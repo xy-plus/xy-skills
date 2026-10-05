@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""检查 xy-goal 在办契约的格式、预算、原话索引与账本。"""
+"""检查 xy-goal 契约的三个文件：清单的条目与产物栏、原话文件的标注与编号、账本的记录，
+以及它们之间的交叉引用。报错格式 `<文件名>:<行号>: <说明>`，退出 1；通过退出 0；用法错退出 2。
+每个函数的 docstring 写明它守 SKILL.md 哪一句。"""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -55,11 +57,12 @@ class Contract:
 
 
 def _line_number(index):
+    """报错里的行号从 1 起，列表索引从 0 起。"""
     return index + 1
 
 
 def _source_numbers(value):
-    """出处里的原话编号，多个用「、」分隔。"""
+    """SKILL.md「契约」：出处至少一个原话编号，多个用「、」；逗号和区间不认。"""
     numbers = set()
     for match in SOURCE_RE.finditer(value):
         numbers.update(int(part) for part in re.split(r"\s*、\s*", match.group(1)))
@@ -67,7 +70,7 @@ def _source_numbers(value):
 
 
 def _find_contract_files(directory):
-    """清单文件：目录顶层、不是原话也不是账本的 *.md。"""
+    """SKILL.md「契约」：一份契约三个同名文件；清单是目录顶层不以 .quotes.md、.done.md 结尾的 *.md。"""
     return sorted(
         (path for path in directory.glob("*.md")
          if not path.name.endswith((".quotes.md", ".done.md"))),
@@ -76,14 +79,17 @@ def _find_contract_files(directory):
 
 
 def _quotes_path(contract_path):
+    """原话文件：和清单同名，后缀 .quotes.md。"""
     return contract_path.with_name(contract_path.stem + ".quotes.md")
 
 
 def _ledger_path(contract_path):
+    """账本：和清单同名，后缀 .done.md。"""
     return contract_path.with_name(contract_path.stem + ".done.md")
 
 
 def _read_lines(path, problems):
+    """按 UTF-8 读成行；读不了就记一条问题并返回 None，调用方跳过这个文件。"""
     try:
         return path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as error:
@@ -92,7 +98,7 @@ def _read_lines(path, problems):
 
 
 def _parse_next_check(path, line_number, segments, task, problems):
-    """产物栏第二段必须是且只有一个「下次核：YYYY-MM-DD HH:MM」。"""
+    """SKILL.md「契约」：产物栏第二段一律是「下次核：YYYY-MM-DD HH:MM」，只有一个；每个开放事项都要有。"""
     found = [(index, segment.strip()) for index, segment in enumerate(segments)
              if segment.strip().startswith("下次核")]
     if not found:
@@ -112,7 +118,8 @@ def _parse_next_check(path, line_number, segments, task, problems):
 
 
 def _parse_artifact(path, line_number, task, artifact, problems):
-    """产物栏：第一段写谁在动，第二段写下次核。"""
+    """SKILL.md「契约」：产物栏第一段写谁在动。[ ] 是「在跑：<名字>（pid N）」（只写一个推进者，进程要还在）、
+    「等：T 号」（多个用「、」）或「等：用户：…」；[x] 是「待验收：<产物指针>」。第二段交给 _parse_next_check。"""
     segments = re.split(r"[；;]", artifact)
     head = segments[0]
     if task.status == "x":
@@ -155,6 +162,8 @@ def _parse_artifact(path, line_number, task, artifact, problems):
 
 
 def _parse_contract(path, problems):
+    """SKILL.md「契约」：清单文件头部写 session 和 cron_job_id，「## 清单」下每项四行：标题、判据、出处、产物；
+    原话不写在这里。判据允许续行。"""
     lines = _read_lines(path, problems)
     if lines is None:
         return None
@@ -272,7 +281,8 @@ def _parse_contract(path, problems):
 
 
 def _parse_landing(landing):
-    """按类别解析原话落点；解释文字中的 T 编号不视作任务号。"""
+    """SKILL.md「原话怎么记」：落点三类，事项 T 号（多个用「、」）、「规矩：位置」、「无：原因」，类别间用「；」；
+    说明文字里的 T 号不算落点。返回 (T 号集合, 错误说明列表)。"""
     targets = set()
     errors = []
     for raw_segment in landing.split("；"):
@@ -295,7 +305,8 @@ def _parse_landing(landing):
 
 
 def _parse_quotes(path, problems):
-    """原话文件：第一个非空行必须是标注，编号从 1 连续；一条标注到下一条之间都是那条原话的正文。
+    """SKILL.md「原话怎么记」：每段开头一行标注「（原话 N → 落点）」，从 1 连续编号，原话文件第一个非空行必须是标注；
+    一条标注到下一条之间都是那条原话的正文。
     正文里顶格的「（原话 N → …）」也会被当成标注，这是接受的边界：用户贴契约片段时自己缩进一格。
     返回 {编号: {"line": 行号, "targets": 落点里的 T 号}}。"""
     lines = _read_lines(path, problems)
@@ -331,7 +342,8 @@ def _parse_quotes(path, problems):
 
 
 def _check_original_quotes(contract, quotes_path, quotes, ledger_ids, problems):
-    """原话落点与条目出处互相对得上：落点要命中清单或账本里的条目，出处引用的原话要存在且落回来。"""
+    """SKILL.md「契约」「原话怎么记」：每个事项通过出处挂到原话，落点与出处互相对得上——
+    落点要命中清单或账本里的条目，出处引用的原话要存在且落回这个事项。"""
     for number, quote in quotes.items():
         for task_id in quote["targets"]:
             task = contract.tasks.get(task_id)
@@ -359,7 +371,7 @@ def _check_original_quotes(contract, quotes_path, quotes, ledger_ids, problems):
 
 
 def _check_wait_targets(contracts, problems):
-    """等待目标必须是同一份清单里的开放事项。"""
+    """SKILL.md「契约」：等待目标必须是同一份清单里的开放事项；[x] 待验收也算开放。"""
     for contract in contracts:
         for task in contract.tasks.values():
             for target in task.wait_targets:
@@ -371,7 +383,7 @@ def _check_wait_targets(contracts, problems):
 
 
 def _check_wait_cycles(contracts, problems):
-    """等待链不能成环；成环就报环上的路径，记在环的起点那一项。"""
+    """SKILL.md「契约」：等待链不能成环。成环就报环上的路径，记在环的起点那一项。"""
     for contract in contracts:
         tasks = contract.tasks
         state = {}  # 1 在栈上，2 已完成
@@ -400,7 +412,8 @@ def _check_wait_cycles(contracts, problems):
 
 
 def _check_ledger(path, quotes, problems):
-    """账本一行一项：验收记录，或引用了现存原话的取消记录。返回账本里的 T 号。"""
+    """SKILL.md「契约」：账本一行一项，验收记录「- T1 …（指针；验收 …）」或取消记录「- [~] T2 …（原话 N：「摘句」）」，
+    取消必须有原话依据，所以引用的原话要存在。返回账本里的 T 号。"""
     lines = _read_lines(path, problems)
     if lines is None:
         return set()
@@ -425,7 +438,7 @@ def _check_ledger(path, quotes, problems):
 
 
 def _check_next_checks(contracts, now, problems):
-    """每个开放条目的下次核都在现在之后、12 小时之内，不看状态。"""
+    """SKILL.md「契约」：下次核是本机时间，不超过 12 小时；过点了就报，直到核过真实状态再改时间。不看状态。"""
     for contract in contracts:
         for task in contract.tasks.values():
             if task.next_check_at is None:
@@ -456,6 +469,7 @@ def _print_summary(contracts):
 
 
 def check_directory(directory):
+    """查目录里每份契约的三个文件和它们之间的引用；有问题就逐条写到 stderr 并返回 1，否则打印摘要返回 0。"""
     problems = []
     contracts = []
     for path in _find_contract_files(directory):
@@ -502,6 +516,7 @@ def check_directory(directory):
 
 
 def main():
+    """用法：python3 check.py <契约目录>；目录必须显式给出。"""
     if len(sys.argv) != 2:
         print("用法：python3 check.py <契约目录>；必须显式提供契约目录", file=sys.stderr)
         return 2

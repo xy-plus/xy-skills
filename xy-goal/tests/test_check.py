@@ -1,4 +1,7 @@
-"""check.py 的契约格式与预算测试。"""
+"""check.py 的测试：一个用例守一条规则。
+
+运行：cd xy-goal && python3 -B -m unittest discover -s tests
+"""
 
 import shutil
 import subprocess
