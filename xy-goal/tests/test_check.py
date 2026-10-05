@@ -723,10 +723,10 @@ class CheckScriptTests(unittest.TestCase):
     def test_done_ledgers_require_one_of_the_two_closed_item_forms(self):
         # 账本只接纳验收记录与有原话依据的取消记录。
         path = self.write_contract(entries=[])
-        self.write_quotes(path, [])
+        self.write_quotes(path, [self.quote(1, "T2")])
         self.write_ledger(lines=[
             "- T1 已验收目标（产物路径；验收 reports/accept-T1.md）",
-            "- [~] T2 用户取消（原话 9：「不做」）",
+            "- [~] T2 用户取消（原话 1：「不做」）",
         ])
         self.assert_passes()
 
@@ -749,18 +749,32 @@ class CheckScriptTests(unittest.TestCase):
         self.write_ledger(lines=["- T6 一句话（没有验收或原话来源）"])
         self.assert_problem("账本格式错误")
 
+    def test_cancelled_ledger_entry_cites_an_existing_quote(self):
+        path = self.write_contract(entries=[])
+        self.write_quotes(path, [self.quote(1, "无：问题")])
+        self.write_ledger(lines=["- [~] T2 用户取消（原话 9：「不做」）"])
+        output = self.assert_problem("取消记录引用的原话 9 不存在")
+        self.assertIn("goal.done.md:1: ", output)
+
+        self.clear_contracts()
+        path = self.write_contract(entries=[])
+        self.write_quotes(path, [self.quote(1, "T2")])
+        self.write_ledger(lines=["- [~] T2 用户取消（原话 1：「不做」）",
+                                 "- T3 做完的事（产物 a.py；验收 python3 -m unittest 退出 0）"])
+        self.assert_passes()
+
     def test_only_top_level_contracts_are_checked(self):
-        # 只读目录顶层的清单文件；子目录里的不读。
+        # 只读目录顶层的清单文件；子目录里的不读，没有清单的账本也不读。
         path = self.write_contract("active.md", entries=[])
         self.write_quotes(path, [])
         self.write_contract("archive/old.md", entries=[])
         self.write_contract("nested/ignored.md", entries=[])
-        self.write_ledger(lines=["- T1 已验收目标（产物路径；验收 reports/accept.md）"])
+        self.write_ledger("orphan.done.md", lines=["不是账本记录"])
         result = self.assert_passes()
         self.assertIn("active.md", result.stdout)
         self.assertNotIn("old.md", result.stdout)
         self.assertNotIn("ignored.md", result.stdout)
-        self.assertNotIn("goal.done.md", result.stdout)
+        self.assertNotIn("orphan.done.md", result.stdout)
 
     def test_missing_argument_exits_with_usage_code_2(self):
         result = self.run_check([])

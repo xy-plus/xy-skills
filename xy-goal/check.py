@@ -25,12 +25,8 @@ SESSION_RE = re.compile(r"^\s*session\s*:\s*(.*?)\s*$")
 RUNNING_ENTRY_RE = re.compile(r"^[^（）、；;]+（pid ([1-9]\d*)）$")
 NEXT_CHECK_RE = re.compile(r"^下次核：\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$")
 
-LEDGER_ACCEPTED_RE = re.compile(
-    r"^-\s+(T\d+[①②③④⑤⑥⑦⑧⑨⑩]?)\s+.+（.+；验收\s+[^）]+）$"
-)
-LEDGER_CANCELLED_RE = re.compile(
-    r"^-\s+\[~\]\s+(T\d+[①②③④⑤⑥⑦⑧⑨⑩]?)\s+.+（原话\s+\d+：「[^」]+」）$"
-)
+LEDGER_ACCEPTED_RE = re.compile(r"^-\s+(T\d+)\s+.+（.+；验收\s+[^）]+）$")
+LEDGER_CANCELLED_RE = re.compile(r"^-\s+\[~\]\s+(T\d+)\s+.+（原话\s+(\d+)：「[^」]+」）$")
 
 
 @dataclass
@@ -81,10 +77,6 @@ def _find_contract_files(directory):
          if not path.name.endswith((".quotes.md", ".done.md"))),
         key=lambda path: path.name,
     )
-
-
-def _find_ledger_files(directory):
-    return sorted(directory.glob("*.done.md"), key=lambda path: path.name)
 
 
 def _quotes_path(contract_path):
@@ -496,7 +488,8 @@ def _check_wait_cycles(contracts, problems):
             ))
 
 
-def _check_ledger(path, problems):
+def _check_ledger(path, quotes, problems):
+    """账本一行一项：验收记录，或引用了现存原话的取消记录。返回账本里的 T 号。"""
     lines = _read_lines(path, problems)
     if lines is None:
         return set()
@@ -505,16 +498,18 @@ def _check_ledger(path, problems):
         if not line.strip():
             problems.append(Problem(path, _line_number(index), "账本格式错误（不允许空行）"))
             continue
-        # 账本只能记录已验收产物或有原话依据的取消事项。
         accepted = LEDGER_ACCEPTED_RE.fullmatch(line)
         cancelled = LEDGER_CANCELLED_RE.fullmatch(line)
         if accepted is None and cancelled is None:
             problems.append(Problem(
-                path, _line_number(index),
-                "账本格式错误（应为验收记录或带原话编号的取消记录）",
+                path, _line_number(index), "账本格式错误（应为验收记录或带原话编号的取消记录）",
             ))
-        else:
-            task_ids.add((accepted or cancelled).group(1))
+            continue
+        task_ids.add((accepted or cancelled).group(1))
+        if cancelled is not None and int(cancelled.group(2)) not in quotes:
+            problems.append(Problem(
+                path, _line_number(index), f"取消记录引用的原话 {cancelled.group(2)} 不存在",
+            ))
     return task_ids
 
 
@@ -593,17 +588,20 @@ def _print_summary(contracts):
 def check_directory(directory):
     problems = []
     contracts = []
-    quotes_by_contract = {}
     for path in _find_contract_files(directory):
         contract = _parse_contract(path, problems)
         if contract is None:
             continue
         contracts.append(contract)
         quotes_path = _quotes_path(path)
-        if quotes_path.exists():
-            quotes_by_contract[path] = _parse_quotes(quotes_path, problems)
-        else:
+        if not quotes_path.exists():
+            # 原话都没有，落点和账本里的原话引用都没法核，只报缺文件。
             problems.append(Problem(path, 1, f"缺少原话文件 {quotes_path.name}"))
+            continue
+        quotes = _parse_quotes(quotes_path, problems)
+        ledger_path = _ledger_path(path)
+        ledger_ids = _check_ledger(ledger_path, quotes, problems) if ledger_path.exists() else set()
+        _check_original_quotes(contract, quotes_path, quotes, ledger_ids, problems)
 
     # 一个 session 只对应一份在办契约；对每份重复契约都报告另一份的位置。
     contracts_by_session = {}
@@ -620,21 +618,6 @@ def check_directory(directory):
                 f"session {session} 已有另一份契约 {other.path.name}，一个会话只许一份",
             ))
 
-    ledger_ids = {}
-    for path in _find_ledger_files(directory):
-        ledger_ids[path.name] = _check_ledger(path, problems)
-
-    # 原话文件缺失时只报缺文件，落点没法核。
-    for contract in contracts:
-        if contract.path not in quotes_by_contract:
-            continue
-        _check_original_quotes(
-            contract,
-            _quotes_path(contract.path),
-            quotes_by_contract[contract.path],
-            ledger_ids.get(_ledger_path(contract.path).name, set()),
-            problems,
-        )
     _check_wait_targets(contracts, problems)
     _check_wait_cycles(contracts, problems)
     _check_budgets(contracts, problems)
