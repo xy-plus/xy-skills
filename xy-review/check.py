@@ -2,7 +2,7 @@
 必填字段齐全、不重复、写法标准（顶格、全角冒号、不加粗）、没有照抄模板占位符；「无」必须单独成项、独占一行，
 后面写对照了什么，「本质」和「留下清单」不能写「无」；留下清单每行有实体和理由，删除清单每行有实体和删了丢什么，
 实体不能空；仓库规范 1 到 7 条齐全且不重复；结论只有一行，是「通过」「改了就过」或「不通过」，并与各节一致：
-通过时各节全是「无」，另两种至少一处不是。
+通过时查问题的地方（偏离、问题、删除清单、仓库规范七条）全是「无」，另两种至少一处不是。
 
 退出码：0 格式合格；1 格式不合格，逐条打印问题；2 用法错误。结论从报告里读。
 """
@@ -22,9 +22,9 @@ RULE_COUNT = 7  # 仓库规范条数
 PROBLEM_FIELDS = ["偏离", "问题", "删除清单"]
 MUST_HAVE_CONTENT = ["本质", "留下清单"]  # 写「无」就等于没审
 VERDICTS = ("通过", "改了就过", "不通过")
-# 「无」必须单独成项：后面紧跟标点、括号、空白或行尾；前面可以有列表符。「无法」「无用」这类词不算「无」。
-NONE_RE = re.compile(r"(?:[-*]\s+)?无(?:[，,、。；;：:（(\s]|$)")
-BARE_NONE_RE = re.compile(r"(?:[-*]\s+)?无[，,、。；;：:（(\s]*[）)]?")
+# 「无」必须单独成项：后面紧跟标点、括号或行尾；前面可以有列表符。「无法」「无用」这类词，以及「无 docstring」这种空格隔开的真发现，都不算「无」。
+NONE_RE = re.compile(r"(?:[-*]\s+)?无(?:[，,、。；;：:（(]|$)")
+BARE_NONE_RE = re.compile(r"(?:[-*]\s+)?无[，,、。；;：:（(]*[）)]?")
 # 模板占位符就是 SKILL.md 报告模板里尖括号包着的那些话，从那里读，不另抄一份。
 TEMPLATE_PLACEHOLDERS = re.findall(
     r"<([^<>]+)>",
@@ -131,7 +131,7 @@ def check_lines(where, value, separators, shape):
 
 
 def check(text):
-    """返回 (问题列表, 结论)。问题列表为空即格式合格，结论是「通过」「改了就过」或「不通过」。"""
+    """返回问题列表，为空即格式合格。"""
     sections, problems = split_sections(text)
     values, rules = {}, {}
 
@@ -150,7 +150,7 @@ def check(text):
                 problems.append(f"{name}：「{key}」不能写「无」，它本来就该有内容")
             values[key] = fields[key]
     if "留下清单" in values:
-        problems += check_lines("留下清单", values["留下清单"], "：", "实体：离开它，用户的哪个要求做不到")
+        problems += check_lines("留下清单", values["留下清单"], "：", "实体：离开它，用户原话哪条做不到")
     if "删除清单" in values:
         problems += check_lines("删除清单", values["删除清单"], "；;", "实体；删了丢什么")
 
@@ -173,7 +173,7 @@ def check(text):
 
     if "结论" not in sections:
         problems.append("缺少「## 结论」")
-        return problems, ""
+        return problems
     conclusion_lines = [line.strip() for line in sections["结论"] if line.strip()]
     verdict = conclusion_lines[0] if conclusion_lines else ""
     if len(conclusion_lines) != 1 or verdict not in VERDICTS:
@@ -182,7 +182,7 @@ def check(text):
         problems.append("结论写通过，但有的地方不是「无，」开头：" + "、".join(findings))
     elif verdict != "通过" and not findings:
         problems.append(f"结论写{verdict}，但各节都是「无」")
-    return problems, verdict
+    return problems
 
 
 def main(argv):
@@ -190,7 +190,7 @@ def main(argv):
         print("用法：check.py <报告路径>")
         return 2
     with open(argv[1], encoding="utf-8") as f:
-        problems, _ = check(f.read())
+        problems = check(f.read())
     if problems:
         print("\n".join(problems))
         return 1

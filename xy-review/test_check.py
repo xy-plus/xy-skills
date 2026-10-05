@@ -1,4 +1,4 @@
-"""check.py 的测试，一个用例守一条规则。运行：PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest test_check"""
+"""check.py 的测试，一个用例守一条规则。运行：cd xy-review && python3 -B -m unittest test_check"""
 import contextlib
 import io
 import os
@@ -36,19 +36,19 @@ def report(**overrides):
 
 class CheckTest(unittest.TestCase):
     def assertProblems(self, text, *needles):
-        problems, _ = check(text)
+        problems = check(text)
         self.assertTrue(problems, "应该报错却通过了")
         for needle in needles:
             self.assertTrue(any(needle in p for p in problems), f"没报「{needle}」：{problems}")
 
     def test_clean_pass(self):
-        self.assertEqual(check(report()), ([], "通过"))
+        self.assertEqual(check(report()), [])
 
     def test_fail_with_findings(self):
         text = report(偏离="a.py:3 没改根源，在 b.py 兜底",
                       删除清单="- 参数 x；删了丢什么：无\n- 分支 y；删了丢什么：无",
                       结论="不通过")
-        self.assertEqual(check(text), ([], "不通过"))
+        self.assertEqual(check(text), [])
 
     def test_missing_section(self):
         self.assertProblems(report().replace("## 铁律 2 难误用\n", ""), "缺少「## 铁律 2 难误用」")
@@ -81,20 +81,20 @@ class CheckTest(unittest.TestCase):
         self.assertProblems(report().replace("本质：用户要的是 X", "本质: 用户要的是 X"), "全角冒号", "缺少「本质」")
 
     def test_list_item_named_like_a_field_is_content(self):
-        self.assertEqual(check(report(留下清单="\n- 删除清单：原话 8 要求说明删了丢什么")), ([], "通过"))
-        self.assertEqual(check(report(留下清单="\n  - 删除清单：原话 8 要求说明删了丢什么")), ([], "通过"))
+        self.assertEqual(check(report(留下清单="\n- 删除清单：原话 8 要求说明删了丢什么")), [])
+        self.assertEqual(check(report(留下清单="\n  - 删除清单：原话 8 要求说明删了丢什么")), [])
 
     def test_placeholder_whole_field(self):
         self.assertProblems(report(本质="<用户真正要的是什么；若是修错，根源在哪>"), "占位符")
 
     def test_placeholder_fragment_inside_line(self):
-        self.assertProblems(report(留下清单="参数 x：<离开它，用户的哪个要求做不到>"), "占位符")
+        self.assertProblems(report(留下清单="参数 x：<离开它，用户原话哪条做不到>"), "占位符")
 
     def test_angle_brackets_outside_template_are_fine(self):
         text = report(问题="依据 </home/xy/.claude/xy-workflow/原话.md> 的原话 7，缺少格式校验", 结论="改了就过")
-        self.assertEqual(check(text), ([], "改了就过"))
+        self.assertEqual(check(text), [])
         text = report(偏离="目录 ~/.claude/xy-workflow/<仓库名>-<主题>/ 第 8 步删了，账本还指着它", 结论="改了就过")
-        self.assertEqual(check(text), ([], "改了就过"))
+        self.assertEqual(check(text), [])
 
     def test_bare_none_needs_comparison(self):
         self.assertProblems(report(偏离="无"), "后面要写对照了什么")
@@ -105,12 +105,15 @@ class CheckTest(unittest.TestCase):
         self.assertProblems(report(偏离="无，对照了 X\ncheck.py:12 没改根源"), "只能有这一行")
 
     def test_none_with_parentheses_or_bullet_is_none(self):
-        self.assertEqual(check(report(偏离="无（对照了 spec）")), ([], "通过"))
-        self.assertEqual(check(report(偏离="\n- 无，对照了 spec")), ([], "通过"))
+        self.assertEqual(check(report(偏离="无（对照了 spec）")), [])
+        self.assertEqual(check(report(偏离="\n- 无，对照了 spec")), [])
 
     def test_essence_and_keep_list_cannot_be_none(self):
         self.assertProblems(report(本质="无，看不出"), "「本质」不能写「无」")
         self.assertProblems(report(留下清单="无，没什么要留"), "「留下清单」不能写「无」")
+
+    def test_space_after_none_is_a_finding(self):
+        self.assertProblems(report(问题="无 docstring 的函数 check_lines（check.py:120）"), "结论写通过，但有的地方不是「无，」开头")
 
     def test_word_starting_with_none_is_a_finding(self):
         self.assertProblems(report(问题="无法拒绝空路径，check.py:138 直接打开"),
@@ -134,7 +137,7 @@ class CheckTest(unittest.TestCase):
         self.assertProblems(report(问题="缺省值静默生效"), "结论写通过")
 
     def test_fix_and_pass_needs_findings(self):
-        self.assertEqual(check(report(问题="缺省值静默生效", 结论="改了就过")), ([], "改了就过"))
+        self.assertEqual(check(report(问题="缺省值静默生效", 结论="改了就过")), [])
         self.assertProblems(report(结论="改了就过"), "结论写改了就过，但各节都是「无」")
 
     def test_fail_without_findings(self):
@@ -151,7 +154,7 @@ class CheckTest(unittest.TestCase):
         self.assertProblems(report(删除清单="- ；删了不丢要求", 结论="不通过"), "删除清单每行")
 
     def test_old_code_does_not_block(self):
-        self.assertEqual(check(report(旧代码删减="old.py:10 死分支")), ([], "通过"))
+        self.assertEqual(check(report(旧代码删减="old.py:10 死分支")), [])
 
     def test_exit_codes(self):
         cases = [(report(), 0), (report(问题="缺省值静默生效", 结论="不通过"), 0), (report(偏离=""), 1)]
