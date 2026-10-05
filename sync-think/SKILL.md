@@ -1,6 +1,6 @@
 ---
 name: sync-think
-description: 仅在用户调用时使用
+description: 仅在被明确调用时使用，不自动触发。
 ---
 
 - 把不确定、需要用户决策、可能有问题的地方，用提问工具（AskUserQuestion）做成选择题问用户，问得详细，不怕麻烦。

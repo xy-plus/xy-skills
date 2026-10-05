@@ -4,10 +4,10 @@
 
 | skill | 用途 |
 |---|---|
-| `xy-iron-law` | 三条铁律及检查方法 |
+| `xy-iron-law` | 三条铁律 |
 | `xy-repo-rules` | 仓库规范 |
 | `xy-workflow` | 标准工作流程 |
-| `adversarial-review` | 对抗审查的模板与结果检查脚本（`xy-workflow` 引用） |
+| `xy-review` | 对抗审查：怎么派、怎么审、报告格式和格式检查脚本、怎么处理结果（`xy-workflow` 的所有审查都用它） |
 | `xy-goal` | 长目标契约与定时自查 |
 | `sync-think` | 拿不准的事做成选择题问用户 |
 
