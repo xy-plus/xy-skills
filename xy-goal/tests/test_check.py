@@ -641,6 +641,22 @@ class CheckScriptTests(unittest.TestCase):
         self.write_quotes(path, ["（原话 1 → T3）a", "（原话 3 → 无：问题）b"])
         self.assert_problem("原话编号应为 2，实际是 3")
 
+    def test_source_must_cite_an_existing_quote(self):
+        path = self.write_contract(entries=self.entry(source="来源：spec.md"))
+        self.write_quotes(path, [self.quote(1, "无：问题")])
+        output = self.assert_problem("出处至少含一个原话编号")
+        self.assertIn("goal.md:7: ", output)
+
+        self.clear_contracts()
+        path = self.write_contract(entries=self.entry(source="原话 1、2"))
+        self.write_quotes(path, [self.quote(1, "T3")])
+        self.assert_problem("出处引用的原话 2 不存在")
+
+        self.clear_contracts()
+        path = self.write_contract(entries=self.entry(source="原话 1、2"))
+        self.write_quotes(path, [self.quote(1, "T3"), self.quote(2, "T3")])
+        self.assert_passes()
+
     def test_original_quote_requires_a_landing_but_accepts_rule_and_none_landings(self):
         # 原话标注必须说明落到条目、规矩或无落点。
         path = self.write_contract(entries=[])

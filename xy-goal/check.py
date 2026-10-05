@@ -21,7 +21,7 @@ WAIT_TARGETS_RE = re.compile(
     rf"^({WAIT_TARGET_ID_PATTERN}(?:\s*[,，]\s*{WAIT_TARGET_ID_PATTERN})*)(?=$|[；;。\s])"
 )
 QUOTE_RE = re.compile(r"^（原话\s+(\d+)\s*→\s*(.*?)）")  # 标注必须顶格
-SOURCE_RE = re.compile(r"原话\s+(\d+(?:(?:\s*～\s*\d+)|(?:\s*[、,，]\s*\d+))*)")
+SOURCE_RE = re.compile(r"原话\s+(\d+(?:\s*、\s*\d+)*)")
 CRON_RE = re.compile(r"^\s*cron_job_id\s*:")
 SESSION_RE = re.compile(r"^\s*session\s*:\s*(.*?)\s*$")
 RUNNING_ENTRY_RE = re.compile(r"^(.+?)（pid ([1-9]\d*)）$")
@@ -78,29 +78,12 @@ def _line_number(index):
     return index + 1
 
 
-def _expand_quote_numbers(value):
-    """展开「原话 113～115、120」中的编号；返回编号与格式问题。"""
+def _source_numbers(value):
+    """出处里的原话编号，多个用「、」分隔。"""
     numbers = set()
-    malformed = []
     for match in SOURCE_RE.finditer(value):
-        for component in re.split(r"\s*[、,，]\s*", match.group(1)):
-            endpoints = re.split(r"\s*～\s*", component)
-            if len(endpoints) == 1:
-                numbers.add(int(endpoints[0]))
-                continue
-            if len(endpoints) != 2:
-                malformed.append(component)
-                continue
-            first, last = map(int, endpoints)
-            if last < first:
-                malformed.append(component)
-                continue
-            numbers.update(range(first, last + 1))
-    return numbers, malformed
-
-
-def _is_task_id(value):
-    return TASK_ID_RE.fullmatch(value) is not None
+        numbers.update(int(part) for part in re.split(r"\s*、\s*", match.group(1)))
+    return numbers
 
 
 def _find_contract_files(directory):
@@ -303,7 +286,7 @@ def _parse_contract(path, problems):
             problems.append(Problem(path, _line_number(index), "清单状态只能是 [ ] 或 [x]"))
             index += 1
             continue
-        if not _is_task_id(task_id):
+        if TASK_ID_RE.fullmatch(task_id) is None:
             problems.append(Problem(path, _line_number(index), f"条目编号格式错误：{task_id}（应为 T 加编号）"))
         if task_id in contract.tasks:
             problems.append(Problem(path, _line_number(index), f"条目编号重复：{task_id}"))
@@ -347,12 +330,13 @@ def _parse_contract(path, problems):
                 f"条目合计 {item_chars} 字，超过 {ITEM_LIMIT} 字",
             ))
 
+        # 每个事项都通过出处挂到原话；没有原话编号的出处挂不上。
         source_value = lines[source_index][len("  - 出处："):]
+        source_ids = _source_numbers(source_value)
         if not source_value.strip():
             problems.append(Problem(path, _line_number(source_index), "出处：内容不能为空"))
-        source_ids, malformed = _expand_quote_numbers(source_value)
-        for component in malformed:
-            problems.append(Problem(path, _line_number(source_index), f"出处中的原话区间格式错误：{component}"))
+        elif not source_ids:
+            problems.append(Problem(path, _line_number(source_index), "出处至少含一个原话编号"))
 
         artifact_value = lines[artifact_index][len("  - 产物："):]
         artifact_info = _parse_artifact(
@@ -391,7 +375,7 @@ def _parse_landing(landing):
             continue
 
         task_ids = [item.strip() for item in segment.split("、")]
-        if not task_ids or any(not _is_task_id(task_id) for task_id in task_ids):
+        if any(TASK_ID_RE.fullmatch(task_id) is None for task_id in task_ids):
             errors.append(f"落点类别格式错误：{segment}")
             continue
         targets.update(task_ids)
