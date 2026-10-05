@@ -1,7 +1,5 @@
 """check.py 的契约格式与预算测试。"""
 
-import os
-import re
 import shutil
 import subprocess
 import sys
@@ -16,7 +14,6 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "check.py"
-DEFAULT_NEXT_CHECK = object()
 sys.path.insert(0, str(ROOT))
 import check as check_module
 
@@ -70,20 +67,7 @@ class CheckScriptTests(unittest.TestCase):
 
     @staticmethod
     def entry(task_id="T3", *, status=" ", criteria="完成验收条件",
-              source="原话 1", artifact=None, next_check=DEFAULT_NEXT_CHECK):
-        if next_check is DEFAULT_NEXT_CHECK:
-            next_check = (datetime.now() + timedelta(hours=11)).strftime(
-                "%Y-%m-%d %H:%M",
-            )
-        if artifact is None:
-            artifact = "等：用户：等待输入"
-        if (status == " " and artifact.startswith("在跑：")
-                and next_check is not None
-                and not any(segment.strip().startswith("下次核")
-                            for segment in re.split(r"[；;]", artifact))):
-            parts = re.split(r"([；;])", artifact, maxsplit=1)
-            if len(parts) == 3:
-                artifact = parts[0] + parts[1] + f"下次核：{next_check}" + parts[1] + parts[2]
+              source="原话 1", artifact):
         return [
             f"- [{status}] {task_id} 测试条目",
             f"  - 判据：{criteria}",
@@ -91,12 +75,14 @@ class CheckScriptTests(unittest.TestCase):
             f"  - 产物：{artifact}",
         ]
 
+    @staticmethod
+    def later():
+        return (datetime.now() + timedelta(hours=11)).strftime("%Y-%m-%d %H:%M")
+
     def test_running_next_check_missing_is_reported_at_artifact_line(self):
         pid = self.start_live_child().pid
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {pid}）；src/output.py",
-            next_check=None,
-        ))
+            artifact=f"在跑：worker（pid {pid}）；src/output.py"))
         self.write_quotes(path, [self.quote()])
 
         output = self.assert_problem("下次核")
@@ -109,10 +95,10 @@ class CheckScriptTests(unittest.TestCase):
         invalid_artifacts = (
             (f"在跑：worker（pid {pid}）；下次核：2026-10-05 15:30；"
              "下次核：2026-10-05 16:30",
-             "「下次核」格式应为 YYYY-MM-DD HH:MM"),
+             "「下次核」必须是产物栏第二段且只有一个"),
             (f"在跑：worker（pid {pid}）；src/output.py；"
              "下次核：2026-10-05 15:30",
-             "必须写在推进者段之后"),
+             "「下次核」必须是产物栏第二段且只有一个"),
             (f"在跑：worker（pid {pid}）；下次核：2026-02-30 15:30",
              "不是有效日期时间"),
             (f"在跑：worker（pid {pid}）；下次核：2026-10-05 15:30 +08:00",
@@ -123,19 +109,15 @@ class CheckScriptTests(unittest.TestCase):
         for artifact, expected in invalid_artifacts:
             with self.subTest(artifact=artifact):
                 self.clear_contracts()
-                path = self.write_contract(entries=self.entry(
-                    artifact=artifact, next_check=None))
+                path = self.write_contract(entries=self.entry(artifact=artifact))
                 self.write_quotes(path, [self.quote()])
                 output = self.assert_problem(expected)
                 self.assertIn("goal.md:8: ", output)
 
     def test_expired_next_check_reports_only_contract_deadline(self):
         pid = self.start_live_child().pid
-        deadline = "2026-10-05 07:30"
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {pid}）；产物指针 src/output.py",
-            next_check=deadline,
-        ))
+            artifact=f"在跑：worker（pid {pid}）；下次核：2026-10-05 07:30；产物指针 src/output.py"))
         self.write_quotes(path, [self.quote()])
         now = datetime(2026, 10, 5, 9, 40)
 
@@ -150,7 +132,6 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_next_check_comparison_is_strict_in_local_time(self):
         pid = self.start_live_child().pid
-        deadline = "2026-10-05 10:00"
         cases = (
             (datetime(2026, 10, 5, 10, 0), 0),
             (datetime(2026, 10, 5, 10, 0, 1), 1),
@@ -159,9 +140,7 @@ class CheckScriptTests(unittest.TestCase):
         for now, expected in cases:
             with self.subTest(now=now):
                 path = self.write_contract(entries=self.entry(
-                    artifact=f"在跑：worker（pid {pid}）；src/output.py",
-                    next_check=deadline,
-                ))
+                    artifact=f"在跑：worker（pid {pid}）；下次核：2026-10-05 10:00；src/output.py"))
                 self.write_quotes(path, [self.quote()])
                 returncode, stdout, stderr = self._run_check_at(now)
                 self.assertEqual(returncode, expected, stdout + stderr)
@@ -171,9 +150,7 @@ class CheckScriptTests(unittest.TestCase):
     def test_next_check_thirteen_hours_ahead_is_rejected(self):
         pid = self.start_live_child().pid
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {pid}）；src/output.py",
-            next_check="2026-10-05 23:00",
-        ))
+            artifact=f"在跑：worker（pid {pid}）；下次核：2026-10-05 23:00；src/output.py"))
         self.write_quotes(path, [self.quote()])
         now = datetime(2026, 10, 5, 10, 0)
         returncode, stdout, stderr = self._run_check_at(now)
@@ -187,9 +164,7 @@ class CheckScriptTests(unittest.TestCase):
     def test_next_check_exactly_twelve_hours_ahead_is_allowed(self):
         pid = self.start_live_child().pid
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {pid}）；src/output.py",
-            next_check="2026-10-05 22:00",
-        ))
+            artifact=f"在跑：worker（pid {pid}）；下次核：2026-10-05 22:00；src/output.py"))
         self.write_quotes(path, [self.quote()])
         returncode, stdout, stderr = self._run_check_at(datetime(2026, 10, 5, 10, 0))
         self.assertEqual(returncode, 0, stdout + stderr)
@@ -197,9 +172,7 @@ class CheckScriptTests(unittest.TestCase):
     def test_next_check_eleven_hours_ahead_is_allowed(self):
         pid = self.start_live_child().pid
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {pid}）；src/output.py",
-            next_check="2026-10-05 21:00",
-        ))
+            artifact=f"在跑：worker（pid {pid}）；下次核：2026-10-05 21:00；src/output.py"))
         self.write_quotes(path, [self.quote()])
         now = datetime(2026, 10, 5, 10, 0)
         returncode, stdout, stderr = self._run_check_at(now)
@@ -211,9 +184,7 @@ class CheckScriptTests(unittest.TestCase):
         dead_pid = child.pid
         child.wait()
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {dead_pid}）；src/output.py",
-            next_check="2026-10-05 07:30",
-        ))
+            artifact=f"在跑：worker（pid {dead_pid}）；下次核：2026-10-05 07:30；src/output.py"))
         self.write_quotes(path, [self.quote()])
         now = datetime(2026, 10, 5, 9, 40)
         returncode, stdout, stderr = self._run_check_at(now)
@@ -223,48 +194,44 @@ class CheckScriptTests(unittest.TestCase):
         self.assertIn("进程已不在", output)
         self.assertIn("T3：下次核 2026-10-05 07:30 已过期", output)
 
-    def test_waiting_and_acceptance_items_do_not_require_next_check(self):
-        entries = self.entry("T1", artifact="等：用户：确认参数")
-        entries += self.entry("T2", status="x", source="原话 2",
-                              artifact="待验收：reports/accept-T2.md")
-        path = self.write_contract(entries=entries)
-        self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2")])
+    def test_every_open_item_needs_a_next_check(self):
+        for status, artifact in ((" ", "等：用户：确认参数"), (" ", "等：T4"),
+                                 ("x", "待验收：reports/a.md")):
+            with self.subTest(artifact=artifact):
+                self.clear_contracts()
+                entries = self.entry(status=status, artifact=artifact)
+                quotes = [self.quote(1, "T3")]
+                if "T4" in artifact:
+                    entries += self.entry("T4", source="原话 2",
+                                          artifact=f"等：用户：x；下次核：{self.later()}")
+                    quotes.append(self.quote(2, "T4"))
+                path = self.write_contract(entries=entries)
+                self.write_quotes(path, quotes)
+                output = self.assert_problem("缺少「下次核」字段")
+                self.assertIn("goal.md:8: ", output)
 
+    def test_running_entry_names_exactly_one_pusher(self):
+        live = self.start_live_child().pid
+        path = self.write_contract(entries=self.entry(
+            artifact=f"在跑：a（pid {live}）、b（pid {live}）；下次核：{self.later()}；产物"))
+        self.write_quotes(path, [self.quote()])
+        self.assert_problem("「在跑：」只写一个推进者，格式「名字（pid N）」")
+
+    def test_wait_targets_use_the_enumeration_comma(self):
+        later = self.later()
+        entries = self.entry("T1", artifact=f"等：T2、T3；下次核：{later}")
+        entries += self.entry("T2", source="原话 2", artifact=f"等：用户：a；下次核：{later}")
+        entries += self.entry("T3", source="原话 3", artifact=f"等：用户：b；下次核：{later}")
+        path = self.write_contract(entries=entries)
+        self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2"), self.quote(3, "T3")])
         self.assert_passes()
 
-    def test_expired_deadline_repeats_until_contract_time_is_updated(self):
-        first_pid = self.start_live_child().pid
-        second_pid = self.start_live_child().pid
-        deadline = "2026-10-05 07:30"
-        now = datetime(2026, 10, 5, 9, 40)
-        path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker-a（pid {first_pid}）；src/output.py",
-            next_check=deadline,
-        ))
-        self.write_quotes(path, [self.quote()])
-
-        for _ in range(2):
-            returncode, stdout, stderr = self._run_check_at(now)
-            self.assertEqual(returncode, 1, stdout + stderr)
-            self.assertIn("T3：下次核 2026-10-05 07:30 已过期", stdout + stderr)
-
-        path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker-b（pid {second_pid}）；new-output.py",
-            next_check=deadline,
-        ))
-        self.write_quotes(path, [self.quote()])
-        returncode, stdout, stderr = self._run_check_at(now)
-        self.assertEqual(returncode, 1, stdout + stderr)
-
-        path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker-b（pid {second_pid}）；new-output.py",
-            next_check="2026-10-05 20:00",
-        ))
-        self.write_quotes(path, [self.quote()])
-        returncode, stdout, stderr = self._run_check_at(now)
-        self.assertEqual(returncode, 0, stdout + stderr)
-        self.assertEqual(sorted(path.name for path in self.contract_dir.iterdir()),
-                         ["goal.md", "goal.quotes.md"])
+        self.clear_contracts()
+        entries = self.entry("T1", artifact=f"等：T2，T3；下次核：{later}")
+        entries += self.entry("T2", source="原话 2", artifact=f"等：用户：a；下次核：{later}")
+        path = self.write_contract(entries=entries)
+        self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2")])
+        self.assert_problem("「等：」后应为条目 ID 或「用户：…」")
 
     @staticmethod
     def quote(number=1, landing="T3"):
@@ -308,14 +275,17 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_required_criteria_and_source_must_be_nonempty(self):
         # 判据与出处不能只写字段前缀，正文必须非空。
-        path = self.write_contract(entries=self.entry(criteria=""))
+        later = self.later()
+        path = self.write_contract(entries=self.entry(
+            criteria="", artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, [self.quote()])
         output = self.assert_problem("判据：内容不能为空")
         self.assertIn("goal.md:6: ", output)
         self.assertEqual(len(output.splitlines()), 1, output)
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(source=""))
+        path = self.write_contract(entries=self.entry(
+            source="", artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, [self.quote(1, "无：无需对应在办条目")])
         output = self.assert_problem("出处：内容不能为空")
         self.assertIn("goal.md:7: ", output)
@@ -324,7 +294,7 @@ class CheckScriptTests(unittest.TestCase):
     def test_running_waiting_and_acceptance_prefixes_require_values(self):
         # 「谁在动」字段须包含任务名、条目 ID 或验收产物。
         for artifact, expected in (
-            ("在跑：worker", "「在跑：」必须包含进程号（pid N）"),
+            ("在跑：worker", "「在跑：」只写一个推进者，格式「名字（pid N）」"),
             ("等：", "「等：」后应为条目 ID 或「用户：…」"),
             ("待验收：", "[x] 「待验收：」后必须有产物指针"),
         ):
@@ -335,42 +305,42 @@ class CheckScriptTests(unittest.TestCase):
                 self.write_quotes(path, [self.quote()])
                 output = self.assert_problem(expected)
                 self.assertIn("goal.md:8: ", output)
-                if artifact == "在跑：worker":
-                    self.assertIn("下次核", output)
-                    self.assertEqual(len(output.splitlines()), 2, output)
-                else:
-                    self.assertEqual(len(output.splitlines()), 1, output)
+                self.assertIn("缺少「下次核」字段", output)
+                self.assertEqual(len(output.splitlines()), 2, output)
 
         self.clear_contracts()
-        entries = self.entry(artifact="等：T4")
-        entries += self.entry("T4", source="原话 2", artifact="等：用户：确认输入")
+        later = self.later()
+        entries = self.entry(artifact=f"等：T4；下次核：{later}")
+        entries += self.entry("T4", source="原话 2", artifact=f"等：用户：确认输入；下次核：{later}")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [self.quote(1, "T3"), self.quote(2, "T4")])
         self.assert_passes()
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(status="x", artifact="待验收：reports/check.md"))
+        path = self.write_contract(entries=self.entry(
+            status="x", artifact=f"待验收：reports/check.md；下次核：{later}"))
         self.write_quotes(path, [self.quote()])
         self.assert_passes()
 
     def test_artifact_prefixes_wait_targets_and_running_names(self):
         # 检查在跑、等、待验收前缀；等待目标必须仍在清单中。
         live_pid = self.start_live_child().pid
+        later = self.later()
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker-a（pid {live_pid}）；产物路径"))
+            artifact=f"在跑：worker-a（pid {live_pid}）；下次核：{later}；产物路径"))
         self.write_quotes(path, [self.quote()])
         output = self.assert_passes().stdout
         self.assertIn(f"在跑：worker-a（pid {live_pid}）", output)
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(artifact="等：用户：确认参数"))
+        path = self.write_contract(entries=self.entry(artifact=f"等：用户：确认参数；下次核：{later}"))
         self.write_quotes(path, [self.quote()])
         self.assert_passes()
 
         self.clear_contracts()
-        entries = self.entry(artifact=f"在跑：worker-a（pid {live_pid}）；产物")
+        entries = self.entry(artifact=f"在跑：worker-a（pid {live_pid}）；下次核：{later}；产物")
         entries += self.entry("T4", source="原话 2",
-                              artifact=f"在跑：worker-b（pid {live_pid}）；产物")
+                              artifact=f"在跑：worker-b（pid {live_pid}）；下次核：{later}；产物")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [self.quote(1, "T3"), self.quote(2, "T4")])
         output = self.assert_passes().stdout
@@ -389,48 +359,15 @@ class CheckScriptTests(unittest.TestCase):
         self.assert_problem("[x] 产物栏必须以「待验收：」开头")
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(status="x", artifact="待验收：报告路径"))
+        path = self.write_contract(entries=self.entry(
+            status="x", artifact=f"待验收：报告路径；下次核：{later}"))
         self.write_quotes(path, [self.quote()])
         self.assert_passes()
-
-    def test_live_non_ancestor_child_pid_is_checked_and_included_in_summary(self):
-        pid = self.start_live_child().pid
-        path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {pid}）；产物路径"))
-        self.write_quotes(path, [self.quote()])
-
-        result = self.assert_passes()
-
-        self.assertIn(f"在跑：worker（pid {pid}）", result.stdout)
-
-    def test_executing_process_pid_is_accepted_as_running(self):
-        pid = os.getpid()
-        path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：执行者（pid {pid}）；产物路径"))
-        self.write_quotes(path, [self.quote()])
-        real_readlink = os.readlink
-
-        def identify_current_process(path, *args, **kwargs):
-            if os.fspath(path) == f"/proc/{pid}/exe":
-                return "/usr/bin/claude"
-            return real_readlink(path, *args, **kwargs)
-
-        stdout = StringIO()
-        stderr = StringIO()
-        with mock.patch.object(
-                check_module.os, "readlink",
-                side_effect=identify_current_process) as readlink, \
-                redirect_stdout(stdout), redirect_stderr(stderr):
-            returncode = check_module.check_directory(self.contract_dir)
-
-        self.assertEqual(returncode, 0, stdout.getvalue() + stderr.getvalue())
-        self.assertIn(f"在跑：执行者（pid {pid}）", stdout.getvalue())
-        readlink.assert_not_called()
 
     def test_permission_error_while_checking_running_pid_counts_as_alive(self):
         pid = 2147483647
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {pid}）；产物路径"))
+            artifact=f"在跑：worker（pid {pid}）；下次核：{self.later()}；产物路径"))
         self.write_quotes(path, [self.quote()])
         stdout = StringIO()
         stderr = StringIO()
@@ -447,7 +384,7 @@ class CheckScriptTests(unittest.TestCase):
         dead_pid = child.pid
         child.wait()
         path = self.write_contract(entries=self.entry(
-            artifact=f"在跑：child（pid {dead_pid}）；产物路径"))
+            artifact=f"在跑：child（pid {dead_pid}）；下次核：{self.later()}；产物路径"))
         self.write_quotes(path, [self.quote()])
 
         result = self.run_check([self.contract_dir])
@@ -456,12 +393,12 @@ class CheckScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, output)
         self.assertEqual(
             output.strip(),
-            f"goal.md:8: 在跑：child（pid {dead_pid}）的进程已不在：收尾、送验或接手",
+            f"goal.md:8: 在跑：child（pid {dead_pid}）的进程已不在：收尾或送验",
         )
 
-    def test_running_entry_without_pid_reports_required_pid_at_artifact_line(self):
+    def test_running_entry_without_pid_is_rejected_at_artifact_line(self):
         path = self.write_contract(entries=self.entry(
-            artifact="在跑：worker；产物路径"))
+            artifact=f"在跑：worker；下次核：{self.later()}；产物路径"))
         self.write_quotes(path, [self.quote()])
 
         result = self.run_check([self.contract_dir])
@@ -470,43 +407,26 @@ class CheckScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, output)
         self.assertEqual(
             output.strip(),
-            "goal.md:8: 「在跑：」必须包含进程号（pid N）",
-        )
-
-    def test_only_exited_pid_is_reported_when_running_entry_lists_two(self):
-        child = subprocess.Popen([sys.executable, "-c", "pass"])
-        dead_pid = child.pid
-        child.wait()
-        live_pid = self.start_live_child().pid
-        path = self.write_contract(entries=self.entry(
-            artifact=(f"在跑：live（pid {live_pid}）、child（pid {dead_pid}）；产物路径")))
-        self.write_quotes(path, [self.quote()])
-
-        result = self.run_check([self.contract_dir])
-        output = result.stdout + result.stderr
-
-        self.assertEqual(result.returncode, 1, output)
-        self.assertEqual(
-            output.strip(),
-            f"goal.md:8: 在跑：child（pid {dead_pid}）的进程已不在：收尾、送验或接手",
+            "goal.md:8: 「在跑：」只写一个推进者，格式「名字（pid N）」",
         )
 
     def test_waiting_for_missing_or_closed_task_fails_and_waiting_for_open_task_passes(self):
         # 等：只能指向清单中仍开放的条目。
-        path = self.write_contract(entries=self.entry(artifact="等：T9"))
+        later = self.later()
+        path = self.write_contract(entries=self.entry(artifact=f"等：T9；下次核：{later}"))
         self.write_quotes(path, [self.quote()])
         output = self.assert_problem("等：T9 指向不在清单中的条目")
         self.assertIn("goal.md:8: ", output)
 
         self.clear_contracts()
-        entries = self.entry(artifact="等：T9；等 T9 的产物")
-        entries += self.entry("T9", source="原话 2")
+        entries = self.entry(artifact=f"等：T9；下次核：{later}；等 T9 的产物")
+        entries += self.entry("T9", source="原话 2", artifact=f"等：用户：等待输入；下次核：{later}")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [self.quote(1, "T3"), self.quote(2, "T9")])
         self.assert_passes()
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(artifact="等：T9"))
+        path = self.write_contract(entries=self.entry(artifact=f"等：T9；下次核：{later}"))
         self.write_quotes(path, [self.quote()])
         self.write_ledger(lines=["- T9 已验收（产物路径；验收 reports/accept-T9.md）"])
         self.assert_problem("等：T9 指向不在清单中的条目")
@@ -514,10 +434,11 @@ class CheckScriptTests(unittest.TestCase):
     def test_wait_chain_can_end_at_a_live_worker(self):
         # 等待链可以经过开放条目到达仍在工作的非主会话推进者。
         worker_pid = self.start_live_child().pid
-        entries = self.entry("T1", artifact="等：T2")
+        later = self.later()
+        entries = self.entry("T1", artifact=f"等：T2；下次核：{later}")
         entries += self.entry(
             "T2", source="原话 2",
-            artifact=f"在跑：worker（pid {worker_pid}）；产物路径",
+            artifact=f"在跑：worker（pid {worker_pid}）；下次核：{later}；产物路径",
         )
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2")])
@@ -526,8 +447,9 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_wait_chain_can_end_at_a_user_decision(self):
         # 等待链可以经过开放条目终止于待用户决定的事项。
-        entries = self.entry("T1", artifact="等：T2")
-        entries += self.entry("T2", source="原话 2", artifact="等：用户：确认参数")
+        later = self.later()
+        entries = self.entry("T1", artifact=f"等：T2；下次核：{later}")
+        entries += self.entry("T2", source="原话 2", artifact=f"等：用户：确认参数；下次核：{later}")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2")])
 
@@ -535,8 +457,9 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_wait_cycle_reports_every_task_in_the_cycle(self):
         # 等待关系成环时，错误应明确列出环上的每个条目。
-        entries = self.entry("T1", artifact="等：T2")
-        entries += self.entry("T2", source="原话 2", artifact="等：T1")
+        later = self.later()
+        entries = self.entry("T1", artifact=f"等：T2；下次核：{later}")
+        entries += self.entry("T2", source="原话 2", artifact=f"等：T1；下次核：{later}")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2")])
 
@@ -545,7 +468,7 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_self_wait_is_reported_as_a_cycle(self):
         # 条目等待自己也应被识别为等待环。
-        path = self.write_contract(entries=self.entry(artifact="等：T3"))
+        path = self.write_contract(entries=self.entry(artifact=f"等：T3；下次核：{self.later()}"))
         self.write_quotes(path, [self.quote()])
 
         output = self.assert_problem("等待链成环：T3 → T3")
@@ -554,12 +477,13 @@ class CheckScriptTests(unittest.TestCase):
     def test_wait_list_accepts_multiple_open_targets_across_acyclic_branches(self):
         # 多个开放目标都是等待边，各分支可分别终止于推进者或用户。
         worker_pid = self.start_live_child().pid
-        entries = self.entry("T1", artifact="等：T2，T3")
+        later = self.later()
+        entries = self.entry("T1", artifact=f"等：T2、T3；下次核：{later}")
         entries += self.entry(
             "T2", source="原话 2",
-            artifact=f"在跑：worker（pid {worker_pid}）；产物路径",
+            artifact=f"在跑：worker（pid {worker_pid}）；下次核：{later}；产物路径",
         )
-        entries += self.entry("T3", source="原话 3", artifact="等：用户：确认参数")
+        entries += self.entry("T3", source="原话 3", artifact=f"等：用户：确认参数；下次核：{later}")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [
             self.quote(1, "T1"), self.quote(2, "T2"), self.quote(3, "T3"),
@@ -568,9 +492,10 @@ class CheckScriptTests(unittest.TestCase):
         self.assert_passes()
 
     def test_wait_list_rejects_a_closed_target_even_when_another_target_is_open(self):
-        # 逗号列出的每个目标都必须仍在清单中，不能漏掉后面的关闭目标。
-        entries = self.entry("T1", artifact="等：T2，T9")
-        entries += self.entry("T2", source="原话 2", artifact="等：用户：确认参数")
+        # 列出的每个目标都必须仍在清单中，不能漏掉后面的关闭目标。
+        later = self.later()
+        entries = self.entry("T1", artifact=f"等：T2、T9；下次核：{later}")
+        entries += self.entry("T2", source="原话 2", artifact=f"等：用户：确认参数；下次核：{later}")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2")])
         self.write_ledger(lines=["- T9 已验收（产物路径；验收 reports/accept-T9.md）"])
@@ -580,9 +505,10 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_cycle_through_second_wait_target_is_reported(self):
         # 每个目标都是图边，第二个目标形成的环也必须被发现。
-        entries = self.entry("T1", artifact="等：T2, T3")
-        entries += self.entry("T2", source="原话 2", artifact="等：用户：确认参数")
-        entries += self.entry("T3", source="原话 3", artifact="等：T1")
+        later = self.later()
+        entries = self.entry("T1", artifact=f"等：T2、T3；下次核：{later}")
+        entries += self.entry("T2", source="原话 2", artifact=f"等：用户：确认参数；下次核：{later}")
+        entries += self.entry("T3", source="原话 3", artifact=f"等：T1；下次核：{later}")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [
             self.quote(1, "T1"), self.quote(2, "T2"), self.quote(3, "T3"),
@@ -595,65 +521,73 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_waiting_for_an_acceptance_pending_task_is_a_valid_terminal(self):
         # [x] 待验收事项仍在清单中，可以作为等待链的终点。
-        entries = self.entry("T1", artifact="等：T2")
+        later = self.later()
+        entries = self.entry("T1", artifact=f"等：T2；下次核：{later}")
         entries += self.entry("T2", status="x", source="原话 2",
-                              artifact="待验收：reports/accept-T2.md")
+                              artifact=f"待验收：reports/accept-T2.md；下次核：{later}")
         path = self.write_contract(entries=entries)
         self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2")])
 
         self.assert_passes()
 
     def test_quotes_live_in_a_separate_file(self):
-        path = self.write_contract(entries=self.entry())
+        later = self.later()
+        path = self.write_contract(entries=self.entry(artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, [self.quote()])
         self.assert_passes()
 
         self.clear_contracts()
-        self.write_contract(entries=self.entry())
+        self.write_contract(entries=self.entry(artifact=f"等：用户：等待输入；下次核：{later}"))
         output = self.assert_problem("缺少原话文件 goal.quotes.md")
         self.assertIn("goal.md:1: ", output)
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry())
+        path = self.write_contract(entries=self.entry(artifact=f"等：用户：等待输入；下次核：{later}"))
         path.write_text(path.read_text(encoding="utf-8") + "## 用户原话\n（原话 1 → T3）x\n",
                         encoding="utf-8")
         self.write_quotes(path, [self.quote()])
         self.assert_problem("原话应写在 goal.quotes.md，清单文件里不能有「## 用户原话」")
 
     def test_quotes_file_starts_with_an_annotation_and_numbers_run_from_one(self):
-        path = self.write_contract(entries=self.entry())
+        later = self.later()
+        path = self.write_contract(entries=self.entry(artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, ["（原话 1 → T3）第一条\n\n第一条的第二段"])
         self.assert_passes()
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry())
+        path = self.write_contract(entries=self.entry(artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, ["前言", "（原话 1 → T3）第一条"])
         output = self.assert_problem("原话文件第一个非空行必须是「（原话 N → 落点）」")
         self.assertIn("goal.quotes.md:1: ", output)
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(source="原话 2"))
+        path = self.write_contract(entries=self.entry(
+            source="原话 2", artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, ["（原话 2 → T3）第一条"])
         self.assert_problem("原话编号应为 1，实际是 2")
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry())
+        path = self.write_contract(entries=self.entry(artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, ["（原话 1 → T3）a", "（原话 3 → 无：问题）b"])
         self.assert_problem("原话编号应为 2，实际是 3")
 
     def test_source_must_cite_an_existing_quote(self):
-        path = self.write_contract(entries=self.entry(source="来源：spec.md"))
+        later = self.later()
+        path = self.write_contract(entries=self.entry(
+            source="来源：spec.md", artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, [self.quote(1, "无：问题")])
         output = self.assert_problem("出处至少含一个原话编号")
         self.assertIn("goal.md:7: ", output)
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(source="原话 1、2"))
+        path = self.write_contract(entries=self.entry(
+            source="原话 1、2", artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, [self.quote(1, "T3")])
         self.assert_problem("出处引用的原话 2 不存在")
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(source="原话 1、2"))
+        path = self.write_contract(entries=self.entry(
+            source="原话 1、2", artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, [self.quote(1, "T3"), self.quote(2, "T3")])
         self.assert_passes()
 
@@ -672,7 +606,8 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_landing_to_active_item_must_match_its_source_but_ledger_items_are_allowed(self):
         # 在办条目的原话落点须与出处对应；已入账条目不必留在清单。
-        path = self.write_contract(entries=self.entry(source="原话 1"))
+        path = self.write_contract(entries=self.entry(
+            source="原话 1", artifact=f"等：用户：等待输入；下次核：{self.later()}"))
         self.write_quotes(path, [self.quote(1, "T3"), self.quote(2, "T3")])
         self.assert_problem("原话 2 落到 T3，但 T3 的出处没有原话 2")
 
@@ -712,13 +647,16 @@ class CheckScriptTests(unittest.TestCase):
                 expected = f"{landing[:3]}后的说明不能为空"
                 self.assert_problem(expected)
 
+        later = self.later()
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(source="原话 2"))
+        path = self.write_contract(entries=self.entry(
+            source="原话 2", artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, [self.quote(1, "无：T3 已关闭"), self.quote(2, "T3")])
         self.assert_passes()
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(source="原话 1"))
+        path = self.write_contract(entries=self.entry(
+            source="原话 1", artifact=f"等：用户：等待输入；下次核：{later}"))
         self.write_quotes(path, [self.quote(1, "T3；规矩：记忆 foo；无：已答")])
         self.assert_passes()
 
@@ -773,7 +711,7 @@ class CheckScriptTests(unittest.TestCase):
 
     def test_original_text_mention_and_multiline_criteria_are_not_misparsed(self):
         # 原话正文里的相似字样不是段首标注，跨行判据照样属于同一条目。
-        rows = self.entry()
+        rows = self.entry(artifact=f"等：用户：等待输入；下次核：{self.later()}")
         rows.insert(2, "    判据第二行")
         path = self.write_contract(entries=rows)
         self.write_quotes(path, [
