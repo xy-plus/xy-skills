@@ -32,6 +32,6 @@ for d in ~/xy-skills/*/; do ln -sfn "${d%/}" ~/.claude/skills/$(basename "$d"); 
 @~/xy-skills/xy-repo-rules/SKILL.md
 ```
 
-`xy-workflow` 依赖 Claude Code 插件 `superpowers`（装法：`/plugin install superpowers@claude-plugins-official`），以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 需要 Claude Code 的定时任务工具 CronCreate、CronList、CronDelete。
+`xy-workflow` 依赖 Claude Code 插件 `superpowers`（装法：`/plugin install superpowers@claude-plugins-official`），以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 `xy-review` 和 Claude Code 的定时任务工具 CronCreate、CronList、CronDelete。
 
 新加 skill：建目录、写 `SKILL.md`，再按上面的方式软链。只在有 SKILL.md 装不下的东西时，比如代码、前提、测试命令，才给 skill 目录加 README。

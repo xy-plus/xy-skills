@@ -1,17 +1,17 @@
 # xy-goal
 
-xy-goal 用一份落盘契约延续跨会话的长目标。定时自查真实进度，并推进能推进的事项。子代理按用户原话核验产物，通过后才关闭目标。
+用三个落盘文件延续跨会话的长目标：清单、用户原话、账本。
 
-需要提供 `CronCreate`、`CronList`、`CronDelete` 的 Claude Code 环境。
+前提：Claude Code 的定时任务工具 CronCreate、CronList、CronDelete；本仓库的 xy-review。
 
 ## 用法
 
-输入 `/xy-goal` 或明确要求「用 xy-goal」，再说目标；只在明确要求时调用。
+输入 `/xy-goal` 或明确要求「用 xy-goal」，再说目标；只在明确要求时调用。手动检查：`python3 ~/.claude/skills/xy-goal/check.py ~/.claude/xy-goal`。
 
-手动检查契约：
+规矩见 [`SKILL.md`](SKILL.md)。
+
+## 测试
 
 ```bash
-python3 ~/.claude/skills/xy-goal/check.py ~/.claude/xy-goal
+cd xy-goal && python3 -B -m unittest discover -s tests
 ```
-
-契约、定时自查、验收与关闭规则见 [`SKILL.md`](SKILL.md)。
