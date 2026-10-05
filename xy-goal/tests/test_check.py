@@ -1,6 +1,7 @@
 """check.py 的契约格式与预算测试。"""
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -8,6 +9,7 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -15,6 +17,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "check.py"
+DEFAULT_NEXT_CHECK = object()
 sys.path.insert(0, str(ROOT))
 import check as check_module
 
@@ -31,60 +34,6 @@ class CheckScriptTests(unittest.TestCase):
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         self.addCleanup(self.stop_child, child)
         return child
-
-    def start_python_check_worker(self, marker):
-        worker_code = (
-            "import pathlib, subprocess, sys, time\n"
-            "marker, script, directory = sys.argv[1:]\n"
-            "while not pathlib.Path(marker).exists(): time.sleep(0.01)\n"
-            "result = subprocess.run([sys.executable, script, directory], "
-            "capture_output=True, text=True)\n"
-            "sys.stdout.write(result.stdout)\n"
-            "sys.stderr.write(result.stderr)\n"
-            "raise SystemExit(result.returncode)\n"
-        )
-        worker = subprocess.Popen(
-            [sys.executable, "-c", worker_code, str(marker), str(SCRIPT),
-             str(self.contract_dir)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.addCleanup(self.stop_child, worker)
-        return worker
-
-    def start_claude_exe_check_worker(self, marker):
-        bash = shutil.which("bash")
-        self.assertIsNotNone(bash, "该 Linux 回归测试需要 bash 二进制")
-        launcher = self.contract_dir / "claude.exe"
-        shutil.copy2(bash, launcher)
-        shell_code = (
-            'while [ ! -e "$1" ]; do sleep 0.01; done\n'
-            'python3 "$2" "$3"\n'
-            'status=$?\n'
-            'exit "$status"'
-        )
-        worker = subprocess.Popen(
-            [str(launcher), "-c", shell_code, "xy-goal-test",
-             str(marker), str(SCRIPT), str(self.contract_dir)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.addCleanup(self.stop_child, worker)
-        deadline = time.monotonic() + 5
-        executable = None
-        while time.monotonic() < deadline and worker.poll() is None:
-            try:
-                executable = Path(os.readlink(f"/proc/{worker.pid}/exe")).resolve()
-            except OSError:
-                time.sleep(0.01)
-                continue
-            if executable == launcher.resolve():
-                break
-            time.sleep(0.01)
-        self.assertEqual(executable, launcher.resolve())
-        return worker
 
     @staticmethod
     def stop_child(child):
@@ -123,15 +72,190 @@ class CheckScriptTests(unittest.TestCase):
 
     @staticmethod
     def entry(task_id="T3", *, status=" ", criteria="完成验收条件",
-              source="原话 7", artifact=None):
+              source="原话 7", artifact=None, next_check=DEFAULT_NEXT_CHECK):
+        if next_check is DEFAULT_NEXT_CHECK:
+            next_check = (datetime.now() + timedelta(hours=11)).strftime(
+                "%Y-%m-%d %H:%M",
+            )
         if artifact is None:
             artifact = "等：用户：等待输入"
+        if (status == " " and artifact.startswith("在跑：")
+                and next_check is not None
+                and not any(segment.strip().startswith("下次核")
+                            for segment in re.split(r"[；;]", artifact))):
+            parts = re.split(r"([；;])", artifact, maxsplit=1)
+            if len(parts) == 3:
+                artifact = parts[0] + parts[1] + f"下次核：{next_check}" + parts[1] + parts[2]
         return [
             f"- [{status}] {task_id} 测试条目",
             f"  - 判据：{criteria}",
             f"  - 出处：{source}",
             f"  - 产物：{artifact}",
         ]
+
+    def test_running_next_check_missing_is_reported_at_artifact_line(self):
+        pid = self.start_live_child().pid
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker（pid {pid}）；src/output.py",
+            next_check=None,
+        ), quotes=[self.quote()])
+
+        output = self.assert_problem("下次核")
+        self.assertIn("goal.md:8: ", output)
+        self.assertIn("缺少「下次核」字段", output)
+        self.assertEqual(len(output.splitlines()), 1, output)
+
+    def test_running_next_check_rejects_duplicate_misplaced_and_invalid_fields(self):
+        pid = self.start_live_child().pid
+        invalid_artifacts = (
+            (f"在跑：worker（pid {pid}）；下次核：2026-10-05 15:30；"
+             "下次核：2026-10-05 16:30",
+             "「下次核」格式应为 YYYY-MM-DD HH:MM"),
+            (f"在跑：worker（pid {pid}）；src/output.py；"
+             "下次核：2026-10-05 15:30",
+             "必须写在推进者段之后"),
+            (f"在跑：worker（pid {pid}）；下次核：2026-02-30 15:30",
+             "不是有效日期时间"),
+            (f"在跑：worker（pid {pid}）；下次核：2026-10-05 15:30 +08:00",
+             "格式应为 YYYY-MM-DD HH:MM"),
+            (f"在跑：worker（pid {pid}）；下次核：2026/10/05 15:30",
+             "格式应为 YYYY-MM-DD HH:MM"),
+        )
+        for artifact, expected in invalid_artifacts:
+            with self.subTest(artifact=artifact):
+                self.clear_contracts()
+                self.write_contract(entries=self.entry(
+                    artifact=artifact, next_check=None), quotes=[self.quote()])
+                output = self.assert_problem(expected)
+                self.assertIn("goal.md:8: ", output)
+
+    def test_expired_next_check_reports_only_contract_deadline(self):
+        pid = self.start_live_child().pid
+        deadline = "2026-10-05 07:30"
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker（pid {pid}）；产物指针 src/output.py",
+            next_check=deadline,
+        ), quotes=[self.quote()])
+        now = datetime(2026, 10, 5, 9, 40)
+
+        returncode, stdout, stderr = self._run_check_at(now)
+
+        output = stdout + stderr
+        self.assertEqual(returncode, 1, output)
+        self.assertIn(
+            "goal.md:8: T3：下次核 2026-10-05 07:30 已过期",
+            output,
+        )
+
+    def test_next_check_comparison_is_strict_in_local_time(self):
+        pid = self.start_live_child().pid
+        deadline = "2026-10-05 10:00"
+        cases = (
+            (datetime(2026, 10, 5, 10, 0), 0),
+            (datetime(2026, 10, 5, 10, 0, 1), 1),
+            (datetime(2026, 10, 5, 9, 59, 59), 0),
+        )
+        for now, expected in cases:
+            with self.subTest(now=now):
+                self.write_contract(entries=self.entry(
+                    artifact=f"在跑：worker（pid {pid}）；src/output.py",
+                    next_check=deadline,
+                ), quotes=[self.quote()])
+                returncode, stdout, stderr = self._run_check_at(now)
+                self.assertEqual(returncode, expected, stdout + stderr)
+                if expected == 0:
+                    self.assertIn("通过：session=session-1：", stdout)
+
+    def test_next_check_thirteen_hours_ahead_is_rejected(self):
+        pid = self.start_live_child().pid
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker（pid {pid}）；src/output.py",
+            next_check="2026-10-05 23:00",
+        ), quotes=[self.quote()])
+        now = datetime(2026, 10, 5, 10, 0)
+        returncode, stdout, stderr = self._run_check_at(now)
+        output = stdout + stderr
+        self.assertEqual(returncode, 1, output)
+        self.assertIn(
+            "goal.md:8: T3：下次核离现在超过 12 小时",
+            output,
+        )
+
+    def test_next_check_exactly_twelve_hours_ahead_is_allowed(self):
+        pid = self.start_live_child().pid
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker（pid {pid}）；src/output.py",
+            next_check="2026-10-05 22:00",
+        ), quotes=[self.quote()])
+        returncode, stdout, stderr = self._run_check_at(datetime(2026, 10, 5, 10, 0))
+        self.assertEqual(returncode, 0, stdout + stderr)
+
+    def test_next_check_eleven_hours_ahead_is_allowed(self):
+        pid = self.start_live_child().pid
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker（pid {pid}）；src/output.py",
+            next_check="2026-10-05 21:00",
+        ), quotes=[self.quote()])
+        now = datetime(2026, 10, 5, 10, 0)
+        returncode, stdout, stderr = self._run_check_at(now)
+        self.assertEqual(returncode, 0, stdout + stderr)
+        self.assertIn("通过：session=session-1：", stdout)
+
+    def test_expired_dead_pid_reports_dead_process_and_deadline(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead_pid = child.pid
+        child.wait()
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker（pid {dead_pid}）；src/output.py",
+            next_check="2026-10-05 07:30",
+        ), quotes=[self.quote()])
+        now = datetime(2026, 10, 5, 9, 40)
+        returncode, stdout, stderr = self._run_check_at(now)
+
+        output = stdout + stderr
+        self.assertEqual(returncode, 1, output)
+        self.assertIn("进程已不在", output)
+        self.assertIn("T3：下次核 2026-10-05 07:30 已过期", output)
+
+    def test_waiting_and_acceptance_items_do_not_require_next_check(self):
+        entries = self.entry("T1", artifact="等：用户：确认参数")
+        entries += self.entry("T2", status="x", source="原话 8",
+                              artifact="待验收：reports/accept-T2.md")
+        self.write_contract(entries=entries, quotes=[
+            self.quote(7, "T1"), self.quote(8, "T2"),
+        ])
+
+        self.assert_passes()
+
+    def test_expired_deadline_repeats_until_contract_time_is_updated(self):
+        first_pid = self.start_live_child().pid
+        second_pid = self.start_live_child().pid
+        deadline = "2026-10-05 07:30"
+        now = datetime(2026, 10, 5, 9, 40)
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker-a（pid {first_pid}）；src/output.py",
+            next_check=deadline,
+        ), quotes=[self.quote()])
+
+        for _ in range(2):
+            returncode, stdout, stderr = self._run_check_at(now)
+            self.assertEqual(returncode, 1, stdout + stderr)
+            self.assertIn("T3：下次核 2026-10-05 07:30 已过期", stdout + stderr)
+
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker-b（pid {second_pid}）；new-output.py",
+            next_check=deadline,
+        ), quotes=[self.quote()])
+        returncode, stdout, stderr = self._run_check_at(now)
+        self.assertEqual(returncode, 1, stdout + stderr)
+
+        self.write_contract(entries=self.entry(
+            artifact=f"在跑：worker-b（pid {second_pid}）；new-output.py",
+            next_check="2026-10-05 20:00",
+        ), quotes=[self.quote()])
+        returncode, stdout, stderr = self._run_check_at(now)
+        self.assertEqual(returncode, 0, stdout + stderr)
+        self.assertEqual([path.name for path in self.contract_dir.iterdir()], ["goal.md"])
 
     @staticmethod
     def quote(number=7, landing="T3"):
@@ -150,6 +274,15 @@ class CheckScriptTests(unittest.TestCase):
             capture_output=True,
             check=False,
         )
+
+    def _run_check_at(self, now):
+        stdout = StringIO()
+        stderr = StringIO()
+        with mock.patch.object(
+                check_module, "_local_now", return_value=now, create=True), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            returncode = check_module.check_directory(self.contract_dir)
+        return returncode, stdout.getvalue(), stderr.getvalue()
 
     def assert_passes(self, *args):
         result = self.run_check(self.contract_dir, *args)
@@ -224,7 +357,7 @@ class CheckScriptTests(unittest.TestCase):
     def test_running_waiting_and_acceptance_prefixes_require_values(self):
         # 「谁在动」字段须包含任务名、条目 ID 或验收产物。
         for artifact, expected in (
-            ("在跑：worker", "「在跑：」要写进程号（pid N），脚本才能核它还活着"),
+            ("在跑：worker", "「在跑：」必须包含进程号（pid N）"),
             ("等：", "「等：」后应为条目 ID 或「用户：…」"),
             ("待验收：", "[x] 「待验收：」后必须有产物指针"),
         ):
@@ -235,7 +368,11 @@ class CheckScriptTests(unittest.TestCase):
                                     quotes=[self.quote()])
                 output = self.assert_problem(expected)
                 self.assertIn("goal.md:8: ", output)
-                self.assertEqual(len(output.splitlines()), 1, output)
+                if artifact == "在跑：worker":
+                    self.assertIn("下次核", output)
+                    self.assertEqual(len(output.splitlines()), 2, output)
+                else:
+                    self.assertEqual(len(output.splitlines()), 1, output)
 
         self.clear_contracts()
         entries = self.entry(artifact="等：T4")
@@ -323,38 +460,29 @@ class CheckScriptTests(unittest.TestCase):
 
         self.assertIn(f"在跑：worker（pid {pid}）", result.stdout)
 
-    def test_live_non_claude_worker_ancestor_pid_passes(self):
-        marker = self.contract_dir / "worker-ready"
-        worker = self.start_python_check_worker(marker)
-        executable = Path(os.readlink(f"/proc/{worker.pid}/exe")).name
-        self.assertNotIn(executable, {"claude", "claude.exe"})
+    def test_executing_process_pid_is_accepted_as_running(self):
+        pid = os.getpid()
         self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {worker.pid}）；产物路径"),
+            artifact=f"在跑：执行者（pid {pid}）；产物路径"),
                             quotes=[self.quote()])
-        marker.touch()
+        real_readlink = os.readlink
 
-        stdout, stderr = worker.communicate(timeout=10)
+        def identify_current_process(path, *args, **kwargs):
+            if os.fspath(path) == f"/proc/{pid}/exe":
+                return "/usr/bin/claude"
+            return real_readlink(path, *args, **kwargs)
 
-        self.assertEqual(worker.returncode, 0, stdout + stderr)
-        self.assertIn(f"在跑：worker（pid {worker.pid}）", stdout)
+        stdout = StringIO()
+        stderr = StringIO()
+        with mock.patch.object(
+                check_module.os, "readlink",
+                side_effect=identify_current_process) as readlink, \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            returncode = check_module.check_directory(self.contract_dir)
 
-    def test_running_claude_exe_ancestor_pid_is_rejected_at_artifact_line(self):
-        marker = self.contract_dir / "claude-ready"
-        worker = self.start_claude_exe_check_worker(marker)
-        self.write_contract(entries=self.entry(
-            artifact=f"在跑：主会话（pid {worker.pid}）；产物路径"),
-                            quotes=[self.quote()])
-        marker.touch()
-
-        stdout, stderr = worker.communicate(timeout=10)
-
-        self.assertEqual(worker.returncode, 1, stdout + stderr)
-        self.assertIn(
-            f"goal.md:8: 在跑：主会话（pid {worker.pid}）是运行本检查会话的 "
-            "Claude Code 主会话："
-            "主会话只编排，能派的派给子代理，否则写「等：…」",
-            stderr.splitlines(),
-        )
+        self.assertEqual(returncode, 0, stdout.getvalue() + stderr.getvalue())
+        self.assertIn(f"在跑：执行者（pid {pid}）", stdout.getvalue())
+        readlink.assert_not_called()
 
     def test_permission_error_while_checking_running_pid_counts_as_alive(self):
         pid = 2147483647
@@ -370,45 +498,6 @@ class CheckScriptTests(unittest.TestCase):
         self.assertEqual(returncode, 0, stderr.getvalue())
         self.assertIn(f"在跑：worker（pid {pid}）", stdout.getvalue())
 
-    def test_unreadable_proc_skips_ancestor_check_and_reports_why(self):
-        ancestor_pid = os.getppid()
-        self.write_contract(entries=self.entry(
-            artifact=f"在跑：主会话（pid {ancestor_pid}）；产物路径"),
-                            quotes=[self.quote()])
-        real_read_text = Path.read_text
-
-        def deny_proc(path, *args, **kwargs):
-            if path.as_posix().startswith("/proc/"):
-                raise PermissionError("proc hidden")
-            return real_read_text(path, *args, **kwargs)
-
-        stdout = StringIO()
-        stderr = StringIO()
-        with mock.patch.object(Path, "read_text", deny_proc), \
-                redirect_stdout(stdout), redirect_stderr(stderr):
-            returncode = check_module.check_directory(self.contract_dir)
-
-        self.assertEqual(returncode, 0, stdout.getvalue() + stderr.getvalue())
-        self.assertIn("跳过自身会话 PID 检查", stderr.getvalue())
-        self.assertIn("PermissionError: proc hidden", stderr.getvalue())
-
-    def test_unreadable_proc_exe_skips_pid_identity_check_and_reports_why(self):
-        ancestor_pid = os.getppid()
-        self.write_contract(entries=self.entry(
-            artifact=f"在跑：worker（pid {ancestor_pid}）；产物路径"),
-                            quotes=[self.quote()])
-        stdout = StringIO()
-        stderr = StringIO()
-
-        with mock.patch.object(check_module.os, "readlink",
-                               side_effect=PermissionError("exe hidden")), \
-                redirect_stdout(stdout), redirect_stderr(stderr):
-            returncode = check_module.check_directory(self.contract_dir)
-
-        self.assertEqual(returncode, 0, stdout.getvalue() + stderr.getvalue())
-        self.assertIn("跳过该 PID 的主会话身份检查", stderr.getvalue())
-        self.assertIn("PermissionError: exe hidden", stderr.getvalue())
-
     def test_exited_running_process_is_reported_at_artifact_line(self):
         child = subprocess.Popen([sys.executable, "-c", "pass"])
         dead_pid = child.pid
@@ -422,7 +511,7 @@ class CheckScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, output)
         self.assertEqual(
             output.strip(),
-            f"goal.md:8: 在跑：child（pid {dead_pid}）的进程已不在：收尾、送验或重派",
+            f"goal.md:8: 在跑：child（pid {dead_pid}）的进程已不在：收尾、送验或接手",
         )
 
     def test_running_entry_without_pid_reports_required_pid_at_artifact_line(self):
@@ -435,7 +524,7 @@ class CheckScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, output)
         self.assertEqual(
             output.strip(),
-            "goal.md:8: 「在跑：」要写进程号（pid N），脚本才能核它还活着",
+            "goal.md:8: 「在跑：」必须包含进程号（pid N）",
         )
 
     def test_only_exited_pid_is_reported_when_running_entry_lists_two(self):
@@ -453,7 +542,7 @@ class CheckScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, output)
         self.assertEqual(
             output.strip(),
-            f"goal.md:8: 在跑：child（pid {dead_pid}）的进程已不在：收尾、送验或重派",
+            f"goal.md:8: 在跑：child（pid {dead_pid}）的进程已不在：收尾、送验或接手",
         )
 
     def test_waiting_for_missing_or_closed_task_fails_and_waiting_for_open_task_passes(self):

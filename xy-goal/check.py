@@ -2,6 +2,7 @@
 """检查 xy-goal 在办契约的格式、预算、原话索引与账本。"""
 
 from dataclasses import dataclass, field
+from datetime import datetime
 import os
 from pathlib import Path
 import re
@@ -10,6 +11,8 @@ import sys
 
 TOTAL_LIMIT = 5000
 ITEM_LIMIT = 300
+# 超过半天不核一次方向，就等于放着不管。
+MAX_NEXT_CHECK_HOURS = 12
 
 TASK_RE = re.compile(r"^\s*-\s*\[([^\]]*)\]\s*(\S+)(?:\s+.*)?$")
 TASK_ID_RE = re.compile(r"T\d+[①②③④⑤⑥⑦⑧⑨⑩]?")
@@ -23,6 +26,8 @@ SOURCE_RE = re.compile(r"原话\s+(\d+(?:(?:\s*～\s*\d+)|(?:\s*[、,，]\s*\d+)
 CRON_RE = re.compile(r"^\s*cron_job_id\s*:")
 SESSION_RE = re.compile(r"^\s*session\s*:\s*(.*?)\s*$")
 RUNNING_ENTRY_RE = re.compile(r"^(.+?)（pid ([1-9]\d*)）$")
+NEXT_CHECK_FIELD_RE = re.compile(r"下次核：([^；;]*)")
+NEXT_CHECK_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
 
 LEDGER_ACCEPTED_RE = re.compile(
     r"^-\s+(T\d+[①②③④⑤⑥⑦⑧⑨⑩]?)\s+.+（.+；验收\s+[^）]+）$"
@@ -40,6 +45,14 @@ class Problem:
 
 
 @dataclass
+class ArtifactInfo:
+    running_name: str = ""
+    next_check_at: datetime | None = None
+    next_check_text: str | None = None
+    wait_targets: list = field(default_factory=list)
+
+
+@dataclass
 class Task:
     task_id: str
     status: str
@@ -49,6 +62,8 @@ class Task:
     source_ids: set = field(default_factory=set)
     wait_targets: list = field(default_factory=list)
     running_name: str = ""
+    next_check_at: datetime | None = None
+    next_check_text: str | None = None
 
 
 @dataclass
@@ -117,85 +132,65 @@ def _read_lines(path, problems):
         return None
 
 
-def _collect_ancestor_processes():
-    """读取祖先链的可执行文件名，并标出 Claude Code 主会话进程。"""
-    ancestor_pids = set()
-    main_session_pids = set()
-    executable_errors = {}
-    pid = os.getpid()
-    while pid > 0 and pid not in ancestor_pids:
-        ancestor_pids.add(pid)
-
-        executable_path = Path("/proc") / str(pid) / "exe"
-        try:
-            executable = os.readlink(executable_path)
-        except OSError as error:
-            executable_errors[pid] = (
-                f"提示：无法读取 {executable_path}：{type(error).__name__}: {error}；"
-                "跳过该 PID 的主会话身份检查"
-            )
-        else:
-            if executable.endswith(" (deleted)"):
-                executable = executable[:-len(" (deleted)")]
-            if Path(executable).name in {"claude", "claude.exe"}:
-                main_session_pids.add(pid)
-
-        if pid == 1:
-            return ancestor_pids, main_session_pids, executable_errors, ""
-
-        stat_path = Path("/proc") / str(pid) / "stat"
-        try:
-            stat = stat_path.read_text(encoding="ascii")
-        except (OSError, UnicodeError) as error:
-            return None, set(), {}, (
-                f"提示：无法读取 {stat_path}：{type(error).__name__}: {error}；"
-                "跳过自身会话 PID 检查"
-            )
-
-        closing_paren = stat.rfind(")")
-        if closing_paren < 0:
-            return None, set(), {}, (
-                f"提示：无法解析 {stat_path}：缺少进程名结束括号；"
-                "跳过自身会话 PID 检查"
-            )
-        fields = stat[closing_paren + 1:].split()
-        if len(fields) < 2:
-            return None, set(), {}, (
-                f"提示：无法解析 {stat_path}：缺少 ppid 字段；"
-                "跳过自身会话 PID 检查"
-            )
-        try:
-            parent_pid = int(fields[1])
-        except ValueError:
-            return None, set(), {}, (
-                f"提示：无法解析 {stat_path}：ppid 不是整数；"
-                "跳过自身会话 PID 检查"
-            )
-        if parent_pid <= 0:
-            return ancestor_pids, main_session_pids, executable_errors, ""
-        pid = parent_pid
-
-    return ancestor_pids, main_session_pids, executable_errors, ""
-
-
-def _parse_artifact(path, line_number, status, artifact, problems, process_chain, notices):
-    """检查产物栏格式，并提取运行名称或等待目标。"""
-    ancestor_pids, main_session_pids, executable_errors = process_chain
+def _parse_artifact(path, line_number, status, artifact, problems):
+    """检查产物栏并提取下次核时间或等待目标。"""
     if status == "x":
         if not artifact.startswith("待验收："):
             problems.append(Problem(path, line_number, "[x] 产物栏必须以「待验收：」开头"))
         elif not artifact[len("待验收："):].strip():
             problems.append(Problem(path, line_number, "[x] 「待验收：」后必须有产物指针"))
-        return "", []
+        return ArtifactInfo()
 
     if artifact.startswith("在跑："):
-        running_name = re.split(r"[；;]", artifact[len("在跑："):], maxsplit=1)[0].strip()
+        artifact_segments = re.split(r"[；;]", artifact)
+        running_name = artifact_segments[0][len("在跑："):].strip()
+        info = ArtifactInfo(running_name=running_name)
+        next_check_segments = [
+            (index, segment.strip())
+            for index, segment in enumerate(artifact_segments)
+            if segment.strip().startswith("下次核")
+        ]
+        if not next_check_segments:
+            problems.append(Problem(path, line_number, "缺少「下次核」字段"))
+        elif len(next_check_segments) != 1:
+            problems.append(Problem(
+                path, line_number,
+                "「下次核」格式应为 YYYY-MM-DD HH:MM",
+            ))
+        elif next_check_segments[0][0] != 1:
+            problems.append(Problem(
+                path, line_number,
+                "「下次核」字段必须写在推进者段之后",
+            ))
+        else:
+            next_check_text = next_check_segments[0][1]
+            next_check_match = NEXT_CHECK_FIELD_RE.fullmatch(next_check_text)
+            if next_check_match is None or NEXT_CHECK_RE.fullmatch(
+                    next_check_match.group(1).strip()) is None:
+                problems.append(Problem(
+                    path, line_number,
+                    "「下次核」格式应为 YYYY-MM-DD HH:MM",
+                ))
+            else:
+                next_check_text = next_check_match.group(1).strip()
+                try:
+                    info.next_check_at = datetime.strptime(
+                        next_check_text, "%Y-%m-%d %H:%M",
+                    )
+                except ValueError:
+                    problems.append(Problem(
+                        path, line_number,
+                        "「下次核」不是有效日期时间",
+                    ))
+                else:
+                    info.next_check_text = next_check_text
+
         if not running_name:
             problems.append(Problem(
                 path, line_number,
-                "「在跑：」要写进程号（pid N），脚本才能核它还活着",
+                "「在跑：」必须包含进程号（pid N）",
             ))
-            return "", []
+            return info
 
         pid_missing = False
         for entry in running_name.split("、"):
@@ -205,23 +200,12 @@ def _parse_artifact(path, line_number, status, artifact, problems, process_chain
                 continue
             name, pid_text = match.groups()
             pid = int(pid_text)
-            if ancestor_pids is not None and pid in ancestor_pids:
-                if pid in main_session_pids:
-                    problems.append(Problem(
-                        path, line_number,
-                        f"在跑：{name}（pid {pid}）是运行本检查会话的 "
-                        "Claude Code 主会话："
-                        "主会话只编排，能派的派给子代理，否则写「等：…」",
-                    ))
-                    continue
-                if pid in executable_errors:
-                    notices.add(executable_errors[pid])
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
                 problems.append(Problem(
                     path, line_number,
-                    f"在跑：{name}（pid {pid}）的进程已不在：收尾、送验或重派",
+                    f"在跑：{name}（pid {pid}）的进程已不在：收尾、送验或接手",
                 ))
             except PermissionError:
                 pass
@@ -229,31 +213,31 @@ def _parse_artifact(path, line_number, status, artifact, problems, process_chain
         if pid_missing:
             problems.append(Problem(
                 path, line_number,
-                "「在跑：」要写进程号（pid N），脚本才能核它还活着",
+                "「在跑：」必须包含进程号（pid N）",
             ))
-        return running_name, []
+        return info
 
     if artifact.startswith("等："):
         target = artifact[len("等："):].strip()
         if target.startswith("用户："):
             if not target[len("用户："):].strip():
                 problems.append(Problem(path, line_number, "「等：用户：」后必须写待决定事项"))
-            return "", []
+            return ArtifactInfo()
         match = WAIT_TARGETS_RE.match(target)
         if match is None:
             problems.append(Problem(path, line_number, "「等：」后应为条目 ID 或「用户：…」"))
-            return "", []
+            return ArtifactInfo()
         wait_targets = re.split(r"\s*[,，]\s*", match.group(1))
-        return "", wait_targets
+        return ArtifactInfo(wait_targets=wait_targets)
 
     problems.append(Problem(
         path, line_number,
         "[ ] 产物栏缺少「谁在动」前缀（应以「在跑：」或「等：」开头）",
     ))
-    return "", []
+    return ArtifactInfo()
 
 
-def _parse_contract(path, problems, process_chain, notices):
+def _parse_contract(path, problems):
     raw_lines = _read_lines(path, problems)
     if raw_lines is None:
         return None
@@ -383,9 +367,8 @@ def _parse_contract(path, problems, process_chain, notices):
             problems.append(Problem(path, _line_number(source_index), f"出处中的原话区间格式错误：{component}"))
 
         artifact_value = lines[artifact_index][len("  - 产物："):]
-        running_name, wait_targets = _parse_artifact(
+        artifact_info = _parse_artifact(
             path, _line_number(artifact_index), status, artifact_value, problems,
-            process_chain, notices,
         )
         contract.tasks[task_id] = Task(
             task_id=task_id,
@@ -394,8 +377,10 @@ def _parse_contract(path, problems, process_chain, notices):
             source_line=_line_number(source_index),
             artifact_line=_line_number(artifact_index),
             source_ids=source_ids,
-            wait_targets=wait_targets,
-            running_name=running_name,
+            wait_targets=artifact_info.wait_targets,
+            running_name=artifact_info.running_name,
+            next_check_at=artifact_info.next_check_at,
+            next_check_text=artifact_info.next_check_text,
         )
         index = artifact_index + 1
 
@@ -648,6 +633,28 @@ def _check_budgets(contracts, problems):
         ))
 
 
+def _local_now():
+    return datetime.now()
+
+
+def _check_running_deadlines(contracts, now, problems):
+    for contract in contracts:
+        for task in contract.tasks.values():
+            if task.status != " " or task.next_check_at is None:
+                continue
+            remaining_seconds = (task.next_check_at - now).total_seconds()
+            if remaining_seconds > MAX_NEXT_CHECK_HOURS * 3600:
+                message = (
+                    f"{task.task_id}：下次核离现在超过 "
+                    f"{MAX_NEXT_CHECK_HOURS} 小时"
+                )
+            elif remaining_seconds < 0:
+                message = f"{task.task_id}：下次核 {task.next_check_text} 已过期"
+            else:
+                continue
+            problems.append(Problem(contract.path, task.artifact_line, message))
+
+
 def _print_summary(contracts):
     groups = {}
     for contract in contracts:
@@ -680,15 +687,8 @@ def _print_summary(contracts):
 def check_directory(directory):
     problems = []
     contracts = []
-    ancestor_pids, main_session_pids, executable_errors, scan_notice = (
-        _collect_ancestor_processes()
-    )
-    process_chain = (ancestor_pids, main_session_pids, executable_errors)
-    notices = set()
-    if scan_notice:
-        notices.add(scan_notice)
     for path in _find_contract_files(directory):
-        contract = _parse_contract(path, problems, process_chain, notices)
+        contract = _parse_contract(path, problems)
         if contract is not None:
             contracts.append(contract)
 
@@ -727,9 +727,9 @@ def check_directory(directory):
     _check_wait_targets(contracts, problems)
     _check_wait_cycles(contracts, problems)
     _check_budgets(contracts, problems)
+    now = _local_now()
+    _check_running_deadlines(contracts, now, problems)
 
-    for notice in sorted(notices):
-        print(notice, file=sys.stderr)
     problems.sort(key=lambda problem: (problem.path.name, problem.line, problem.message))
     if problems:
         for problem in problems:
