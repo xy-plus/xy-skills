@@ -60,6 +60,12 @@ class CheckTest(unittest.TestCase):
         text = report().replace("## 铁律 2 难误用\n", "## 铁律 2 难误用\n问题：check.py:100 漏检\n## 铁律 2 难误用\n")
         self.assertProblems(text, "「## 铁律 2 难误用」出现了两次")
 
+    def test_content_outside_fields_is_rejected(self):
+        finding = "- check.py:35 发现被丢弃\n"
+        self.assertProblems(finding + report(), "第一节之前不能有内容")
+        self.assertProblems(report().replace("## 铁律 2 难误用\n", "## 铁律 2 难误用\n" + finding), "字段之外有内容")
+        self.assertProblems(report().replace("## 仓库规范\n", "## 仓库规范\n" + finding), "第 1 条之前有内容")
+
     def test_empty_field(self):
         self.assertProblems(report(偏离=""), "「偏离」为空")
 
@@ -76,13 +82,19 @@ class CheckTest(unittest.TestCase):
 
     def test_list_item_named_like_a_field_is_content(self):
         self.assertEqual(check(report(留下清单="\n- 删除清单：原话 8 要求说明删了丢什么")), ([], "通过"))
-        self.assertEqual(check(report(留下清单="- 格式脚本：原话 7 要求格式检查\n- 删除清单：原话 8 要求说明删了丢什么")), ([], "通过"))
+        self.assertEqual(check(report(留下清单="\n  - 删除清单：原话 8 要求说明删了丢什么")), ([], "通过"))
 
     def test_placeholder_whole_field(self):
         self.assertProblems(report(本质="<用户真正要的是什么；若是修错，根源在哪>"), "占位符")
 
-    def test_placeholder_inside_line(self):
+    def test_placeholder_fragment_inside_line(self):
         self.assertProblems(report(留下清单="参数 x：<离开它，用户的哪个要求做不到>"), "占位符")
+
+    def test_angle_brackets_outside_template_are_fine(self):
+        text = report(问题="依据 </home/xy/.claude/xy-workflow/原话.md> 的原话 7，缺少格式校验", 结论="改了就过")
+        self.assertEqual(check(text), ([], "改了就过"))
+        text = report(偏离="目录 ~/.claude/xy-workflow/<仓库名>-<主题>/ 第 8 步删了，账本还指着它", 结论="改了就过")
+        self.assertEqual(check(text), ([], "改了就过"))
 
     def test_bare_none_needs_comparison(self):
         self.assertProblems(report(偏离="无"), "后面要写对照了什么")
@@ -95,6 +107,10 @@ class CheckTest(unittest.TestCase):
     def test_none_with_parentheses_or_bullet_is_none(self):
         self.assertEqual(check(report(偏离="无（对照了 spec）")), ([], "通过"))
         self.assertEqual(check(report(偏离="\n- 无，对照了 spec")), ([], "通过"))
+
+    def test_essence_and_keep_list_cannot_be_none(self):
+        self.assertProblems(report(本质="无，看不出"), "「本质」不能写「无」")
+        self.assertProblems(report(留下清单="无，没什么要留"), "「留下清单」不能写「无」")
 
     def test_word_starting_with_none_is_a_finding(self):
         self.assertProblems(report(问题="无法拒绝空路径，check.py:138 直接打开"),
@@ -138,8 +154,7 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(check(report(旧代码删减="old.py:10 死分支")), ([], "通过"))
 
     def test_exit_codes(self):
-        cases = [(report(), 0), (report(问题="缺省值静默生效", 结论="改了就过"), 3),
-                 (report(问题="缺省值静默生效", 结论="不通过"), 4), (report(偏离=""), 1)]
+        cases = [(report(), 0), (report(问题="缺省值静默生效", 结论="不通过"), 0), (report(偏离=""), 1)]
         for text, expected in cases:
             with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
                 f.write(text)

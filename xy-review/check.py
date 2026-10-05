@@ -1,10 +1,12 @@
-"""检查一份 xy-review 报告的格式，确保没有遗漏：只有规定的五节且不重复；必填字段齐全、不重复、
-写法标准（顶格、全角冒号、不加粗）、不是模板占位符；「无」必须单独成项、独占一行、后面写对照了什么；
-留下清单每行有实体和理由，删除清单每行有实体和删了丢什么，实体不能空；仓库规范 1 到 7 条齐全且不重复；
-结论只有一行，是「通过」「改了就过」或「不通过」，并与各节一致：通过时各节全是「无」，另两种至少一处不是。
+"""检查一份 xy-review 报告的格式，确保没有遗漏：只有规定的五节且不重复，节外、字段外、编号外没有内容；
+必填字段齐全、不重复、写法标准（顶格、全角冒号、不加粗）、没有照抄模板占位符；「无」必须单独成项、独占一行，
+后面写对照了什么，「本质」和「留下清单」不能写「无」；留下清单每行有实体和理由，删除清单每行有实体和删了丢什么，
+实体不能空；仓库规范 1 到 7 条齐全且不重复；结论只有一行，是「通过」「改了就过」或「不通过」，并与各节一致：
+通过时各节全是「无」，另两种至少一处不是。
 
-退出码：0 通过；3 改了就过；4 不通过；1 格式不合格，逐条打印问题；2 用法错误。
+退出码：0 格式合格；1 格式不合格，逐条打印问题；2 用法错误。结论从报告里读。
 """
+import pathlib
 import re
 import sys
 
@@ -16,24 +18,29 @@ LAW_FIELDS = {
 }
 SECTIONS = [*LAW_FIELDS, "仓库规范", "结论"]
 RULE_COUNT = 7  # 仓库规范条数
-# 不是「无」就算查出了问题的字段。「本质」「留下清单」本来就该有内容；「旧代码删减」另开任务处理，不阻塞本次通过。
+# 不是「无」就算查出了问题的字段。「本质」「留下清单」本来就该有内容；「旧代码删减」另开任务处理，不计入结论。
 PROBLEM_FIELDS = ["偏离", "问题", "删除清单"]
-VERDICT_EXIT = {"通过": 0, "改了就过": 3, "不通过": 4}
+MUST_HAVE_CONTENT = ["本质", "留下清单"]  # 写「无」就等于没审
+VERDICTS = ("通过", "改了就过", "不通过")
 # 「无」必须单独成项：后面紧跟标点、括号、空白或行尾；前面可以有列表符。「无法」「无用」这类词不算「无」。
 NONE_RE = re.compile(r"(?:[-*]\s+)?无(?:[，,、。；;：:（(\s]|$)")
 BARE_NONE_RE = re.compile(r"(?:[-*]\s+)?无[，,、。；;：:（(\s]*[）)]?")
-# 模板占位符：尖括号里带中文。代码里的 Vec<T> 这类不带中文，不算。
-PLACEHOLDER_RE = re.compile(r"<[^<>]*[一-鿿][^<>]*>")
+# 模板占位符就是 SKILL.md 报告模板里尖括号包着的那些话，从那里读，不另抄一份。
+TEMPLATE_PLACEHOLDERS = re.findall(
+    r"<([^<>]+)>",
+    re.search(r"```markdown\n(.*?)```", pathlib.Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8"), re.S).group(1))
 
 
 def split_sections(text):
-    """按「## 标题」切分，返回 ({标题: 行列表}, 问题列表)。不认识的标题和重复的标题都是问题。"""
+    """按「## 标题」切分，返回 ({标题: 行列表}, 问题列表)。不认识的标题、重复的标题、第一节之前的内容都是问题。"""
     sections, problems, name = {}, [], None
     for line in text.splitlines():
         heading = re.fullmatch(r"##\s+(.+?)\s*", line)
         if heading is None:
             if name is not None:
                 sections[name].append(line)
+            elif line.strip():
+                problems.append(f"第一节之前不能有内容：{line.strip()}")
             continue
         name = heading.group(1)
         if name not in SECTIONS:
@@ -44,10 +51,10 @@ def split_sections(text):
     return sections, problems
 
 
-def split_fields(lines, keys):
+def split_fields(name, lines, keys):
     """「字段：值」，值可以接着写多行，直到下一个字段。字段名要顶格、全角冒号、不加粗，
     写法不标准的同名行当场报错，不能悄悄并进上一个字段；带列表符的行是清单内容，实体恰好叫字段名也不算。
-    返回 ({字段: 值}, 问题列表)。"""
+    第一个字段之前不能有内容，否则那里写的发现没人看。返回 ({字段: 值}, 问题列表)。"""
     near_miss = re.compile(r"\W*(" + "|".join(map(re.escape, keys)) + r")\W*[:：]")
     fields, problems, key = {}, [], None
     for line in lines:
@@ -57,15 +64,17 @@ def split_fields(lines, keys):
             if key in fields:
                 problems.append(f"「{key}」出现了两次")
             fields.setdefault(key, []).append(matched.group(2))
-        elif not re.match(r"[-*]\s", line) and near_miss.match(line):
+        elif not re.match(r"\s*[-*]\s", line) and near_miss.match(line):
             problems.append(f"「{near_miss.match(line).group(1)}」要顶格写、用全角冒号「：」、不加粗")
         elif key is not None:
             fields[key].append(line)
+        elif line.strip():
+            problems.append(f"「{name}」里字段之外有内容：{line.strip()}")
     return {k: "\n".join(v).strip() for k, v in fields.items()}, problems
 
 
 def split_rules(lines):
-    """「N. 内容」，内容可以接着写多行，直到下一个编号。返回 ({N: 内容}, 问题列表)。"""
+    """「N. 内容」，内容可以接着写多行，直到下一个编号。第 1 条之前不能有内容。返回 ({N: 内容}, 问题列表)。"""
     rules, problems, number = {}, [], None
     for line in lines:
         matched = re.match(r"(\d+)\.\s*(.*)", line)
@@ -78,6 +87,8 @@ def split_rules(lines):
             rules.setdefault(number, []).append(matched.group(2))
         elif number is not None:
             rules[number].append(line)
+        elif line.strip():
+            problems.append(f"仓库规范第 1 条之前有内容：{line.strip()}")
     return {k: "\n".join(v).strip() for k, v in rules.items()}, problems
 
 
@@ -85,12 +96,18 @@ def is_none(value):
     return NONE_RE.match(value) is not None
 
 
+def has_placeholder(value):
+    """尖括号里的话是模板占位符或它的片段，就是照抄模板没填。<仓库名>、<路径/文件> 这类不在模板里，不算。"""
+    return any(len(piece) >= 2 and any(piece in template for template in TEMPLATE_PLACEHOLDERS)
+               for piece in re.findall(r"<([^<>]+)>", value))
+
+
 def check_value(where, value):
-    """字段和规范条目的通用检查：非空、不是占位符、写了「无」就要带对照且只有这一行。返回问题列表。"""
+    """字段和规范条目的通用检查：非空、没抄占位符、写了「无」就要带对照且只有这一行。返回问题列表。"""
     if not value:
         return [f"{where}为空"]
     problems = []
-    if PLACEHOLDER_RE.search(value):
+    if has_placeholder(value):
         problems.append(f"{where}还留着模板占位符")
     if is_none(value):
         if BARE_NONE_RE.fullmatch(value):
@@ -114,7 +131,7 @@ def check_lines(where, value, separators, shape):
 
 
 def check(text):
-    """返回 (问题列表, 结论)。问题列表为空即格式合格，结论是「通过」或「不通过」。"""
+    """返回 (问题列表, 结论)。问题列表为空即格式合格，结论是「通过」「改了就过」或「不通过」。"""
     sections, problems = split_sections(text)
     values, rules = {}, {}
 
@@ -122,13 +139,15 @@ def check(text):
         if name not in sections:
             problems.append(f"缺少「## {name}」")
             continue
-        fields, field_problems = split_fields(sections[name], keys)
+        fields, field_problems = split_fields(name, sections[name], keys)
         problems += field_problems
         for key in keys:
             if key not in fields:
                 problems.append(f"{name}：缺少「{key}」")
                 continue
             problems += check_value(f"{name}：「{key}」", fields[key])
+            if key in MUST_HAVE_CONTENT and is_none(fields[key]):
+                problems.append(f"{name}：「{key}」不能写「无」，它本来就该有内容")
             values[key] = fields[key]
     if "留下清单" in values:
         problems += check_lines("留下清单", values["留下清单"], "：", "实体：离开它，用户的哪个要求做不到")
@@ -157,7 +176,7 @@ def check(text):
         return problems, ""
     conclusion_lines = [line.strip() for line in sections["结论"] if line.strip()]
     verdict = conclusion_lines[0] if conclusion_lines else ""
-    if len(conclusion_lines) != 1 or verdict not in VERDICT_EXIT:
+    if len(conclusion_lines) != 1 or verdict not in VERDICTS:
         problems.append("结论只能有一行，写「通过」「改了就过」或「不通过」")
     elif verdict == "通过" and findings:
         problems.append("结论写通过，但有的地方不是「无，」开头：" + "、".join(findings))
@@ -171,11 +190,11 @@ def main(argv):
         print("用法：check.py <报告路径>")
         return 2
     with open(argv[1], encoding="utf-8") as f:
-        problems, verdict = check(f.read())
+        problems, _ = check(f.read())
     if problems:
         print("\n".join(problems))
         return 1
-    return VERDICT_EXIT[verdict]
+    return 0
 
 
 if __name__ == "__main__":
