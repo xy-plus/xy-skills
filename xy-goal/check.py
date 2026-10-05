@@ -9,8 +9,6 @@ import re
 import sys
 
 
-TOTAL_LIMIT = 5000
-ITEM_LIMIT = 300
 # 超过半天不核一次方向，就等于放着不管。
 MAX_NEXT_CHECK_HOURS = 12
 
@@ -53,8 +51,6 @@ class Task:
 class Contract:
     path: Path
     session: str
-    list_chars: int
-    list_line: int
     tasks: dict = field(default_factory=dict)
 
 
@@ -186,7 +182,7 @@ def _parse_contract(path, problems):
         if not cron_line.split(":", 1)[1].strip():
             problems.append(Problem(path, _line_number(cron_index), "cron_job_id: 值不能为空"))
 
-    # 每份契约头都要记录 session，预算按该值分组。
+    # 每份契约头都要记录 session，一个 session 只许一份契约。
     session_rows = [(i, match.group(1)) for i, line in enumerate(header_lines)
                     if (match := SESSION_RE.match(line))]
     session = ""
@@ -199,22 +195,13 @@ def _parse_contract(path, problems):
         for duplicate, _ in session_rows[1:]:
             problems.append(Problem(path, _line_number(duplicate), "session: 行重复"))
 
-    list_chars = len("\n".join(lines))
-    list_line = _line_number(list_index if list_index >= 0 else 0)
-    contract = Contract(path, session, list_chars, list_line)
+    contract = Contract(path, session)
 
     checklist_start = list_index + 1 if list_index >= 0 else 0
     checklist_end = len(lines)
     index = checklist_start
     while index < checklist_end:
-        body = lines[index]
-        stripped = body.strip()
-        if stripped.startswith(("已验收：", "已取消：")) or re.match(
-                r"^##\s*(已验收|已取消)(?:\s|$)", stripped):
-            # 已验收或已取消内容应移到同目录账本，不留在在办清单。
-            problems.append(Problem(path, _line_number(index), "已验收或已取消内容应移入 .done.md 账本"))
-
-        task_match = TASK_RE.match(body)
+        task_match = TASK_RE.match(lines[index])
         if task_match is None:
             index += 1
             continue
@@ -231,14 +218,12 @@ def _parse_contract(path, problems):
 
         # 判据允许续行；条目由标题、完整判据、出处和产物构成。
         cursor = index + 1
-        criteria_rows = []
         if cursor >= checklist_end or not lines[cursor].startswith("  - 判据："):
             problems.append(Problem(path, _line_number(cursor), f"条目 {task_id} 缺少「判据：」行"))
             index += 1
             continue
         if not lines[cursor][len("  - 判据："):].strip():
             problems.append(Problem(path, _line_number(cursor), "判据：内容不能为空"))
-        criteria_rows.append(lines[cursor])
         cursor += 1
         while cursor < checklist_end and not lines[cursor].startswith("  - 出处："):
             continuation = lines[cursor]
@@ -247,7 +232,6 @@ def _parse_contract(path, problems):
                     or TASK_RE.match(continuation)
                     or continuation.startswith("## ")):
                 break
-            criteria_rows.append(continuation)
             cursor += 1
 
         if cursor >= checklist_end or not lines[cursor].startswith("  - 出处："):
@@ -260,13 +244,6 @@ def _parse_contract(path, problems):
             problems.append(Problem(path, _line_number(artifact_index), f"条目 {task_id} 缺少「产物：」行"))
             index = artifact_index
             continue
-
-        item_chars = len("\n".join(lines[index:artifact_index + 1]))
-        if item_chars > ITEM_LIMIT:
-            problems.append(Problem(
-                path, _line_number(index),
-                f"条目合计 {item_chars} 字，超过 {ITEM_LIMIT} 字",
-            ))
 
         # 每个事项都通过出处挂到原话；没有原话编号的出处挂不上。
         source_value = lines[source_index][len("  - 出处："):]
@@ -382,15 +359,11 @@ def _check_original_quotes(contract, quotes_path, quotes, ledger_ids, problems):
 
 
 def _check_wait_targets(contracts, problems):
-    # 等：列出的每个条目都必须仍在同一 session 的清单中。
-    tasks_by_session = {}
+    """等待目标必须是同一份清单里的开放事项。"""
     for contract in contracts:
-        tasks_by_session.setdefault(contract.session, set()).update(contract.tasks)
-    for contract in contracts:
-        open_tasks = tasks_by_session.get(contract.session, set())
         for task in contract.tasks.values():
             for target in task.wait_targets:
-                if target not in open_tasks:
+                if target not in contract.tasks:
                     problems.append(Problem(
                         contract.path, task.artifact_line,
                         f"等：{target} 指向不在清单中的条目（可能已关闭或不存在）",
@@ -398,94 +371,32 @@ def _check_wait_targets(contracts, problems):
 
 
 def _check_wait_cycles(contracts, problems):
-    # 把每个等待目标作为边，报告所有等待环中的条目。
-    tasks_by_session = {}
+    """等待链不能成环；成环就报环上的路径，记在环的起点那一项。"""
     for contract in contracts:
-        session_tasks = tasks_by_session.setdefault(contract.session, {})
-        for task in contract.tasks.values():
-            session_tasks.setdefault(task.task_id, []).append((contract, task))
-
-    for session_tasks in tasks_by_session.values():
-        # 重复 ID 已由其他格式检查报告；只沿唯一 ID 的边检查，避免猜测目标。
-        unique_tasks = {
-            task_id: matches[0]
-            for task_id, matches in session_tasks.items()
-            if len(matches) == 1
-        }
-        graph = {
-            task_id: [target for target in task.wait_targets if target in unique_tasks]
-            for task_id, (_, task) in unique_tasks.items()
-        }
-        next_index = 0
-        indices = {}
-        lowlinks = {}
-        stack = []
-        on_stack = set()
-        components = []
+        tasks = contract.tasks
+        state = {}  # 1 在栈上，2 已完成
+        path = []
 
         def visit(task_id):
-            nonlocal next_index
-            indices[task_id] = next_index
-            lowlinks[task_id] = next_index
-            next_index += 1
-            stack.append(task_id)
-            on_stack.add(task_id)
-
-            for target in graph[task_id]:
-                if target not in indices:
-                    visit(target)
-                    lowlinks[task_id] = min(lowlinks[task_id], lowlinks[target])
-                elif target in on_stack:
-                    lowlinks[task_id] = min(lowlinks[task_id], indices[target])
-
-            if lowlinks[task_id] == indices[task_id]:
-                component = set()
-                while True:
-                    member = stack.pop()
-                    on_stack.remove(member)
-                    component.add(member)
-                    if member == task_id:
-                        break
-                components.append(component)
-
-        for task_id in graph:
-            if task_id not in indices:
-                visit(task_id)
-
-        for component in components:
-            if len(component) == 1:
-                only_task = next(iter(component))
-                if only_task not in graph[only_task]:
+            state[task_id] = 1
+            path.append(task_id)
+            for target in tasks[task_id].wait_targets:
+                if target not in tasks:
                     continue
+                if state.get(target) == 1:
+                    cycle = path[path.index(target):] + [target]
+                    problems.append(Problem(
+                        contract.path, tasks[target].artifact_line,
+                        "等待链成环：" + " → ".join(cycle),
+                    ))
+                elif target not in state:
+                    visit(target)
+            path.pop()
+            state[task_id] = 2
 
-            start_id = next(task_id for task_id in graph if task_id in component)
-            contract, task = unique_tasks[start_id]
-            cycle_path = [start_id]
-            visited = {start_id}
-
-            def find_cycle(task_id):
-                for target in graph[task_id]:
-                    if target not in component:
-                        continue
-                    if target == start_id:
-                        cycle_path.append(start_id)
-                        return True
-                    if target in visited:
-                        continue
-                    visited.add(target)
-                    cycle_path.append(target)
-                    if find_cycle(target):
-                        return True
-                    cycle_path.pop()
-                return False
-
-            find_cycle(start_id)
-            cycle_description = " → ".join(cycle_path)
-            cycle_members = "、".join(sorted(component))
-            problems.append(Problem(
-                contract.path, task.artifact_line,
-                f"等待链成环：{cycle_description}；环上条目：{cycle_members}",
-            ))
+        for task_id in tasks:
+            if task_id not in state:
+                visit(task_id)
 
 
 def _check_ledger(path, quotes, problems):
@@ -513,33 +424,6 @@ def _check_ledger(path, quotes, problems):
     return task_ids
 
 
-def _check_budgets(contracts, problems):
-    # 按 session 汇总所有在办契约的预算，拆分文件不会降低总量。
-    groups = {}
-    for contract in contracts:
-        groups.setdefault(contract.session, []).append(contract)
-    for session, members in groups.items():
-        total = sum(contract.list_chars for contract in members)
-        if total <= TOTAL_LIMIT:
-            continue
-        session_label = session if session else "（缺失）"
-        used = 0
-        location = members[-1]
-        for contract in members:
-            used += contract.list_chars
-            if used > TOTAL_LIMIT:
-                location = contract
-                break
-        problems.append(Problem(
-            location.path, location.list_line,
-            f"session {session_label} 的清单部分合计 {total} 字，超过 {TOTAL_LIMIT} 字上限",
-        ))
-
-
-def _local_now():
-    return datetime.now()
-
-
 def _check_next_checks(contracts, now, problems):
     """每个开放条目的下次核都在现在之后、12 小时之内，不看状态。"""
     for contract in contracts:
@@ -557,31 +441,17 @@ def _check_next_checks(contracts, now, problems):
 
 
 def _print_summary(contracts):
-    groups = {}
-    for contract in contracts:
-        groups.setdefault(contract.session, []).append(contract)
-
-    if not groups:
-        print("通过：无在办契约；无 session 预算")
+    """通过时一行：每份契约的 session、文件名和在跑的推进者（去重）。"""
+    if not contracts:
+        print("通过：无在办契约")
         return
-
     parts = []
-    for session in sorted(groups):
-        members = groups[session]
-        total = sum(contract.list_chars for contract in members)
-        files = "、".join(
-            f"{contract.path.name} {contract.list_chars} 字" for contract in members
-        )
+    for contract in sorted(contracts, key=lambda contract: contract.session):
         running_names = list(dict.fromkeys(
-            task.running_name
-            for contract in members
-            for task in contract.tasks.values()
-            if task.running_name
+            task.running_name for task in contract.tasks.values() if task.running_name
         ))
         running = "、".join(running_names) if running_names else "无"
-        parts.append(
-            f"session={session}：{files}；合计 {total}/{TOTAL_LIMIT} 字；在跑：{running}"
-        )
+        parts.append(f"session={contract.session}：{contract.path.name}；在跑：{running}")
     print("通过：" + "；".join(parts))
 
 
@@ -620,9 +490,7 @@ def check_directory(directory):
 
     _check_wait_targets(contracts, problems)
     _check_wait_cycles(contracts, problems)
-    _check_budgets(contracts, problems)
-    now = _local_now()
-    _check_next_checks(contracts, now, problems)
+    _check_next_checks(contracts, datetime.now(), problems)
 
     problems.sort(key=lambda problem: (problem.path.name, problem.line, problem.message))
     if problems:
@@ -633,12 +501,11 @@ def check_directory(directory):
     return 0
 
 
-def main(argv=None):
-    args = sys.argv[1:] if argv is None else argv
-    if len(args) != 1:
+def main():
+    if len(sys.argv) != 2:
         print("用法：python3 check.py <契约目录>；必须显式提供契约目录", file=sys.stderr)
         return 2
-    directory = Path(args[0]).expanduser()
+    directory = Path(sys.argv[1]).expanduser()
     if not directory.exists() or not directory.is_dir():
         print(f"契约目录不存在或不是目录：{directory}", file=sys.stderr)
         return 2

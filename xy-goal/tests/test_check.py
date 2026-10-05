@@ -254,9 +254,9 @@ class CheckScriptTests(unittest.TestCase):
     def _run_check_at(self, now):
         stdout = StringIO()
         stderr = StringIO()
-        with mock.patch.object(
-                check_module, "_local_now", return_value=now, create=True), \
+        with mock.patch.object(check_module, "datetime", wraps=datetime) as fake, \
                 redirect_stdout(stdout), redirect_stderr(stderr):
+            fake.now.return_value = now
             returncode = check_module.check_directory(self.contract_dir)
         return returncode, stdout.getvalue(), stderr.getvalue()
 
@@ -330,7 +330,8 @@ class CheckScriptTests(unittest.TestCase):
             artifact=f"在跑：worker-a（pid {live_pid}）；下次核：{later}；产物路径"))
         self.write_quotes(path, [self.quote()])
         output = self.assert_passes().stdout
-        self.assertIn(f"在跑：worker-a（pid {live_pid}）", output)
+        self.assertEqual(output.strip(),
+                         f"通过：session=session-1：goal.md；在跑：worker-a（pid {live_pid}）")
 
         self.clear_contracts()
         path = self.write_contract(entries=self.entry(artifact=f"等：用户：确认参数；下次核：{later}"))
@@ -464,7 +465,7 @@ class CheckScriptTests(unittest.TestCase):
         self.write_quotes(path, [self.quote(1, "T1"), self.quote(2, "T2")])
 
         output = self.assert_problem("等待链成环：T1 → T2 → T1")
-        self.assertIn("goal.md:8: ", output)
+        self.assertEqual(output.strip(), "goal.md:8: 等待链成环：T1 → T2 → T1")
 
     def test_self_wait_is_reported_as_a_cycle(self):
         # 条目等待自己也应被识别为等待环。
@@ -689,7 +690,7 @@ class CheckScriptTests(unittest.TestCase):
         self.assertEqual(len(output.splitlines()), 1, output)
 
     def test_each_session_has_one_contract_but_distinct_sessions_are_allowed(self):
-        # 一个 session 只允许一份契约，这条规则独立于 5000 字预算。
+        # 一个 session 只允许一份契约。
         self.write_quotes(self.write_contract("a.md", entries=[], session="shared"), [])
         self.write_quotes(self.write_contract("b.md", entries=[], session="shared"), [])
         output = self.assert_problem(
@@ -699,8 +700,6 @@ class CheckScriptTests(unittest.TestCase):
         self.assertIn("session shared 已有另一份契约 a.md，一个会话只许一份", output)
         self.assertIn("b.md:1: ", output)
         self.assertEqual(len(output.splitlines()), 2, output)
-        self.assertLess(len((self.contract_dir / "a.md").read_text(encoding="utf-8"))
-                        + len((self.contract_dir / "b.md").read_text(encoding="utf-8")), 5000)
 
         self.clear_contracts()
         self.write_quotes(self.write_contract("a.md", entries=[], session="one"), [])
