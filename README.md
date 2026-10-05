@@ -19,7 +19,7 @@ mkdir -p ~/.claude/skills
 for d in ~/xy-skills/*/; do ln -sfn "${d%/}" ~/.claude/skills/$(basename "$d"); done
 ```
 
-然后在 `~/.claude/CLAUDE.md` 或仓库的 `CLAUDE.md` 里写引用：
+然后在 `~/.claude/CLAUDE.md` 或仓库的 `CLAUDE.md` 里写引用，两行 `@` 让两把尺子启动即全文载入：
 
 ```markdown
 ## 规则
@@ -27,6 +27,9 @@ for d in ~/xy-skills/*/; do ln -sfn "${d%/}" ~/.claude/skills/$(basename "$d"); 
 - 铁律：skill `xy-iron-law`（https://github.com/xy-plus/xy-skills/blob/master/xy-iron-law/SKILL.md），任何情况下都要遵守。
 - 仓库规范：skill `xy-repo-rules`（https://github.com/xy-plus/xy-skills/blob/master/xy-repo-rules/SKILL.md）。
 - 工作流程：讨论问题并可能写代码时，按 skill `xy-workflow`（https://github.com/xy-plus/xy-skills/blob/master/xy-workflow/SKILL.md）走。
+
+@~/xy-skills/xy-iron-law/SKILL.md
+@~/xy-skills/xy-repo-rules/SKILL.md
 ```
 
 `xy-workflow` 依赖 Claude Code 插件 `superpowers`（装法：`/plugin install superpowers@claude-plugins-official`），以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 需要 Claude Code 的定时任务工具 CronCreate、CronList、CronDelete。
