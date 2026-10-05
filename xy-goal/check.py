@@ -20,8 +20,7 @@ WAIT_TARGET_ID_PATTERN = r"T\d+[①②③④⑤⑥⑦⑧⑨⑩]?"
 WAIT_TARGETS_RE = re.compile(
     rf"^({WAIT_TARGET_ID_PATTERN}(?:\s*[,，]\s*{WAIT_TARGET_ID_PATTERN})*)(?=$|[；;。\s])"
 )
-QUOTE_START_RE = re.compile(r"^\s*（原话\s+\d+\s*→")
-QUOTE_RE = re.compile(r"^\s*（原话\s+(\d+)\s*→\s*(.*?)）")
+QUOTE_RE = re.compile(r"^（原话\s+(\d+)\s*→\s*(.*?)）")  # 标注必须顶格
 SOURCE_RE = re.compile(r"原话\s+(\d+(?:(?:\s*～\s*\d+)|(?:\s*[、,，]\s*\d+))*)")
 CRON_RE = re.compile(r"^\s*cron_job_id\s*:")
 SESSION_RE = re.compile(r"^\s*session\s*:\s*(.*?)\s*$")
@@ -69,16 +68,10 @@ class Task:
 @dataclass
 class Contract:
     path: Path
-    lines: list
     session: str
     list_chars: int
     list_line: int
     tasks: dict = field(default_factory=dict)
-
-
-def _line_body(line):
-    """去掉物理行尾，保留该行其余字符。"""
-    return line.rstrip("\r\n")
 
 
 def _line_number(index):
@@ -111,9 +104,10 @@ def _is_task_id(value):
 
 
 def _find_contract_files(directory):
-    """只检查目录顶层的在办契约；账本由单独检查处理。"""
+    """清单文件：目录顶层、不是原话也不是账本的 *.md。"""
     return sorted(
-        (path for path in directory.glob("*.md") if not path.name.endswith(".done.md")),
+        (path for path in directory.glob("*.md")
+         if not path.name.endswith((".quotes.md", ".done.md"))),
         key=lambda path: path.name,
     )
 
@@ -122,11 +116,17 @@ def _find_ledger_files(directory):
     return sorted(directory.glob("*.done.md"), key=lambda path: path.name)
 
 
+def _quotes_path(contract_path):
+    return contract_path.with_name(contract_path.stem + ".quotes.md")
+
+
+def _ledger_path(contract_path):
+    return contract_path.with_name(contract_path.stem + ".done.md")
+
+
 def _read_lines(path, problems):
     try:
-        # newline="" 保留原始换行符，预算按原文件的 Unicode 字符计数。
-        with path.open("r", encoding="utf-8", newline="") as stream:
-            return stream.read().splitlines(keepends=True)
+        return path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as error:
         problems.append(Problem(path, 1, f"无法读取文件：{error}"))
         return None
@@ -238,31 +238,26 @@ def _parse_artifact(path, line_number, status, artifact, problems):
 
 
 def _parse_contract(path, problems):
-    raw_lines = _read_lines(path, problems)
-    if raw_lines is None:
+    lines = _read_lines(path, problems)
+    if lines is None:
         return None
-    lines = [_line_body(line) for line in raw_lines]
 
     list_indices = [i for i, line in enumerate(lines) if line.strip() == "## 清单"]
-    quote_indices = [i for i, line in enumerate(lines) if line.strip() == "## 用户原话"]
     list_index = list_indices[0] if list_indices else -1
-    quote_index = quote_indices[0] if quote_indices else -1
     header_end = list_index if list_index >= 0 else next(
         (i for i, line in enumerate(lines) if line.startswith("## ")), len(lines),
     )
     header_lines = lines[:header_end]
 
-    # 契约必须包含清单、原话区与 cron_job_id。
+    # 清单文件必须包含「## 清单」与 cron_job_id；原话在单独的文件里。
     if not list_indices:
         problems.append(Problem(path, 1, "缺少「## 清单」标题"))
-    if not quote_indices:
-        problems.append(Problem(path, 1, "缺少「## 用户原话」标题"))
-    for duplicate in list_indices[1:]:
-        problems.append(Problem(path, _line_number(duplicate), "「## 清单」标题重复"))
-    for duplicate in quote_indices[1:]:
-        problems.append(Problem(path, _line_number(duplicate), "「## 用户原话」标题重复"))
-    if list_index >= 0 and quote_index >= 0 and list_index > quote_index:
-        problems.append(Problem(path, _line_number(list_index), "「## 清单」必须位于「## 用户原话」之前"))
+    for index, line in enumerate(lines):
+        if line.strip() == "## 用户原话":
+            problems.append(Problem(
+                path, _line_number(index),
+                f"原话应写在 {_quotes_path(path).name}，清单文件里不能有「## 用户原话」",
+            ))
     cron_rows = [(i, line) for i, line in enumerate(header_lines) if CRON_RE.match(line)]
     if not cron_rows:
         problems.append(Problem(path, 1, "缺少 cron_job_id: 行"))
@@ -283,14 +278,12 @@ def _parse_contract(path, problems):
         for duplicate, _ in session_rows[1:]:
             problems.append(Problem(path, _line_number(duplicate), "session: 行重复"))
 
-    # 预算统计 ## 用户原话 之前的文本，包含模板头与换行。
-    count_until = quote_index if quote_index >= 0 else len(raw_lines)
-    list_chars = len("".join(raw_lines[:count_until]))
+    list_chars = len("\n".join(lines))
     list_line = _line_number(list_index if list_index >= 0 else 0)
-    contract = Contract(path, lines, session, list_chars, list_line)
+    contract = Contract(path, session, list_chars, list_line)
 
     checklist_start = list_index + 1 if list_index >= 0 else 0
-    checklist_end = quote_index if quote_index >= checklist_start else len(lines)
+    checklist_end = len(lines)
     index = checklist_start
     while index < checklist_end:
         body = lines[index]
@@ -347,12 +340,7 @@ def _parse_contract(path, problems):
             index = artifact_index
             continue
 
-        item_text = "".join(raw_lines[index:artifact_index + 1])
-        if item_text.endswith("\r\n"):
-            item_text = item_text[:-2]
-        elif item_text.endswith(("\n", "\r")):
-            item_text = item_text[:-1]
-        item_chars = len(item_text)
+        item_chars = len("\n".join(lines[index:artifact_index + 1]))
         if item_chars > ITEM_LIMIT:
             problems.append(Problem(
                 path, _line_number(index),
@@ -410,70 +398,64 @@ def _parse_landing(landing):
     return targets, errors
 
 
-def _check_original_quotes(contract, problems, session_tasks, ledger_ids):
-    lines = contract.lines
-    quote_headers = [i for i, line in enumerate(lines) if line.strip() == "## 用户原话"]
-    if not quote_headers:
-        return
-    start = quote_headers[0] + 1
-    next_header = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
-    origins = {}
-    paragraph_start = True
-
-    for index in range(start, next_header):
-        body = lines[index]
-        if not body.strip():
-            paragraph_start = True
-            continue
-        if not paragraph_start:
-            continue
-        paragraph_start = False
-
-        # 只把段首的「原话 N →」识别为标注；正文中的相似文字仍是原话内容。
-        if not QUOTE_START_RE.match(body):
-            continue
-        match = QUOTE_RE.match(body)
+def _parse_quotes(path, problems):
+    """原话文件：第一个非空行必须是标注，编号从 1 连续；一条标注到下一条之间都是那条原话的正文。
+    正文里顶格的「（原话 N → …）」也会被当成标注，这是接受的边界：用户贴契约片段时自己缩进一格。
+    返回 {编号: {"line": 行号, "targets": 落点里的 T 号}}。"""
+    lines = _read_lines(path, problems)
+    if lines is None:
+        return {}
+    quotes = {}
+    expected = 1
+    first_line_checked = False
+    for index, line in enumerate(lines):
+        match = QUOTE_RE.match(line)
         if match is None:
-            problems.append(Problem(contract.path, _line_number(index), "原话标注格式错误，应为「（原话 N → 落点）」"))
+            if line.strip() and not first_line_checked:
+                problems.append(Problem(
+                    path, _line_number(index), "原话文件第一个非空行必须是「（原话 N → 落点）」",
+                ))
+                first_line_checked = True
             continue
-
+        first_line_checked = True
         number = int(match.group(1))
+        if number != expected:
+            problems.append(Problem(path, _line_number(index), f"原话编号应为 {expected}，实际是 {number}"))
+        expected = number + 1
         landing = match.group(2).strip()
         if not landing:
-            problems.append(Problem(contract.path, _line_number(index), f"原话 {number} 缺少落点"))
+            problems.append(Problem(path, _line_number(index), f"原话 {number} 缺少落点"))
             targets = set()
         else:
-            targets, landing_errors = _parse_landing(landing)
-            for error in landing_errors:
-                problems.append(Problem(contract.path, _line_number(index), f"原话 {number} {error}"))
-        if number in origins:
-            problems.append(Problem(contract.path, _line_number(index), f"原话编号重复：{number}"))
-            origins[number]["targets"].update(targets)
-        else:
-            origins[number] = {"line": _line_number(index), "targets": targets}
+            targets, errors = _parse_landing(landing)
+            for error in errors:
+                problems.append(Problem(path, _line_number(index), f"原话 {number} {error}"))
+        quotes[number] = {"line": _line_number(index), "targets": targets}
+    return quotes
 
-    # 原话落点必须命中同一 session 的在办条目或本契约账本中的条目。
-    for number, origin in origins.items():
-        for task_id in origin["targets"]:
-            matching_tasks = session_tasks.get(task_id, [])
-            if not matching_tasks and task_id not in ledger_ids:
+
+def _check_original_quotes(contract, quotes_path, quotes, ledger_ids, problems):
+    """原话落点与条目出处互相对得上：落点要命中清单或账本里的条目，出处引用的原话要存在且落回来。"""
+    for number, quote in quotes.items():
+        for task_id in quote["targets"]:
+            task = contract.tasks.get(task_id)
+            if task is None and task_id not in ledger_ids:
                 problems.append(Problem(
-                    contract.path, origin["line"],
+                    quotes_path, quote["line"],
                     f"原话 {number} 的落点 {task_id} 不在清单也不在账本",
                 ))
-            elif matching_tasks and not any(number in task.source_ids for task in matching_tasks):
+            elif task is not None and number not in task.source_ids:
                 problems.append(Problem(
-                    contract.path, origin["line"],
+                    quotes_path, quote["line"],
                     f"原话 {number} 落到 {task_id}，但 {task_id} 的出处没有原话 {number}",
                 ))
 
-    # 出处引用的原话必须存在，且其落点必须包含对应的在办条目。
     for task in contract.tasks.values():
         for number in sorted(task.source_ids):
-            origin = origins.get(number)
-            if origin is None:
+            quote = quotes.get(number)
+            if quote is None:
                 problems.append(Problem(contract.path, task.source_line, f"出处引用的原话 {number} 不存在"))
-            elif task.task_id not in origin["targets"]:
+            elif task.task_id not in quote["targets"]:
                 problems.append(Problem(
                     contract.path, task.source_line,
                     f"{task.task_id} 的出处含原话 {number}，但原话落点没有 {task.task_id}",
@@ -592,8 +574,7 @@ def _check_ledger(path, problems):
     if lines is None:
         return set()
     task_ids = set()
-    for index, raw_line in enumerate(lines):
-        line = _line_body(raw_line)
+    for index, line in enumerate(lines):
         if not line.strip():
             problems.append(Problem(path, _line_number(index), "账本格式错误（不允许空行）"))
             continue
@@ -687,10 +668,17 @@ def _print_summary(contracts):
 def check_directory(directory):
     problems = []
     contracts = []
+    quotes_by_contract = {}
     for path in _find_contract_files(directory):
         contract = _parse_contract(path, problems)
-        if contract is not None:
-            contracts.append(contract)
+        if contract is None:
+            continue
+        contracts.append(contract)
+        quotes_path = _quotes_path(path)
+        if quotes_path.exists():
+            quotes_by_contract[path] = _parse_quotes(quotes_path, problems)
+        else:
+            problems.append(Problem(path, 1, f"缺少原话文件 {quotes_path.name}"))
 
     # 一个 session 只对应一份在办契约；对每份重复契约都报告另一份的位置。
     contracts_by_session = {}
@@ -711,18 +699,16 @@ def check_directory(directory):
     for path in _find_ledger_files(directory):
         ledger_ids[path.name] = _check_ledger(path, problems)
 
-    tasks_by_session = {}
+    # 原话文件缺失时只报缺文件，落点没法核。
     for contract in contracts:
-        session_tasks = tasks_by_session.setdefault(contract.session, {})
-        for task_id, task in contract.tasks.items():
-            session_tasks.setdefault(task_id, []).append(task)
-    for contract in contracts:
-        expected_ledger = f"{contract.path.stem}.done.md"
+        if contract.path not in quotes_by_contract:
+            continue
         _check_original_quotes(
             contract,
+            _quotes_path(contract.path),
+            quotes_by_contract[contract.path],
+            ledger_ids.get(_ledger_path(contract.path).name, set()),
             problems,
-            tasks_by_session.get(contract.session, {}),
-            ledger_ids.get(expected_ledger, set()),
         )
     _check_wait_targets(contracts, problems)
     _check_wait_cycles(contracts, problems)
