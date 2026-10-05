@@ -595,6 +595,20 @@ class CheckScriptTests(unittest.TestCase):
         self.write_quotes(path, [self.quote(1, "T3"), self.quote(2, "T3")])
         self.assert_passes()
 
+        self.clear_contracts()
+        path = self.write_contract(entries=self.entry(
+            source="原话 1，2", artifact=f"等：用户：等待输入；下次核：{later}"))
+        self.write_quotes(path, [self.quote(1, "T3"), self.quote(2, "无：问题")])
+        output = self.assert_problem("出处里多个原话编号只认「、」")
+        self.assertIn("goal.md:7: ", output)
+
+    def test_indented_annotation_inside_a_quote_is_body_text(self):
+        # 标注只认顶格：用户贴进来的「（原话 N → …）」缩进一格后就是正文，不是新的标注。
+        path = self.write_contract(entries=self.entry(
+            artifact=f"等：用户：等待输入；下次核：{self.later()}"))
+        self.write_quotes(path, ["（原话 1 → T3）用户贴了契约片段：\n （原话 1 → T404）片段里的标注"])
+        self.assert_passes()
+
     def test_original_quote_requires_a_landing_but_accepts_rule_and_none_landings(self):
         # 原话标注必须说明落到条目、规矩或无落点。
         path = self.write_contract(entries=[])

@@ -40,7 +40,6 @@ class Problem:
 class Task:
     task_id: str
     status: str
-    line: int
     source_line: int
     artifact_line: int
     source_ids: set = field(default_factory=set)
@@ -62,7 +61,8 @@ def _line_number(index):
 
 
 def _source_numbers(value):
-    """SKILL.md「契约」：出处至少一个原话编号，多个用「、」；逗号和区间不认。"""
+    """SKILL.md「契约」：出处里的原话编号，多个用「、」。只提取「原话 N、M」里的编号；
+    逗号、「～」写法由 _parse_contract 报错，不在这里猜。"""
     numbers = set()
     for match in SOURCE_RE.finditer(value):
         numbers.update(int(part) for part in re.split(r"\s*、\s*", match.group(1)))
@@ -261,11 +261,12 @@ def _parse_contract(path, problems):
             problems.append(Problem(path, _line_number(source_index), "出处：内容不能为空"))
         elif not source_ids:
             problems.append(Problem(path, _line_number(source_index), "出处至少含一个原话编号"))
+        elif re.search(r"\d\s*[,，～]\s*\d", source_value):
+            problems.append(Problem(path, _line_number(source_index), "出处里多个原话编号只认「、」"))
 
         task = Task(
             task_id=task_id,
             status=status,
-            line=_line_number(index),
             source_line=_line_number(source_index),
             artifact_line=_line_number(artifact_index),
             source_ids=source_ids,
