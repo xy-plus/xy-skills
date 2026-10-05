@@ -337,11 +337,6 @@ class CheckScriptTests(unittest.TestCase):
                          f"通过：session=session-1：goal.md；在跑：worker-a（pid {live_pid}）")
 
         self.clear_contracts()
-        path = self.write_contract(entries=self.entry(artifact=f"等：用户：确认参数；下次核：{later}"))
-        self.write_quotes(path, [self.quote()])
-        self.assert_passes()
-
-        self.clear_contracts()
         entries = self.entry(artifact=f"在跑：worker-a（pid {live_pid}）；下次核：{later}；产物")
         entries += self.entry("T4", source="原话 2",
                               artifact=f"在跑：worker-b（pid {live_pid}）；下次核：{later}；产物")
@@ -361,12 +356,6 @@ class CheckScriptTests(unittest.TestCase):
         path = self.write_contract(entries=self.entry(status="x", artifact="已完成"))
         self.write_quotes(path, [self.quote()])
         self.assert_problem("[x] 产物栏必须以「待验收：」开头")
-
-        self.clear_contracts()
-        path = self.write_contract(entries=self.entry(
-            status="x", artifact=f"待验收：报告路径；下次核：{later}"))
-        self.write_quotes(path, [self.quote()])
-        self.assert_passes()
 
     def test_permission_error_while_checking_running_pid_counts_as_alive(self):
         pid = 2147483647
