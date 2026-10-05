@@ -50,6 +50,11 @@ class CheckTest(unittest.TestCase):
         result = run(VALID.replace("删除清单：", "删除清单（共 1 条）："))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_conclusion_may_carry_a_parenthetical_reason(self):
+        result = run(VALID.replace("旧代码删减：无\n结论：不通过", "旧代码删减：无\n结论：不通过（删除清单未清）"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("奥卡姆剃刀：不通过", result.stdout)
+
     def test_missing_section_fails(self):
         result = run(VALID.replace("## 难误用", "## 别的"))
         self.assertEqual(result.returncode, 1)

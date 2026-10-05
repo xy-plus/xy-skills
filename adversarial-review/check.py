@@ -50,10 +50,12 @@ def check(text):
         for key in required:
             if not fields.get(key):
                 problems.append(f"{name}：「{key}」为空")
-        if fields.get("结论") not in ("通过", "不通过"):
+        # 结论后可带「（…）」写理由，如「不通过（删除清单未清）」。
+        verdict = re.fullmatch(r"(通过|不通过)(?:（.*）)?", fields.get("结论", ""), re.S)
+        if verdict is None:
             problems.append(f"{name}：结论必须是「通过」或「不通过」")
         else:
-            conclusions.append(f"{name}：{fields['结论']}")
+            conclusions.append(f"{name}：{verdict.group(1)}")
     return problems, conclusions
 
 
