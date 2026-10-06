@@ -16,6 +16,6 @@ description: 讨论问题并可能改代码时的标准工作流程；只要改�
 3. 用 `writing-plans` 写 plan，不问执行方式，plan 开头也不写执行方式那一行，怎么执行由第 5 步定。最后一个任务是把 spec、plan 里要留的信息和实现中的经验写进注释和 README、runbook、TODO 这类文档文件，spec 和 plan 删掉后不丢信息。
 4. 审 plan。
 5. 开工作树：先确认 `.worktrees/` 在被改的那个子仓的 .gitignore 里，再 `git worktree add .worktrees/<分支> -b <分支>`；树里装好依赖、跑一遍测试确认基线干净；不用 Claude Code 自带的 worktree 工具。派一个工作子代理按 plan 逐任务实现，带 `test-driven-development`；任务说明写明工作树的绝对路径，所有命令用绝对路径或 `git -C`，卡住就停下报告。plan 里互不依赖的任务多时，按 `dispatching-parallel-agents` 判断能不能并行、任务说明怎么写，各开工作树、各派一个，各审各合。
-6. 把工作树变基到主分支最新提交，再终审：按 `requesting-code-review` 派，审查者按它的模板和 `xy-review` 的模板各出一份报告、各写一个文件，闸以 `xy-review` 的结论为准。
+6. 把工作树变基到主分支最新提交，再终审：主审按 `requesting-code-review` 派，按它的模板和 `xy-review` 的审查报告各出一份、各写一个文件；剃刀出剃刀报告；闸以 `xy-review` 两份报告的结论为准。
 7. 按 `verification-before-completion` 核过证据，再按 `finishing-a-development-branch` 走「本地合并」，不出菜单、不等用户，合完推主分支。主检出是大家共用的，不在那里跑测试，所以合并只许快进：`git merge --ff-only`，主分支指向的就是工作树里审过测过的那个提交；快进不了就回第 6 步。删工作树会连带删掉里面被忽略的产物，先确认没有进程或配置还在用它，要留的先挪走。
 8. 删掉 `~/.claude/xy-workflow/<仓库名>-<主题>/`。

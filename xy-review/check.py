@@ -1,7 +1,8 @@
-"""检查一份 xy-review 报告的格式，确保没有遗漏：只有规定的五节且不重复，节外、字段外、编号外没有内容；
-必填字段齐全、不重复、写法标准（顶格、全角冒号、不加粗）、没有照抄模板占位符；「无」必须单独成项、独占一行，
-后面写对照了什么，「本质」和「留下清单」不能写「无」；留下清单每行有实体和理由，删除清单每行有实体和删了丢什么，
-实体不能空；仓库规范 1 到 7 条齐全且不重复；结论只有一行，是「通过」「改了就过」或「不通过」，并与各节一致：
+"""检查一份 xy-review 报告的格式，确保没有遗漏。报告有两种：主审的审查报告（铁律 1、铁律 2、仓库规范、结论）
+和剃刀的剃刀报告（铁律 3、结论），节集合必须正好是其中一种，节外、字段外、编号外没有内容；必填字段齐全、
+不重复、写法标准（顶格、全角冒号、不加粗）、没有照抄模板占位符；「无」必须单独成项、独占一行，后面写对照了什么，
+「本质」和「留下清单」不能写「无」；留下清单每行有实体和理由，删除清单每行有实体和删了丢什么，实体不能空；
+仓库规范 1 到 7 条齐全且不重复；结论只有一行，是「通过」「改了就过」或「不通过」，并与各节一致：
 通过时查问题的地方（偏离、问题、删除清单、仓库规范七条）全是「无」，另两种至少一处不是。
 
 退出码：0 格式合格；1 格式不合格，逐条打印问题；2 用法错误。结论从报告里读。
@@ -16,23 +17,29 @@ LAW_FIELDS = {
     "铁律 2 难误用": ["问题"],
     "铁律 3 奥卡姆剃刀": ["留下清单", "删除清单", "旧代码删减"],
 }
-SECTIONS = [*LAW_FIELDS, "仓库规范", "结论"]
+# 两种报告各自的节。
+REPORT_KINDS = {
+    "审查报告": ["铁律 1 第一性原理", "铁律 2 难误用", "仓库规范", "结论"],
+    "剃刀报告": ["铁律 3 奥卡姆剃刀", "结论"],
+}
 RULE_COUNT = 7  # 仓库规范条数
 # 不是「无」就算查出了问题的字段。「本质」「留下清单」本来就该有内容；「旧代码删减」另开任务处理，不计入结论。
 PROBLEM_FIELDS = ["偏离", "问题", "删除清单"]
-MUST_HAVE_CONTENT = ["本质", "留下清单"]  # 写「无」就等于没审
+MUST_HAVE_CONTENT = ["本质", "留下清单"]
 VERDICTS = ("通过", "改了就过", "不通过")
 # 「无」必须单独成项：后面紧跟标点、括号或行尾；前面可以有列表符。「无法」「无用」这类词，以及「无 docstring」这种空格隔开的真发现，都不算「无」。
 NONE_RE = re.compile(r"(?:[-*]\s+)?无(?:[，,、。；;：:（(]|$)")
 BARE_NONE_RE = re.compile(r"(?:[-*]\s+)?无[，,、。；;：:（(]*[）)]?")
-# 模板占位符就是 SKILL.md 报告模板里尖括号包着的那些话，从那里读，不另抄一份。
-TEMPLATE_PLACEHOLDERS = re.findall(
-    r"<([^<>]+)>",
-    re.search(r"```markdown\n(.*?)```", pathlib.Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8"), re.S).group(1))
+# 模板占位符就是 SKILL.md 两个报告模板里尖括号包着的那些话，从那里读，不另抄一份。
+TEMPLATE_PLACEHOLDERS = [
+    piece
+    for block in re.findall(r"```markdown\n(.*?)```", pathlib.Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8"), re.S)
+    for piece in re.findall(r"<([^<>]+)>", block)
+]
 
 
 def split_sections(text):
-    """按「## 标题」切分，返回 ({标题: 行列表}, 问题列表)。不认识的标题、重复的标题、第一节之前的内容都是问题。"""
+    """按「## 标题」切分，返回 ({标题: 行列表}, 问题列表)。重复的标题、第一节之前的内容都是问题；标题认不认识由 check 按报告种类判。"""
     sections, problems, name = {}, [], None
     for line in text.splitlines():
         heading = re.fullmatch(r"##\s+(.+?)\s*", line)
@@ -43,9 +50,7 @@ def split_sections(text):
                 problems.append(f"第一节之前不能有内容：{line.strip()}")
             continue
         name = heading.group(1)
-        if name not in SECTIONS:
-            problems.append(f"不认识的节「## {name}」，报告里只能有规定的五节")
-        elif name in sections:
+        if name in sections:
             problems.append(f"「## {name}」出现了两次")
         sections.setdefault(name, [])
     return sections, problems
@@ -133,11 +138,21 @@ def check_lines(where, value, separators, shape):
 def check(text):
     """返回问题列表，为空即格式合格。"""
     sections, problems = split_sections(text)
-    values, rules = {}, {}
-
-    for name, keys in LAW_FIELDS.items():
+    kind = next((name for name, headings in REPORT_KINDS.items() if headings[0] in sections), None)
+    if kind is None:
+        problems.append("报告要么是" + "，要么是".join(f"{kind}（{'、'.join(names)}）" for kind, names in REPORT_KINDS.items()))
+        return problems
+    expected = REPORT_KINDS[kind]
+    for name in sections:
+        if name not in expected:
+            problems.append(f"不认识的节「## {name}」，{kind}只能有：" + "、".join(expected))
+    for name in expected:
         if name not in sections:
             problems.append(f"缺少「## {name}」")
+
+    values, rules = {}, {}
+    for name, keys in LAW_FIELDS.items():
+        if name not in sections:
             continue
         fields, field_problems = split_fields(name, sections[name], keys)
         problems += field_problems
@@ -153,10 +168,7 @@ def check(text):
         problems += check_lines("留下清单", values["留下清单"], "：", "实体：离开它，用户原话哪条做不到")
     if "删除清单" in values:
         problems += check_lines("删除清单", values["删除清单"], "；;", "实体；删了丢什么")
-
-    if "仓库规范" not in sections:
-        problems.append("缺少「## 仓库规范」")
-    else:
+    if "仓库规范" in sections:
         rules, rule_problems = split_rules(sections["仓库规范"])
         problems += rule_problems
         for number in range(1, RULE_COUNT + 1):
@@ -172,7 +184,6 @@ def check(text):
                  if rules.get(number) and not is_none(rules[number])]
 
     if "结论" not in sections:
-        problems.append("缺少「## 结论」")
         return problems
     conclusion_lines = [line.strip() for line in sections["结论"] if line.strip()]
     verdict = conclusion_lines[0] if conclusion_lines else ""
