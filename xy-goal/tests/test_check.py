@@ -82,6 +82,12 @@ class CheckScriptTests(unittest.TestCase):
     def later():
         return (datetime.now() + timedelta(hours=11)).strftime("%Y-%m-%d %H:%M")
 
+    def entry_of_length(self, length):
+        """四行合计恰好 length 字的条目（标题行到产物行，含行间换行），用判据补齐长度。"""
+        artifact = f"等：用户：等待输入；下次核：{self.later()}"
+        filler = length - len("\n".join(self.entry(criteria="", artifact=artifact)))
+        return self.entry(criteria="判" * filler, artifact=artifact)
+
     def test_running_next_check_missing_is_reported_at_artifact_line(self):
         pid = self.start_live_child().pid
         path = self.write_contract(entries=self.entry(
@@ -723,6 +729,46 @@ class CheckScriptTests(unittest.TestCase):
             self.quote(1, "T3"),
             "正文里提到「（原话 3 说过旧口径）」但这不是标注。",
         ])
+        self.assert_passes()
+
+    def test_item_of_exactly_300_chars_passes_and_301_fails(self):
+        # 用户要求的字数线：每项从标题行到产物行（含行间换行）恰好 300 字通过，多一字报错，报在标题行。
+        path = self.write_contract(entries=self.entry_of_length(300))
+        self.write_quotes(path, [self.quote(1, "T3")])
+        self.assert_passes()
+
+        self.clear_contracts()
+        path = self.write_contract(entries=self.entry_of_length(301))
+        self.write_quotes(path, [self.quote(1, "T3")])
+        output = self.assert_problem("条目 T3 四行合计 301 字，超过 300 字")
+        self.assertIn("goal.md:5: ", output)
+
+    def test_criteria_continuation_lines_count_toward_the_item_limit(self):
+        # 判据的续行也算在这一项里：290 字的条目加一行 24 字的续行（含换行 25 字）就超线。
+        rows = self.entry_of_length(290)
+        rows.insert(2, "    " + "续" * 20)
+        path = self.write_contract(entries=rows)
+        self.write_quotes(path, [self.quote(1, "T3")])
+        self.assert_problem("条目 T3 四行合计 315 字，超过 300 字")
+
+    def test_checklist_file_of_exactly_5000_chars_passes_and_5001_fails(self):
+        # 用户要求的字数线：清单文件全文（含开头三行和每个换行）恰好 5000 字通过，多一字报错，报在第 1 行。
+        path = self.write_contract(entries=[])
+        self.write_quotes(path, [])
+        text = path.read_text(encoding="utf-8")
+        padded = text.replace("# 测试目标", "# 测试目标" + "长" * (5000 - len(text)), 1)
+        path.write_text(padded, encoding="utf-8")
+        self.assert_passes()
+
+        path.write_text(padded.replace("# 测试目标", "# 测试目标长", 1), encoding="utf-8")
+        output = self.assert_problem("清单合计 5001 字，超过 5000 字")
+        self.assertIn("goal.md:1: ", output)
+
+    def test_quotes_and_ledger_do_not_count_toward_the_limits(self):
+        # 字数线只管清单文件：原话和账本再长也不触发。
+        path = self.write_contract(entries=[])
+        self.write_quotes(path, ["（原话 1 → T1）" + "长" * 6000])
+        self.write_ledger(lines=["- T1 " + "长" * 6000 + "（产物路径；验收 通过）"])
         self.assert_passes()
 
     def test_done_ledgers_require_one_of_the_two_closed_item_forms(self):

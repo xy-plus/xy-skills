@@ -13,6 +13,9 @@ import sys
 
 # 超过半天不核一次方向，就等于放着不管。
 MAX_NEXT_CHECK_HOURS = 12
+# 用户要求的两条字数线，保留：每项四行合计、每份清单文件全文的上限。
+ITEM_LIMIT = 300
+TOTAL_LIMIT = 5000
 
 TASK_RE = re.compile(r"^\s*-\s*\[([^\]]*)\]\s*(\S+)(?:\s+.*)?$")
 TASK_ID_RE = re.compile(r"T\d+")
@@ -88,10 +91,10 @@ def _ledger_path(contract_path):
     return contract_path.with_name(contract_path.stem + ".done.md")
 
 
-def _read_lines(path, problems):
-    """按 UTF-8 读成行；读不了就记一条问题并返回 None，调用方跳过这个文件。"""
+def _read_text(path, problems):
+    """按 UTF-8 读全文；读不了就记一条问题并返回 None，调用方跳过这个文件。"""
     try:
-        return path.read_text(encoding="utf-8").splitlines()
+        return path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         problems.append(Problem(path, 1, f"无法读取文件：{error}"))
         return None
@@ -163,10 +166,14 @@ def _parse_artifact(path, line_number, task, artifact, problems):
 
 def _parse_contract(path, problems):
     """SKILL.md「契约」：清单文件头部写 session 和 cron_job_id，「## 清单」下每项四行：标题、判据、出处、产物；
-    原话不写在这里。判据允许续行。"""
-    lines = _read_lines(path, problems)
-    if lines is None:
+    原话不写在这里。判据允许续行。字数线：每项四行合计不超过 ITEM_LIMIT 字，清单文件全文不超过 TOTAL_LIMIT 字。"""
+    text = _read_text(path, problems)
+    if text is None:
         return None
+    # 一个会话只许一份契约，按文件查全文就是按会话查；原话、账本在别的文件，不计。
+    if len(text) > TOTAL_LIMIT:
+        problems.append(Problem(path, 1, f"清单合计 {len(text)} 字，超过 {TOTAL_LIMIT} 字"))
+    lines = text.splitlines()
 
     list_indices = [i for i, line in enumerate(lines) if line.strip() == "## 清单"]
     list_index = list_indices[0] if list_indices else -1
@@ -254,6 +261,13 @@ def _parse_contract(path, problems):
             index = artifact_index
             continue
 
+        # 字数从标题行算到产物行，判据续行和行间换行都算。
+        item_chars = len("\n".join(lines[index:artifact_index + 1]))
+        if item_chars > ITEM_LIMIT:
+            problems.append(Problem(
+                path, _line_number(index), f"条目 {task_id} 四行合计 {item_chars} 字，超过 {ITEM_LIMIT} 字",
+            ))
+
         # 每个事项都通过出处挂到原话；没有原话编号的出处挂不上。
         source_value = lines[source_index][len("  - 出处："):]
         source_ids = _source_numbers(source_value)
@@ -310,9 +324,10 @@ def _parse_quotes(path, problems):
     一条标注到下一条之间都是那条原话的正文。
     正文里顶格的「（原话 N → …）」也会被当成标注，这是接受的边界：用户贴契约片段时自己缩进一格。
     返回 {编号: {"line": 行号, "targets": 落点里的 T 号}}。"""
-    lines = _read_lines(path, problems)
-    if lines is None:
+    text = _read_text(path, problems)
+    if text is None:
         return {}
+    lines = text.splitlines()
     quotes = {}
     expected = 1
     first_line_checked = False
@@ -415,9 +430,10 @@ def _check_wait_cycles(contracts, problems):
 def _check_ledger(path, quotes, problems):
     """SKILL.md「契约」：账本一行一项，验收记录「- T1 …（指针；验收 …）」或取消记录「- [~] T2 …（原话 N：「摘句」）」，
     取消必须有原话依据，所以引用的原话要存在。返回账本里的 T 号。"""
-    lines = _read_lines(path, problems)
-    if lines is None:
+    text = _read_text(path, problems)
+    if text is None:
         return set()
+    lines = text.splitlines()
     task_ids = set()
     for index, line in enumerate(lines):
         if not line.strip():
