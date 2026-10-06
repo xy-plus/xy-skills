@@ -5,17 +5,15 @@ description: 讨论问题并可能改代码时的标准工作流程；按改动�
 
 ## 改动分档
 
-动手前先分档，在消息里说出档位和原因，不等回复；拿不准走重的那档；只升不降，做到一半发现比预想复杂就停下说明、升档。
+动手前按 superpowers [`brainstorming` 的 Three Paths](https://github.com/obra/superpowers/blob/v6.4.1/skills/brainstorming/SKILL.md) 分档，在消息里说出档位和原因，不等回复；哪件事归哪档以原文为准，不自己另加判据；各档怎么走按本流程。拿不准走重的那档；只升不降，做到一半发现比预想复杂就停下说明、升档。
 
 - 只调查：要的是一个答案（能不能做、行不行），不是要留下的代码；查完给结论，为查写的代码只当一次性的，不合入；不走下面编号步骤。
 - 小改动：改本仓已有代码、范围清楚，例如加开关、小接口、单文件修复；按本仓衡量，不按熟悉程度，需改的流程已在本仓里存在且读得到才算小改动。
 - 架构级：新项目、新子系统、改组件之间的组织方式或别人依赖的接口。
 
-分档判据取自 [superpowers 6.4.2 `brainstorming`](https://github.com/obra/superpowers/blob/v6.4.2/skills/brainstorming/SKILL.md)。
-
 ## 工作流程
 
-提到的 skill 除 `xy-` 开头和 `sync-think` 外都来自 superpowers，缺了就提醒用户安装；引用的 skill 和本流程冲突时以本流程为准，派子代理时把它该守的边界写进任务说明。
+提到的 skill 除 `xy-` 开头和 `sync-think` 外都来自 superpowers；superpowers 不低于 6.4.1，缺了就提醒用户安装；引用的 skill 和本流程冲突时以本流程为准，派子代理时把它该守的边界写进任务说明。
 
 本流程要求用 `xy-goal`：会话里还没开就先开，几个主题的项都登记在本会话这一份契约里。用户原话只由契约照抄、编号，spec 和审查都引用契约里的原话，不再抄一份。spec、精简 plan、审查报告都放 `~/.claude/xy-workflow/<仓库名>-<主题>/`，不入库；这个目录和契约的路径告诉每个子代理。每个产物在契约里登记一项：spec、代码；审查不单独成项，审查通过就是 spec 那一项的验收；代码项的验收是终审通过、已快进合入并推送、运行目录已删，后三件用命令输出核。`xy-iron-law` 和 `xy-repo-rules` 自己已经加载；子代理不继承，派任何子代理都把这两份 SKILL.md 交给它并说明按它们做。
 
@@ -25,7 +23,7 @@ description: 讨论问题并可能改代码时的标准工作流程；按改动�
 
 1. 用 `brainstorming` 讨论并写 spec，每条要求注明来自哪条原话；小改动的 spec 只写几句，写明做法、改哪些文件和怎么测，每句注明原话出处；架构级照旧写完整 spec。
 2. 主审和剃刀按 `xy-review` 审 spec，审过才实现。
-3. 开工作树：先确认 `.worktrees/` 在被改的那个子仓的 .gitignore 里，再 `git worktree add .worktrees/<分支> -b <分支>`；树里装好依赖、跑一遍测试确认基线干净；不用 Claude Code 自带的 worktree 工具。派一个工作子代理按审过的 spec 自己规划，带 `test-driven-development` 实现；任务说明写明工作树的绝对路径，所有命令用绝对路径或 `git -C`，卡住就停下报告。spec 没写的新设计（新类型、新接口、新函数）先停下报告，不为让测试变绿自己加。最后一个任务是把 spec 里要留的信息和实现中的经验写进注释和 README、runbook、TODO 这类文档文件，spec 删掉后不丢信息。
+3. 开工作树：先确认 `.worktrees/` 在被改的那个子仓的 .gitignore 里，再 `git worktree add .worktrees/<分支> -b <分支>`；树里装好依赖、跑一遍测试确认基线干净；不用 Claude Code 自带的 worktree 工具。派一个工作子代理按审过的 spec 自己规划，带 `test-driven-development` 实现；任务说明写明工作树的绝对路径，所有命令用绝对路径或 `git -C`，卡住或碰到 spec 没写的东西，就停下报告给编排者，由编排者决定，不等用户。最后一个任务是把 spec 里要留的信息和实现中的经验写进注释和 README、runbook、TODO 这类文档文件，spec 删掉后不丢信息。
 4. 把工作树变基到主分支最新提交，再终审：主审按 `requesting-code-review` 派，给它提交范围、只读，写审查报告；剃刀出剃刀报告；闸以两份报告的结论为准。
 5. 按 `verification-before-completion` 核过证据，再按 `finishing-a-development-branch` 走「本地合并」，不出菜单、不等用户，合完推主分支。主检出是大家共用的，不在那里跑测试，所以合并只许快进：`git merge --ff-only`，主分支指向的就是工作树里审过测过的那个提交；快进不了就回第 4 步。删工作树会连带删掉里面被忽略的产物，先确认没有进程或配置还在用它，要留的先挪走。
 6. 删掉 `~/.claude/xy-workflow/<仓库名>-<主题>/`。
