@@ -207,7 +207,7 @@ def main(argv):
     if problems:
         print("\n".join(problems))
         return 1
-    path = pathlib.Path(argv[1])
+    path = pathlib.Path(argv[1]).resolve()
     group = path.parent.parent.name
     sections, _ = split_sections(text)
     # 派判因子代理所用的工具不属于 xy-skills，所以这里只提醒、不拦截。

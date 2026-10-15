@@ -185,17 +185,24 @@ class CheckTest(unittest.TestCase):
                 path = os.path.join(directory, "review.md")
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(main_report(问题="check.py:100 漏检", 结论=conclusion))
-                output = io.StringIO()
-                with contextlib.redirect_stdout(output):
-                    code = main(["check.py", path])
-                self.assertEqual(code, 0, output.getvalue())
+                paths = [(directory, path)]
                 if expected_reminder:
-                    self.assertIn(
-                        "提醒：group7 第 3 轮仍不通过，按 xy-review 先派判因子代理写 group7/diagnosis.md，按结论处理后再开下一组",
-                        output.getvalue().splitlines(),
-                    )
-                else:
-                    self.assertNotIn("提醒：", output.getvalue())
+                    previous_directory = os.path.join(root, "group7", "round2")
+                    os.makedirs(previous_directory)
+                    paths += [(directory, "review.md"), (previous_directory, "../round3/review.md")]
+                for working_directory, report_path in paths:
+                    with self.subTest(path=report_path):
+                        output = io.StringIO()
+                        with contextlib.chdir(working_directory), contextlib.redirect_stdout(output):
+                            code = main(["check.py", report_path])
+                        self.assertEqual(code, 0, output.getvalue())
+                        if expected_reminder:
+                            self.assertIn(
+                                "提醒：group7 第 3 轮仍不通过，按 xy-review 先派判因子代理写 group7/diagnosis.md，按结论处理后再开下一组",
+                                output.getvalue().splitlines(),
+                            )
+                        else:
+                            self.assertNotIn("提醒：", output.getvalue())
 
     def test_exit_codes(self):
         cases = [(main_report(), 0), (razor_report(删除清单="参数 x；丢什么：无", 结论="改了就过"), 0), (main_report(偏离=""), 1)]
