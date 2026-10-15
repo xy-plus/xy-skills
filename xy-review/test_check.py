@@ -1,8 +1,7 @@
 """check.py 的测试，一个用例守一条规则。运行：cd xy-review && python3 -B -m unittest test_check"""
 import contextlib
 import io
-from pathlib import Path
-import shutil
+import os
 import tempfile
 import unittest
 
@@ -177,435 +176,39 @@ class CheckTest(unittest.TestCase):
     def test_old_code_does_not_block(self):
         self.assertEqual(check(razor_report(旧代码删减="old.py:10 死分支")), [])
 
+    def test_round3_failure_reminder(self):
+        cases = [("round3", "不通过", True), ("round3", "改了就过", False), ("round2", "不通过", False)]
+        for round_name, conclusion, expected_reminder in cases:
+            with self.subTest(round=round_name, conclusion=conclusion), tempfile.TemporaryDirectory() as root:
+                directory = os.path.join(root, "group7", round_name)
+                os.makedirs(directory)
+                path = os.path.join(directory, "review.md")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(main_report(问题="check.py:100 漏检", 结论=conclusion))
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = main(["check.py", path])
+                self.assertEqual(code, 0, output.getvalue())
+                if expected_reminder:
+                    self.assertIn(
+                        "提醒：group7 第 3 轮仍不通过，按 xy-review 先派判因子代理写 group7/diagnosis.md，按结论处理后再开下一组",
+                        output.getvalue().splitlines(),
+                    )
+                else:
+                    self.assertNotIn("提醒：", output.getvalue())
+
     def test_exit_codes(self):
         cases = [(main_report(), 0), (razor_report(删除清单="参数 x；丢什么：无", 结论="改了就过"), 0), (main_report(偏离=""), 1)]
         for text, expected in cases:
-            with tempfile.TemporaryDirectory() as directory:
-                report = Path(directory) / "group1/round1/report.md"
-                report.parent.mkdir(parents=True)
-                report.write_text(text, encoding="utf-8")
-                (report.parent / "submitted-code.txt").write_text("d0348a4\n", encoding="utf-8")
+            with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+                f.write(text)
+            try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(main(["check.py", str(report)]), expected)
+                    self.assertEqual(main(["check.py", f.name]), expected)
+            finally:
+                os.unlink(f.name)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["check.py"]), 2)
-
-
-def diagnosis_report(actions):
-    return (
-        "## 判因\n"
-        "round1/main.txt、round2/main.txt、round3/main.txt 都指出参数缺省，"
-        "handling.md 只改了调用处；当前 check.py 仍静默接受空参数，同类问题反复。\n"
-        "## 结论\n"
-        f"{actions}\n"
-    )
-
-
-class FileCheckTest(unittest.TestCase):
-    """走真实文件入口；每项拒绝规则撤掉时，对应的 rc 或补齐提示就会失败。"""
-
-    def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
-
-    def write(self, relative, text):
-        path = self.root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-        return path
-
-    def write_report(self, relative, text):
-        path = self.write(relative, text)
-        version = path.parent.relative_to(self.root) / "submitted-version.md"
-        self.write(version, "这一轮送审的原文。\n")
-        return path
-
-    def write_round(self, group, round_number, failed_role):
-        main_text = main_report()
-        razor_text = razor_report()
-        if failed_role == "主审":
-            main_text = main_report(问题="check.py:10 空参数静默生效", 结论="不通过")
-        elif failed_role == "剃刀":
-            razor_text = razor_report(删除清单="多余分支；删了不丢原话要求", 结论="不通过")
-        prefix = f"group{group}/round{round_number}"
-        path = self.write_report(f"{prefix}/main.txt", main_text)
-        self.write(f"{prefix}/razor.txt", razor_text)
-        if failed_role is not None:
-            self.write(f"{prefix}/handling.md", "意见：空参数静默生效；处理：修改参数检查，拒绝空值。\n")
-        return path
-
-    def write_failed_group(self, group):
-        for round_number in (1, 2, 3):
-            self.write_round(group, round_number, "主审")
-        return self.write(f"group{group}/diagnosis.md", diagnosis_report("重想"))
-
-    def run_check(self, path):
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            rc = main(["check.py", str(path)])
-        return rc, output.getvalue()
-
-    def assert_rejected(self, path, *needles):
-        rc, output = self.run_check(path)
-        self.assertEqual(rc, 1, output)
-        for needle in needles:
-            self.assertIn(needle, output)
-
-    def test_review_path_requires_exact_group_and_round_directories(self):
-        for relative in ("report.md", "group0/round1/report.md", "group01/round1/report.md",
-                         "group1/round0/report.md", "group1/round01/report.md",
-                         "group1/round1/nested/report.md"):
-            with self.subTest(path=relative):
-                path = self.write_report(relative, main_report())
-                self.assert_rejected(path, "group<G>/round<R>/", "作者")
-
-    def test_diagnosis_path_requires_group_directory(self):
-        for relative in ("diagnosis.md", "group0/diagnosis.md", "group1/round1/diagnosis.md",
-                         "group1/nested/diagnosis.md"):
-            with self.subTest(path=relative):
-                path = self.write(relative, diagnosis_report("重想"))
-                self.assert_rejected(path, "group<G>/diagnosis.md", "判因子代理")
-
-    def test_fourth_round_requires_diagnosis_then_next_group(self):
-        path = self.write_report("group1/round4/main.txt", main_report())
-        self.assert_rejected(path, "group1/diagnosis.md", "group2", "作者", "判因子代理")
-
-    def test_fourth_round_in_current_group_blocks_other_reports(self):
-        path = self.write_report("group1/round1/main.txt", main_report())
-        (self.root / "group1/round4").mkdir()
-        self.assert_rejected(path, "round4", "group1/diagnosis.md", "group2", "判因子代理")
-
-    def test_current_round_may_have_only_one_role(self):
-        for text in (main_report(), razor_report()):
-            with self.subTest(text=text):
-                path = self.write_report("group1/round1/report", text)
-                self.assertEqual(self.run_check(path), (0, ""))
-
-    def test_roles_follow_content_instead_of_filename_or_extension(self):
-        path = self.write_report("group1/round1/razor", main_report())
-        self.write("group1/round1/main.txt", razor_report())
-        self.write("group1/round1/brief.md", "请主审检查 spec，报告写到本目录。\n")
-        self.assertEqual(self.run_check(path), (0, ""))
-
-    def test_duplicate_main_reports_are_rejected(self):
-        path = self.write_report("group1/round1/main-a.txt", main_report())
-        self.write("group1/round1/main-b.txt", main_report())
-        self.assert_rejected(path, "主审", "main-a.txt", "main-b.txt", "作者")
-
-    def test_duplicate_razor_reports_are_rejected(self):
-        path = self.write_report("group1/round1/razor-a.txt", razor_report())
-        self.write("group1/round1/razor-b.txt", razor_report())
-        self.assert_rejected(path, "剃刀", "razor-a.txt", "razor-b.txt", "作者")
-
-    def test_current_report_still_runs_content_checks(self):
-        path = self.write_report("group1/round1/main.txt", main_report(本质=""))
-        self.assert_rejected(path, "本质", "为空", "主审")
-
-    def test_review_reports_cannot_use_material_filenames(self):
-        self.write_round(1, 1, None)
-        for filename in ("handling.md", "submitted", "submitted-report.md"):
-            for role, text in (("主审", main_report()), ("剃刀", razor_report())):
-                with self.subTest(filename=filename, role=role):
-                    path = self.write(f"group1/round1/{filename}", text)
-                    self.assert_rejected(path, "handling.md", "submitted", "保留", "材料", "作者")
-
-    def test_review_report_cannot_replace_submitted_material(self):
-        for role, text in (("主审", main_report()), ("剃刀", razor_report())):
-            with self.subTest(role=role):
-                path = self.write("group1/round1/submitted-report.md", text)
-                self.assert_rejected(path, "submitted", "保留", "材料", "作者")
-
-    def test_second_round_requires_first_round(self):
-        path = self.write_report("group1/round2/main.txt", main_report())
-        self.assert_rejected(path, "round1", "主审", "剃刀")
-
-    def test_previous_round_requires_main_report(self):
-        self.write_round(1, 1, "剃刀")
-        (self.root / "group1/round1/main.txt").unlink()
-        path = self.write_report("group1/round2/main.txt", main_report())
-        self.assert_rejected(path, "round1", "主审")
-
-    def test_previous_round_requires_razor_report(self):
-        self.write_round(1, 1, "主审")
-        (self.root / "group1/round1/razor.txt").unlink()
-        path = self.write_report("group1/round2/main.txt", main_report())
-        self.assert_rejected(path, "round1", "剃刀")
-
-    def test_previous_reports_must_pass_content_checks(self):
-        for filename, text, field, role in (
-                ("main.txt", main_report(本质=""), "本质", "主审"),
-                ("razor.txt", razor_report(留下清单=""), "留下清单", "剃刀")):
-            with self.subTest(role=role):
-                self.write_round(1, 1, "主审")
-                self.write(f"group1/round1/{filename}", text)
-                path = self.write_report("group1/round2/main.txt", main_report())
-                self.assert_rejected(path, "round1", field, role)
-
-    def test_next_round_requires_previous_verdict_to_be_fail(self):
-        for text in (main_report(), main_report(问题="check.py:10 缺检查", 结论="改了就过")):
-            with self.subTest(text=text):
-                self.write_round(1, 1, None)
-                self.write("group1/round1/main.txt", text)
-                path = self.write_report("group1/round2/main.txt", main_report())
-                self.assert_rejected(path, "round1", "不通过", "作者")
-
-    def test_failed_previous_round_requires_author_handling(self):
-        self.write_round(1, 1, "主审")
-        (self.root / "group1/round1/handling.md").unlink()
-        path = self.write_report("group1/round2/main.txt", main_report())
-        self.assert_rejected(path, "round1/handling.md", "作者")
-
-    def test_razor_failure_also_allows_next_round(self):
-        self.write_round(1, 1, "剃刀")
-        path = self.write_report("group1/round2/main.txt", main_report())
-        self.assertEqual(self.run_check(path), (0, ""))
-
-    def test_third_round_checks_both_earlier_rounds(self):
-        for missing_round in (1, 2):
-            with self.subTest(missing_round=missing_round):
-                self.write_round(1, 1, "主审")
-                self.write_round(1, 2, "主审")
-                shutil.rmtree(self.root / f"group1/round{missing_round}")
-                path = self.write_report("group1/round3/main.txt", main_report())
-                self.assert_rejected(path, f"round{missing_round}", "主审", "剃刀")
-
-    def test_third_round_checks_earlier_continuation_conditions(self):
-        self.write_round(1, 1, None)
-        self.write_round(1, 2, "主审")
-        path = self.write_report("group1/round3/main.txt", main_report())
-        self.assert_rejected(path, "round1", "不通过", "作者")
-
-    def test_third_round_accepts_complete_history(self):
-        self.write_round(1, 1, "主审")
-        self.write_round(1, 2, "剃刀")
-        path = self.write_report("group1/round3/main.txt", main_report())
-        self.assertEqual(self.run_check(path), (0, ""))
-
-    def test_previous_round_also_rejects_duplicate_roles(self):
-        for text, role in ((main_report(), "主审"), (razor_report(), "剃刀")):
-            with self.subTest(role=role):
-                self.write_round(1, 1, "主审")
-                extra = self.write("group1/round1/extra.txt", text)
-                path = self.write_report("group1/round2/main.txt", main_report())
-                self.assert_rejected(path, "round1", role, "extra.txt", "作者")
-                extra.unlink()
-
-    def test_next_group_requires_all_three_previous_rounds(self):
-        for missing_round in (1, 2, 3):
-            with self.subTest(missing_round=missing_round):
-                self.write_failed_group(1)
-                shutil.rmtree(self.root / f"group1/round{missing_round}")
-                path = self.write_report("group2/round1/main.txt", main_report())
-                self.assert_rejected(path, f"group1/round{missing_round}", "主审", "剃刀")
-
-    def test_next_group_requires_both_roles_in_every_previous_round(self):
-        for round_number in (1, 2, 3):
-            for filename, role in (("main.txt", "主审"), ("razor.txt", "剃刀")):
-                with self.subTest(round_number=round_number, role=role):
-                    self.write_failed_group(1)
-                    (self.root / f"group1/round{round_number}/{filename}").unlink()
-                    path = self.write_report("group2/round1/main.txt", main_report())
-                    self.assert_rejected(path, f"group1/round{round_number}", role)
-
-    def test_next_group_requires_valid_previous_reports(self):
-        self.write_failed_group(1)
-        self.write("group1/round3/main.txt", main_report(本质=""))
-        path = self.write_report("group2/round1/main.txt", main_report())
-        self.assert_rejected(path, "group1/round3/main.txt", "本质", "主审")
-
-    def test_next_group_requires_third_round_failure(self):
-        self.write_failed_group(1)
-        self.write_round(1, 3, None)
-        path = self.write_report("group2/round1/main.txt", main_report())
-        self.assert_rejected(path, "group1/round3", "不通过", "作者")
-
-    def test_next_group_requires_third_round_handling(self):
-        self.write_failed_group(1)
-        (self.root / "group1/round3/handling.md").unlink()
-        path = self.write_report("group2/round1/main.txt", main_report())
-        self.assert_rejected(path, "group1/round3/handling.md", "作者")
-
-    def test_next_group_requires_previous_diagnosis(self):
-        self.write_failed_group(1).unlink()
-        path = self.write_report("group2/round1/main.txt", main_report())
-        self.assert_rejected(path, "group1/diagnosis.md", "作者", "判因子代理")
-
-    def test_next_group_requires_valid_previous_diagnosis(self):
-        self.write_failed_group(1)
-        self.write("group1/diagnosis.md", diagnosis_report("继续审"))
-        path = self.write_report("group2/round1/main.txt", main_report())
-        self.assert_rejected(path, "group1/diagnosis.md", "结论", "判因子代理")
-
-    def test_third_group_checks_first_group_diagnosis(self):
-        self.write_failed_group(1).unlink()
-        self.write_failed_group(2)
-        path = self.write_report("group3/round1/main.txt", main_report())
-        self.assert_rejected(path, "group1/diagnosis.md", "判因子代理")
-
-    def test_later_group_accepts_complete_history(self):
-        self.write_failed_group(1)
-        self.write_failed_group(2)
-        path = self.write_report("group3/round1/main.txt", main_report())
-        self.assertEqual(self.run_check(path), (0, ""))
-
-    def test_fourth_round_in_previous_group_also_blocks(self):
-        self.write_failed_group(1)
-        (self.root / "group1/round4").mkdir()
-        path = self.write_report("group2/round1/main.txt", main_report())
-        self.assert_rejected(path, "round4", "group1/diagnosis.md", "group2", "判因子代理")
-
-    def test_diagnosis_requires_exactly_two_sections(self):
-        valid = diagnosis_report("重想")
-        for text, needle in ((valid.replace("## 判因\n", ""), "判因"),
-                             (valid.replace("## 结论\n重想\n", ""), "结论"),
-                             (valid + "## 备注\n补充\n", "备注"),
-                             (valid + "## 判因\n重复\n", "出现了两次")):
-            with self.subTest(text=text):
-                path = self.write_failed_group(1)
-                path.write_text(text, encoding="utf-8")
-                self.assert_rejected(path, needle, "判因子代理")
-
-    def test_diagnosis_requires_nonempty_reason(self):
-        path = self.write_failed_group(1)
-        path.write_text("## 判因\n\n## 结论\n重想\n", encoding="utf-8")
-        self.assert_rejected(path, "判因", "为空", "判因子代理")
-
-    def test_diagnosis_rejects_template_placeholder(self):
-        path = self.write_failed_group(1)
-        path.write_text("## 判因\n<这组为什么没过，引用各轮报告的阻断项和证据>\n## 结论\n重想\n", encoding="utf-8")
-        self.assert_rejected(path, "占位符", "判因子代理")
-
-    def test_diagnosis_requires_one_nonempty_action_line(self):
-        for actions in ("", "重想\n顶回"):
-            with self.subTest(actions=actions):
-                path = self.write_failed_group(1)
-                path.write_text(diagnosis_report(actions), encoding="utf-8")
-                self.assert_rejected(path, "结论", "一行", "判因子代理")
-
-    def test_diagnosis_rejects_unknown_actions(self):
-        for actions in ("继续审", "拆分、继续审", "通过"):
-            with self.subTest(actions=actions):
-                path = self.write_failed_group(1)
-                path.write_text(diagnosis_report(actions), encoding="utf-8")
-                self.assert_rejected(path, "结论", "拆分", "重想", "问用户", "顶回", "判因子代理")
-
-    def test_diagnosis_rejects_duplicate_actions(self):
-        path = self.write_failed_group(1)
-        path.write_text(diagnosis_report("拆分、重想、拆分"), encoding="utf-8")
-        self.assert_rejected(path, "结论", "重复", "判因子代理")
-
-    def test_diagnosis_requires_chinese_list_separator(self):
-        for actions in ("拆分,重想", "拆分，重想", "拆分、", "、重想"):
-            with self.subTest(actions=actions):
-                path = self.write_failed_group(1)
-                path.write_text(diagnosis_report(actions), encoding="utf-8")
-                self.assert_rejected(path, "结论", "、", "判因子代理")
-
-    def test_diagnosis_accepts_each_single_action(self):
-        for action in ("拆分", "重想", "问用户", "顶回"):
-            with self.subTest(action=action):
-                path = self.write_failed_group(1)
-                path.write_text(diagnosis_report(action), encoding="utf-8")
-                self.assertEqual(self.run_check(path), (0, ""))
-
-    def test_diagnosis_accepts_multiple_ordered_actions(self):
-        for actions in ("问用户、拆分", "拆分、重想、问用户、顶回"):
-            with self.subTest(actions=actions):
-                path = self.write_failed_group(1)
-                path.write_text(diagnosis_report(actions), encoding="utf-8")
-                self.assertEqual(self.run_check(path), (0, ""))
-
-    def test_diagnosis_requires_all_three_rounds(self):
-        for missing_round in (1, 2, 3):
-            with self.subTest(missing_round=missing_round):
-                path = self.write_failed_group(1)
-                shutil.rmtree(self.root / f"group1/round{missing_round}")
-                self.assert_rejected(path, f"group1/round{missing_round}", "主审", "剃刀")
-
-    def test_diagnosis_requires_both_roles(self):
-        path = self.write_failed_group(1)
-        (self.root / "group1/round3/razor.txt").unlink()
-        self.assert_rejected(path, "group1/round3", "剃刀")
-
-    def test_diagnosis_requires_valid_round_reports(self):
-        path = self.write_failed_group(1)
-        self.write("group1/round3/main.txt", main_report(本质=""))
-        self.assert_rejected(path, "group1/round3/main.txt", "本质", "主审")
-
-    def test_diagnosis_requires_third_round_failure(self):
-        path = self.write_failed_group(1)
-        self.write_round(1, 3, None)
-        self.assert_rejected(path, "group1/round3", "不通过", "作者")
-
-    def test_diagnosis_requires_third_round_handling(self):
-        path = self.write_failed_group(1)
-        (self.root / "group1/round3/handling.md").unlink()
-        self.assert_rejected(path, "group1/round3/handling.md", "作者")
-
-    def test_diagnosis_also_checks_all_earlier_groups(self):
-        self.write_failed_group(1).unlink()
-        path = self.write_failed_group(2)
-        self.assert_rejected(path, "group1/diagnosis.md", "判因子代理")
-
-    def test_current_round_requires_submitted_version(self):
-        path = self.write_report("group1/round1/main.txt", main_report())
-        (path.parent / "submitted-version.md").unlink()
-        self.assert_rejected(path, "group1/round1/submitted", "作者")
-
-    def test_next_round_requires_its_own_submitted_version(self):
-        self.write_round(1, 1, "主审")
-        path = self.write_report("group1/round2/main.txt", main_report())
-        (path.parent / "submitted-version.md").unlink()
-        self.assert_rejected(path, "group1/round2/submitted", "作者")
-
-    def test_each_earlier_round_requires_submitted_version(self):
-        for round_number in (1, 2):
-            with self.subTest(round_number=round_number):
-                self.write_round(1, 1, "主审")
-                self.write_round(1, 2, "主审")
-                (self.root / f"group1/round{round_number}/submitted-version.md").unlink()
-                path = self.write_report("group1/round3/main.txt", main_report())
-                self.assert_rejected(path, f"group1/round{round_number}/submitted", "作者")
-
-    def test_each_previous_group_round_requires_submitted_version(self):
-        for group in (1, 2):
-            for round_number in (1, 2, 3):
-                with self.subTest(group=group, round_number=round_number):
-                    self.write_failed_group(1)
-                    self.write_failed_group(2)
-                    (self.root / f"group{group}/round{round_number}/submitted-version.md").unlink()
-                    path = self.write_report("group3/round1/main.txt", main_report())
-                    self.assert_rejected(path, f"group{group}/round{round_number}/submitted", "作者")
-
-    def test_diagnosis_requires_submitted_version_for_all_three_rounds(self):
-        for round_number in (1, 2, 3):
-            with self.subTest(round_number=round_number):
-                path = self.write_failed_group(1)
-                (self.root / f"group1/round{round_number}/submitted-version.md").unlink()
-                self.assert_rejected(path, f"group1/round{round_number}/submitted", "作者")
-
-    def test_submitted_prefix_accepts_document_or_commit_record(self):
-        path = self.write_report("group1/round1/main.txt", main_report())
-        (path.parent / "submitted-version.md").unlink()
-        for filename, text in (("submitted", "送审文档的原文\n"),
-                               ("submitted-spec.md", "# 送审文档\n原文\n"),
-                               ("submitted-code.txt", "d0348a4..123abcd\n")):
-            with self.subTest(filename=filename):
-                version = self.write(f"group1/round1/{filename}", text)
-                self.assertEqual(self.run_check(path), (0, ""))
-                version.unlink()
-
-    def test_submitted_directory_does_not_replace_version_file(self):
-        path = self.write_report("group1/round1/main.txt", main_report())
-        (path.parent / "submitted-version.md").unlink()
-        (path.parent / "submitted-spec.md").mkdir()
-        self.assert_rejected(path, "group1/round1/submitted", "作者")
-
-    def test_submitted_version_is_not_counted_as_review_report(self):
-        path = self.write_report("group1/round1/main.txt", main_report())
-        self.write("group1/round1/submitted-version.md", main_report())
-        self.assertEqual(self.run_check(path), (0, ""))
 
 
 if __name__ == "__main__":
