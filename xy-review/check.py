@@ -229,7 +229,7 @@ def check_round(directory, complete):
     reports, problems, failed = {"主审": [], "剃刀": []}, [], False
     files = [path for path in sorted(directory.iterdir()) if path.is_file()] if directory.is_dir() else []
     if not any(path.name.startswith("submitted") for path in files):
-        problems.append(f"缺少 {directory / 'submitted*'} 送审版本，请作者补齐：文档拷原文，代码写提交号或提交范围")
+        problems.append(f"缺少 {directory / 'submitted*'} 送审版本，请作者补齐")
     for path in files:
         if path.name == "handling.md" or path.name.startswith("submitted"):
             continue
@@ -257,6 +257,8 @@ def check_round(directory, complete):
 
 def check_path(path):
     """目录就是轮次记录；每次从头核整条历史，不依赖以前曾运行过检查。"""
+    if path.name == "handling.md" or path.name.startswith("submitted"):
+        return [f"{path}：普通报告不能使用保留名 handling.md 或 submitted*，这两类名字只给材料用；请作者另选报告文件名"]
     diagnosis = path.name == "diagnosis.md"
     group_directory = path.parent if diagnosis else path.parent.parent
     group_match = re.fullmatch(r"group([1-9][0-9]*)", group_directory.name)
@@ -274,8 +276,6 @@ def check_path(path):
         extra_rounds = [item.name for item in group.iterdir()
                         if item.is_dir() and re.fullmatch(r"round[0-9]+", item.name)
                         and int(item.name[5:]) > 3] if group.is_dir() else []
-        if number == group_number and round_number > 3 and path.parent.name not in extra_rounds:
-            extra_rounds.append(path.parent.name)
         if extra_rounds:
             return [f"{group} 出现 {'、'.join(sorted(extra_rounds))}，一组最多 3 轮；请作者先派判因子代理写 "
                     f"{group / 'diagnosis.md'}，按结论处理后再开 {group.parent / f'group{number + 1}'}"]
@@ -304,7 +304,6 @@ def check_path(path):
     if diagnosis:
         problems += [f"{path}：请判因子代理修正报告：{problem}" for problem in check_diagnosis(text)]
     else:
-        # 当前报告始终查内容，不能因为文件名属于处理记录或送审材料而跳过。
         sections, _ = split_sections(text)
         role = ("主审" if REPORT_KINDS["审查报告"][0] in sections else
                 "剃刀" if REPORT_KINDS["剃刀报告"][0] in sections else "审查者")

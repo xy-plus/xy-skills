@@ -302,11 +302,19 @@ class FileCheckTest(unittest.TestCase):
         path = self.write_report("group1/round1/main.txt", main_report(本质=""))
         self.assert_rejected(path, "本质", "为空", "主审")
 
-    def test_current_content_checks_cannot_be_skipped_by_artifact_filename(self):
-        for filename in ("handling.md", "submitted-report.md"):
-            with self.subTest(filename=filename):
-                path = self.write_report(f"group1/round1/{filename}", main_report(本质=""))
-                self.assert_rejected(path, "本质", "为空", "主审")
+    def test_review_reports_cannot_use_material_filenames(self):
+        self.write_round(1, 1, None)
+        for filename in ("handling.md", "submitted", "submitted-report.md"):
+            for role, text in (("主审", main_report()), ("剃刀", razor_report())):
+                with self.subTest(filename=filename, role=role):
+                    path = self.write(f"group1/round1/{filename}", text)
+                    self.assert_rejected(path, "handling.md", "submitted", "保留", "材料", "作者")
+
+    def test_review_report_cannot_replace_submitted_material(self):
+        for role, text in (("主审", main_report()), ("剃刀", razor_report())):
+            with self.subTest(role=role):
+                path = self.write("group1/round1/submitted-report.md", text)
+                self.assert_rejected(path, "submitted", "保留", "材料", "作者")
 
     def test_second_round_requires_first_round(self):
         path = self.write_report("group1/round2/main.txt", main_report())
