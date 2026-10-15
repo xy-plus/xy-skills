@@ -5,7 +5,10 @@
 仓库规范 1 到 7 条齐全且不重复；结论只有一行，是「通过」「改了就过」或「不通过」，并与各节一致：
 通过时查问题的地方（偏离、问题、删除清单、仓库规范七条）全是「无」，另两种至少一处不是。
 
-退出码：0 格式合格；1 格式不合格，逐条打印问题；2 用法错误。结论从报告里读。
+文件入口另查 group<G>/round<R>/ 路径、角色唯一、当前轮及全部前序轮的 submitted 送审版本，
+从 group1/round1 起的全部前序记录和每组三轮上限。
+判因报告固定为 group<G>/diagnosis.md，检查判因、结论两节及所在组的三轮材料。
+退出码：0 检查合格；1 不合格，逐条打印问题和补齐责任人；2 用法错误。结论从报告里读。
 """
 import pathlib
 import re
@@ -30,7 +33,7 @@ VERDICTS = ("通过", "改了就过", "不通过")
 # 「无」必须单独成项：后面紧跟标点、括号或行尾；前面可以有列表符。「无法」「无用」这类词，以及「无 docstring」这种空格隔开的真发现，都不算「无」。
 NONE_RE = re.compile(r"(?:[-*]\s+)?无(?:[，,、。；;：:（(]|$)")
 BARE_NONE_RE = re.compile(r"(?:[-*]\s+)?无[，,、。；;：:（(]*[）)]?")
-# 模板占位符就是 SKILL.md 两个报告模板里尖括号包着的那些话，从那里读，不另抄一份。
+# 模板占位符就是 SKILL.md 各报告模板里尖括号包着的那些话，从那里读，不另抄一份。
 TEMPLATE_PLACEHOLDERS = [
     piece
     for block in re.findall(r"```markdown\n(.*?)```", pathlib.Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8"), re.S)
@@ -196,12 +199,127 @@ def check(text):
     return problems
 
 
+def check_diagnosis(text):
+    """判因只查两节、非空原因和有序且不重复的处置，不重新编码各轮的阻断项。"""
+    sections, problems = split_sections(text)
+    for name in sections:
+        if name not in ("判因", "结论"):
+            problems.append(f"不认识的节「## {name}」，判因报告只能有：判因、结论")
+    for name in ("判因", "结论"):
+        if name not in sections:
+            problems.append(f"缺少「## {name}」")
+    if "判因" in sections:
+        reason = "\n".join(sections["判因"]).strip()
+        if not reason:
+            problems.append("判因为空，要引用各轮报告的阻断项和证据说明这组为什么没过")
+        if has_placeholder(reason):
+            problems.append("判因还留着模板占位符")
+    if "结论" in sections:
+        lines = [line.strip() for line in sections["结论"] if line.strip()]
+        actions = lines[0].split("、") if len(lines) == 1 else []
+        if not actions or any(action not in ("拆分", "重想", "问用户", "顶回") for action in actions):
+            problems.append("结论只能有一行，写「拆分」「重想」「问用户」「顶回」中的一种或几种，用「、」隔开")
+        elif len(actions) != len(set(actions)):
+            problems.append("结论里的走法不能重复")
+    return problems
+
+
+def check_round(directory, complete):
+    """每轮须留送审版本；按内容认角色，当前轮可缺另一角色，前序失败轮须有作者处理记录。"""
+    reports, problems, failed = {"主审": [], "剃刀": []}, [], False
+    files = [path for path in sorted(directory.iterdir()) if path.is_file()] if directory.is_dir() else []
+    if not any(path.name.startswith("submitted") for path in files):
+        problems.append(f"缺少 {directory / 'submitted*'} 送审版本，请作者补齐：文档拷原文，代码写提交号或提交范围")
+    for path in files:
+        if path.name == "handling.md" or path.name.startswith("submitted"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        sections, _ = split_sections(text)
+        kind = next((name for name, headings in REPORT_KINDS.items() if headings[0] in sections), None)
+        if kind is None:
+            continue  # 派审说明等文件不是报告，不靠文件名猜角色。
+        role = "主审" if kind == "审查报告" else "剃刀"
+        reports[role].append(path)
+        if complete:
+            problems += [f"{path}：请{role}修正报告：{problem}" for problem in check(text)]
+        verdict = [line.strip() for line in sections.get("结论", []) if line.strip()]
+        failed |= verdict == ["不通过"]
+    for role, paths in reports.items():
+        if complete and not paths:
+            problems.append(f"{directory}：缺少{role}报告，请作者安排{role}补齐")
+        elif len(paths) > 1:
+            problems.append(f"{directory}：同轮{role}报告只能有一份，发现："
+                            + "、".join(path.name for path in paths) + "；请作者核对轮次，修订后在下一轮派审")
+    if complete and failed and not (directory / "handling.md").is_file():
+        problems.append(f"缺少 {directory / 'handling.md'}，请作者补写每条意见怎么处理、对象改了什么")
+    return problems, failed
+
+
+def check_path(path):
+    """目录就是轮次记录；每次从头核整条历史，不依赖以前曾运行过检查。"""
+    diagnosis = path.name == "diagnosis.md"
+    group_directory = path.parent if diagnosis else path.parent.parent
+    group_match = re.fullmatch(r"group([1-9][0-9]*)", group_directory.name)
+    round_match = None if diagnosis else re.fullmatch(r"round([1-9][0-9]*)", path.parent.name)
+    if group_match is None or (not diagnosis and round_match is None):
+        if diagnosis:
+            return [f"{path}：判因报告位置不合，请作者交给判因子代理写到 <对象目录>/group<G>/diagnosis.md，G 从 1 起"]
+        return [f"{path}：报告位置不合，请作者指定 <对象目录>/group<G>/round<R>/<报告文件>，G 从 1 起，R 只能是 1、2、3"]
+
+    group_number = int(group_match.group(1))
+    round_number = 3 if diagnosis else int(round_match.group(1))
+    problems = []
+    for number in range(1, group_number + 1):
+        group = group_directory.parent / f"group{number}"
+        extra_rounds = [item.name for item in group.iterdir()
+                        if item.is_dir() and re.fullmatch(r"round[0-9]+", item.name)
+                        and int(item.name[5:]) > 3] if group.is_dir() else []
+        if number == group_number and round_number > 3 and path.parent.name not in extra_rounds:
+            extra_rounds.append(path.parent.name)
+        if extra_rounds:
+            return [f"{group} 出现 {'、'.join(sorted(extra_rounds))}，一组最多 3 轮；请作者先派判因子代理写 "
+                    f"{group / 'diagnosis.md'}，按结论处理后再开 {group.parent / f'group{number + 1}'}"]
+
+        completed_group = number < group_number or diagnosis
+        last_round = 3 if completed_group else round_number
+        previous_failed = False
+        for current_round in range(1, last_round + 1):
+            directory = group / f"round{current_round}"
+            if current_round > 1 and not previous_failed:
+                problems.append(f"{directory} 的上一轮 {group / f'round{current_round - 1}'} 没有「不通过」报告；"
+                                "请作者核对结论，只有不通过、处理完才在同组下一轮再审")
+            round_problems, previous_failed = check_round(directory, completed_group or current_round < round_number)
+            problems += round_problems
+        if completed_group and not previous_failed:
+            problems.append(f"{group / 'round3'} 没有「不通过」报告，这组未满足失败条件；请作者核对结论，不能判因或另开下一组")
+        if number < group_number:
+            report = group / "diagnosis.md"
+            if not report.is_file():
+                problems.append(f"缺少 {report}，请作者派判因子代理补齐，按结论处理后再开下一组")
+            else:
+                problems += [f"{report}：请判因子代理修正报告：{problem}"
+                             for problem in check_diagnosis(report.read_text(encoding="utf-8"))]
+
+    text = path.read_text(encoding="utf-8")
+    if diagnosis:
+        problems += [f"{path}：请判因子代理修正报告：{problem}" for problem in check_diagnosis(text)]
+    else:
+        # 当前报告始终查内容，不能因为文件名属于处理记录或送审材料而跳过。
+        sections, _ = split_sections(text)
+        role = ("主审" if REPORT_KINDS["审查报告"][0] in sections else
+                "剃刀" if REPORT_KINDS["剃刀报告"][0] in sections else "审查者")
+        problems += [f"{path}：请{role}修正报告：{problem}" for problem in check(text)]
+    return problems
+
+
 def main(argv):
     if len(argv) != 2:
         print("用法：check.py <报告路径>")
         return 2
-    with open(argv[1], encoding="utf-8") as f:
-        problems = check(f.read())
+    try:
+        problems = check_path(pathlib.Path(argv[1]).absolute())
+    except (OSError, UnicodeError) as error:
+        problems = [f"请作者核对报告路径与 UTF-8 文件，并安排对应的审查者或判因子代理补齐：{error}"]
     if problems:
         print("\n".join(problems))
         return 1

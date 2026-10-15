@@ -22,7 +22,7 @@ description: 讨论问题并可能改代码时的标准工作流程；按改动�
 要拆给多个代理并行或实现者换成较弱模型时，编排者先写一份只记决策的精简 plan；作者自查覆盖 spec、没有占位、前后一致，不派审，不在契约里单独成项。并行时照旧按 `dispatching-parallel-agents` 判断能不能并行、任务说明怎么写，各开工作树、各派一个，各审各合。
 
 1. 用 `brainstorming` 讨论并写 spec，每条要求注明来自哪条原话；小改动的 spec 只写几句，写明做法、改哪些文件和怎么测，每句注明原话出处；架构级照旧写完整 spec。
-2. 主审和剃刀按 `xy-review` 审 spec，审过才实现。同一份 spec 审了 3 轮仍不通过时，可能是 spec 太大，可开始考虑拆细（不强制）。
+2. 主审和剃刀按 `xy-review` 审 spec，审过才实现。
 3. 开工作树：先确认 `.worktrees/` 在被改的那个子仓的 .gitignore 里，再 `git worktree add .worktrees/<分支> -b <分支>`；树里装好依赖、跑一遍测试确认基线干净；不用 Claude Code 自带的 worktree 工具。派一个工作子代理按审过的 spec 自己规划，带 `test-driven-development` 实现；任务说明写明工作树的绝对路径，所有命令用绝对路径或 `git -C`，卡住或碰到 spec 没写的东西，就停下报告给编排者，由编排者决定，不等用户。最后一个任务是把 spec 里要留的信息和实现中的经验写进注释和 README、runbook、TODO 这类文档文件，spec 删掉后不丢信息。
 4. 把工作树变基到主分支最新提交，再终审：主审按 `requesting-code-review` 派，给它提交范围、只读，写审查报告；剃刀出剃刀报告；闸以两份报告的结论为准。
 5. 按 `verification-before-completion` 核过证据，再按 `finishing-a-development-branch` 走「本地合并」，不出菜单、不等用户，合完推主分支。主检出是大家共用的，不在那里跑测试，所以合并只许快进：`git merge --ff-only`，主分支指向的就是工作树里审过测过的那个提交；快进不了就回第 4 步。删工作树会连带删掉里面被忽略的产物，先确认没有进程或配置还在用它，要留的先挪走。
