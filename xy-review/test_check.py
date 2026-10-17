@@ -47,6 +47,11 @@ def razor_report(**overrides):
     )
 
 
+def diagnosis_report(diagnosis, conclusion):
+    """判因报告，正文和结论都显式传入。"""
+    return f"## 判因\n{diagnosis}\n## 结论\n{conclusion}\n"
+
+
 class CheckTest(unittest.TestCase):
     def assertProblems(self, text, *needles):
         problems = check(text)
@@ -58,11 +63,33 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(check(main_report()), [])
         self.assertEqual(check(razor_report()), [])
 
+    def test_diagnosis_report_passes(self):
+        self.assertEqual(check(diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "拆分、重想、问用户、顶回")), [])
+
+    def test_diagnosis_extra_section(self):
+        text = diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "拆分")
+        self.assertProblems(text + "## 备注\n补充说明\n", "不认识的节「## 备注」")
+
+    def test_diagnosis_conclusion_single_line(self):
+        self.assertProblems(diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "拆分\n重想"), "判因结论只能有一行")
+
+    def test_diagnosis_action_must_be_known(self):
+        self.assertProblems(diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "通过"), "判因结论", "走法")
+
+    def test_diagnosis_actions_must_not_repeat(self):
+        self.assertProblems(diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "拆分、拆分"), "判因结论", "不重复")
+
+    def test_diagnosis_must_not_be_empty(self):
+        self.assertProblems(diagnosis_report(" \n\t", "拆分"), "判因为空")
+
+    def test_diagnosis_must_not_copy_placeholder(self):
+        self.assertProblems(diagnosis_report("<用户真正要的是什么；若是修错，根源在哪>", "拆分"), "判因还留着模板占位符")
+
     def test_fail_with_findings(self):
         self.assertEqual(check(main_report(偏离="a.py:3 没改根源，在 b.py 兜底", 结论="不通过")), [])
         self.assertEqual(check(razor_report(删除清单="- 参数 x；删了丢什么：无\n- 分支 y；删了丢什么：无", 结论="改了就过")), [])
 
-    def test_report_must_be_one_of_the_two_kinds(self):
+    def test_report_must_match_one_kind(self):
         self.assertProblems("## 结论\n通过\n", "要么是审查报告")
         mixed = main_report().replace("## 结论\n", "## 铁律 3 奥卡姆剃刀\n留下清单：a：原话 1\n删除清单：无，问过\n旧代码删减：无，没有\n## 结论\n")
         self.assertProblems(mixed, "不认识的节「## 铁律 3 奥卡姆剃刀」")
