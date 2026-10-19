@@ -223,11 +223,15 @@ def main(argv):
         print("\n".join(problems))
         return 1
     path = pathlib.Path(argv[1]).resolve()
-    group = path.parent.parent.name
+    round_name, group = path.parent.name, path.parent.parent.name
     sections, _ = split_sections(text)
-    # 派判因子代理所用的工具不属于 xy-skills，所以这里只提醒、不拦截。
-    if (path.parent.name == "round3" and re.fullmatch(r"group[1-9]\d*", group)
-            and "\n".join(sections["结论"]).strip() == "不通过"):
+    # 报告放哪、第几轮后派判因，SKILL.md 都写明了；派子代理所用的工具不属于 xy-skills，所以这里只提醒、不拦截。
+    if "判因" in sections:
+        if not (path.name == "diagnosis.md" and re.fullmatch(r"group[1-9]\d*", round_name)):
+            print("提醒：判因报告按 xy-review 写在 group<G>/diagnosis.md")
+    elif not (re.fullmatch(r"round[123]", round_name) and re.fullmatch(r"group[1-9]\d*", group)):
+        print("提醒：报告路径不是 group<G>/round<R>/（R 只能是 1、2、3），按 xy-review 同一对象的每轮都写到那里，第 3 轮仍不通过就先派判因子代理")
+    elif round_name == "round3" and "\n".join(sections["结论"]).strip() == "不通过":
         print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.md，按结论处理后再开下一组")
     return 0
 
