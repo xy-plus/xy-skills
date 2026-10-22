@@ -5,6 +5,8 @@ description: 讨论问题并可能改代码时的标准工作流程；按改动�
 
 ## 改动分档
 
+和用户讨论之前，先加载 `brainstorming` 和 `sync-think`。
+
 动手前按 superpowers [`brainstorming` 的 Three Paths](https://github.com/obra/superpowers/blob/v6.4.1/skills/brainstorming/SKILL.md) 分档，在消息里说出档位和原因，不等回复；哪件事归哪档以原文为准，不自己另加判据；各档怎么走按本流程。拿不准走重的那档；只升不降，做到一半发现比预想复杂就停下说明、升档。
 
 - 只调查：要的是一个答案（能不能做、行不行），不是要留下的代码；查完给结论，为查写的代码只当一次性的，不合入；不走下面编号步骤。
