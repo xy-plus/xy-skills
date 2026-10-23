@@ -410,7 +410,8 @@ def read_inbox(root, session_id):
     if links.exists():
         for row in read_text(links).splitlines():
             match = re.fullmatch(r"([1-9][0-9]*) 不必跟进 (.+)", row)
-            if match is None or int(match[1]) not in quotes or int(match[1]) in dismissed:
+            if (match is None or not match[2].strip() or int(match[1]) not in quotes
+                    or int(match[1]) in dismissed):
                 raise GoalError(f"{links}: inbox 映射格式错误")
             dismissed[int(match[1])] = match[2]
     return quotes, dismissed
@@ -725,6 +726,7 @@ def execute(options, *, root, session_id, claude_pid, now):
             if path.parent != root or path.name in ("archive", "inbox"):
                 raise GoalError(f"契约目录必须在根目录内：{path}")
             contract = Contract(path)
+            find_contract(root, contract.metadata["session_id"])
             try:
                 os.kill(int(contract.metadata["claude_pid"]), 0)
             except ProcessLookupError:

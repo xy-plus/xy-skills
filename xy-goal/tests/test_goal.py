@@ -655,6 +655,29 @@ class GoalTests(unittest.TestCase):
         self.hook("hook-prompt", {"session_id": other_session, "prompt": "继续记录"})
         self.assertEqual((inbox / "3.md").read_text(), "继续记录")
 
+    def test_adopt_refuses_duplicate_contracts_of_the_previous_owner(self):
+        contract = self.open_goal()
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        metadata = (contract / "goal.md").read_text()
+        (contract / "goal.md").write_text(metadata.replace(f'"{self.pid}"', f'"{child.pid}"'))
+        shutil.copytree(contract, self.root / "duplicate-old-owner")
+        self.session = "new-session"
+        self.rejects("adopt", str(contract), message="多份契约")
+
+    def test_hook_refuses_blank_reason_in_inbox_mapping_without_appending_quote(self):
+        inbox = self.root / "inbox" / self.session
+        inbox.mkdir(parents=True)
+        (inbox / "1.md").write_text("原消息")
+        links = inbox / "links.md"
+        links.write_text("1 不必跟进    \n")
+        before = self.files()
+        code, output, errors = self.run_goal("hook-prompt", session=None, pid=None,
+                                            stdin=json.dumps({"session_id": self.session, "prompt": "新消息"}))
+        self.assertEqual(code, 1, output + errors)
+        self.assertIn(str(links), errors)
+        self.assertEqual(self.files(), before)
+
 
 if __name__ == "__main__":
     unittest.main()
