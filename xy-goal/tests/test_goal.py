@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from unittest import mock
 
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parents[1]
@@ -611,6 +612,48 @@ class GoalTests(unittest.TestCase):
         quotes.write_text(original)
         old.write_text(old.read_text().replace(f"session: {self.pid}", "session: 会话名"))
         self.rejects("migrate", str(old), message="session")
+
+    def test_failed_mapping_write_rolls_back_task_update(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "发布")
+        self.quote(contract, 2, "加严判据")
+        self.add_task(1)
+        real_replace = os.replace
+        def cannot_replace_links(source, destination):
+            if Path(destination) == contract / "links.md":
+                raise PermissionError("模拟映射文件写入失败")
+            return real_replace(source, destination)
+        with mock.patch("goal.os.replace", side_effect=cannot_replace_links):
+            self.rejects("update", "T1", "--field", "判据", "--value", "两轮通过",
+                         "--source", "2", message="模拟映射文件写入失败")
+
+    def test_cleanup_does_not_follow_archive_directory_symlink(self):
+        outside_cleanup = self.root / "do-not-clean"
+        outside_cleanup.mkdir()
+        important = outside_cleanup / "keep.md"
+        important.write_text("不属于归档")
+        old = self.now.timestamp() - 31 * 86400
+        os.utime(important, (old, old))
+        (self.root / "archive").symlink_to(outside_cleanup, target_is_directory=True)
+        self.open_goal()
+        self.assertTrue(important.exists(), "不能沿软链清理 archive/inbox 之外的文件")
+
+    def test_inbox_cleanup_removes_mapping_to_expired_quote_and_keeps_recording(self):
+        other_session = "other-session"
+        notification = "<task-notification><task-id>j</task-id><status>done</status><summary>完成</summary></task-notification>"
+        self.hook("hook-prompt", {"session_id": other_session, "prompt": notification})
+        self.hook("hook-prompt", {"session_id": other_session, "prompt": "近期消息"})
+        inbox = self.root / "inbox" / other_session
+        old = self.now.timestamp() - 31 * 86400
+        fresh = self.now.timestamp() - 86400
+        os.utime(inbox / "1.md", (old, old))
+        os.utime(inbox / "2.md", (fresh, fresh))
+        os.utime(inbox / "links.md", (fresh, fresh))
+        self.open_goal()
+        self.assertFalse((inbox / "1.md").exists())
+        self.assertEqual((inbox / "2.md").read_text(), "近期消息")
+        self.hook("hook-prompt", {"session_id": other_session, "prompt": "继续记录"})
+        self.assertEqual((inbox / "3.md").read_text(), "继续记录")
 
 
 if __name__ == "__main__":

@@ -108,8 +108,11 @@ def quote_files(directory, *, inbox):
 
 
 def write_files(changes, removals):
-    """调用前完成全部语义校验；先写好临时文件，原子替换每个文件，不留下半个字段。"""
+    """先校验、写临时文件，再替换；I/O 失败也回滚已经替换的文件。"""
     staged = {}
+    originals = {path: path.read_bytes() if path.exists() else None
+                 for path in set(changes) | set(removals)}
+    committed = []
     try:
         for path, content in changes.items():
             with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".goal-", delete=False) as output:
@@ -117,8 +120,23 @@ def write_files(changes, removals):
                 output.write(content.encode("utf-8"))
         for path, temporary in staged.items():
             os.replace(temporary, path)
+            committed.append(path)
         for path in removals:
             path.unlink()
+            committed.append(path)
+    except BaseException:
+        for path in reversed(committed):
+            if originals[path] is None:
+                path.unlink(missing_ok=True)
+            else:
+                with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".goal-", delete=False) as output:
+                    temporary = Path(output.name)
+                    output.write(originals[path])
+                try:
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        raise
     finally:
         for temporary in staged.values():
             temporary.unlink(missing_ok=True)
@@ -439,7 +457,8 @@ def publish_contract(root, destination, metadata, quotes, tasks, done, links, ex
 def parse_legacy_quotes(path):
     text = read_text(path)
     matches = list(re.finditer(r"^（原话\s+([0-9]+)\s*→\s*(.*?)）", text, re.MULTILINE))
-    if text[:matches[0].start()].strip() if matches else text.strip():
+    prefix = text[:matches[0].start()] if matches else text
+    if prefix.strip():
         raise GoalError(f"{path}: 原话文件必须从顶格标注开始")
     if len(list(re.finditer(r"^（原话", text, re.MULTILINE))) != len(matches):
         raise GoalError(f"{path}: 原话顶格标注格式错误")
@@ -583,15 +602,32 @@ def cleanup_old_files(root, now):
     cutoff = now.timestamp() - 30 * 86400
     for name in ("archive", "inbox"):
         directory = root / name
+        if directory.is_symlink():
+            if directory.lstat().st_mtime < cutoff:
+                directory.unlink()
+            continue
         if not directory.exists():
             continue
         # 只看每个文件自己的 mtime；目录不按年龄整棵删除，也不沿软链走出根目录。
         for current, directories, files in os.walk(directory, topdown=False, followlinks=False):
             current = Path(current)
+            expired_quotes = set()
             for child in files + [child for child in directories if (current / child).is_symlink()]:
                 path = current / child
                 if path.lstat().st_mtime < cutoff:
                     path.unlink()
+                    if re.fullmatch(r"[1-9][0-9]*\.md", child):
+                        expired_quotes.add(int(path.stem))
+            links = current / "links.md"
+            if name == "inbox" and expired_quotes and links.exists():
+                # 自动标记随过期原话一起移除，避免清理制造悬空映射、阻塞后续 hook。
+                rows = read_text(links).splitlines(keepends=True)
+                retained = []
+                for row in rows:
+                    match = re.fullmatch(r"([1-9][0-9]*) 不必跟进 .+\n?", row)
+                    if match is None or int(match[1]) not in expired_quotes:
+                        retained.append(row)
+                write_files({links: "".join(retained)}, [])
             if not any(current.iterdir()):
                 current.rmdir()
 
