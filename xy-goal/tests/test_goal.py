@@ -834,18 +834,28 @@ class GoalTests(unittest.TestCase):
         self.assertIn("\n （原话 99 → T404）用户贴的片段", (old.with_suffix("") / "quotes" / "1.md").read_text())
 
     def test_migrate_discards_known_legacy_notes_header(self):
-        old, _ = self.legacy_contract()
-        old.write_text(old.read_text().replace("\n## 清单", "\n笔记：archive/legacy.notes.md\n## 清单"))
-        self.succeeds("migrate", str(old))
-        contract = old.with_suffix("")
-        self.assertEqual({p.name for p in contract.iterdir()},
-                         {"goal.md", "quotes", "tasks", "done", "links.md"})
-        self.assertEqual(len(list((contract / "tasks").iterdir())), 4)
-        self.assertEqual(len(list((contract / "done").iterdir())), 4)
-        self.assertEqual(len(list((contract / "quotes").iterdir())), 7)
-        self.assertEqual({row.split(": ", 1)[0] for row in (contract / "goal.md").read_text().splitlines()},
-                         {"target", "session_id", "claude_pid"})
-        self.assertFalse(old.exists())
+        original_root = self.root
+        expected = None
+        for index, notes_header in enumerate(("", "笔记：\n", "笔记：archive/legacy.notes.md\n")):
+            with self.subTest(notes_header=notes_header):
+                self.root = original_root / str(index)
+                self.root.mkdir()
+                old, _ = self.legacy_contract()
+                old.write_text(old.read_text().replace("\n## 清单", "\n" + notes_header + "## 清单"))
+                self.succeeds("migrate", str(old))
+                contract = old.with_suffix("")
+                self.assertEqual({p.name for p in contract.iterdir()},
+                                 {"goal.md", "quotes", "tasks", "done", "links.md"})
+                self.assertEqual(len(list((contract / "tasks").iterdir())), 4)
+                self.assertEqual(len(list((contract / "done").iterdir())), 4)
+                self.assertEqual(len(list((contract / "quotes").iterdir())), 7)
+                self.assertEqual({row.split(": ", 1)[0] for row in (contract / "goal.md").read_text().splitlines()},
+                                 {"target", "session_id", "claude_pid"})
+                self.assertFalse(old.exists())
+                if expected is None:
+                    expected = self.files()
+                else:
+                    self.assertEqual(self.files(), expected)
 
     def test_migrate_refuses_unknown_landing_and_non_numeric_session(self):
         old, _ = self.legacy_contract()

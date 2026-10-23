@@ -375,7 +375,7 @@ def parser():
         command.add_argument("--claude-pid", type=int, required=True,
                              help='在 Claude Code 的 Bash 中用 "$PPID" 显式传入本会话进程号')
     adding = commands.add_parser("add")
-    for name in ("title", "criteria", "state", "pointer"):
+    for name in TASK_FIELDS.values():
         adding.add_argument(f"--{name}", required=True)
     adding.add_argument("--source", type=int, nargs="+", required=True)
     updating = commands.add_parser("update")
@@ -411,7 +411,7 @@ def root_lock(root):
 def automatic_reason(text, contract):
     # hook 没有可靠的来源字段。只认完整正文；人手完整粘贴的通知也会命中，
     # 所以保留原文，关闭前由新开的子代理复核所有「不必跟进」。
-    if contract is not None and text == timer_prompt(contract):
+    if text == timer_prompt(contract):
         return "自动：本契约定时提示"
     if (text.startswith("<task-notification>") and text.endswith("</task-notification>")
             and all(re.search(f"<{tag}>.*?</{tag}>", text, re.DOTALL)
@@ -451,9 +451,6 @@ def remove_temporary_path(path):
 @contextmanager
 def consume_inputs(paths):
     """输入先移出可领取的位置；主体失败放回，成功后删除失败只警告。"""
-    if not paths:
-        yield
-        return
     moved = []
     try:
         for source in paths:
@@ -545,7 +542,6 @@ def parse_legacy_checklist(path, claude_pid):
             continue
         # 已知旧清单还会指向 archive 的笔记；只丢弃这行元数据，不读取或复制笔记。
         if row.startswith("笔记："):
-            require_text(row[len("笔记："):], f"{path}: 笔记指针")
             continue
         match = re.fullmatch(r"(session|cron_job_id)\s*:\s*(.+)", row)
         if match is None or match[1] in header:
@@ -709,10 +705,11 @@ def record_hook(root, session_id, text):
     try:
         with output:
             output.write(text)
-        reason = automatic_reason(text, path)
-        if contract is not None and reason is not None:
-            contract.dismissed[number] = reason
-            write_files({contract.path / "links.md": contract.links_text()}, [])
+        if contract is not None:
+            reason = automatic_reason(text, path)
+            if reason is not None:
+                contract.dismissed[number] = reason
+                write_files({contract.path / "links.md": contract.links_text()}, [])
     except BaseException:
         quote.unlink()
         raise
@@ -763,13 +760,13 @@ def execute(options, *, root, session_id, claude_pid, now):
             if path.parent != root or path.name in ("archive", "inbox"):
                 raise GoalError(f"契约目录必须在根目录内：{path}")
             contract = Contract(path)
-            # 新会话尚未绑定不代表旧所有者唯一；接管前也核原会话的重复绑定。
-            find_contract(root, contract.metadata["session_id"])
             if contract.metadata["session_id"] == session_id:
                 # --resume 沿用会话 id。同会话只刷新 PID，不领取或改动其他内容。
                 contract.metadata["claude_pid"] = str(claude_pid)
                 write_files({path / "goal.md": encode_fields(contract.metadata)}, [])
             else:
+                # 本会话已在入口核过；新会话接管还须核旧所有者的重复绑定。
+                find_contract(root, contract.metadata["session_id"])
                 try:
                     os.kill(int(contract.metadata["claude_pid"]), 0)
                 except ProcessLookupError:
