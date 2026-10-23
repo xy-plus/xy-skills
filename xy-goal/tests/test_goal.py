@@ -27,7 +27,7 @@ class GoalTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.session = "session-main"
-        self.pid = os.getpid()
+        self.pid = os.getppid()
         self.now = datetime(2026, 10, 24, 9, 30)
 
     def run_goal(self, *arguments, session, pid, stdin):
@@ -480,6 +480,50 @@ class GoalTests(unittest.TestCase):
         return subprocess.run([sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
                                "--root", str(self.root), *arguments],
                               env=environment, capture_output=True, text=True, check=False)
+
+    def live_process(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        def stop():
+            if child.poll() is None:
+                child.terminate()
+            child.wait()
+        self.addCleanup(stop)
+        return child
+
+    def test_open_refuses_live_or_dead_non_ancestor_pid(self):
+        child = self.live_process()
+        original_root = self.root
+        for state in ("live", "dead"):
+            with self.subTest(state=state):
+                if state == "dead":
+                    child.terminate()
+                    child.wait()
+                self.root = original_root / state
+                self.pid = child.pid
+                self.rejects("open", "release", "目标", message="祖先")
+                self.assertFalse(list(self.root.glob("*/goal.md")))
+
+    def test_migrate_cannot_take_foreign_live_contract_by_copying_its_pid(self):
+        child = self.live_process()
+        self.pid = child.pid
+        old, _ = self.legacy_contract()
+        self.session = "unrelated-session"
+        before = self.files()
+        result = self.cli_command("migrate", str(old), "--claude-pid", str(child.pid))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("祖先", result.stderr)
+        self.assertEqual(self.files(), before)
+        self.assertIsNone(child.poll())
+
+    def test_adopt_refuses_non_ancestor_pid_before_changing_owner(self):
+        contract = self.open_goal()
+        old = subprocess.Popen([sys.executable, "-c", "pass"])
+        old.wait()
+        metadata = contract / "goal.md"
+        metadata.write_text(metadata.read_text().replace(f'"{self.pid}"', f'"{old.pid}"'))
+        self.session = "unrelated-session"
+        self.pid = self.live_process().pid
+        self.rejects("adopt", str(contract), message="祖先")
 
     def test_cli_records_bash_parent_pid(self):
         environment = os.environ.copy()

@@ -685,6 +685,17 @@ def record_hook(root, session_id, text):
 def require_pid(claude_pid):
     if not isinstance(claude_pid, int) or isinstance(claude_pid, bool) or claude_pid <= 0:
         raise GoalError("本会话的 claude 进程号必须是正整数；" + PID_USAGE)
+    # 只核数字父链，不按 comm/argv[0] 认程序；抄别人的活 PID 也不能取得归属。
+    current = os.getpid()
+    try:
+        while current > 1:
+            fields = (Path("/proc") / str(current) / "stat").read_bytes().rsplit(b")", 1)[1].split()
+            current = int(fields[1])
+            if current == claude_pid:
+                return
+    except (OSError, ValueError, IndexError) as error:
+        raise GoalError(f"无法核对调用进程的祖先：{error}；{PID_USAGE}") from error
+    raise GoalError(f"进程 {claude_pid} 不是当前调用进程的祖先；{PID_USAGE}")
 
 
 def execute(options, *, root, session_id, claude_pid, now):
