@@ -318,6 +318,57 @@ class GoalTests(unittest.TestCase):
         self.assertFalse(contract.exists())
         self.assertEqual(other.read_text(), "别的文件")
 
+    def contract_with_legacy_done(self):
+        """直接写已迁入 done/ 的账本结构，不读取真实契约或调用旧格式入口。"""
+        contract = self.open_goal()
+        self.quote(contract, 1, "交付实验报告")
+        self.quote(contract, 396, "这个 early stop 就作为我们现在的标准流程了")
+        records = {
+            "T1": "- T1 实验报告（docs/experiments/report.md；验收 终审通过，verify.sh rc=0）\n",
+            "T125": "- [~] T125 两次搜参续跑（原话 396：「这个 early stop 就作为我们现在的标准流程了」）\n",
+            "T500": "- T500 批准清单匹配（spec.md 第三稿；验收 主审第二轮通过）\n旧记录无出处\n",
+        }
+        for task, text in records.items():
+            (contract / "done" / f"{task}.md").write_text(text, encoding="utf-8")
+        (contract / "links.md").write_text("1 T1\n396 T125\n", encoding="utf-8")
+        return contract
+
+    def test_show_reads_legacy_done_without_listing_closed_tasks(self):
+        self.contract_with_legacy_done()
+        before = self.files()
+        self.assertEqual(self.succeeds("show"), "目标：交付新版本\n还没处理的原话：无\n")
+        self.assertEqual(self.files(), before)
+
+    def test_check_reads_legacy_done_without_changing_records(self):
+        contract = self.contract_with_legacy_done()
+        before = self.files()
+        self.assertEqual(self.succeeds("check"), f"通过：{contract}\n")
+        self.assertEqual(self.files(), before)
+
+    def test_close_removes_contract_with_legacy_done(self):
+        contract = self.contract_with_legacy_done()
+        self.succeeds("close")
+        self.assertFalse(contract.exists())
+
+    def test_add_does_not_reuse_legacy_done_numbers(self):
+        contract = self.contract_with_legacy_done()
+        self.quote(contract, 397, "新增发布要求")
+        self.assertEqual(self.add_task(397), "T501\n")
+        self.assertTrue((contract / "tasks" / "T501.md").exists())
+        self.succeeds("check")
+
+    def test_check_rejects_legacy_done_with_inconsistent_sources(self):
+        original_root = self.root
+        for problem, links, message in (
+                ("missing-body-source", "1 T1\n1 T125\n396 不必跟进 已答\n", "账本正文原话缺少映射"),
+                ("missing-source-marker", "396 T125\n1 不必跟进 已答\n", "旧记录无出处标记与映射不符"),
+                ("mapped-without-source", "1 T1\n1 T500\n396 T125\n", "旧记录无出处标记与映射不符")):
+            with self.subTest(problem=problem):
+                self.root = original_root / problem
+                contract = self.contract_with_legacy_done()
+                (contract / "links.md").write_text(links, encoding="utf-8")
+                self.rejects("check", message=message)
+
     def test_all_commands_refuse_corrupt_contract_files_and_name_the_file(self):
         contract = self.open_goal()
         self.quote(contract, 1, "发布")
