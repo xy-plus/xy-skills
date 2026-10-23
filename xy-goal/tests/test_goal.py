@@ -323,6 +323,41 @@ class GoalTests(unittest.TestCase):
         self.assertIn("5000", output.splitlines()[-1])
         self.succeeds("check")
 
+    def test_unicode_line_separators_round_trip_in_native_fields(self):
+        original_root = self.root
+        for separator in ("\u2028", "\u2029", "\u0085"):
+            for operation in ("add", "update", "accept"):
+                with self.subTest(separator=repr(separator), operation=operation):
+                    self.root = original_root / f"{ord(separator)}-{operation}"
+                    contract = self.open_goal()
+                    self.quote(contract, 1, "按要求完成")
+                    text = "甲" + separator + "乙"
+                    if operation == "add":
+                        self.succeeds("add", "--title", text, "--criteria", "通过", "--source", "1",
+                                      "--state", "在办", "--pointer", "无")
+                    else:
+                        self.add_task(1)
+                        if operation == "update":
+                            self.succeeds("update", "T1", "--field", "指针", "--value", text)
+                        else:
+                            self.succeeds("accept", "T1", "--verdict", text)
+                    self.succeeds("check")
+                    saved = goal.Contract(contract)
+                    if operation == "accept":
+                        self.assertEqual(saved.done["T1"]["verdict"], text)
+                    else:
+                        self.assertEqual(saved.tasks["T1"]["title" if operation == "add" else "pointer"], text)
+                        self.assertEqual(len(self.succeeds("show").splitlines()), 6)
+
+    def test_dismiss_rejects_all_record_line_breaks_before_writing(self):
+        original_root = self.root
+        for separator in ("\u2028", "\u2029", "\u0085", "\v", "\f", "\x1c", "\x1d", "\x1e"):
+            with self.subTest(separator=repr(separator)):
+                self.root = original_root / str(ord(separator))
+                contract = self.open_goal()
+                self.quote(contract, 1, "问题已回答")
+                self.rejects("dismiss", "1", "--reason", "甲" + separator + "乙", message="一行")
+
     def test_required_arguments_and_empty_fields_are_rejected_without_writes(self):
         self.rejects("open", "release", message="target")
         self.rejects("open", "../escape", "目标", message="slug")

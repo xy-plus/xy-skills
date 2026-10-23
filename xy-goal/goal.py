@@ -23,6 +23,7 @@ ITEM_LIMIT = 300
 TOTAL_LIMIT = 5000
 TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
 GOAL_FIELDS = ("target", "session_id", "claude_pid")
+LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
 PID_USAGE = ('请在 Claude Code 的 Bash 工具中运行，在 open/adopt/migrate 命令后传入 '
              '--claude-pid "$PPID"（由该 Bash 展开）')
 # 迁入的账本只保留原行，不能为旧记录补造判据或验收字段；读取 done/ 时仍需认它。
@@ -71,7 +72,8 @@ def read_text(path):
 
 def read_fields(path, names):
     try:
-        rows = read_text(path).splitlines()
+        # 字段只用物理 LF 分行。JSON 字符串中的 U+2028 等仍是值的一部分。
+        rows = read_text(path).removesuffix("\n").split("\n")
         values = {}
         for row in rows:
             name, value = row.split(": ", 1)
@@ -277,7 +279,8 @@ class Contract:
         warnings = []
         for task, values in self.tasks.items():
             # 保持清单每项四行；原值中的换行在此显示为转义，不改文件里的值。
-            display = {key: value.replace("\r", "\\r").replace("\n", "\\n")
+            display = {key: value.translate({ord(char): json.dumps(char, ensure_ascii=True)[1:-1]
+                                             for char in LINE_BREAKS})
                        for key, value in values.items()}
             item = (f"{task} {display['title']}\n  判据：{display['criteria']}\n"
                     f"  出处：原话 {'、'.join(map(str, self.sources(task)))}\n"
@@ -330,7 +333,7 @@ class Contract:
         elif command == "dismiss":
             self.require_sources([options.quote])
             require_text(options.reason, "原因")
-            if "\n" in options.reason or "\r" in options.reason:
+            if any(char in options.reason for char in LINE_BREAKS):
                 raise GoalError("原因必须写成一行")
             self.dismissed[options.quote] = options.reason
         else:
