@@ -23,6 +23,8 @@ ITEM_LIMIT = 300
 TOTAL_LIMIT = 5000
 TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
 GOAL_FIELDS = ("target", "session_id", "claude_pid")
+PID_USAGE = ('请在 Claude Code 的 Bash 工具中运行，在 open/adopt/migrate 命令后传入 '
+             '--claude-pid "$PPID"（由该 Bash 展开）')
 # 迁入的账本只保留原行，不能为旧记录补造判据或验收字段；读取 done/ 时仍需认它。
 LEDGER_ACCEPTED = re.compile(r"^-\s+(T[1-9][0-9]*)\s+.+（.+；验收\s+[^）]+）$")
 LEDGER_CANCELLED = re.compile(r"^-\s+\[~\]\s+(T[1-9][0-9]*)\s+.+（原话\s+([1-9][0-9]*)：「[^」]+」）$")
@@ -34,6 +36,8 @@ class GoalError(ValueError):
 
 class ArgumentParser(argparse.ArgumentParser):
     def error(self, message):
+        if "--claude-pid" in message:
+            message += "；" + PID_USAGE
         raise GoalError(message)
 
 
@@ -354,6 +358,9 @@ def parser():
     adopting.add_argument("directory")
     migrating = commands.add_parser("migrate")
     migrating.add_argument("checklist")
+    for command in (opening, adopting, migrating):
+        command.add_argument("--claude-pid", type=int, required=True,
+                             help='在 Claude Code 的 Bash 中用 "$PPID" 显式传入本会话进程号')
     adding = commands.add_parser("add")
     for name in ("title", "criteria", "state", "pointer"):
         adding.add_argument(f"--{name}", required=True)
@@ -699,7 +706,7 @@ def record_hook(root, session_id, text):
 
 def require_pid(claude_pid):
     if not isinstance(claude_pid, int) or isinstance(claude_pid, bool) or claude_pid <= 0:
-        raise GoalError("未找到本会话的 claude 进程号")
+        raise GoalError("本会话的 claude 进程号必须是正整数；" + PID_USAGE)
 
 
 def execute(options, *, root, session_id, claude_pid, now):
@@ -769,10 +776,13 @@ def execute(options, *, root, session_id, claude_pid, now):
     return 0
 
 
-def main(arguments, *, root, session_id, claude_pid, now):
-    """依赖全部显式传入；测试不用真实家目录、会话或时钟。"""
+def main(arguments, *, root, session_id, now):
+    """根目录、会话、时钟显式传入；进程号只取命令参数，测试也走同一入口。"""
     try:
         options = parser().parse_args(arguments)
+        # Claude Code 的 Bash 的 $PPID 是本会话 claude。由该 Bash 展开后传入，
+        # 不依赖进程名、argv[0]，也不依赖未公开保证的 CLAUDE_PID 环境变量。
+        claude_pid = options.claude_pid if options.command in ("open", "adopt", "migrate") else None
         incoming = None
         if options.command.startswith("hook-"):
             incoming = hook_input(options.command)
@@ -791,34 +801,14 @@ def main(arguments, *, root, session_id, claude_pid, now):
         return 1
 
 
-def claude_process_id():
-    # Bash 的 PPID 才是 claude；Python 的直接父进程有时只是临时 shell。
-    # 沿 Linux 进程祖先找 claude，不把临时 shell 写成会话所有者。
-    pid = os.getppid()
-    while pid > 1:
-        process = Path("/proc") / str(pid)
-        command = (process / "cmdline").read_bytes().split(b"\0", 1)[0].decode("utf-8")
-        name = (process / "comm").read_text(encoding="utf-8").strip()
-        if name in ("claude", "claude-deepseek") or Path(command).name in ("claude", "claude-deepseek"):
-            return pid
-        fields = (process / "stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
-        pid = int(fields[1])
-    raise GoalError("未找到本会话的 claude 进程号；请在 Claude Code 的 Bash 中调用")
-
-
 def cli(arguments):
     try:
         entry = ArgumentParser(description="xy-goal；根目录必须显式提供")
         entry.add_argument("--root", required=True)
         entry.add_argument("arguments", nargs=argparse.REMAINDER)
         options = entry.parse_args(arguments)
-        command = parser().parse_args(options.arguments).command
-        session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
-        if not command.startswith("hook-"):
-            require_name(session_id, "CLAUDE_CODE_SESSION_ID")
-        pid = claude_process_id() if command in ("open", "adopt", "migrate") else None
-        return main(options.arguments, root=options.root, session_id=session_id,
-                    claude_pid=pid, now=datetime.now())
+        return main(options.arguments, root=options.root,
+                    session_id=os.environ.get("CLAUDE_CODE_SESSION_ID"), now=datetime.now())
     except (GoalError, OSError, UnicodeError) as error:
         print(error, file=sys.stderr)
         return 1

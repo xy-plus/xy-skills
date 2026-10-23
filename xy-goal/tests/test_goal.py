@@ -6,6 +6,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -30,13 +31,16 @@ class GoalTests(unittest.TestCase):
         self.now = datetime(2026, 10, 24, 9, 30)
 
     def run_goal(self, *arguments, session, pid, stdin):
+        command_arguments = list(arguments)
+        if arguments and arguments[0] in ("open", "adopt", "migrate") and pid is not None:
+            command_arguments.extend(("--claude-pid", str(pid)))
         output, errors = StringIO(), StringIO()
         with redirect_stdout(output), redirect_stderr(errors):
             old_stdin = sys.stdin
             sys.stdin = StringIO(stdin)
             try:
-                code = goal.main(list(arguments), root=self.root,
-                                 session_id=session, claude_pid=pid, now=self.now)
+                code = goal.main(command_arguments, root=self.root,
+                                 session_id=session, now=self.now)
             finally:
                 sys.stdin = old_stdin
         return code, output.getvalue(), errors.getvalue()
@@ -434,18 +438,88 @@ class GoalTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn(message, result.stderr)
 
-    def test_cli_records_claude_ancestor_pid_instead_of_short_lived_shell_pid(self):
+    def cli_command(self, *arguments):
         environment = os.environ.copy()
         environment["CLAUDE_CODE_SESSION_ID"] = self.session
-        wrapper = ("import os, subprocess, sys; "
-                   "print(os.getpid(), flush=True); "
-                   f"sys.exit(subprocess.call({[sys.executable, '-B', str(SCRIPT_DIRECTORY / 'goal.py'), '--root', str(self.root), 'open', 'cli', 'CLI 目标']!r}))")
-        result = subprocess.run(["claude", "-c", wrapper], executable=sys.executable,
-                                env=environment, capture_output=True, text=True, check=False)
+        environment["CLAUDE_PID"] = str(self.pid)
+        return subprocess.run([sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
+                               "--root", str(self.root), *arguments],
+                              env=environment, capture_output=True, text=True, check=False)
+
+    def test_cli_records_bash_ppid_with_real_claude_process_names(self):
+        # 真实创建 claude.exe -> Bash -> goal.py，不模拟 PID 查找函数。
+        # argv[0] 覆盖后台会话改写和 npm 安装的三种实际形状。
+        for index, command_line in enumerate(("claude bg-spare", "claude bg-pty-host",
+                "/home/xy/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe")):
+            with self.subTest(command_line=command_line):
+                root = self.root / str(index)
+                environment = os.environ.copy()
+                environment["CLAUDE_CODE_SESSION_ID"] = self.session
+                environment["CLAUDE_PID"] = str(self.pid)  # 故意与 Bash 的 PPID 不同。
+                invocation = shlex.join([sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
+                                         "--root", str(root), "open", "cli", "CLI 目标"])
+                invocation += ' --claude-pid "$PPID"'
+                wrapper = (
+                    "import ctypes, json, os, subprocess, sys; "
+                    "from pathlib import Path; "
+                    "ctypes.CDLL(None).prctl(15, b'claude.exe', 0, 0, 0); "
+                    "print(json.dumps({'pid': os.getpid(), "
+                    "'comm': Path('/proc/self/comm').read_text().strip(), "
+                    "'cmdline0': Path('/proc/self/cmdline').read_bytes().split(b'\\0')[0].decode()}), flush=True); "
+                    f"sys.exit(subprocess.call(['/bin/bash', '-c', {invocation!r}]))")
+                result = subprocess.run([command_line, "-c", wrapper], executable=sys.executable,
+                                        env=environment, capture_output=True, text=True, check=False)
+                parent = json.loads(result.stdout.splitlines()[0])
+                self.assertEqual(parent["comm"], "claude.exe")
+                self.assertEqual(parent["cmdline0"], command_line)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                goals = list(root.glob("*/goal.md"))
+                self.assertEqual(len(goals), 1, "CLI 必须实际创建契约")
+                self.assertIn(f'claude_pid: "{parent["pid"]}"', goals[0].read_text())
+
+    def test_cli_requires_bash_ppid_for_each_owner_command_even_with_claude_pid_environment(self):
+        for arguments in (("open", "release", "目标"),
+                          ("adopt", str(self.root / "old-contract")),
+                          ("migrate", str(self.root / "old.md"))):
+            with self.subTest(arguments=arguments):
+                before = self.files()
+                result = self.cli_command(*arguments)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                for message in ("--claude-pid", "$PPID", "Claude Code", "Bash"):
+                    self.assertIn(message, result.stderr)
+                self.assertEqual(self.files(), before)
+
+    def test_cli_rejects_invalid_bash_ppid_with_calling_instructions(self):
+        for arguments in (("open", "release", "目标"),
+                          ("adopt", str(self.root / "old-contract")),
+                          ("migrate", str(self.root / "old.md"))):
+            for value in ("", "not-a-pid", "0", "-1"):
+                with self.subTest(arguments=arguments, value=value):
+                    before = self.files()
+                    result = self.cli_command(*arguments, "--claude-pid", value)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    for message in ("--claude-pid", "$PPID", "Claude Code", "Bash"):
+                        self.assertIn(message, result.stderr)
+                    self.assertEqual(self.files(), before)
+
+    def test_cli_adopt_records_explicit_bash_parent_pid(self):
+        contract = self.open_goal()
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        metadata = (contract / "goal.md").read_text()
+        (contract / "goal.md").write_text(metadata.replace(f'"{self.pid}"', f'"{child.pid}"'))
+        self.session = "new-session"
+        result = self.cli_command("adopt", str(contract), "--claude-pid", str(self.pid))
         self.assertEqual(result.returncode, 0, result.stderr)
-        goals = list(self.root.glob("*/goal.md"))
-        self.assertEqual(len(goals), 1, "CLI 必须实际创建契约")
-        self.assertIn(f'claude_pid: "{result.stdout.splitlines()[0]}"', goals[0].read_text())
+        self.assertIn(f'claude_pid: "{self.pid}"', (contract / "goal.md").read_text())
+        self.assertIn("new-session", (contract / "goal.md").read_text())
+
+    def test_cli_migrate_checks_and_records_explicit_bash_parent_pid(self):
+        old, _ = self.legacy_contract()
+        result = self.cli_command("migrate", str(old), "--claude-pid", str(self.pid))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(old.exists())
+        self.assertIn(f'claude_pid: "{self.pid}"', (old.with_suffix("") / "goal.md").read_text())
 
     def test_open_cleans_old_files_by_file_age_and_keeps_recent_children(self):
         old = self.now.timestamp() - 31 * 86400
