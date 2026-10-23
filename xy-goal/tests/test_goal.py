@@ -818,7 +818,7 @@ class GoalTests(unittest.TestCase):
 
     def test_committed_owner_commands_warn_on_inbox_delete_failure_without_reimporting(self):
         original_root = self.root
-        for operation, expected_count in (("open", 1), ("adopt", 1)):
+        for operation in ("open", "adopt"):
             with self.subTest(operation=operation):
                 self.root = original_root / operation
                 self.session = "session-main"
@@ -829,15 +829,15 @@ class GoalTests(unittest.TestCase):
                     self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
                     self.assertIn("警告", errors)
                     self.assertFalse(inbox.exists(), "已领原话不能继续留在可被再次领取的位置")
-                    self.assertEqual(len(list((contract / "quotes").iterdir())), expected_count)
+                    self.assertEqual(len(list((contract / "quotes").iterdir())), 1)
                     self.succeeds("adopt", str(contract))
-                    self.assertEqual(len(list((contract / "quotes").iterdir())), expected_count)
+                    self.assertEqual(len(list((contract / "quotes").iterdir())), 1)
                 self.hook("hook-prompt", {"session_id": self.session, "prompt": "后续消息"})
-                self.assertEqual(len(list((contract / "quotes").iterdir())), expected_count + 1)
+                self.assertEqual(len(list((contract / "quotes").iterdir())), 2)
 
     def test_failed_input_claim_rolls_back_owner_commands_and_can_be_retried(self):
         original_root = self.root
-        for operation, expected_count in (("open", 1), ("adopt", 1)):
+        for operation in ("open", "adopt"):
             with self.subTest(operation=operation):
                 self.root = original_root / operation
                 self.session = "session-main"
@@ -846,7 +846,7 @@ class GoalTests(unittest.TestCase):
                     self.rejects(*arguments, message="Permission denied")
                 self.succeeds(*arguments)
                 self.assertFalse(inbox.exists())
-                self.assertEqual(len(list((contract / "quotes").iterdir())), expected_count)
+                self.assertEqual(len(list((contract / "quotes").iterdir())), 1)
 
     def test_adopt_write_failure_after_claim_restores_inbox_for_retry(self):
         arguments, contract, inbox = self.owner_command_with_inbox("adopt")
