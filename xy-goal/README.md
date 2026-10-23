@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$HOME/.claude/skills/xy-goal/goal.py\" --root \"$HOME/.claude/xy-goal\" hook-prompt"
+            "command": "python3 \"$HOME/.claude/skills/xy-goal/goal.py\" --root \"$HOME/.claude/xy-goal\" hook-prompt || exit 1"
           }
         ]
       }
@@ -36,6 +36,8 @@
 }
 ```
 
+脚本文件打不开时 Python 解释器退出 2，而 `UserPromptSubmit` 退出 2 会拦下并丢弃这条用户消息、影响每个装了 hook 的会话，因此用 `|| exit 1` 把一切失败转成不拦消息的报错；`PostToolUse` 退出 2 只向模型反馈错误，配置保持原样（[官方 hooks 文档](https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event)）。
+
 `hook-prompt` 读取官方 hook JSON 的 `session_id`、`prompt`，逐字保存 `prompt`；`hook-answer` 将 `AskUserQuestion` 的 `tool_input`、`tool_response` 原值存成 JSON，不解析回答结构或改写问题。成功无输出，失败写 stderr、退出 1，Claude Code 仍会送达消息。编号、子代理排除及自动分类规则见 [契约与命令](SKILL.md#契约与命令)。
 
 ## 命令示例
@@ -50,7 +52,7 @@ python3 "$goal_script" --root "$goal_root" show
 python3 "$goal_script" --root "$goal_root" check
 ```
 
-`open`、`adopt`、`migrate` 必填由该 Bash 展开的 `--claude-pid "$PPID"`；脚本核对它是调用进程的祖先，拒绝无关或已退出的进程号。它们输出的定时提示原文交给 `CronCreate(cron="*/30 * * * *", recurring=true, prompt=...)`。核对、过期重建、暂停提醒与自查步骤见 [定时自查](SKILL.md#定时自查)。
+`open`、`adopt` 必填由该 Bash 展开的 `--claude-pid "$PPID"`；脚本核对它是调用进程的祖先，拒绝无关或已退出的进程号。它们输出的定时提示原文交给 `CronCreate(cron="*/30 * * * *", recurring=true, prompt=...)`。核对、过期重建、暂停提醒与自查步骤见 [定时自查](SKILL.md#定时自查)。
 
 `show` 只输出目标、开放事项和未处理原话编号；`check` 通过退出 0，有问题逐条报告并退出 1。每项 300 字、全文 5000 字是 `show` 的软提示，不拒绝写入。原话按编号直接读 `quotes/N.md`。
 
@@ -95,31 +97,15 @@ python3 "$goal_script" --root "$goal_root" close
 
 验收或取消时，已解析的事项字段与结论统一编码写入 `done/`，保留字段值。
 
+已迁入 `done/` 的旧账本验收行、取消行仍按原行读取，不补造判据、状态或验收字段；无出处的第二行是 `旧记录无出处`，标记须与 `links.md` 中的映射一致，正文里的原话编号也必须有对应映射。保留这种读取能力，现存契约才能继续 `show`、`check`、`close`。
+
 未开契约时，`inbox/<会话 id>/N.md` 只存原话。领取时重算自动分类，写进契约唯一的 `links.md`；匹配与复核规则见 [契约与命令](SKILL.md#契约与命令)。
 
-写命令先校验；本契约坏文件会指出路径，不诊断其他会话的数据。普通多文件写入 I/O 失败会回滚。`open`、`migrate` 要求本会话还没有契约；`adopt` 可接管或刷新自己的契约；其他 agent 命令要求恰好一份，本会话重复绑定会拒绝。
+写命令先校验；本契约坏文件会指出路径，不诊断其他会话的数据。普通多文件写入 I/O 失败会回滚。`open` 要求本会话还没有契约；`adopt` 可接管或刷新自己的契约；其他 agent 命令要求恰好一份，本会话重复绑定会拒绝。
 
 ## 失败与清理
 
-`open`、新会话 `adopt`、`migrate` 在主体提交前，将已校验的输入在原父目录内临时改名。提交前失败会放回输入，返回 1，可安全重试；同会话 `adopt` 只更新 PID。主体已提交后，临时输入或归档删除失败只向 stderr 警告，照常返回 0 并输出定时提示；警告给出残留路径，已领取原话不会再次导入。30 天清理的对象与边界见 [清理与迁移](SKILL.md#清理与迁移)。
-
-## 旧格式迁移
-
-新流程合入后，各在办会话迁自己的契约：
-
-```bash
-python3 "$goal_script" --root "$goal_root" migrate /absolute/path/to/old-checklist.md --claude-pid "$PPID"
-```
-
-旧清单 `session` 必须等于经祖先核对的本次 PID。转换格式：
-
-- 旧头的 `笔记：…` 是已知元数据，包括空值在内均丢弃该行，不读取或复制笔记。开放事项标题、判据、指针保留；`等：用户：…` 变成 `等用户：…`，其余在跑、等 T 号、待验收变成 `在办`，丢弃下次核及运行者字段；无指针写 `无`。
-- 原话去掉顶格标注，编号、正文和空行保留；缩进的用户片段仍是正文。当前会话 inbox 按原顺序接在最大号后。
-- 多 T 号转成唯一映射；`无：原因` 变为 `不必跟进 原因`；`规矩：位置` 变为 `不必跟进 旧规矩落点`。
-- 旧账本每行原样放入 `done/TN.md`，不补造判据、状态、验收字段。出处取旧标注及正文的「原话 N」；都没有的加 `旧记录无出处`。
-- 临时目录逐条重读，核原话数、开放事项数、账本行数和引用；开放事项出处与旧标注必须一致。验证后提交新目录、移出旧三文件与 inbox；提交前失败保留输入，提交后清理失败按前节警告处理。
-
-迁移后的定时器与旧入口删除时机见 [清理与迁移](SKILL.md#清理与迁移)。所有在办契约迁完前，保留 `migrate`、旧 `check.py` 及旧测试。
+`open`、新会话 `adopt` 在主体提交前，将已校验的输入在原父目录内临时改名。提交前失败会放回输入，返回 1，可安全重试；同会话 `adopt` 只更新 PID。主体已提交后，临时输入或归档删除失败只向 stderr 警告，照常返回 0 并输出定时提示；警告给出残留路径，已领取原话不会再次导入。30 天清理的对象与边界见 [清理](SKILL.md#清理)。
 
 ## 测试
 
@@ -129,6 +115,6 @@ python3 "$goal_script" --root "$goal_root" migrate /absolute/path/to/old-checkli
 python3 -B -m unittest discover -s xy-goal/tests
 ```
 
-测试均用临时目录。根目录和 PID 走正式参数解析，覆盖一次真实 Bash → CLI 的 PID 往返、拒绝非祖先 PID、同会话恢复、其他会话坏元数据隔离、Unicode 字段、迁移及真实只读权限下的提交与回滚。
+测试均用临时目录。根目录和 PID 走正式参数解析，覆盖一次真实 Bash → CLI 的 PID 往返、拒绝非祖先 PID、同会话恢复、其他会话坏元数据隔离、Unicode 字段、旧账本 `done/` 读取及真实只读权限下的提交与回滚。
 
 合入前还需隔离会话（claude-deepseek，`--setting-sources project`，只加载临时测试目录配置）实测：中途插话的 `UserPromptSubmit`、`AskUserQuestion` 回答、开契约前消息领取、原生子代理 hook 的 `agent_id` 排除。单元测试不代替这一步。
