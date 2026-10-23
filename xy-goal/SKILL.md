@@ -26,10 +26,12 @@ xy-goal 在 goal 的基础上做简单优化，只管五件事：用户原话自
 写入只经脚本，不手改契约；读取直接用 Read 或 cat。脚本根目录必须显式提供：
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal open <slug> '<目标>'
+python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal open <slug> '<目标>' --claude-pid "$PPID"
 python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal show
 python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal check
 ```
+
+`open`、`adopt`、`migrate` 必须在 Claude Code 的 Bash 工具里运行，显式传 `--claude-pid "$PPID"`。该 Bash 的 `$PPID` 就是本会话 claude 进程号，可在同一个 Bash 里用 `echo "$PPID"` 核对；让它直接展开，不到另开的 shell 或 Python 里重新取父进程号。脚本不按进程名或 argv[0] 猜，也不依赖未公开保证的 `CLAUDE_PID` 环境变量；缺参数或值不是正整数就报错并给出调用方式。
 
 脚本从 `CLAUDE_CODE_SESSION_ID` 定位本会话的契约。一个会话一份契约，几个主题的事项都放里面。`open`、`adopt`、`migrate` 要求本会话还没有契约，其余 agent 命令要求恰好一份；没有或有多份就报错，不猜。标题等字段的值用 JSON 字符串保存，以保留换行和引号；原话正文不经过字段编码。
 
@@ -76,7 +78,7 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal cancel <T> --q
 ## 换会话接管
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt <契约目录绝对路径>
+python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt <契约目录绝对路径> --claude-pid "$PPID"
 ```
 
 新会话必须还没有契约，原会话的 claude 进程必须已不在；还在就先在原会话 `CronDelete` 并结束它，不能抢接。脚本改会话 id 与进程号、领走新会话 inbox，输出定时提示；照抄重建，再 `CronList` 核对只有一个。
@@ -101,7 +103,7 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt <契约�
 新流程合入后，各在办会话自己运行：
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal migrate <自己的旧清单绝对路径>
+python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal migrate <自己的旧清单绝对路径> --claude-pid "$PPID"
 ```
 
 旧清单的 `session` 必须等于本会话 claude 进程号。脚本转换旧三文件、领取本会话 inbox，校验原话数、开放事项数、账本行数和出处；通过才删旧三文件，失败保留。照输出按本节重建半小时定时器。所有在办契约迁完后，再删 `migrate`、旧 `check.py` 及其测试，不保留长期兼容入口。转换细节与测试命令见 README。

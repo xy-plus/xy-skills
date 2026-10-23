@@ -5,7 +5,7 @@
 ## 前提与 hook 配置
 
 - Claude Code 的 `UserPromptSubmit`、`PostToolUse` hook，以及 `CronCreate`、`CronList`、`CronDelete`。
-- Linux、Python 3.10 及以上；脚本用目录文件锁协调并发，用 `/proc` 找本会话的 claude 祖先进程，不把短命的 Bash/Python 进程登记成所有者。
+- Linux、Python 3.10 及以上；脚本用目录文件锁协调并发。
 - 把本目录装到 `~/.claude/skills/xy-goal`；命令在 Claude Code 的 Bash 中运行，环境变量 `CLAUDE_CODE_SESSION_ID` 必须存在。定时器由 agent 管，脚本不调用定时工具。
 
 安装后，将下面两项合并到 `~/.claude/settings.json` 的 `hooks`，保留已有配置；没有配置 hook 就不能自动记录原话：
@@ -47,8 +47,10 @@
 ## 开契约与定时器
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal open release '交付新版本'
+python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal open release '交付新版本' --claude-pid "$PPID"
 ```
+
+`open`、`adopt`、`migrate` 都必填 `--claude-pid "$PPID"`，在 Claude Code 的 Bash 工具里直接运行。这个 Bash 的 `$PPID` 就是本会话 claude 的进程号，可用同一个 Bash 中的 `echo "$PPID"` 核对；由它展开后传给脚本，不到另开的 shell 或 Python 里重新取父进程号。进程名可能是 `claude.exe`，argv[0] 也可能被改写成 `claude bg-spare` 等，不能用它们判断会话；脚本移除了进程名识别，也不使用未公开保证的 `CLAUDE_PID` 环境变量。缺参数、空值或非正整数会退出 1，并提示正确的 Bash 调用方式。
 
 脚本创建 `~/.claude/xy-goal/<YYYYMMDD-HHMMSS>-release/`，记录目标、会话 id、claude 进程号，并领走本会话 inbox 中的全部原话。未开契约也照常记录，所以开契约前的讨论、触发开契约的消息不会漏。每个会话只有一份契约，几个主题的事项都在里面。
 
@@ -119,7 +121,7 @@ python3 "$goal_script" --root "$goal_root" cancel T2 --quote 7
 原会话还在时，先在原会话 `CronDelete` 并结束它；新会话没有契约且旧进程已不在，才能接管：
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt /absolute/path/to/contract-directory
+python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt /absolute/path/to/contract-directory --claude-pid "$PPID"
 ```
 
 脚本拒绝抢占活会话，也检查原所有者是否重复绑定；通过后改会话与进程号，领取新会话 inbox、接在原最大编号后，输出定时提示。照抄 `CronCreate`，再 `CronList` 核对只有一个。
@@ -144,7 +146,7 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal close
 新流程合入后，**各在办会话自己迁自己的旧契约**，不批量迁别人的：
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal migrate /absolute/path/to/old-checklist.md
+python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal migrate /absolute/path/to/old-checklist.md --claude-pid "$PPID"
 ```
 
 旧清单的 `session` 必须等于当前 claude 进程号，本会话必须尚未绑定新契约。输出的定时提示按前文建半小时定时器，并核对只有一个。转换遵循：
@@ -165,6 +167,6 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal migrate /absol
 python3 -B -m unittest discover -s xy-goal/tests
 ```
 
-测试全部用临时根目录，显式注入会话 id、进程号与时钟，不依赖真实家目录。覆盖所有子命令、拒绝写入、损坏文件、原话字节保真、并发 hook、机器输入严格匹配、inbox 领取、接管、按文件年龄清理，以及旧格式迁移与失败保留。
+测试全部用临时根目录，显式注入会话 id 与时钟，进程号经过与 CLI 相同的必填参数解析，不依赖真实家目录。受控子进程设置 `claude.exe` 和三种实际 argv[0] 形状，再经 Bash 展开 `$PPID` 调用 CLI，核对写入的进程号，并检查环境中的 `CLAUDE_PID` 不会被采用。另覆盖所有子命令、拒绝写入、损坏文件、原话字节保真、并发 hook、机器输入严格匹配、inbox 领取、接管、按文件年龄清理，以及旧格式迁移与失败保留。
 
 合入前还需在隔离 Claude Code 会话（`--setting-sources project`，只加载测试目录配置，使用 claude-deepseek）实测：中途插话触发 `UserPromptSubmit`、`AskUserQuestion` 回答、开契约前消息领取，以及原生子代理 hook 带 `agent_id` 被跳过。单元测试不代替这一步；实测用临时根目录。
