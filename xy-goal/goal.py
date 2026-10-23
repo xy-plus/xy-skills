@@ -701,9 +701,10 @@ def require_pid(claude_pid):
 def execute(options, *, root, session_id, claude_pid, now):
     path = find_contract(root, session_id)
     if options.command in ("open", "adopt", "migrate"):
-        if path is not None:
-            raise GoalError(f"本会话已有契约：{path}")
         require_pid(claude_pid)
+        if path is not None and not (options.command == "adopt"
+                and Path(options.directory).expanduser().resolve() == path):
+            raise GoalError(f"本会话已有契约：{path}")
         if options.command == "migrate":
             migrate_contract(root, Path(options.checklist).expanduser().resolve(), session_id, claude_pid)
             return 0
@@ -724,22 +725,27 @@ def execute(options, *, root, session_id, claude_pid, now):
             contract = Contract(path)
             # 新会话尚未绑定不代表旧所有者唯一；接管前也核原会话的重复绑定。
             find_contract(root, contract.metadata["session_id"])
-            try:
-                os.kill(int(contract.metadata["claude_pid"]), 0)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
+            if contract.metadata["session_id"] == session_id:
+                # --resume 沿用会话 id。同会话只刷新 PID，不领取或改动其他内容。
+                contract.metadata["claude_pid"] = str(claude_pid)
+                write_files({path / "goal.md": encode_fields(contract.metadata)}, [])
             else:
-                raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
-            quotes, reasons = incoming_quotes(root, session_id, path, max(contract.quotes, default=0))
-            contract.metadata.update(session_id=session_id, claude_pid=str(claude_pid))
-            contract.dismissed.update(reasons)
-            changes = {path / "quotes" / f"{number}.md": text for number, text in quotes.items()}
-            changes[path / "goal.md"] = encode_fields(contract.metadata)
-            changes[path / "links.md"] = contract.links_text()
-            write_files(changes, [])
-            remove_inbox(root, session_id)
+                try:
+                    os.kill(int(contract.metadata["claude_pid"]), 0)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
+                else:
+                    raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
+                quotes, reasons = incoming_quotes(root, session_id, path, max(contract.quotes, default=0))
+                contract.metadata.update(session_id=session_id, claude_pid=str(claude_pid))
+                contract.dismissed.update(reasons)
+                changes = {path / "quotes" / f"{number}.md": text for number, text in quotes.items()}
+                changes[path / "goal.md"] = encode_fields(contract.metadata)
+                changes[path / "links.md"] = contract.links_text()
+                write_files(changes, [])
+                remove_inbox(root, session_id)
         print(timer_prompt(path))
         return 0
     if path is None:

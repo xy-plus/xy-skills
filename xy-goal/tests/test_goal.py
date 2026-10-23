@@ -627,7 +627,39 @@ class GoalTests(unittest.TestCase):
         self.assertIn(str(self.pid), (contract / "goal.md").read_text())
         self.assertEqual((contract / "quotes" / "6.md").read_text(), "接管前的话")
         self.assertFalse((self.root / "inbox" / self.session).exists())
-        self.rejects("adopt", str(contract), message="已有契约")
+        self.succeeds("adopt", str(contract))
+        another = self.root / "another-contract"
+        shutil.copytree(contract, another)
+        metadata = another / "goal.md"
+        metadata.write_text(metadata.read_text().replace("new-session", "another-session"))
+        self.rejects("adopt", str(another), message="已有契约")
+
+    def test_same_session_adopt_refreshes_dead_pid_and_blocks_foreign_takeover(self):
+        contract = self.open_goal()
+        old = subprocess.Popen([sys.executable, "-c", "pass"])
+        old.wait()
+        metadata = contract / "goal.md"
+        metadata.write_text(metadata.read_text().replace(f'"{self.pid}"', f'"{old.pid}"'))
+        self.succeeds("check")
+        result = self.cli_command("adopt", str(contract), "--claude-pid", str(os.getpid()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'claude_pid: "{os.getpid()}"', metadata.read_text())
+        self.session = "takeover-session"
+        self.rejects("adopt", str(contract), message="原会话进程还在")
+        self.session = "session-main"
+        self.succeeds("check")
+
+    def test_same_session_adopt_only_refreshes_pid_even_if_previous_process_is_alive(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "保留原事项和映射")
+        self.add_task(1)
+        before = self.files()
+        result = self.cli_command("adopt", str(contract), "--claude-pid", str(os.getpid()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'claude_pid: "{os.getpid()}"', (contract / "goal.md").read_text())
+        for relative, content in before.items():
+            if relative != str((contract / "goal.md").relative_to(self.root)):
+                self.assertEqual(self.files()[relative], content)
 
     def test_open_refuses_malformed_inbox_before_creating_contract(self):
         inbox = self.root / "inbox" / self.session
