@@ -279,6 +279,32 @@ class GoalTests(unittest.TestCase):
         self.assertEqual((contract / "links.md").read_text(), "1 T1\n2 T1\n")
         self.succeeds("check")
 
+    def test_closing_task_without_final_lf_preserves_fields_and_keeps_hook_working(self):
+        original_root = self.root
+        for operation in ("accept", "cancel"):
+            with self.subTest(operation=operation):
+                self.root = original_root / operation
+                contract = self.open_goal()
+                self.quote(contract, 1, "测试后发布，或取消发布")
+                self.add_task(1)
+                task = contract / "tasks" / "T1.md"
+                task.write_bytes(task.read_bytes().removesuffix(b"\n"))
+                self.succeeds("check")
+                if operation == "accept":
+                    self.succeeds("accept", "T1", "--verdict", "验证通过")
+                    conclusion = {"verdict": "验证通过"}
+                else:
+                    self.succeeds("cancel", "T1", "--quote", "1")
+                    conclusion = {"cancel_quote": "1"}
+                self.succeeds("check")
+                self.assertEqual(goal.Contract(contract).done["T1"], {
+                    "title": "发布", "criteria": "测试通过", "state": "在办", "pointer": "无", **conclusion,
+                })
+                self.assertFalse(task.exists())
+                self.hook("hook-prompt", {"session_id": self.session, "prompt": "后续要求"})
+                self.assertEqual((contract / "quotes" / "2.md").read_text(), "后续要求")
+                self.assertIn("还没处理的原话：2", self.succeeds("show"))
+
     def test_close_refuses_open_tasks_and_unhandled_quotes_then_deletes_only_own_contract(self):
         contract = self.open_goal()
         other = self.root / "untouched.txt"

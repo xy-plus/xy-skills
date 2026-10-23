@@ -347,7 +347,8 @@ class Contract:
                 conclusion = {"cancel_quote": str(options.quote)}
                 self.links.add((options.quote, task))
             original = self.path / "tasks" / f"{task}.md"
-            changes[self.path / "done" / f"{task}.md"] = read_text(original) + encode_fields(conclusion)
+            # 统一编码已解析字段与结论，不依赖被接受的原文件是否带末尾 LF。
+            changes[self.path / "done" / f"{task}.md"] = encode_fields({**self.tasks[task], **conclusion})
             removals.append(original)
         changes[self.path / "links.md"] = self.links_text()
         write_files(changes, removals)
