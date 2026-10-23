@@ -31,11 +31,11 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal show
 python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal check
 ```
 
-`open`、`adopt`、`migrate` 必须在 Claude Code 的 Bash 工具里运行，显式传 `--claude-pid "$PPID"`。该 Bash 的 `$PPID` 就是本会话 claude 进程号，可在同一个 Bash 里用 `echo "$PPID"` 核对；让它直接展开，不到另开的 shell 或 Python 里重新取父进程号。脚本不按进程名或 argv[0] 猜，也不依赖未公开保证的 `CLAUDE_PID` 环境变量；缺参数或值不是正整数就报错并给出调用方式。
+`open`、`adopt`、`migrate` 必须在 Claude Code 的 Bash 工具里运行，显式传 `--claude-pid "$PPID"`。该 Bash 的 `$PPID` 就是本会话 claude 进程号，可在同一个 Bash 里用 `echo "$PPID"` 核对；让它直接展开。脚本核对传入的正整数 PID 是本次调用进程的祖先，否则拒绝并说明调用方式，不能抄别的会话的 PID 来迁移或接管。
 
-脚本从 `CLAUDE_CODE_SESSION_ID` 定位本会话的契约。一个会话一份契约，几个主题的事项都放里面。`open`、`adopt`、`migrate` 要求本会话还没有契约，其余 agent 命令要求恰好一份；没有或有多份就报错，不猜。标题等字段的值用 JSON 字符串保存，以保留换行和引号；原话正文不经过字段编码。
+脚本从 `CLAUDE_CODE_SESSION_ID` 定位本会话的契约。一个会话一份契约，几个主题的事项都放里面。`open`、`migrate` 要求本会话还没有契约；`adopt` 可新会话接管，也可同会话恢复刷新 PID（见「换会话接管」）；其余 agent 命令要求恰好一份。本会话重复绑定会报错，不猜。标题等字段的值用 JSON 字符串保存，以保留换行和引号，按物理 LF 分行；原话正文不经过字段编码。
 
-尚未开契约时，hook 把消息暂记在 `inbox/<会话 id>/`；`open`、`adopt` 领走全部原话，按原顺序接着编号，触发开契约的那条消息也在其中。子代理输入带 `agent_id`，两个 hook 都跳过。主代理的输入每条都记，同一 `prompt_id` 也不去重：中途插话可能与该轮共用这个 id。
+尚未开契约时，hook 把消息原文暂记在 `inbox/<会话 id>/`，不存分类副本；`open`、新会话 `adopt` 领走全部原话，按原顺序接着编号，领取时统一计算自动分类。触发开契约的那条消息也在其中。子代理输入带 `agent_id`，两个 hook 都跳过。主代理的输入每条都记，同一 `prompt_id` 也不去重：中途插话可能与该轮共用这个 id。
 
 与本契约定时提示逐字一致的输入，以及首尾为 `<task-notification>`、`</task-notification>` 且带齐 `<task-id>`、`<status>`、`<summary>` 成对子标签的完整后台通知，原文保留并自动标为不必跟进。不能只凭「本次契约」或一个标签就排除要求；来源字段不足以辨认机器输入，用户完整粘贴通知也会命中，所以关闭前必须复核自动标记。其他会话发来的消息照记，由 agent 处理。hook 错误写到 stderr、退出 1；消息照常送达，看到提示后要处理记录失败，不能把它当作已记下。
 
@@ -53,7 +53,7 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal accept <T> --v
 python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal cancel <T> --quote <N>
 ```
 
-`update --field` 只认 `标题`、`判据`、`状态`、`指针`。改判据必须同时带原话；`--source` 只追加出处。出处和取消依据必须引用已存在的原话。取消必须有用户原话依据，未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明原因，不必硬建事项。
+`update --field` 只认 `标题`、`判据`、`状态`、`指针`。改判据必须同时带原话；`--source` 只追加出处。出处和取消依据必须引用已存在的原话。取消必须有用户原话依据，未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明一行原因，不必硬建事项；原因含 Unicode 分行符也会写前拒绝。
 
 `show` 只列目标、每个开放事项四行（标题、判据、出处、状态与指针）、未处理原话编号，不重复输出全部原话和已关闭事项。每项四行超过 300 字、清单全文超过 5000 字会在末尾提示压短，这是用户要求的，保留；它是软约束，不拒绝写入。`check` 只检查本契约，逐条报未处理原话；通过退出 0，有问题退出 1，直接看输出，不接管道截取。
 
@@ -83,6 +83,8 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt <契约�
 
 新会话必须还没有契约，原会话的 claude 进程必须已不在；还在就先在原会话 `CronDelete` 并结束它，不能抢接。脚本改会话 id 与进程号、领走新会话 inbox，输出定时提示；照抄重建，再 `CronList` 核对只有一个。
 
+同一会话恢复（`--resume` 沿用 session id，PID 变化）也先对自己的契约运行上述 `adopt`。这时只刷新 PID，不要求原 PID 退出，不改原话、事项和映射，防止已恢复的活会话被当成无主接管；再按输出核对或重建本契约定时器。
+
 ## 验收与关闭
 
 事项按自己的判据核，结论写进 `accept --verdict`。验收要的证据在删除之前核完，`done/` 留结论；过程与证据放在所属仓库或报告里，不另建契约笔记、证据目录或副本。
@@ -100,10 +102,12 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt <契约�
 
 `open` 顺手清理 `archive/`、`inbox/` 中修改时间超过 30 天的文件，再删空目录。按文件各自的时间算，不因父目录超期就删其中的新文件，不沿软链走出清理范围。契约目录不在清理范围，只经 `close` 删除。旧 `archive/` 按同一规则自然清掉，不另做归档迁移。
 
+主体已提交后的清理错误只警告，仍返回 0、输出定时提示；返回 1 的操作可重试，不会重复领取。残留路径与提交边界见 README 的[失败与清理](README.md#失败与清理)。
+
 新流程合入后，各在办会话自己运行：
 
 ```bash
 python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal migrate <自己的旧清单绝对路径> --claude-pid "$PPID"
 ```
 
-旧清单的 `session` 必须等于本会话 claude 进程号。脚本转换旧三文件、领取本会话 inbox，校验原话数、开放事项数、账本行数和出处；通过才删旧三文件，失败保留。照输出按本节重建半小时定时器。所有在办契约迁完后，再删 `migrate`、旧 `check.py` 及其测试，不保留长期兼容入口。转换细节与测试命令见 README。
+旧清单的 `session` 必须等于经祖先核对的本次 claude 进程号。已知旧头的「笔记：…」行丢弃，不读取或复制笔记。脚本转换旧三文件、领取本会话 inbox，校验原话数、开放事项数、账本行数和出处；校验或提交前失败保留输入，可重试，已提交后的清理失败只警告。照输出按本节重建半小时定时器。所有在办契约迁完后，再删 `migrate`、旧 `check.py` 及其测试，不保留长期兼容入口。转换细节与测试命令见 README。
