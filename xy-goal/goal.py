@@ -506,6 +506,10 @@ def parse_legacy_checklist(path, claude_pid):
     for row in lines[1:start]:
         if not row.strip():
             continue
+        # 已知旧清单还会指向 archive 的笔记；只丢弃这行元数据，不读取或复制笔记。
+        if row.startswith("笔记："):
+            require_text(row[len("笔记："):], f"{path}: 笔记指针")
+            continue
         match = re.fullmatch(r"(session|cron_job_id)\s*:\s*(.+)", row)
         if match is None or match[1] in header:
             raise GoalError(f"{path}: 旧清单头格式错误")
