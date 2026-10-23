@@ -139,6 +139,41 @@ class GoalTests(unittest.TestCase):
         (other / "tasks" / "T1.md").write_text("损坏", encoding="utf-8")
         self.assertIn("通过", self.succeeds("check"))
 
+    def test_foreign_invalid_utf8_metadata_does_not_block_check_or_either_hook(self):
+        contract = self.open_goal()
+        foreign = self.root / "foreign-contract"
+        foreign.mkdir()
+        metadata = foreign / "goal.md"
+        metadata.write_bytes(b'target: "\xff"\nsession_id: "foreign-session"\nclaude_pid: "123"\n')
+        original = metadata.read_bytes()
+        self.succeeds("check")
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "本会话新要求"})
+        self.hook("hook-answer", {"session_id": self.session, "tool_name": "AskUserQuestion",
+                                  "tool_input": {"question": "继续？"}, "tool_response": "继续"})
+        self.assertEqual((contract / "quotes" / "1.md").read_text(), "本会话新要求")
+        self.assertEqual(json.loads((contract / "quotes" / "2.md").read_text())["tool_response"], "继续")
+        self.assertEqual(metadata.read_bytes(), original)
+
+    def test_foreign_unreadable_metadata_does_not_block_own_contract(self):
+        contract = self.open_goal()
+        foreign = self.root / "foreign-contract"
+        foreign.mkdir()
+        metadata = foreign / "goal.md"
+        metadata.write_text('session_id: "foreign-session"\n')
+        metadata.chmod(0)
+        try:
+            self.succeeds("check")
+            self.hook("hook-prompt", {"session_id": self.session, "prompt": "仍能记录"})
+            self.assertEqual((contract / "quotes" / "1.md").read_text(), "仍能记录")
+        finally:
+            metadata.chmod(0o600)
+
+    def test_own_invalid_utf8_metadata_is_still_reported(self):
+        contract = self.open_goal()
+        metadata = contract / "goal.md"
+        metadata.write_bytes(b'target: "\xff"\nsession_id: "session-main"\nclaude_pid: "123"\n')
+        self.rejects("check", message=str(metadata))
+
     def test_add_keeps_many_to_many_sources_only_in_links(self):
         contract = self.open_goal()
         self.quote(contract, 1, "测试后发布")

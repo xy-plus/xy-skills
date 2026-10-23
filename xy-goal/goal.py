@@ -88,11 +88,19 @@ def read_fields(path, names):
 
 
 def find_contract(root, session_id):
-    # 只用 goal.md 的会话字段定位；不加载或检查其他会话的事项、原话和映射。
-    session_row = f"session_id: {json.dumps(session_id, ensure_ascii=False)}"
-    matches = [path.parent for path in sorted(root.glob("*/goal.md"))
-               if path.parent.name not in ("archive", "inbox")
-               and session_row in read_text(path).splitlines()]
+    # 定位只比较归属行的字节，不解码其他会话的目标、也不诊断它的坏文件。
+    # 能认出本会话后，由 Contract 完整读取、报格式错误；重复归属仍在这里拒绝。
+    session_row = f"session_id: {json.dumps(session_id, ensure_ascii=False)}".encode("utf-8")
+    matches = []
+    for path in sorted(root.glob("*/goal.md")):
+        if path.parent.name in ("archive", "inbox"):
+            continue
+        try:
+            with path.open("rb") as source:
+                if any(row.rstrip(b"\r\n") == session_row for row in source):
+                    matches.append(path.parent)
+        except OSError:
+            continue  # 归属不可读，不能把它当成本会话的契约来检查。
     if len(matches) > 1:
         raise GoalError(f"会话 {session_id} 对应多份契约：" + "、".join(map(str, matches)))
     return matches[0] if matches else None
