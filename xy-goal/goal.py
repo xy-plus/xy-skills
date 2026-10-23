@@ -437,18 +437,48 @@ def incoming_quotes(root, session_id, contract, last_number):
     return imported, reasons
 
 
-def remove_inbox(root, session_id):
-    directory = root / "inbox" / session_id
-    if directory.exists():
-        shutil.rmtree(directory)
+def remove_temporary_path(path):
+    try:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except OSError as error:
+        print(f"警告：临时输入或目录清理失败，残留在 {path}：{error}", file=sys.stderr)
 
 
-def publish_contract(root, destination, metadata, quotes, tasks, done, links, expected_counts):
+@contextmanager
+def consume_inputs(paths):
+    """输入先移出可领取的位置；主体失败放回，成功后删除失败只警告。"""
+    if not paths:
+        yield
+        return
+    moved = []
+    try:
+        for source in paths:
+            # 同一父目录内改名，不改目录的 ..；只读 inbox 也能先移出领取位置。
+            destination = Path(tempfile.mkdtemp(dir=source.parent, prefix=".goal-inputs-"))
+            destination.rmdir()
+            source.rename(destination)
+            moved.append((source, destination))
+        yield
+    except BaseException:
+        # 若回滚本身失败，不删除临时位置的原件，让错误路径指出残留位置。
+        for source, destination in reversed(moved):
+            destination.rename(source)
+        raise
+    else:
+        for _, destination in moved:
+            remove_temporary_path(destination)
+
+
+def publish_contract(root, destination, metadata, quotes, tasks, done, links, expected_counts, input_paths):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     if destination.exists():
         raise GoalError(f"契约目录已存在：{destination}")
-    with tempfile.TemporaryDirectory(dir=root, prefix=".goal-") as temporary:
-        staging = Path(temporary) / "contract"
+    temporary = Path(tempfile.mkdtemp(dir=root, prefix=".goal-"))
+    try:
+        staging = temporary / "contract"
         staging.mkdir()
         for name, files in (("quotes", quotes), ("tasks", tasks), ("done", done)):
             directory = staging / name
@@ -461,7 +491,11 @@ def publish_contract(root, destination, metadata, quotes, tasks, done, links, ex
         actual_counts = (len(saved.quotes), len(saved.tasks), len(saved.done))
         if actual_counts != expected_counts:
             raise GoalError(f"迁移条数校验失败：原话、开放事项、账本应为 {expected_counts}，实际 {actual_counts}")
-        staging.rename(destination)
+        # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
+        with consume_inputs(input_paths):
+            staging.rename(destination)
+    finally:
+        remove_temporary_path(temporary)
 
 
 def parse_legacy_quotes(path):
@@ -601,12 +635,10 @@ def migrate_contract(root, old, session_id, claude_pid):
         quotes.update(imported)
         dismissed.update(reasons)
         metadata = {"target": title, "session_id": session_id, "claude_pid": str(claude_pid)}
+        inbox = root / "inbox" / session_id
+        inputs = [old, quotes_path, ledger_path] + ([inbox] if inbox.exists() else [])
         publish_contract(root, destination, metadata, quotes, tasks, done, encode_links(links, dismissed),
-                         (quote_count + len(imported), task_count, len(ledger)))
-        # 只有新目录通过逐条读取、出处与数量校验，才动旧三文件和已领走的 inbox。
-        for path in (old, quotes_path, ledger_path):
-            path.unlink()
-        remove_inbox(root, session_id)
+                         (quote_count + len(imported), task_count, len(ledger)), inputs)
         print(timer_prompt(destination))
     except (GoalError, OSError) as error:
         raise GoalError(f"迁移 {old} 失败：{error}") from error
@@ -718,9 +750,13 @@ def execute(options, *, root, session_id, claude_pid, now):
             quotes, reasons = incoming_quotes(root, session_id, path, 0)
             metadata = {"target": options.target, "session_id": session_id, "claude_pid": str(claude_pid)}
             links = "".join(f"{number} 不必跟进 {reason}\n" for number, reason in reasons.items())
-            publish_contract(root, path, metadata, quotes, {}, {}, links, (len(quotes), 0, 0))
-            remove_inbox(root, session_id)
-            cleanup_old_files(root, now)
+            inbox = root / "inbox" / session_id
+            publish_contract(root, path, metadata, quotes, {}, {}, links, (len(quotes), 0, 0),
+                             [inbox] if inbox.exists() else [])
+            try:
+                cleanup_old_files(root, now)
+            except OSError as error:
+                print(f"警告：契约已生效，archive/inbox 清理失败：{error}", file=sys.stderr)
         else:
             path = Path(options.directory).expanduser().resolve()
             if path.parent != root or path.name in ("archive", "inbox"):
@@ -747,8 +783,9 @@ def execute(options, *, root, session_id, claude_pid, now):
                 changes = {path / "quotes" / f"{number}.md": text for number, text in quotes.items()}
                 changes[path / "goal.md"] = encode_fields(contract.metadata)
                 changes[path / "links.md"] = contract.links_text()
-                write_files(changes, [])
-                remove_inbox(root, session_id)
+                inbox = root / "inbox" / session_id
+                with consume_inputs([inbox] if inbox.exists() else []):
+                    write_files(changes, [])
         print(timer_prompt(path))
         return 0
     if path is None:

@@ -1,6 +1,6 @@
 """新契约 API 的行为测试；所有文件只放 TemporaryDirectory。"""
 
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from io import StringIO
 import json
@@ -844,6 +844,98 @@ class GoalTests(unittest.TestCase):
         with mock.patch("goal.os.replace", side_effect=cannot_replace_links):
             self.rejects("update", "T1", "--field", "判据", "--value", "两轮通过",
                          "--source", "2", message="模拟映射文件写入失败")
+
+    @contextmanager
+    def readonly_directory(self, path):
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        mode = path.stat().st_mode & 0o777
+        os.fchmod(descriptor, 0o555)
+        try:
+            yield
+        finally:
+            # 即使生产代码已经将目录领取到临时位置，也能恢复测试夹具的权限。
+            os.fchmod(descriptor, mode)
+            os.close(descriptor)
+
+    def owner_command_with_inbox(self, operation):
+        self.root.mkdir(parents=True, exist_ok=True)
+        if operation == "open":
+            arguments = ("open", "release", "交付新版本")
+            contract = self.root / "20261024-093000-release"
+        elif operation == "adopt":
+            contract = self.open_goal()
+            old = subprocess.Popen([sys.executable, "-c", "pass"])
+            old.wait()
+            metadata = contract / "goal.md"
+            metadata.write_text(metadata.read_text().replace(f'"{self.pid}"', f'"{old.pid}"'))
+            self.session = "new-session"
+            arguments = ("adopt", str(contract))
+        else:
+            old, _ = self.legacy_contract()
+            contract = old.with_suffix("")
+            arguments = ("migrate", str(old))
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "只领取一次"})
+        return arguments, contract, self.root / "inbox" / self.session
+
+    def test_open_archive_cleanup_failure_warns_and_still_returns_timer_prompt(self):
+        archive = self.root / "archive" / "protected"
+        archive.mkdir(parents=True)
+        expired = archive / "old.md"
+        expired.write_text("过期归档")
+        modified = self.now.timestamp() - 31 * 86400
+        os.utime(expired, (modified, modified))
+        with self.readonly_directory(archive):
+            code, output, errors = self.command("open", "release", "交付新版本")
+        contract = self.root / "20261024-093000-release"
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
+        self.assertIn("警告", errors)
+        self.assertTrue(expired.exists())
+        self.succeeds("check")
+
+    def test_committed_owner_commands_warn_on_inbox_delete_failure_without_reimporting(self):
+        original_root = self.root
+        for operation, expected_count in (("open", 1), ("adopt", 1), ("migrate", 8)):
+            with self.subTest(operation=operation):
+                self.root = original_root / operation
+                self.session = "session-main"
+                arguments, contract, inbox = self.owner_command_with_inbox(operation)
+                with self.readonly_directory(inbox):
+                    code, output, errors = self.command(*arguments)
+                    self.assertEqual(code, 0, errors)
+                    self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
+                    self.assertIn("警告", errors)
+                    self.assertFalse(inbox.exists(), "已领原话不能继续留在可被再次领取的位置")
+                    self.assertEqual(len(list((contract / "quotes").iterdir())), expected_count)
+                    self.succeeds("adopt", str(contract))
+                    self.assertEqual(len(list((contract / "quotes").iterdir())), expected_count)
+                self.hook("hook-prompt", {"session_id": self.session, "prompt": "后续消息"})
+                self.assertEqual(len(list((contract / "quotes").iterdir())), expected_count + 1)
+                if operation == "migrate":
+                    for suffix in (".md", ".quotes.md", ".done.md"):
+                        self.assertFalse(contract.with_suffix(suffix).exists())
+
+    def test_failed_input_claim_rolls_back_owner_commands_and_can_be_retried(self):
+        original_root = self.root
+        for operation, expected_count in (("open", 1), ("adopt", 1), ("migrate", 8)):
+            with self.subTest(operation=operation):
+                self.root = original_root / operation
+                self.session = "session-main"
+                arguments, contract, inbox = self.owner_command_with_inbox(operation)
+                with self.readonly_directory(inbox.parent):
+                    self.rejects(*arguments, message="Permission denied")
+                self.succeeds(*arguments)
+                self.assertFalse(inbox.exists())
+                self.assertEqual(len(list((contract / "quotes").iterdir())), expected_count)
+
+    def test_adopt_write_failure_after_claim_restores_inbox_for_retry(self):
+        arguments, contract, inbox = self.owner_command_with_inbox("adopt")
+        with self.readonly_directory(contract):
+            self.rejects(*arguments, message="Permission denied")
+        self.assertEqual((inbox / "1.md").read_text(), "只领取一次")
+        self.succeeds(*arguments)
+        self.assertFalse(inbox.exists())
+        self.assertEqual(len(list((contract / "quotes").iterdir())), 1)
 
     def test_cleanup_does_not_follow_archive_directory_symlink(self):
         outside_cleanup = self.root / "do-not-clean"
