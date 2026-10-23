@@ -726,6 +726,7 @@ def execute(options, *, root, session_id, claude_pid, now):
             if path.parent != root or path.name in ("archive", "inbox"):
                 raise GoalError(f"契约目录必须在根目录内：{path}")
             contract = Contract(path)
+            # 新会话尚未绑定不代表旧所有者唯一；接管前也核原会话的重复绑定。
             find_contract(root, contract.metadata["session_id"])
             try:
                 os.kill(int(contract.metadata["claude_pid"]), 0)
