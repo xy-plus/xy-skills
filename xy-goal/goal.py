@@ -23,6 +23,9 @@ ITEM_LIMIT = 300
 TOTAL_LIMIT = 5000
 TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
 GOAL_FIELDS = ("target", "session_id", "claude_pid")
+# 迁入的账本只保留原行，不能为旧记录补造判据或验收字段；读取 done/ 时仍需认它。
+LEDGER_ACCEPTED = re.compile(r"^-\s+(T[1-9][0-9]*)\s+.+（.+；验收\s+[^）]+）$")
+LEDGER_CANCELLED = re.compile(r"^-\s+\[~\]\s+(T[1-9][0-9]*)\s+.+（原话\s+([1-9][0-9]*)：「[^」]+」）$")
 
 
 class GoalError(ValueError):
@@ -121,6 +124,28 @@ def write_files(changes, removals):
             temporary.unlink(missing_ok=True)
 
 
+def ledger_task_id(line):
+    match = LEDGER_ACCEPTED.fullmatch(line) or LEDGER_CANCELLED.fullmatch(line)
+    if match is None:
+        raise GoalError("账本行必须是验收记录或带原话编号的取消记录")
+    return match[1]
+
+
+def source_numbers(text):
+    numbers = set()
+    for match in re.finditer(r"原话\s+([0-9]+(?:\s*、\s*[0-9]+)*)", text):
+        numbers.update(int(part) for part in re.split(r"\s*、\s*", match[1]))
+    return numbers
+
+
+def encode_links(links, dismissed):
+    rows = list(links)
+    rows.extend((number, "不必跟进 " + reason) for number, reason in dismissed.items())
+    rows.sort(key=lambda row: (row[0], 0 if row[1].startswith("T") else 1,
+                               int(row[1][1:]) if row[1].startswith("T") else row[1]))
+    return "".join(f"{number} {landing}\n" for number, landing in rows)
+
+
 class Contract:
     def __init__(self, path):
         self.path = path
@@ -157,6 +182,12 @@ class Contract:
             if not self.sources(task):
                 raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处")
         for task, values in self.done.items():
+            if "legacy_line" in values:
+                if bool(self.sources(task)) == values["without_source"]:
+                    raise GoalError(f"{path / 'done' / (task + '.md')}: 旧记录无出处标记与映射不符")
+                for number in source_numbers(values["legacy_line"]):
+                    if (number, task) not in self.links:
+                        raise GoalError(f"{path / 'done' / (task + '.md')}: 账本正文原话缺少映射")
             if "cancel_quote" in values:
                 number = int(values["cancel_quote"])
                 if number not in self.quotes or (number, task) not in self.links:
@@ -170,6 +201,17 @@ class Contract:
             fields = list(TASK_FIELDS.values())
             if directory == "done":
                 text = read_text(path)
+                if text.startswith("- "):
+                    rows = text.splitlines()
+                    try:
+                        if ledger_task_id(rows[0]) != path.stem:
+                            raise GoalError("账本 T 号与文件名不符")
+                        if len(rows) > 2 or (len(rows) == 2 and rows[1] != "旧记录无出处"):
+                            raise GoalError("旧账本只能保留原行和无出处标记")
+                    except GoalError as error:
+                        raise GoalError(f"{path}: {error}") from error
+                    tasks[path.stem] = {"legacy_line": rows[0], "without_source": len(rows) == 2}
+                    continue
                 fields.append("verdict" if "\nverdict: " in text else "cancel_quote")
             values = read_fields(path, fields)
             try:
@@ -198,11 +240,7 @@ class Contract:
             raise GoalError(f"开放事项 {task} 不存在")
 
     def links_text(self):
-        rows = [(number, target) for number, target in self.links]
-        rows.extend((number, "不必跟进 " + reason) for number, reason in self.dismissed.items())
-        rows.sort(key=lambda row: (row[0], 0 if row[1].startswith("T") else 1,
-                                   int(row[1][1:]) if row[1].startswith("T") else row[1]))
-        return "".join(f"{number} {landing}\n" for number, landing in rows)
+        return encode_links(self.links, self.dismissed)
 
     def show(self):
         lines = [f"目标：{self.metadata['target']}"]
@@ -296,6 +334,8 @@ def parser():
         commands.add_parser(name)
     adopting = commands.add_parser("adopt")
     adopting.add_argument("directory")
+    migrating = commands.add_parser("migrate")
+    migrating.add_argument("checklist")
     adding = commands.add_parser("add")
     for name in ("title", "criteria", "state", "pointer"):
         adding.add_argument(f"--{name}", required=True)
@@ -375,7 +415,7 @@ def remove_inbox(root, session_id):
         shutil.rmtree(directory)
 
 
-def publish_contract(root, destination, metadata, quotes, tasks, done, links):
+def publish_contract(root, destination, metadata, quotes, tasks, done, links, expected_counts):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     if destination.exists():
         raise GoalError(f"契约目录已存在：{destination}")
@@ -389,8 +429,154 @@ def publish_contract(root, destination, metadata, quotes, tasks, done, links):
                 (directory / f"{number}.md").write_bytes(text.encode("utf-8"))
         (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
         (staging / "links.md").write_text(links, encoding="utf-8")
-        Contract(staging)
+        saved = Contract(staging)
+        actual_counts = (len(saved.quotes), len(saved.tasks), len(saved.done))
+        if actual_counts != expected_counts:
+            raise GoalError(f"迁移条数校验失败：原话、开放事项、账本应为 {expected_counts}，实际 {actual_counts}")
         staging.rename(destination)
+
+
+def parse_legacy_quotes(path):
+    text = read_text(path)
+    matches = list(re.finditer(r"^（原话\s+([0-9]+)\s*→\s*(.*?)）", text, re.MULTILINE))
+    if text[:matches[0].start()].strip() if matches else text.strip():
+        raise GoalError(f"{path}: 原话文件必须从顶格标注开始")
+    if len(list(re.finditer(r"^（原话", text, re.MULTILINE))) != len(matches):
+        raise GoalError(f"{path}: 原话顶格标注格式错误")
+    quotes, links, dismissed = {}, set(), {}
+    for index, match in enumerate(matches):
+        number = int(match[1])
+        if number <= 0 or number in quotes or (quotes and number <= max(quotes)):
+            raise GoalError(f"{path}: 原话编号重复或不按顺序")
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        # 仅去掉顶格标注，连同原消息的空行、缩进和分隔空行一起保留，绝不猜正文边界。
+        quotes[number] = text[match.end():end]
+        reasons = []
+        for segment in match[2].split("；"):
+            segment = segment.strip()
+            if segment.startswith("无：") or segment.startswith("规矩："):
+                label, reason = segment.split("：", 1)
+                require_text(reason, f"{path}: 旧落点原因")
+                reasons.append("旧规矩落点" if label == "规矩" else reason)
+            else:
+                targets = [part.strip() for part in segment.split("、")]
+                if any(re.fullmatch(r"T[1-9][0-9]*", target) is None for target in targets):
+                    raise GoalError(f"{path}: 原话 {number} 落点格式错误")
+                links.update((number, target) for target in targets)
+        if reasons:
+            dismissed[number] = "；".join(reasons)
+    return quotes, links, dismissed, len(matches)
+
+
+def parse_legacy_checklist(path, claude_pid):
+    lines = read_text(path).splitlines()
+    if not lines or not lines[0].startswith("# ") or lines.count("## 清单") != 1:
+        raise GoalError(f"{path}: 旧清单缺目标或「## 清单」")
+    title = lines[0][2:]
+    require_text(title, f"{path}: 目标")
+    start = lines.index("## 清单")
+    header = {}
+    for row in lines[1:start]:
+        if not row.strip():
+            continue
+        match = re.fullmatch(r"(session|cron_job_id)\s*:\s*(.+)", row)
+        if match is None or match[1] in header:
+            raise GoalError(f"{path}: 旧清单头格式错误")
+        header[match[1]] = match[2]
+    if "session" not in header or re.fullmatch(r"[1-9][0-9]*", header["session"]) is None:
+        raise GoalError(f"{path}: session 必须是 claude 进程号")
+    if int(header["session"]) != claude_pid:
+        raise GoalError(f"{path}: 旧清单不属于本会话，session 与 claude 进程号不同")
+    if "cron_job_id" not in header:
+        raise GoalError(f"{path}: 缺少 cron_job_id")
+    tasks, sources = {}, {}
+    index = start + 1
+    count = 0
+    while index < len(lines):
+        if not lines[index].strip():
+            index += 1
+            continue
+        match = re.fullmatch(r"- \[([ x])\] (T[1-9][0-9]*) (.+)", lines[index])
+        if match is None:
+            raise GoalError(f"{path}:{index + 1}: 旧事项标题格式错误")
+        status, task, task_title = match.groups()
+        if task in tasks:
+            raise GoalError(f"{path}: 重复事项 {task}")
+        count += 1
+        index += 1
+        if index >= len(lines) or not lines[index].startswith("  - 判据："):
+            raise GoalError(f"{path}:{index + 1}: 缺少判据")
+        criteria = [lines[index][len("  - 判据："):]]
+        index += 1
+        while index < len(lines) and not lines[index].startswith("  - 出处："):
+            if not lines[index].strip() or lines[index].startswith(("- ", "  - ", "## ")):
+                raise GoalError(f"{path}:{index + 1}: 缺少出处")
+            criteria.append(lines[index])
+            index += 1
+        if index >= len(lines) or not lines[index].startswith("  - 出处："):
+            raise GoalError(f"{path}: 缺少出处")
+        sources[task] = source_numbers(lines[index])
+        index += 1
+        if index >= len(lines) or not lines[index].startswith("  - 产物："):
+            raise GoalError(f"{path}:{index + 1}: 缺少产物")
+        artifact = lines[index][len("  - 产物："):]
+        index += 1
+        segments = re.split(r"[；;]", artifact, maxsplit=2)
+        if len(segments) < 2 or re.fullmatch(r"下次核：\s*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}", segments[1].strip()) is None:
+            raise GoalError(f"{path}: 旧产物第二段必须是下次核")
+        head = segments[0]
+        pointer = segments[2] if len(segments) == 3 else ""
+        state = "在办"
+        if status == "x" and head.startswith("待验收："):
+            pointer = head[len("待验收："):] + ("；" + pointer if pointer else "")
+        elif status == " " and head.startswith("等：用户："):
+            state = "等用户：" + head[len("等：用户："):]
+        elif status != " " or not (head.startswith("在跑：") or re.fullmatch(r"等：T[0-9]+(?:、T[0-9]+)*", head)):
+            raise GoalError(f"{path}: 旧产物状态格式错误")
+        values = {"title": task_title, "criteria": "\n".join(criteria), "state": state,
+                  "pointer": pointer if pointer.strip() else "无"}
+        for label, name in TASK_FIELDS.items():
+            require_text(values[name], f"{path}: {label}")
+        require_state(state)
+        tasks[task] = encode_fields(values)
+    return title, tasks, sources, count
+
+
+def migrate_contract(root, old, session_id, claude_pid):
+    """临时入口：各会话自己迁完后删除本入口、旧 check.py 及旧测试。"""
+    try:
+        if old.parent != root or old.suffix != ".md" or old.name.endswith((".quotes.md", ".done.md")):
+            raise GoalError("旧清单必须是根目录内的清单 .md 文件")
+        title, tasks, sources, task_count = parse_legacy_checklist(old, claude_pid)
+        quotes_path, ledger_path = old.with_suffix(".quotes.md"), old.with_suffix(".done.md")
+        quotes, links, dismissed, quote_count = parse_legacy_quotes(quotes_path)
+        ledger = read_text(ledger_path).splitlines()
+        done = {}
+        for line in ledger:
+            task = ledger_task_id(line)
+            if task in done or task in tasks:
+                raise GoalError(f"{ledger_path}: 重复事项 {task}")
+            links.update((number, task) for number in source_numbers(line))
+            has_source = any(target == task for _, target in links)
+            done[task] = line + ("\n" if has_source else "\n旧记录无出处\n")
+        for task, numbers in sources.items():
+            from_annotations = {number for number, target in links if target == task}
+            if not from_annotations or from_annotations != numbers:
+                raise GoalError(f"开放事项 {task} 的出处与旧原话标注不符或没有出处")
+        destination = old.with_suffix("")
+        imported, reasons = incoming_quotes(root, session_id, destination, max(quotes, default=0))
+        quotes.update(imported)
+        dismissed.update(reasons)
+        metadata = {"target": title, "session_id": session_id, "claude_pid": str(claude_pid)}
+        publish_contract(root, destination, metadata, quotes, tasks, done, encode_links(links, dismissed),
+                         (quote_count + len(imported), task_count, len(ledger)))
+        # 只有新目录通过逐条读取、出处与数量校验，才动旧三文件和已领走的 inbox。
+        for path in (old, quotes_path, ledger_path):
+            path.unlink()
+        remove_inbox(root, session_id)
+        print(timer_prompt(destination))
+    except (GoalError, OSError) as error:
+        raise GoalError(f"迁移 {old} 失败：{error}") from error
 
 
 def cleanup_old_files(root, now):
@@ -481,10 +667,13 @@ def require_pid(claude_pid):
 
 def execute(options, *, root, session_id, claude_pid, now):
     path = find_contract(root, session_id)
-    if options.command in ("open", "adopt"):
+    if options.command in ("open", "adopt", "migrate"):
         if path is not None:
             raise GoalError(f"本会话已有契约：{path}")
         require_pid(claude_pid)
+        if options.command == "migrate":
+            migrate_contract(root, Path(options.checklist).expanduser().resolve(), session_id, claude_pid)
+            return 0
         if options.command == "open":
             require_name(options.slug, "slug")
             require_text(options.target, "目标")
@@ -492,7 +681,7 @@ def execute(options, *, root, session_id, claude_pid, now):
             quotes, reasons = incoming_quotes(root, session_id, path, 0)
             metadata = {"target": options.target, "session_id": session_id, "claude_pid": str(claude_pid)}
             links = "".join(f"{number} 不必跟进 {reason}\n" for number, reason in reasons.items())
-            publish_contract(root, path, metadata, quotes, {}, {}, links)
+            publish_contract(root, path, metadata, quotes, {}, {}, links, (len(quotes), 0, 0))
             remove_inbox(root, session_id)
             cleanup_old_files(root, now)
         else:
@@ -588,7 +777,7 @@ def cli(arguments):
         session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
         if not command.startswith("hook-"):
             require_name(session_id, "CLAUDE_CODE_SESSION_ID")
-        pid = claude_process_id() if command in ("open", "adopt") else None
+        pid = claude_process_id() if command in ("open", "adopt", "migrate") else None
         return main(options.arguments, root=options.root, session_id=session_id,
                     claude_pid=pid, now=datetime.now())
     except (GoalError, OSError, UnicodeError) as error:

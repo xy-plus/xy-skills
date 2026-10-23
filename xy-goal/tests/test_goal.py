@@ -497,6 +497,121 @@ class GoalTests(unittest.TestCase):
         (inbox / "bad.md").write_text("坏文件名")
         self.rejects("open", "release", "交付新版本", message=str(inbox / "bad.md"))
 
+    def legacy_contract(self):
+        """按旧清单四行、顶格落点、逐行账本的实际结构造数据，不读取真实契约。"""
+        path = self.root / "20261001-081500-legacy.md"
+        path.write_text(
+            f"# 旧目标\nsession: {self.pid}\ncron_job_id: old-cron\n\n## 清单\n"
+            "- [ ] T1 运行工作\n  - 判据：命令通过\n    并检查输出\n  - 出处：原话 1\n"
+            "  - 产物：在跑：worker（pid 1234）；下次核：2026-10-01 10:00；/tmp/run.log；保留进度\n"
+            "- [ ] T2 等待决定\n  - 判据：用户确定日期\n  - 出处：原话 2\n"
+            "  - 产物：等：用户：决定日期；下次核：2026-10-01 10:00；/tmp/user.md\n"
+            "- [ ] T3 等待另一项\n  - 判据：任务通过\n  - 出处：原话 1\n"
+            "  - 产物：等：T1、T2；下次核：2026-10-01 10:00\n"
+            "- [x] T4 待验收\n  - 判据：审查通过\n  - 出处：原话 2\n"
+            "  - 产物：待验收：/tmp/result.md；下次核：2026-10-01 10:00\n", encoding="utf-8")
+        quotes = ["（原话 1 → T1、T3、T5）第一段\n\n同一条的第二段",
+                  "（原话 2 → T2、T4）第二条",
+                  "（原话 3 → 无：问题已答）为什么？",
+                  "（原话 4 → 规矩：CLAUDE.md）这次的约定",
+                  "（原话 5 → T5）已做过的要求",
+                  "（原话 6 → 无：已说明）完成另一项",
+                  "（原话 7 → T8）取消旧事项"]
+        path.with_suffix(".quotes.md").write_text("\n\n".join(quotes) + "\n", encoding="utf-8")
+        ledger = ["- T5 已验收（/tmp/report；验收 通过）",
+                  "- T6 另一项（原话 6；验收 python3 -m unittest 退出 0）",
+                  "- T7 无出处旧记录（/tmp/result；验收 通过）",
+                  "- [~] T8 用户取消（原话 7：「不做」）"]
+        path.with_suffix(".done.md").write_text("\n".join(ledger) + "\n", encoding="utf-8")
+        return path, ledger
+
+    def test_migrate_converts_old_three_files_and_preserves_each_record(self):
+        old, ledger = self.legacy_contract()
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "迁移前新消息"})
+        output = self.succeeds("migrate", str(old))
+        contract = old.with_suffix("")
+        self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
+        for suffix in (".md", ".quotes.md", ".done.md"):
+            self.assertFalse(old.with_suffix(suffix).exists())
+        self.assertEqual({p.name for p in (contract / "tasks").iterdir()}, {"T1.md", "T2.md", "T3.md", "T4.md"})
+        self.assertEqual({p.name for p in (contract / "done").iterdir()}, {"T5.md", "T6.md", "T7.md", "T8.md"})
+        self.assertEqual({p.name for p in (contract / "quotes").iterdir()}, {f"{n}.md" for n in range(1, 9)})
+        self.assertEqual((contract / "quotes" / "1.md").read_text(), "第一段\n\n同一条的第二段\n\n")
+        self.assertEqual((contract / "quotes" / "7.md").read_text(), "取消旧事项\n")
+        self.assertEqual((contract / "quotes" / "8.md").read_text(), "迁移前新消息")
+        self.assertFalse((self.root / "inbox" / self.session).exists())
+        for index, line in enumerate(ledger, start=5):
+            saved = (contract / "done" / f"T{index}.md").read_text()
+            self.assertEqual(saved, line + ("\n旧记录无出处\n" if index == 7 else "\n"))
+            for fabricated in ("criteria:", "state:", "verdict:"):
+                self.assertNotIn(fabricated, saved)
+        self.assertEqual((contract / "links.md").read_text(),
+                         "1 T1\n1 T3\n1 T5\n2 T2\n2 T4\n3 不必跟进 问题已答\n"
+                         "4 不必跟进 旧规矩落点\n5 T5\n6 T6\n6 不必跟进 已说明\n7 T8\n")
+        output = self.succeeds("show")
+        for text in ("目标：旧目标", "T1 运行工作", "命令通过\\n    并检查输出", "/tmp/run.log；保留进度",
+                     "等用户：决定日期", "/tmp/user.md", "T3 等待另一项", "指针：无", "/tmp/result.md"):
+            self.assertIn(text, output)
+        self.assertEqual(output.count("状态：在办"), 3)
+        self.assertNotIn("下次核", output)
+        self.succeeds("dismiss", "8", "--reason", "迁移命令已处理")
+        self.succeeds("check")
+        self.assertIn("T9", self.add_task(1))
+
+    def test_migrate_refuses_another_sessions_legacy_contract_without_changing_it(self):
+        old, _ = self.legacy_contract()
+        old.write_text(old.read_text().replace(f"session: {self.pid}", f"session: {self.pid + 1}"))
+        self.rejects("migrate", str(old), message="不属于本会话")
+        self.assertFalse(old.with_suffix("").exists())
+
+    def test_migrate_requires_no_current_contract(self):
+        old, _ = self.legacy_contract()
+        contract = self.open_goal()
+        self.rejects("migrate", str(old), message="已有契约")
+        shutil.copytree(contract, self.root / "copy")
+        self.rejects("migrate", str(old), message="多份契约")
+
+    def test_migrate_keeps_old_files_when_any_validation_fails(self):
+        for problem in ("missing-source", "duplicate-quote", "duplicate-ledger", "dangling-link", "invalid-task", "missing-file"):
+            with self.subTest(problem=problem):
+                old, ledger = self.legacy_contract()
+                quotes_path, ledger_path = old.with_suffix(".quotes.md"), old.with_suffix(".done.md")
+                if problem == "missing-source":
+                    quotes_path.write_text(quotes_path.read_text().replace("T1、T3、T5", "T3、T5"))
+                elif problem == "duplicate-quote":
+                    quotes_path.write_text(quotes_path.read_text() + "\n（原话 7 → T8）重复编号")
+                elif problem == "duplicate-ledger":
+                    ledger_path.write_text(ledger_path.read_text() + ledger[0] + "\n")
+                elif problem == "dangling-link":
+                    quotes_path.write_text(quotes_path.read_text().replace("T1、T3、T5", "T1、T3、T404"))
+                elif problem == "invalid-task":
+                    old.write_text(old.read_text().replace("  - 判据：命令通过", "坏判据"))
+                else:
+                    ledger_path.unlink()
+                before = self.files()
+                code, output, errors = self.command("migrate", str(old))
+                self.assertEqual(code, 1, output + errors)
+                self.assertIn(str(old), errors)
+                self.assertEqual(self.files(), before)
+                self.assertFalse(old.with_suffix("").exists())
+
+    def test_migrate_preserves_indented_annotation_as_quote_body(self):
+        old, _ = self.legacy_contract()
+        quotes = old.with_suffix(".quotes.md")
+        quotes.write_text(quotes.read_text().replace("第一段", "第一段\n （原话 99 → T404）用户贴的片段"))
+        self.succeeds("migrate", str(old))
+        self.assertIn("\n （原话 99 → T404）用户贴的片段", (old.with_suffix("") / "quotes" / "1.md").read_text())
+
+    def test_migrate_refuses_unknown_landing_and_non_numeric_session(self):
+        old, _ = self.legacy_contract()
+        quotes = old.with_suffix(".quotes.md")
+        original = quotes.read_text()
+        quotes.write_text(original.replace("无：问题已答", "未知：内容"))
+        self.rejects("migrate", str(old), message="落点")
+        quotes.write_text(original)
+        old.write_text(old.read_text().replace(f"session: {self.pid}", "session: 会话名"))
+        self.rejects("migrate", str(old), message="session")
+
 
 if __name__ == "__main__":
     unittest.main()
