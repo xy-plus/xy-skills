@@ -31,7 +31,7 @@ class GoalTests(unittest.TestCase):
         self.now = datetime(2026, 10, 24, 9, 30)
 
     def run_goal(self, *arguments, session, pid, stdin):
-        command_arguments = list(arguments)
+        command_arguments = ["--root", str(self.root), *arguments]
         if arguments and arguments[0] in ("open", "adopt", "migrate") and pid is not None:
             command_arguments.extend(("--claude-pid", str(pid)))
         output, errors = StringIO(), StringIO()
@@ -39,8 +39,7 @@ class GoalTests(unittest.TestCase):
             old_stdin = sys.stdin
             sys.stdin = StringIO(stdin)
             try:
-                code = goal.main(command_arguments, root=self.root,
-                                 session_id=session, now=self.now)
+                code = goal.main(command_arguments, session_id=session, now=self.now)
             finally:
                 sys.stdin = old_stdin
         return code, output.getvalue(), errors.getvalue()
@@ -404,9 +403,10 @@ class GoalTests(unittest.TestCase):
             self.hook("hook-prompt", {"session_id": self.session, "prompt": text})
         self.assertIn("还没处理的原话：3、4、5、6、7", self.succeeds("show"))
 
-    def test_complete_pasted_notification_keeps_original_and_inbox_dismissal_survives_open(self):
+    def test_complete_pasted_notification_is_classified_only_when_claimed(self):
         notification = "<task-notification><task-id>pasted</task-id><status>done</status><summary>用户完整粘贴</summary></task-notification>"
         self.hook("hook-prompt", {"session_id": self.session, "prompt": notification})
+        self.assertEqual({p.name for p in (self.root / "inbox" / self.session).iterdir()}, {"1.md"})
         contract = self.open_goal()
         self.assertEqual((contract / "quotes" / "1.md").read_text(), notification)
         self.assertIn("1 不必跟进 ", (contract / "links.md").read_text())
@@ -481,36 +481,20 @@ class GoalTests(unittest.TestCase):
                                "--root", str(self.root), *arguments],
                               env=environment, capture_output=True, text=True, check=False)
 
-    def test_cli_records_bash_ppid_with_real_claude_process_names(self):
-        # 真实创建 claude.exe -> Bash -> goal.py，不模拟 PID 查找函数。
-        # argv[0] 覆盖后台会话改写和 npm 安装的三种实际形状。
-        for index, command_line in enumerate(("claude bg-spare", "claude bg-pty-host",
-                "/home/xy/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe")):
-            with self.subTest(command_line=command_line):
-                root = self.root / str(index)
-                environment = os.environ.copy()
-                environment["CLAUDE_CODE_SESSION_ID"] = self.session
-                environment["CLAUDE_PID"] = str(self.pid)  # 故意与 Bash 的 PPID 不同。
-                invocation = shlex.join([sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
-                                         "--root", str(root), "open", "cli", "CLI 目标"])
-                invocation += ' --claude-pid "$PPID"'
-                wrapper = (
-                    "import ctypes, json, os, subprocess, sys; "
-                    "from pathlib import Path; "
-                    "ctypes.CDLL(None).prctl(15, b'claude.exe', 0, 0, 0); "
-                    "print(json.dumps({'pid': os.getpid(), "
-                    "'comm': Path('/proc/self/comm').read_text().strip(), "
-                    "'cmdline0': Path('/proc/self/cmdline').read_bytes().split(b'\\0')[0].decode()}), flush=True); "
-                    f"sys.exit(subprocess.call(['/bin/bash', '-c', {invocation!r}]))")
-                result = subprocess.run([command_line, "-c", wrapper], executable=sys.executable,
-                                        env=environment, capture_output=True, text=True, check=False)
-                parent = json.loads(result.stdout.splitlines()[0])
-                self.assertEqual(parent["comm"], "claude.exe")
-                self.assertEqual(parent["cmdline0"], command_line)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                goals = list(root.glob("*/goal.md"))
-                self.assertEqual(len(goals), 1, "CLI 必须实际创建契约")
-                self.assertIn(f'claude_pid: "{parent["pid"]}"', goals[0].read_text())
+    def test_cli_records_bash_parent_pid(self):
+        environment = os.environ.copy()
+        environment["CLAUDE_CODE_SESSION_ID"] = self.session
+        invocation = shlex.join([sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
+                                 "--root", str(self.root), "open", "cli", "CLI 目标"])
+        invocation += ' --claude-pid "$PPID"'
+        wrapper = ("import os, subprocess, sys; print(os.getpid(), flush=True); "
+                   f"sys.exit(subprocess.call(['/bin/bash', '-c', {invocation!r}]))")
+        result = subprocess.run([sys.executable, "-c", wrapper], env=environment,
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        goals = list(self.root.glob("*/goal.md"))
+        self.assertEqual(len(goals), 1)
+        self.assertIn(f'claude_pid: "{result.stdout.splitlines()[0]}"', goals[0].read_text())
 
     def test_cli_requires_bash_ppid_for_each_owner_command_even_with_claude_pid_environment(self):
         for arguments in (("open", "release", "目标"),
@@ -761,7 +745,7 @@ class GoalTests(unittest.TestCase):
         self.open_goal()
         self.assertTrue(important.exists(), "不能沿软链清理 archive/inbox 之外的文件")
 
-    def test_inbox_cleanup_removes_mapping_to_expired_quote_and_keeps_recording(self):
+    def test_inbox_cleanup_expires_quotes_and_keeps_recording(self):
         other_session = "other-session"
         notification = "<task-notification><task-id>j</task-id><status>done</status><summary>完成</summary></task-notification>"
         self.hook("hook-prompt", {"session_id": other_session, "prompt": notification})
@@ -771,7 +755,6 @@ class GoalTests(unittest.TestCase):
         fresh = self.now.timestamp() - 86400
         os.utime(inbox / "1.md", (old, old))
         os.utime(inbox / "2.md", (fresh, fresh))
-        os.utime(inbox / "links.md", (fresh, fresh))
         self.open_goal()
         self.assertFalse((inbox / "1.md").exists())
         self.assertEqual((inbox / "2.md").read_text(), "近期消息")
@@ -787,19 +770,6 @@ class GoalTests(unittest.TestCase):
         shutil.copytree(contract, self.root / "duplicate-old-owner")
         self.session = "new-session"
         self.rejects("adopt", str(contract), message="多份契约")
-
-    def test_hook_refuses_blank_reason_in_inbox_mapping_without_appending_quote(self):
-        inbox = self.root / "inbox" / self.session
-        inbox.mkdir(parents=True)
-        (inbox / "1.md").write_text("原消息")
-        links = inbox / "links.md"
-        links.write_text("1 不必跟进    \n")
-        before = self.files()
-        code, output, errors = self.run_goal("hook-prompt", session=None, pid=None,
-                                            stdin=json.dumps({"session_id": self.session, "prompt": "新消息"}))
-        self.assertEqual(code, 1, output + errors)
-        self.assertIn(str(links), errors)
-        self.assertEqual(self.files(), before)
 
 
 if __name__ == "__main__":

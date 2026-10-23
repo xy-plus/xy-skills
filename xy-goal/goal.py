@@ -110,8 +110,8 @@ def timer_prompt(contract):
     return f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做"
 
 
-def quote_files(directory, *, inbox):
-    paths = [path for path in directory.iterdir() if not (inbox and path.name == "links.md")]
+def quote_files(directory):
+    paths = list(directory.iterdir())
     for path in paths:
         if not path.is_file() or re.fullmatch(r"[1-9][0-9]*\.md", path.name) is None:
             raise GoalError(f"{path}: 原话文件名必须是无前导零的正整数.md")
@@ -182,7 +182,7 @@ class Contract:
         self.metadata = read_fields(path / "goal.md", GOAL_FIELDS)
         if re.fullmatch(r"[1-9][0-9]*", self.metadata["claude_pid"]) is None:
             raise GoalError(f"{path / 'goal.md'}: claude_pid 必须是正整数")
-        self.quotes = quote_files(path / "quotes", inbox=False)
+        self.quotes = quote_files(path / "quotes")
         self.tasks = self.read_tasks("tasks")
         self.done = self.read_tasks("done")
         overlap = self.tasks.keys() & self.done.keys()
@@ -354,6 +354,7 @@ class Contract:
 
 def parser():
     result = ArgumentParser(description=__doc__)
+    result.add_argument("--root", required=True)
     commands = result.add_subparsers(dest="command", required=True)
     opening = commands.add_parser("open")
     opening.add_argument("slug")
@@ -418,26 +419,16 @@ def automatic_reason(text, contract):
 def read_inbox(root, session_id):
     directory = root / "inbox" / session_id
     if not directory.exists():
-        return {}, {}
-    quotes = {number: read_text(path) for number, path in quote_files(directory, inbox=True).items()}
-    dismissed = {}
-    links = directory / "links.md"
-    if links.exists():
-        for row in read_text(links).splitlines():
-            match = re.fullmatch(r"([1-9][0-9]*) 不必跟进 (.+)", row)
-            if (match is None or not match[2].strip() or int(match[1]) not in quotes
-                    or int(match[1]) in dismissed):
-                raise GoalError(f"{links}: inbox 映射格式错误")
-            dismissed[int(match[1])] = match[2]
-    return quotes, dismissed
+        return {}
+    return {number: read_text(path) for number, path in quote_files(directory).items()}
 
 
 def incoming_quotes(root, session_id, contract, last_number):
-    quotes, dismissed = read_inbox(root, session_id)
+    quotes = read_inbox(root, session_id)
     imported, reasons = {}, {}
-    for number, (old_number, text) in enumerate(quotes.items(), start=last_number + 1):
+    for number, text in enumerate(quotes.values(), start=last_number + 1):
         imported[number] = text
-        reason = dismissed.get(old_number) or automatic_reason(text, contract)
+        reason = automatic_reason(text, contract)
         if reason is not None:
             reasons[number] = reason
     return imported, reasons
@@ -631,23 +622,10 @@ def cleanup_old_files(root, now):
         # 只看每个文件自己的 mtime；目录不按年龄整棵删除，也不沿软链走出根目录。
         for current, directories, files in os.walk(directory, topdown=False, followlinks=False):
             current = Path(current)
-            expired_quotes = set()
             for child in files + [child for child in directories if (current / child).is_symlink()]:
                 path = current / child
                 if path.lstat().st_mtime < cutoff:
                     path.unlink()
-                    if re.fullmatch(r"[1-9][0-9]*\.md", child):
-                        expired_quotes.add(int(path.stem))
-            links = current / "links.md"
-            if name == "inbox" and expired_quotes and links.exists():
-                # 自动标记随过期原话一起移除，避免清理制造悬空映射、阻塞后续 hook。
-                rows = read_text(links).splitlines(keepends=True)
-                retained = []
-                for row in rows:
-                    match = re.fullmatch(r"([1-9][0-9]*) 不必跟进 .+\n?", row)
-                    if match is None or int(match[1]) not in expired_quotes:
-                        retained.append(row)
-                write_files({links: "".join(retained)}, [])
             if not any(current.iterdir()):
                 current.rmdir()
 
@@ -686,31 +664,19 @@ def record_hook(root, session_id, text):
         number = max(contract.quotes, default=0) + 1
     else:
         contract = None
-        quotes, _ = read_inbox(root, session_id)
+        quotes = read_inbox(root, session_id)
         directory = root / "inbox" / session_id
         directory.mkdir(parents=True, exist_ok=True)
         number = max(quotes, default=0) + 1
-    while True:
-        quote = directory / f"{number}.md"
-        try:
-            output = quote.open("x", encoding="utf-8", newline="")
-            break
-        except FileExistsError:
-            number += 1
+    quote = directory / f"{number}.md"
+    output = quote.open("x", encoding="utf-8", newline="")
     try:
         with output:
             output.write(text)
         reason = automatic_reason(text, path)
-        if reason is not None:
-            if contract is not None:
-                contract.dismissed[number] = reason
-                links = contract.path / "links.md"
-                content = contract.links_text()
-            else:
-                # inbox 也立即标记机器输入；领走时与原话一起重编号，合并进契约唯一映射。
-                links = directory / "links.md"
-                content = (read_text(links) if links.exists() else "") + f"{number} 不必跟进 {reason}\n"
-            write_files({links: content}, [])
+        if contract is not None and reason is not None:
+            contract.dismissed[number] = reason
+            write_files({contract.path / "links.md": contract.links_text()}, [])
     except BaseException:
         quote.unlink()
         raise
@@ -788,8 +754,8 @@ def execute(options, *, root, session_id, claude_pid, now):
     return 0
 
 
-def main(arguments, *, root, session_id, now):
-    """根目录、会话、时钟显式传入；进程号只取命令参数，测试也走同一入口。"""
+def main(arguments, *, session_id, now):
+    """根目录与进程号都从命令参数取；会话和时钟显式传入。"""
     try:
         options = parser().parse_args(arguments)
         # Claude Code 的 Bash 的 $PPID 是本会话 claude。由该 Bash 展开后传入，
@@ -802,7 +768,7 @@ def main(arguments, *, root, session_id, now):
                 return 0
         else:
             require_name(session_id, "CLAUDE_CODE_SESSION_ID")
-        root = Path(root).resolve()
+        root = Path(options.root).expanduser().resolve()
         with root_lock(root):
             if incoming is not None:
                 record_hook(root, *incoming)
@@ -813,18 +779,5 @@ def main(arguments, *, root, session_id, now):
         return 1
 
 
-def cli(arguments):
-    try:
-        entry = ArgumentParser(description="xy-goal；根目录必须显式提供")
-        entry.add_argument("--root", required=True)
-        entry.add_argument("arguments", nargs=argparse.REMAINDER)
-        options = entry.parse_args(arguments)
-        return main(options.arguments, root=options.root,
-                    session_id=os.environ.get("CLAUDE_CODE_SESSION_ID"), now=datetime.now())
-    except (GoalError, OSError, UnicodeError) as error:
-        print(error, file=sys.stderr)
-        return 1
-
-
 if __name__ == "__main__":
-    raise SystemExit(cli(sys.argv[1:]))
+    raise SystemExit(main(sys.argv[1:], session_id=os.environ.get("CLAUDE_CODE_SESSION_ID"), now=datetime.now()))
