@@ -113,12 +113,12 @@ def timer_prompt(contract):
 
 
 def quote_files(directory):
-    paths = list(directory.iterdir())
-    for path in paths:
+    quotes = {}
+    for path in directory.iterdir():
         if not path.is_file() or re.fullmatch(r"[1-9][0-9]*\.md", path.name) is None:
             raise GoalError(f"{path}: 原话文件名必须是无前导零的正整数.md")
-        read_text(path)
-    return {int(path.stem): path for path in sorted(paths, key=lambda p: int(p.stem))}
+        quotes[int(path.stem)] = read_text(path)
+    return dict(sorted(quotes.items()))
 
 
 def write_files(changes, removals):
@@ -442,9 +442,7 @@ def session_project(session_id):
 
 
 def read_inbox(directory):
-    if not directory.exists():
-        return {}
-    return {number: read_text(path) for number, path in quote_files(directory).items()}
+    return quote_files(directory) if directory.exists() else {}
 
 
 def incoming_quotes(inbox, contract, last_number):

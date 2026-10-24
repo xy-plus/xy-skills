@@ -917,8 +917,7 @@ class GoalTests(unittest.TestCase):
         for text in ("先讨论", "用 xy-goal 开契约"):
             self.hook("hook-prompt", {"session_id": self.session, "prompt": text})
         inbox = self.inbox
-        self.assertEqual((inbox / "1.md").read_text(), "先讨论")
-        self.assertEqual((inbox / "2.md").read_text(), "用 xy-goal 开契约")
+        self.assertEqual(goal.quote_files(inbox), {1: "先讨论", 2: "用 xy-goal 开契约"})
         contract = self.open_goal()
         self.assertEqual((contract / "quotes" / "1.md").read_text(), "先讨论")
         self.assertEqual((contract / "quotes" / "2.md").read_text(), "用 xy-goal 开契约")
