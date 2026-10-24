@@ -3,6 +3,7 @@
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from io import StringIO
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
@@ -90,6 +92,120 @@ class GoalTests(unittest.TestCase):
         self.assertIn("session-main", metadata)
         self.assertIn(str(self.pid), metadata)
         self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
+
+    def test_all_commands_refuse_missing_or_non_directory_root_without_writes(self):
+        original_root = self.root
+        environment = os.environ.copy()
+        environment["CLAUDE_CODE_SESSION_ID"] = self.session
+        commands = (
+            (("hook-prompt",), {"session_id": self.session, "prompt": "不能丢失的原话"}),
+            (("hook-answer",), {"session_id": self.session, "tool_name": "AskUserQuestion",
+                                "tool_input": {"question": "继续？"}, "tool_response": "继续"}),
+            (("open", "release", "交付新版本", "--claude-pid", str(self.pid)), None),
+            (("adopt", str(original_root / "old-contract"), "--claude-pid", str(self.pid)), None),
+            (("show",), None),
+            (("check",), None),
+            (("close",), None),
+            (("add", "--title", "发布", "--criteria", "通过", "--source", "1",
+              "--state", "在办", "--pointer", "无"), None),
+            (("update", "T1", "--source", "1"), None),
+            (("dismiss", "1", "--reason", "已答"), None),
+            (("accept", "T1", "--verdict", "通过"), None),
+            (("cancel", "T1", "--quote", "1"), None),
+        )
+        for state in ("missing", "file"):
+            for arguments, payload in commands:
+                with self.subTest(state=state, command=arguments[0]):
+                    directory = original_root / f"{state}-{arguments[0]}"
+                    directory.mkdir()
+                    self.root = directory / "parent" / "root"
+                    if state == "file":
+                        self.root.parent.mkdir()
+                        self.root.write_bytes(b"keep root file unchanged")
+                    result = subprocess.run(
+                        [sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
+                         "--root", str(self.root), *arguments],
+                        input=json.dumps(payload), env=environment,
+                        text=True, capture_output=True, check=False,
+                    )
+                    if state == "missing":
+                        self.assertEqual(list(directory.iterdir()), [], "失败不能创建根目录或父目录")
+                    else:
+                        self.assertEqual(self.root.read_bytes(), b"keep root file unchanged")
+                        self.assertEqual(list(self.root.parent.iterdir()), [self.root])
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(str(self.root), result.stderr)
+
+    def wait_until_root_is_open(self, process, descriptor):
+        locked = os.fstat(descriptor)
+        deadline = time.monotonic() + 10
+        while process.poll() is None and time.monotonic() < deadline:
+            for path in (Path("/proc") / str(process.pid) / "fd").iterdir():
+                try:
+                    opened = path.stat()
+                except FileNotFoundError:
+                    continue  # 子进程可能刚关闭导入模块时打开的文件。
+                if (opened.st_dev, opened.st_ino) == (locked.st_dev, locked.st_ino):
+                    return
+            time.sleep(0.01)
+        self.fail("子进程未在超时前打开已锁住的根目录")
+
+    def test_waiting_hook_and_open_refuse_deleted_or_replaced_root_without_writes(self):
+        original_root = self.root
+        environment = os.environ.copy()
+        environment["CLAUDE_CODE_SESSION_ID"] = self.session
+        for operation in ("hook-prompt", "open"):
+            for change in ("deleted", "replaced"):
+                with self.subTest(operation=operation, change=change):
+                    directory = original_root / f"{operation}-{change}"
+                    directory.mkdir()
+                    self.root = directory / "root"
+                    self.root.mkdir()
+                    (self.root / "keep.md").write_bytes(b"original root")
+                    arguments = (("hook-prompt",) if operation == "hook-prompt" else
+                                 ("open", "release", "交付新版本", "--claude-pid", str(self.pid)))
+                    descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX)
+                        with tempfile.TemporaryFile(mode="w+", dir=original_root) as incoming:
+                            json.dump({"session_id": self.session, "prompt": "排在锁后的原话"}, incoming)
+                            incoming.seek(0)
+                            with subprocess.Popen(
+                                [sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
+                                 "--root", str(self.root), *arguments],
+                                stdin=incoming, env=environment, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            ) as process:
+                                try:
+                                    # 观察真实 CLI 的目录 fd；父进程持锁，子进程还不能执行命令。
+                                    self.wait_until_root_is_open(process, descriptor)
+                                    if change == "deleted":
+                                        shutil.rmtree(self.root)
+                                    else:
+                                        self.root.rename(directory / "retired")
+                                        self.root.mkdir()
+                                        (self.root / "keep.md").write_bytes(b"replacement root")
+                                    before = {str(path.relative_to(directory)):
+                                              path.read_bytes() if path.is_file() else None
+                                              for path in directory.rglob("*")}
+                                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                                    output, errors = process.communicate(timeout=10)
+                                    self.assertEqual(
+                                        {str(path.relative_to(directory)):
+                                         path.read_bytes() if path.is_file() else None
+                                         for path in directory.rglob("*")}, before,
+                                        "根目录失效后不能创建目录或写入文件",
+                                    )
+                                    self.assertEqual(process.returncode, 1, output + errors)
+                                    self.assertEqual(output, "")
+                                    self.assertIn(str(self.root), errors)
+                                finally:
+                                    if process.poll() is None:
+                                        process.kill()
+                                    process.communicate(timeout=10)
+                    finally:
+                        os.close(descriptor)
 
     def test_show_lists_goal_and_unhandled_quotes_in_numeric_order(self):
         contract = self.open_goal()
@@ -284,6 +400,7 @@ class GoalTests(unittest.TestCase):
         for operation in ("accept", "cancel"):
             with self.subTest(operation=operation):
                 self.root = original_root / operation
+                self.root.mkdir()
                 contract = self.open_goal()
                 self.quote(contract, 1, "测试后发布，或取消发布")
                 self.add_task(1)
@@ -365,6 +482,7 @@ class GoalTests(unittest.TestCase):
                 ("mapped-without-source", "1 T1\n1 T500\n396 T125\n", "旧记录无出处标记与映射不符")):
             with self.subTest(problem=problem):
                 self.root = original_root / problem
+                self.root.mkdir()
                 contract = self.contract_with_legacy_done()
                 (contract / "links.md").write_text(links, encoding="utf-8")
                 self.rejects("check", message=message)
@@ -406,6 +524,7 @@ class GoalTests(unittest.TestCase):
             for operation in ("add", "update", "accept"):
                 with self.subTest(separator=repr(separator), operation=operation):
                     self.root = original_root / f"{ord(separator)}-{operation}"
+                    self.root.mkdir()
                     contract = self.open_goal()
                     self.quote(contract, 1, "按要求完成")
                     text = "甲" + separator + "乙"
@@ -431,6 +550,7 @@ class GoalTests(unittest.TestCase):
         for separator in ("\u2028", "\u2029", "\u0085", "\v", "\f", "\x1c", "\x1d", "\x1e"):
             with self.subTest(separator=repr(separator)):
                 self.root = original_root / str(ord(separator))
+                self.root.mkdir()
                 contract = self.open_goal()
                 self.quote(contract, 1, "问题已回答")
                 self.rejects("dismiss", "1", "--reason", "甲" + separator + "乙", message="一行")
@@ -611,6 +731,7 @@ class GoalTests(unittest.TestCase):
                     child.terminate()
                     child.wait()
                 self.root = original_root / state
+                self.root.mkdir()
                 self.pid = child.pid
                 self.rejects("open", "release", "目标", message="祖先")
                 self.assertFalse(list(self.root.glob("*/goal.md")))

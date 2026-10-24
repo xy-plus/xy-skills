@@ -398,10 +398,14 @@ def parser():
 def root_lock(root):
     # 锁目录 fd，不新增持久锁文件。所有命令共用这把锁，使领 inbox、换会话和
     # hook 的编号/映射写入不会交错；原话创建仍用 x（O_EXCL），不覆盖旧原话。
-    root.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+        # 根必须已存在；等锁期间路径可能被删除或替换，不能向失效的根写入。
+        locked = os.fstat(descriptor)
+        current = os.stat(root)
+        if (current.st_dev, current.st_ino) != (locked.st_dev, locked.st_ino):
+            raise GoalError(f"根目录已被替换：{root}")
         yield
     finally:
         os.close(descriptor)
