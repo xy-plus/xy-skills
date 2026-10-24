@@ -1,0 +1,9 @@
+[Unit]
+Description=Run runs-cleaner once per day
+
+[Timer]
+OnCalendar=daily
+Unit=runs-cleaner.service
+
+[Install]
+WantedBy=timers.target

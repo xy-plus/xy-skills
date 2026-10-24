@@ -42,7 +42,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 @~/xy-skills/xy-runs/SKILL.md
 ```
 
-按 `~/runs-cleaner/README.md` 安装定期清理程序，并按其中说明配置 runs 的清理范围。
+按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并按其中说明配置 runs 的清理范围。
 
 然后在 `~/.claude/CLAUDE.md` 或仓库的 `CLAUDE.md` 里写引用，两行 `@` 让两把尺子启动即全文载入：
 
