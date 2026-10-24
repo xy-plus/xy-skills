@@ -9,6 +9,7 @@
 | `xy-workflow` | 标准工作流程 |
 | `xy-review` | 对抗审查：主审加剃刀两个子代理、报告格式和格式检查脚本、怎么处理结果；xy-workflow 的所有审查都用它 |
 | `xy-goal` | 长目标契约与定时自查 |
+| `xy-runs` | 文件去处、runs 布局与定期清理规则 |
 | `sync-think` | 只有用户能定的事，做成带建议的选择题问用户 |
 
 ## 安装
@@ -19,7 +20,29 @@ mkdir -p ~/.claude/skills
 for d in ~/xy-skills/*/; do ln -sfn "${d%/}" ~/.claude/skills/$(basename "$d"); done
 ```
 
-再按 [xy-goal/README.md](xy-goal/README.md) 的安装步骤，将 `UserPromptSubmit` 与 `PostToolUse`（matcher `AskUserQuestion`）两个 hook 合并到 `~/.claude/settings.json`，保留已有配置。配好后，用户原话和选择题回答会自动记录，开契约时领取之前的消息。
+在全局 `~/.claude/settings.json` 的 `env` 里显式设置 runs 的绝对路径，保留已有配置，例如：
+
+```json
+{
+  "env": {
+    "RUNS_ROOT": "/data/user/xy/runs"
+  }
+}
+```
+
+重启会话后，先创建这个根目录，再按 [xy-goal/README.md](xy-goal/README.md) 的安装步骤，将 `UserPromptSubmit` 与 `PostToolUse`（matcher `AskUserQuestion`）两个 hook 合并到全局 settings.json。hook 和命令都用 `--root "$RUNS_ROOT"`，不另设根目录。配好后，用户原话和选择题回答会自动记录，开契约时领取之前的消息。
+
+```bash
+mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT}"
+```
+
+在全局 `~/.claude/CLAUDE.md` 加一行，让每个会话加载 runs 规则：
+
+```markdown
+@~/xy-skills/xy-runs/SKILL.md
+```
+
+按 `~/runs-cleaner/README.md` 安装定期清理程序，并按其中说明配置 runs 的清理范围。
 
 然后在 `~/.claude/CLAUDE.md` 或仓库的 `CLAUDE.md` 里写引用，两行 `@` 让两把尺子启动即全文载入：
 

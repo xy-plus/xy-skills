@@ -11,7 +11,7 @@ xy-goal 在 goal 的基础上做简单优化，只管五件事：用户原话自
 
 ## 契约与命令
 
-一份契约一个目录 `~/.claude/xy-goal/<YYYYMMDD-HHMMSS>-<slug>/`：
+契约文件放在一件事的工具私有子目录 `$RUNS_ROOT/<项目目录名>/<YYYYMMDD-HHMMSS>-<slug>/xy-goal/`：
 
 | 文件 | 内容 |
 |---|---|
@@ -26,16 +26,16 @@ xy-goal 在 goal 的基础上做简单优化，只管五件事：用户原话自
 写入只经脚本，不手改契约；读取直接用 Read 或 cat。`--root` 必须显式提供，且指向事先创建的目录（首次安装步骤见 README）。根目录不存在或不是目录就报错退出，脚本不会自动创建。
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal open <slug> '<目标>' --claude-pid "$PPID"
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal show
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal check
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" open <slug> '<目标>' --claude-pid "$PPID"
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" show
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" check
 ```
 
 `open`、`adopt` 必须在 Claude Code 的 Bash 工具里运行，显式传 `--claude-pid "$PPID"`。该 Bash 的 `$PPID` 就是本会话 claude 进程号，可在同一个 Bash 里用 `echo "$PPID"` 核对；让它直接展开。脚本核对传入的正整数 PID 是本次调用进程的祖先，否则拒绝并说明调用方式，不能抄别的会话的 PID 来接管。
 
-脚本从 `CLAUDE_CODE_SESSION_ID` 定位本会话的契约。一个会话一份契约，几个主题的事项都放里面。`open` 要求本会话还没有契约；`adopt` 可新会话接管，也可同会话恢复刷新 PID（见「换会话接管」）；其余 agent 命令要求恰好一份。本会话重复绑定会报错，不猜。标题等字段的值用 JSON 字符串保存，以保留换行和引号，按物理 LF 分行；原话正文不经过字段编码。
+脚本只在 `$RUNS_ROOT/-*/*/xy-goal/goal.md` 中按会话 id 找契约，回收目录不参与查找。项目目录名直接取会话记录的父目录名：hook 定位 inbox 时用输入的 `transcript_path`；`open` 建契约、新会话 `adopt` 领取 inbox 时，用 `CLAUDE_CODE_SESSION_ID` 在 `~/.claude/projects/*/<会话号>.jsonl` 中找，必须恰好一份，否则报错、不建目录。已有契约的命令及同会话 `adopt` 不再查会话记录。一个会话一份契约，几个主题的事项都放里面。`open` 要求本会话还没有契约；`adopt` 可新会话接管，也可同会话恢复刷新 PID（见「换会话接管」）；其余 agent 命令要求恰好一份。本会话重复绑定会报错，不猜。标题等字段的值用 JSON 字符串保存，以保留换行和引号，按物理 LF 分行；原话正文不经过字段编码。
 
-尚未开契约时，hook 把消息原文暂记在 `inbox/<会话 id>/`，不存分类副本；`open`、新会话 `adopt` 领走全部原话，按原顺序接着编号，领取时统一计算自动分类。触发开契约的那条消息也在其中。子代理输入带 `agent_id`，两个 hook 都跳过。主代理的输入每条都记，同一 `prompt_id` 也不去重：中途插话可能与该轮共用这个 id。
+尚未开契约时，hook 把消息原文暂记在 `$RUNS_ROOT/<项目目录名>/xy-goal-inbox/<会话 id>/`，不存分类副本；`open`、新会话 `adopt` 领走全部原话，按原顺序接着编号，领取时统一计算自动分类。触发开契约的那条消息也在其中。子代理输入带 `agent_id`，两个 hook 都跳过。主代理的输入每条都记，同一 `prompt_id` 也不去重：中途插话可能与该轮共用这个 id。
 
 与本契约定时提示逐字一致的输入，以及首尾为 `<task-notification>`、`</task-notification>` 且带齐 `<task-id>`、`<status>`、`<summary>` 成对子标签的完整后台通知，原文保留并自动标为不必跟进。不能只凭「本次契约」或一个标签就排除要求；来源字段不足以辨认机器输入，用户完整粘贴通知也会命中，所以关闭前必须复核自动标记。其他会话发来的消息照记，由 agent 处理。hook 错误写到 stderr、退出 1；消息照常送达，看到提示后要处理记录失败，不能把它当作已记下。
 
@@ -44,13 +44,13 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal check
 所有参数都显式给出；状态只认 `在办` 或 `等用户：<待定的事>`，还没有指针就写 `无`。脚本分配 T 号，不复用已关闭编号。
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> <M> --state '在办' --pointer '无'
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal update <T> --field 标题 --value '<新标题>'
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal update <T> --field 判据 --value '<新判据>' --source <N>
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal update <T> --source <N> <M>
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal dismiss <N> --reason '<不必跟进的原因>'
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal accept <T> --verdict '<按判据核过的结论，如命令和退出码、审查结论>'
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal cancel <T> --quote <N>
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> <M> --state '在办' --pointer '无'
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --field 标题 --value '<新标题>'
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --field 判据 --value '<新判据>' --source <N>
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --source <N> <M>
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" dismiss <N> --reason '<不必跟进的原因>'
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" accept <T> --verdict '<按判据核过的结论，如命令和退出码、审查结论>'
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" cancel <T> --quote <N>
 ```
 
 `update --field` 只认 `标题`、`判据`、`状态`、`指针`。改判据必须同时带原话；`--source` 只追加出处。出处和取消依据必须引用已存在的原话。取消必须有用户原话依据，未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明一行原因，不必硬建事项；原因含 Unicode 分行符也会写前拒绝。
@@ -78,10 +78,10 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal cancel <T> --q
 ## 换会话接管
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt <契约目录绝对路径> --claude-pid "$PPID"
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" adopt <契约目录绝对路径> --claude-pid "$PPID"
 ```
 
-新会话必须还没有契约，原会话的 claude 进程必须已不在；还在就先在原会话 `CronDelete` 并结束它，不能抢接。脚本改会话 id 与进程号、领走新会话 inbox，输出定时提示；照抄重建，再 `CronList` 核对只有一个。
+`adopt` 只接受 `$RUNS_ROOT/<以 - 开头的项目目录>/<一件事>/xy-goal` 这一层的契约路径。新会话必须还没有契约，原会话的 claude 进程必须已不在；还在就先在原会话 `CronDelete` 并结束它，不能抢接。脚本改会话 id 与进程号、领走新会话 inbox，输出定时提示；照抄重建，再 `CronList` 核对只有一个。
 
 同一会话恢复（`--resume` 沿用 session id，PID 变化）也先对自己的契约运行上述 `adopt`。这时只刷新 PID，不要求原 PID 退出，不改原话、事项和映射，防止已恢复的活会话被当成无主接管；再按输出核对或重建本契约定时器。
 
@@ -94,12 +94,14 @@ python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal adopt <契约�
 1. 没有开放事项、没有未处理原话后，先回溯本会话里说过稍后做、顺手发现未记录、用户中途改口的事项，补进来并做完。
 2. 开一个新开的子代理，交给它契约目录，让它对照**全部原话与全部事项**（`tasks/`、`done/`）：每条要求是否都已做完，所有「不必跟进」是否真的不带要求，已关闭事项的结论是否站得住。
 3. 它指出未完成的，补成事项、做完再查；它确认全部完成后，`CronList` 找出本契约定时器，`CronDelete` 并确认成功，汇报逐项状态与验收证据。
-4. 最后运行 `python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal close`，删除本契约目录。
+4. 最后运行 `python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" close`，只删除本契约的 `xy-goal/goal.md`，解除会话绑定；其余文件留在原处，由定期清理统一处理。
 
 `close` 在代码里拒绝有开放事项或未处理原话的契约；整体复核、定时器删除和汇报由 agent 执行，脚本不调用定时工具。
 
-## 清理
+## 契约生命周期
 
-`open` 顺手清理 `archive/`、`inbox/` 中修改时间超过 30 天的文件，再删空目录。按文件各自的时间算，不因父目录超期就删其中的新文件，不沿软链走出清理范围。契约目录不在清理范围，只经 `close` 删除。旧 `archive/` 按同一规则自然清掉。
+契约所在的事项目录和 runs 里其他东西遵守同一条规则：30 天没有任何改动、本用户没有任何进程在用，就被定期清理整项删除。在办契约每半小时的定时提示会写进原话，不会过期；暂停提醒的契约、会话没走 `close` 就消失的契约，30 天没动静也会被删，不加特例。隔一个多月回来时，可能需要重新开契约、重新说要求。
 
-主体已提交后的清理错误只警告，仍返回 0、输出定时提示；返回 1 的操作可重试，不会重复领取。残留路径与提交边界见 README 的[失败与清理](README.md#失败与清理)。
+`close` 后其余文件随事项目录按同一规则过期；hook 回到项目下的 `xy-goal-inbox`，同会话可以再开契约。`xy-goal-inbox` 整体及其中各会话的 inbox 也按统一规则清理。每条命令都持有 runs 根目录锁，与清理程序互斥。
+
+主体已提交后，临时输入删除失败只警告，仍返回 0、输出定时提示；返回 1 的操作可重试，不会重复领取。残留路径与提交边界见 README 的[失败与输入领取](README.md#失败与输入领取)。

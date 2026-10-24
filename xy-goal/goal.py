@@ -95,9 +95,7 @@ def find_contract(root, session_id):
     # 能认出本会话后，由 Contract 完整读取、报格式错误；重复归属仍在这里拒绝。
     session_row = f"session_id: {json.dumps(session_id, ensure_ascii=False)}".encode("utf-8")
     matches = []
-    for path in sorted(root.glob("*/goal.md")):
-        if path.parent.name in ("archive", "inbox"):
-            continue
+    for path in sorted(root.glob("-*/*/xy-goal/goal.md")):
         try:
             with path.open("rb") as source:
                 if any(row.rstrip(b"\r\n") == session_row for row in source):
@@ -421,15 +419,29 @@ def automatic_reason(text, contract):
     return None
 
 
-def read_inbox(root, session_id):
-    directory = root / "inbox" / session_id
+def require_project_name(name):
+    require_name(name, "项目目录名")
+    if not name.startswith("-"):
+        raise GoalError("项目目录名必须以 - 开头")
+    return name
+
+
+def session_project(session_id):
+    projects = Path.home() / ".claude" / "projects"
+    records = [path for path in projects.glob(f"*/{session_id}.jsonl") if path.is_file()]
+    if len(records) != 1:
+        raise GoalError(f"会话记录必须恰好一份：{projects}/*/{session_id}.jsonl，找到 {len(records)} 份")
+    return require_project_name(records[0].parent.name)
+
+
+def read_inbox(directory):
     if not directory.exists():
         return {}
     return {number: read_text(path) for number, path in quote_files(directory).items()}
 
 
-def incoming_quotes(root, session_id, contract, last_number):
-    quotes = read_inbox(root, session_id)
+def incoming_quotes(inbox, contract, last_number):
+    quotes = read_inbox(inbox)
     imported, reasons = {}, {}
     for number, text in enumerate(quotes.values(), start=last_number + 1):
         imported[number] = text
@@ -473,12 +485,15 @@ def consume_inputs(paths):
 
 def publish_contract(root, destination, metadata, quotes, links, input_paths):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
-    if destination.exists():
-        raise GoalError(f"契约目录已存在：{destination}")
+    item = destination.parent
+    project = item.parent
+    if item.exists():
+        raise GoalError(f"事项目录已存在：{item}")
     temporary = Path(tempfile.mkdtemp(dir=root, prefix=".goal-"))
+    created_project = False
     try:
-        staging = temporary / "contract"
-        staging.mkdir()
+        staging = temporary / "item" / "xy-goal"
+        staging.mkdir(parents=True)
         for name in ("quotes", "tasks", "done"):
             (staging / name).mkdir()
         for number, text in quotes.items():
@@ -486,32 +501,18 @@ def publish_contract(root, destination, metadata, quotes, links, input_paths):
         (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
         (staging / "links.md").write_text(links, encoding="utf-8")
         Contract(staging)
+        if not project.exists():
+            project.mkdir()
+            created_project = True
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
         with consume_inputs(input_paths):
-            staging.rename(destination)
+            staging.parent.rename(item)
+    except BaseException:
+        if created_project:
+            project.rmdir()
+        raise
     finally:
         remove_temporary_path(temporary)
-
-
-def cleanup_old_files(root, now):
-    cutoff = now.timestamp() - 30 * 86400
-    for name in ("archive", "inbox"):
-        directory = root / name
-        if directory.is_symlink():
-            if directory.lstat().st_mtime < cutoff:
-                directory.unlink()
-            continue
-        if not directory.exists():
-            continue
-        # 只看每个文件自己的 mtime；目录不按年龄整棵删除，也不沿软链走出根目录。
-        for current, directories, files in os.walk(directory, topdown=False, followlinks=False):
-            current = Path(current)
-            for child in files + [child for child in directories if (current / child).is_symlink()]:
-                path = current / child
-                if path.lstat().st_mtime < cutoff:
-                    path.unlink()
-            if not any(current.iterdir()):
-                current.rmdir()
 
 
 def hook_input(command):
@@ -537,10 +538,10 @@ def hook_input(command):
         # tool_response 格式没有官方保证：只序列化原值，不提取答案或重述问题。
         text = json.dumps({"tool_input": payload["tool_input"], "tool_response": payload["tool_response"]},
                           ensure_ascii=False, indent=2)
-    return session_id, text
+    return session_id, text, payload.get("transcript_path")
 
 
-def record_hook(root, session_id, text):
+def record_hook(root, session_id, text, transcript_path):
     path = find_contract(root, session_id)
     if path is not None:
         contract = Contract(path)
@@ -548,8 +549,13 @@ def record_hook(root, session_id, text):
         number = max(contract.quotes, default=0) + 1
     else:
         contract = None
-        quotes = read_inbox(root, session_id)
-        directory = root / "inbox" / session_id
+        require_text(transcript_path, "hook transcript_path")
+        transcript = Path(transcript_path)
+        if not transcript.is_absolute():
+            raise GoalError("hook transcript_path 必须是绝对路径")
+        project_name = require_project_name(transcript.parent.name)
+        directory = root / project_name / "xy-goal-inbox" / session_id
+        quotes = read_inbox(directory)
         directory.mkdir(parents=True, exist_ok=True)
         number = max(quotes, default=0) + 1
     quote = directory / f"{number}.md"
@@ -593,21 +599,19 @@ def execute(options, *, root, session_id, claude_pid, now):
         if options.command == "open":
             require_name(options.slug, "slug")
             require_text(options.target, "目标")
-            path = root / f"{now:%Y%m%d-%H%M%S}-{options.slug}"
-            quotes, reasons = incoming_quotes(root, session_id, path, 0)
+            project = root / session_project(session_id)
+            path = project / f"{now:%Y%m%d-%H%M%S}-{options.slug}" / "xy-goal"
+            inbox = project / "xy-goal-inbox" / session_id
+            quotes, reasons = incoming_quotes(inbox, path, 0)
             metadata = {"target": options.target, "session_id": session_id, "claude_pid": str(claude_pid)}
             links = "".join(f"{number} 不必跟进 {reason}\n" for number, reason in reasons.items())
-            inbox = root / "inbox" / session_id
             publish_contract(root, path, metadata, quotes, links,
                              [inbox] if inbox.exists() else [])
-            try:
-                cleanup_old_files(root, now)
-            except OSError as error:
-                print(f"警告：契约已生效，archive/inbox 清理失败：{error}", file=sys.stderr)
         else:
             path = Path(options.directory).expanduser().resolve()
-            if path.parent != root or path.name in ("archive", "inbox"):
-                raise GoalError(f"契约目录必须在根目录内：{path}")
+            parts = path.relative_to(root).parts if path.is_relative_to(root) else ()
+            if len(parts) != 3 or not parts[0].startswith("-") or parts[2] != "xy-goal":
+                raise GoalError(f"契约目录必须是 <根>/<以 - 开头的项目目录>/<一件事>/xy-goal：{path}")
             contract = Contract(path)
             if contract.metadata["session_id"] == session_id:
                 # --resume 沿用会话 id。同会话只刷新 PID，不领取或改动其他内容。
@@ -624,13 +628,13 @@ def execute(options, *, root, session_id, claude_pid, now):
                     raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
                 else:
                     raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
-                quotes, reasons = incoming_quotes(root, session_id, path, max(contract.quotes, default=0))
+                inbox = root / session_project(session_id) / "xy-goal-inbox" / session_id
+                quotes, reasons = incoming_quotes(inbox, path, max(contract.quotes, default=0))
                 contract.metadata.update(session_id=session_id, claude_pid=str(claude_pid))
                 contract.dismissed.update(reasons)
                 changes = {path / "quotes" / f"{number}.md": text for number, text in quotes.items()}
                 changes[path / "goal.md"] = encode_fields(contract.metadata)
                 changes[path / "links.md"] = contract.links_text()
-                inbox = root / "inbox" / session_id
                 with consume_inputs([inbox] if inbox.exists() else []):
                     write_files(changes, [])
         print(timer_prompt(path))
@@ -652,7 +656,7 @@ def execute(options, *, root, session_id, claude_pid, now):
         if contract.pending():
             raise GoalError("仍有还没处理的原话：" + "、".join(map(str, contract.pending())))
         # 子代理整体复核、CronDelete 和汇报由 agent 按 SKILL.md 完成。
-        shutil.rmtree(contract.path)
+        (contract.path / "goal.md").unlink()
     else:
         contract.change(options)
     return 0
@@ -662,6 +666,7 @@ def main(arguments, *, session_id, now):
     """根目录与进程号都从命令参数取；会话和时钟显式传入。"""
     try:
         options = parser().parse_args(arguments)
+        require_text(options.root, "--root")
         # Claude Code 的 Bash 的 $PPID 是本会话 claude。由该 Bash 展开后传入，
         # 不依赖进程名、argv[0]，也不依赖未公开保证的 CLAUDE_PID 环境变量。
         claude_pid = options.claude_pid if options.command in ("open", "adopt") else None

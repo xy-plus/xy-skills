@@ -27,10 +27,34 @@ class GoalTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name) / "runs"
+        self.root.mkdir()
+        self.home = Path(self.temporary.name) / "home"
+        self.projects = self.home / ".claude" / "projects"
+        self.project_name = "-home-xy-goal-tests"
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        for session in ("session-main", "new-session"):
+            self.session_record(session, self.project_name)
         self.session = "session-main"
         self.pid = os.getppid()
         self.now = datetime(2026, 10, 24, 9, 30)
+
+    def session_record(self, session, project_name):
+        directory = self.projects / project_name
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{session}.jsonl"
+        path.write_text("{}\n", encoding="utf-8")
+        return path
+
+    @property
+    def project(self):
+        return self.root / self.project_name
+
+    @property
+    def inbox(self):
+        return self.project / "xy-goal-inbox" / self.session
 
     def run_goal(self, *arguments, session, pid, stdin):
         command_arguments = ["--root", str(self.root), *arguments]
@@ -69,7 +93,7 @@ class GoalTests(unittest.TestCase):
 
     def open_goal(self):
         self.succeeds("open", "release", "交付新版本")
-        return self.root / "20261024-093000-release"
+        return self.project / "20261024-093000-release" / "xy-goal"
 
     @staticmethod
     def quote(contract, number, text):
@@ -84,7 +108,8 @@ class GoalTests(unittest.TestCase):
 
     def test_open_creates_directory_and_outputs_exact_timer_prompt(self):
         output = self.succeeds("open", "release", "交付新版本")
-        contract = self.root / "20261024-093000-release"
+        contract = self.project / "20261024-093000-release" / "xy-goal"
+        self.assertTrue((contract / "goal.md").is_file(), "契约必须写入项目下的 xy-goal 子目录")
         self.assertEqual({p.name for p in contract.iterdir()},
                          {"goal.md", "quotes", "tasks", "done", "links.md"})
         metadata = (contract / "goal.md").read_text(encoding="utf-8")
@@ -92,6 +117,201 @@ class GoalTests(unittest.TestCase):
         self.assertIn("session-main", metadata)
         self.assertIn(str(self.pid), metadata)
         self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
+
+    def test_open_requires_exactly_one_session_record_before_creating_directories(self):
+        record = self.projects / self.project_name / f"{self.session}.jsonl"
+        record.unlink()
+        for matches in (0, 2):
+            with self.subTest(matches=matches):
+                if matches == 2:
+                    self.session_record(self.session, self.project_name)
+                    self.session_record(self.session, "-another-project")
+                before = list(self.root.rglob("*"))
+                self.rejects("open", "release", "交付新版本", message="会话记录")
+                self.assertEqual(list(self.root.rglob("*")), before)
+
+    def test_new_session_adopt_requires_exactly_one_record_before_claiming_inbox(self):
+        contract = self.open_goal()
+        old = subprocess.Popen([sys.executable, "-c", "pass"])
+        old.wait()
+        metadata = contract / "goal.md"
+        metadata.write_text(metadata.read_text().replace(f'"{self.pid}"', f'"{old.pid}"'))
+        self.session = "new-session"
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "等待接管"})
+        (self.projects / self.project_name / f"{self.session}.jsonl").unlink()
+        for matches in (0, 2):
+            with self.subTest(matches=matches):
+                if matches == 2:
+                    self.session_record(self.session, self.project_name)
+                    self.session_record(self.session, "-another-project")
+                before = list(self.root.rglob("*"))
+                self.rejects("adopt", str(contract), message="会话记录")
+                self.assertEqual(list(self.root.rglob("*")), before)
+
+    def test_new_session_adopt_claims_inbox_from_its_own_project(self):
+        contract = self.open_goal()
+        old = subprocess.Popen([sys.executable, "-c", "pass"])
+        old.wait()
+        metadata = contract / "goal.md"
+        metadata.write_text(metadata.read_text().replace(f'"{self.pid}"', f'"{old.pid}"'))
+        self.session = "cross-project-session"
+        self.session_record(self.session, "-adopting-project")
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "跨项目领取",
+                                  "transcript_path": f"/unused/-adopting-project/{self.session}.jsonl"})
+        self.succeeds("adopt", str(contract))
+        self.assertEqual((contract / "quotes" / "1.md").read_text(), "跨项目领取")
+        self.assertFalse((self.root / "-adopting-project" / "xy-goal-inbox" / self.session).exists())
+        self.assertTrue((contract / "goal.md").is_file())
+
+    def test_empty_root_is_rejected_without_using_current_directory(self):
+        environment = os.environ.copy()
+        environment["CLAUDE_CODE_SESSION_ID"] = self.session
+        result = subprocess.run(
+            [sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"), "--root", "",
+             "open", "release", "交付新版本", "--claude-pid", str(self.pid)],
+            cwd=self.root, env=environment, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("--root", result.stderr)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_open_uses_record_parent_name_without_converting_working_directory(self):
+        record = self.projects / self.project_name / f"{self.session}.jsonl"
+        record.unlink()
+        self.session_record(self.session, "-recorded-project-中文")
+        output = self.succeeds("open", "release", "交付新版本")
+        contract = self.root / "-recorded-project-中文" / "20261024-093000-release" / "xy-goal"
+        self.assertTrue((contract / "goal.md").is_file())
+        self.assertIn(str(contract), output)
+        self.assertFalse(self.project.exists())
+
+    def test_both_hooks_use_transcript_parent_for_inbox_without_session_lookup(self):
+        for operation, fields in (
+            ("hook-prompt", {"prompt": "来自记录路径"}),
+            ("hook-answer", {"tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"}),
+        ):
+            with self.subTest(operation=operation):
+                session = operation + "-session"
+                self.hook(operation, {"session_id": session,
+                                      "transcript_path": f"/unused/-hook-project/{session}.jsonl", **fields})
+                quote = self.root / "-hook-project" / "xy-goal-inbox" / session / "1.md"
+                self.assertTrue(quote.is_file())
+                self.assertFalse(self.project.exists())
+                if operation == "hook-prompt":
+                    self.assertEqual(quote.read_text(), "来自记录路径")
+                else:
+                    self.assertEqual(json.loads(quote.read_text())["tool_response"], "继续")
+
+    def test_hook_without_transcript_cannot_create_inbox(self):
+        for operation, fields in (
+            ("hook-prompt", {"prompt": "原话"}),
+            ("hook-answer", {"tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": {}}),
+        ):
+            with self.subTest(operation=operation):
+                before = list(self.root.rglob("*"))
+                code, output, errors = self.run_goal(
+                    operation, session=None, pid=None,
+                    stdin=json.dumps({"session_id": self.session, **fields}),
+                )
+                self.assertEqual(code, 1, output + errors)
+                self.assertIn("transcript_path", errors)
+                self.assertEqual(list(self.root.rglob("*")), before)
+
+    def test_existing_contract_commands_and_hooks_do_not_need_session_record(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "两个事项")
+        self.quote(contract, 2, "问题已答")
+        self.add_task(1)
+        self.add_task(1)
+        shutil.rmtree(self.projects)
+        self.succeeds("adopt", str(contract))
+        self.succeeds("show")
+        self.succeeds("update", "T1", "--field", "标题", "--value", "更新后")
+        self.succeeds("dismiss", "2", "--reason", "已答")
+        self.succeeds("check")
+        code, output, errors = self.run_goal(
+            "hook-prompt", session=None, pid=None,
+            stdin=json.dumps({"session_id": self.session, "prompt": "取消第二项"}),
+        )
+        self.assertEqual((code, output, errors), (0, "", ""))
+        self.succeeds("accept", "T1", "--verdict", "通过")
+        self.succeeds("cancel", "T2", "--quote", "3")
+        self.succeeds("close")
+        self.assertFalse((contract / "goal.md").exists())
+
+    def test_trash_contract_is_neither_found_by_hook_nor_adopted(self):
+        contract = self.open_goal()
+        trash = self.root / ".runs-cleaner-trash" / "retired-item"
+        trash.parent.mkdir()
+        contract.parent.rename(trash)
+        before = {path.relative_to(trash): path.read_bytes()
+                  for path in trash.rglob("*") if path.is_file()}
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "回到 inbox"})
+        self.assertEqual((self.inbox / "1.md").read_text(), "回到 inbox")
+        self.rejects("adopt", str(trash / "xy-goal"), message="契约目录")
+        self.assertEqual({path.relative_to(trash): path.read_bytes()
+                          for path in trash.rglob("*") if path.is_file()}, before)
+
+    def test_adopt_rejects_paths_outside_contract_layer(self):
+        contract = self.open_goal()
+        self.session = "new-session"
+        for destination in (
+            self.root / "ordinary" / "item" / "xy-goal",
+            self.root / "-project" / "xy-goal",
+            self.root / "-project" / "item" / "nested" / "xy-goal",
+            self.root / "-project" / "item" / "other-tool",
+        ):
+            with self.subTest(destination=destination):
+                shutil.copytree(contract, destination)
+                self.rejects("adopt", str(destination), message="契约目录")
+
+    def test_contract_shares_item_with_runner_and_agent_files(self):
+        contract = self.open_goal()
+        runner = contract.parent / "sub-agent-runner" / "tasks"
+        runner.mkdir(parents=True)
+        (runner / "job.json").write_bytes(b'{"state": "done"}\n')
+        (contract.parent / "report.md").write_text("agent 报告")
+        ordinary = self.root / "ordinary" / "item" / "xy-goal"
+        ordinary.mkdir(parents=True)
+        (ordinary / "goal.md").write_text("普通目录里的非契约")
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "并存的任务"})
+        self.add_task(1)
+        self.succeeds("show")
+        self.succeeds("check")
+        self.succeeds("update", "T1", "--field", "指针", "--value", str(contract.parent / "report.md"))
+        self.succeeds("accept", "T1", "--verdict", "通过")
+        before = self.files()
+        self.succeeds("close")
+        del before[str((contract / "goal.md").relative_to(self.root))]
+        self.assertEqual(self.files(), before)
+
+    def test_item_names_archive_and_inbox_have_no_special_meaning(self):
+        contract = self.open_goal()
+        for name in ("archive", "inbox"):
+            destination = self.project / name
+            contract.parent.rename(destination)
+            contract = destination / "xy-goal"
+            self.succeeds("show")
+            self.hook("hook-prompt", {"session_id": self.session, "prompt": name})
+            self.assertTrue((contract / "goal.md").is_file())
+        self.assertEqual((contract / "quotes" / "1.md").read_text(), "archive")
+        self.assertEqual((contract / "quotes" / "2.md").read_text(), "inbox")
+
+    def test_close_returns_hooks_to_inbox_and_allows_a_new_contract(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "第一件事")
+        self.succeeds("dismiss", "1", "--reason", "已答")
+        self.succeeds("close")
+        before = {path.relative_to(contract): path.read_bytes()
+                  for path in contract.rglob("*") if path.is_file()}
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "下一件事"})
+        self.assertEqual((self.inbox / "1.md").read_text(), "下一件事")
+        self.succeeds("open", "next", "下一件事")
+        next_contract = self.project / "20261024-093000-next" / "xy-goal"
+        self.assertEqual((next_contract / "quotes" / "1.md").read_text(), "下一件事")
+        self.assertFalse(self.inbox.exists())
+        self.assertEqual({path.relative_to(contract): path.read_bytes()
+                          for path in contract.rglob("*") if path.is_file()}, before)
 
     def test_all_commands_refuse_missing_or_non_directory_root_without_writes(self):
         original_root = self.root
@@ -243,12 +463,12 @@ class GoalTests(unittest.TestCase):
 
     def test_duplicate_session_contracts_are_rejected(self):
         first = self.open_goal()
-        shutil.copytree(first, self.root / "20261024-093001-copy")
+        shutil.copytree(first, self.project / "20261024-093001-copy" / "xy-goal")
         self.rejects("show", message="多份契约")
 
     def test_check_does_not_validate_another_sessions_tasks(self):
         first = self.open_goal()
-        other = self.root / "20261024-093001-other"
+        other = self.project / "20261024-093001-other" / "xy-goal"
         shutil.copytree(first, other)
         metadata = (other / "goal.md").read_text(encoding="utf-8")
         (other / "goal.md").write_text(metadata.replace("session-main", "session-other"),
@@ -258,8 +478,8 @@ class GoalTests(unittest.TestCase):
 
     def test_foreign_invalid_utf8_metadata_does_not_block_check_or_either_hook(self):
         contract = self.open_goal()
-        foreign = self.root / "foreign-contract"
-        foreign.mkdir()
+        foreign = self.project / "foreign-contract" / "xy-goal"
+        foreign.mkdir(parents=True)
         metadata = foreign / "goal.md"
         metadata.write_bytes(b'target: "\xff"\nsession_id: "foreign-session"\nclaude_pid: "123"\n')
         original = metadata.read_bytes()
@@ -273,8 +493,8 @@ class GoalTests(unittest.TestCase):
 
     def test_foreign_unreadable_metadata_does_not_block_own_contract(self):
         contract = self.open_goal()
-        foreign = self.root / "foreign-contract"
-        foreign.mkdir()
+        foreign = self.project / "foreign-contract" / "xy-goal"
+        foreign.mkdir(parents=True)
         metadata = foreign / "goal.md"
         metadata.write_text('session_id: "foreign-session"\n')
         metadata.chmod(0)
@@ -424,7 +644,7 @@ class GoalTests(unittest.TestCase):
                 self.assertEqual((contract / "quotes" / "2.md").read_text(), "后续要求")
                 self.assertIn("还没处理的原话：2", self.succeeds("show"))
 
-    def test_close_refuses_open_tasks_and_unhandled_quotes_then_deletes_only_own_contract(self):
+    def test_close_refuses_open_tasks_and_unhandled_quotes_then_removes_only_goal_file(self):
         contract = self.open_goal()
         other = self.root / "untouched.txt"
         other.write_text("别的文件")
@@ -433,8 +653,11 @@ class GoalTests(unittest.TestCase):
         self.add_task(1)
         self.rejects("close", message="开放事项")
         self.succeeds("accept", "T1", "--verdict", "通过")
+        before = self.files()
         self.succeeds("close")
-        self.assertFalse(contract.exists())
+        del before[str((contract / "goal.md").relative_to(self.root))]
+        self.assertEqual(self.files(), before)
+        self.assertTrue(contract.is_dir())
         self.assertEqual(other.read_text(), "别的文件")
 
     def contract_with_legacy_done(self):
@@ -464,10 +687,13 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(self.succeeds("check"), f"通过：{contract}\n")
         self.assertEqual(self.files(), before)
 
-    def test_close_removes_contract_with_legacy_done(self):
+    def test_close_preserves_legacy_done(self):
         contract = self.contract_with_legacy_done()
+        before = self.files()
         self.succeeds("close")
-        self.assertFalse(contract.exists())
+        del before[str((contract / "goal.md").relative_to(self.root))]
+        self.assertEqual(self.files(), before)
+        self.assertTrue(contract.is_dir())
 
     def test_add_does_not_reuse_legacy_done_numbers(self):
         contract = self.contract_with_legacy_done()
@@ -575,6 +801,8 @@ class GoalTests(unittest.TestCase):
                      "--pointer", "无", "--source", "1", message="标题")
 
     def hook(self, command, payload):
+        payload = {"transcript_path": str(self.projects / self.project_name / f"{payload['session_id']}.jsonl"),
+                   **payload}
         code, output, errors = self.run_goal(command, session=None, pid=None,
                                              stdin=json.dumps(payload, ensure_ascii=False))
         self.assertEqual(code, 0, errors)
@@ -613,7 +841,7 @@ class GoalTests(unittest.TestCase):
     def test_open_claims_all_inbox_quotes_in_order_and_removes_inbox(self):
         for text in ("先讨论", "用 xy-goal 开契约"):
             self.hook("hook-prompt", {"session_id": self.session, "prompt": text})
-        inbox = self.root / "inbox" / self.session
+        inbox = self.inbox
         self.assertEqual((inbox / "1.md").read_text(), "先讨论")
         self.assertEqual((inbox / "2.md").read_text(), "用 xy-goal 开契约")
         contract = self.open_goal()
@@ -640,7 +868,7 @@ class GoalTests(unittest.TestCase):
     def test_complete_pasted_notification_is_classified_only_when_claimed(self):
         notification = "<task-notification><task-id>pasted</task-id><status>done</status><summary>用户完整粘贴</summary></task-notification>"
         self.hook("hook-prompt", {"session_id": self.session, "prompt": notification})
-        self.assertEqual({p.name for p in (self.root / "inbox" / self.session).iterdir()}, {"1.md"})
+        self.assertEqual({p.name for p in (self.inbox).iterdir()}, {"1.md"})
         contract = self.open_goal()
         self.assertEqual((contract / "quotes" / "1.md").read_text(), notification)
         self.assertIn("1 不必跟进 ", (contract / "links.md").read_text())
@@ -673,7 +901,7 @@ class GoalTests(unittest.TestCase):
         self.assertIn("links.md", errors)
         self.assertEqual(self.files(), before)
         (contract / "links.md").write_bytes(original)
-        shutil.copytree(contract, self.root / "duplicate")
+        shutil.copytree(contract, self.project / "duplicate" / "xy-goal")
         code, _, errors = self.run_goal("hook-answer", session=None, pid=None,
                                         stdin=json.dumps({"session_id": self.session, "tool_name": "AskUserQuestion",
                                                           "tool_input": {}, "tool_response": {}}))
@@ -736,7 +964,7 @@ class GoalTests(unittest.TestCase):
                 self.root.mkdir()
                 self.pid = child.pid
                 self.rejects("open", "release", "目标", message="祖先")
-                self.assertFalse(list(self.root.glob("*/goal.md")))
+                self.assertFalse(list(self.root.glob("-*/*/xy-goal/goal.md")))
 
     def test_adopt_refuses_non_ancestor_pid_before_changing_owner(self):
         contract = self.open_goal()
@@ -759,7 +987,7 @@ class GoalTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", wrapper], env=environment,
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        goals = list(self.root.glob("*/goal.md"))
+        goals = list(self.root.glob("-*/*/xy-goal/goal.md"))
         self.assertEqual(len(goals), 1)
         self.assertIn(f'claude_pid: "{result.stdout.splitlines()[0]}"', goals[0].read_text())
 
@@ -798,32 +1026,6 @@ class GoalTests(unittest.TestCase):
         self.assertIn(f'claude_pid: "{self.pid}"', (contract / "goal.md").read_text())
         self.assertIn("new-session", (contract / "goal.md").read_text())
 
-    def test_open_cleans_old_files_by_file_age_and_keeps_recent_children(self):
-        old = self.now.timestamp() - 31 * 86400
-        fresh = self.now.timestamp() - 5 * 86400
-        for tree in ("archive", "inbox"):
-            folder = self.root / tree / "old-folder"
-            folder.mkdir(parents=True)
-            expired, recent, boundary = (folder / name for name in ("expired.md", "recent.md", "boundary.md"))
-            for path, modified in ((expired, old), (recent, fresh), (boundary, self.now.timestamp() - 30 * 86400)):
-                path.write_text("data")
-                os.utime(path, (modified, modified))
-            os.utime(folder, (old, old))
-        empty = self.root / "archive" / "empty"
-        empty.mkdir()
-        old_contract = self.root / "20250101-000000-keep"
-        old_contract.mkdir()
-        (old_contract / "keep.md").write_text("契约不能清理")
-        os.utime(old_contract / "keep.md", (old, old))
-        self.open_goal()
-        for tree in ("archive", "inbox"):
-            folder = self.root / tree / "old-folder"
-            self.assertFalse((folder / "expired.md").exists())
-            self.assertTrue((folder / "recent.md").exists())
-            self.assertTrue((folder / "boundary.md").exists())
-        self.assertFalse(empty.exists())
-        self.assertTrue((old_contract / "keep.md").exists())
-
     def test_adopt_refuses_live_owner_and_claims_inbox_after_owner_exits(self):
         contract = self.open_goal()
         self.quote(contract, 5, "旧会话要求")
@@ -840,9 +1042,9 @@ class GoalTests(unittest.TestCase):
         self.assertIn("new-session", (contract / "goal.md").read_text())
         self.assertIn(str(self.pid), (contract / "goal.md").read_text())
         self.assertEqual((contract / "quotes" / "6.md").read_text(), "接管前的话")
-        self.assertFalse((self.root / "inbox" / self.session).exists())
+        self.assertFalse((self.inbox).exists())
         self.succeeds("adopt", str(contract))
-        another = self.root / "another-contract"
+        another = self.project / "another-contract" / "xy-goal"
         shutil.copytree(contract, another)
         metadata = another / "goal.md"
         metadata.write_text(metadata.read_text().replace("new-session", "another-session"))
@@ -876,7 +1078,7 @@ class GoalTests(unittest.TestCase):
                 self.assertEqual(self.files()[relative], content)
 
     def test_open_refuses_malformed_inbox_before_creating_contract(self):
-        inbox = self.root / "inbox" / self.session
+        inbox = self.inbox
         inbox.mkdir(parents=True)
         (inbox / "bad.md").write_text("坏文件名")
         self.rejects("open", "release", "交付新版本", message=str(inbox / "bad.md"))
@@ -911,7 +1113,7 @@ class GoalTests(unittest.TestCase):
         self.root.mkdir(parents=True, exist_ok=True)
         if operation == "open":
             arguments = ("open", "release", "交付新版本")
-            contract = self.root / "20261024-093000-release"
+            contract = self.project / "20261024-093000-release" / "xy-goal"
         elif operation == "adopt":
             contract = self.open_goal()
             old = subprocess.Popen([sys.executable, "-c", "pass"])
@@ -921,23 +1123,7 @@ class GoalTests(unittest.TestCase):
             self.session = "new-session"
             arguments = ("adopt", str(contract))
         self.hook("hook-prompt", {"session_id": self.session, "prompt": "只领取一次"})
-        return arguments, contract, self.root / "inbox" / self.session
-
-    def test_open_archive_cleanup_failure_warns_and_still_returns_timer_prompt(self):
-        archive = self.root / "archive" / "protected"
-        archive.mkdir(parents=True)
-        expired = archive / "old.md"
-        expired.write_text("过期归档")
-        modified = self.now.timestamp() - 31 * 86400
-        os.utime(expired, (modified, modified))
-        with self.readonly_directory(archive):
-            code, output, errors = self.command("open", "release", "交付新版本")
-        contract = self.root / "20261024-093000-release"
-        self.assertEqual(code, 0, errors)
-        self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
-        self.assertIn("警告", errors)
-        self.assertTrue(expired.exists())
-        self.succeeds("check")
+        return arguments, contract, self.inbox
 
     def test_committed_owner_commands_warn_on_inbox_delete_failure_without_reimporting(self):
         original_root = self.root
@@ -980,40 +1166,13 @@ class GoalTests(unittest.TestCase):
         self.assertFalse(inbox.exists())
         self.assertEqual(len(list((contract / "quotes").iterdir())), 1)
 
-    def test_cleanup_does_not_follow_archive_directory_symlink(self):
-        outside_cleanup = self.root / "do-not-clean"
-        outside_cleanup.mkdir()
-        important = outside_cleanup / "keep.md"
-        important.write_text("不属于归档")
-        old = self.now.timestamp() - 31 * 86400
-        os.utime(important, (old, old))
-        (self.root / "archive").symlink_to(outside_cleanup, target_is_directory=True)
-        self.open_goal()
-        self.assertTrue(important.exists(), "不能沿软链清理 archive/inbox 之外的文件")
-
-    def test_inbox_cleanup_expires_quotes_and_keeps_recording(self):
-        other_session = "other-session"
-        notification = "<task-notification><task-id>j</task-id><status>done</status><summary>完成</summary></task-notification>"
-        self.hook("hook-prompt", {"session_id": other_session, "prompt": notification})
-        self.hook("hook-prompt", {"session_id": other_session, "prompt": "近期消息"})
-        inbox = self.root / "inbox" / other_session
-        old = self.now.timestamp() - 31 * 86400
-        fresh = self.now.timestamp() - 86400
-        os.utime(inbox / "1.md", (old, old))
-        os.utime(inbox / "2.md", (fresh, fresh))
-        self.open_goal()
-        self.assertFalse((inbox / "1.md").exists())
-        self.assertEqual((inbox / "2.md").read_text(), "近期消息")
-        self.hook("hook-prompt", {"session_id": other_session, "prompt": "继续记录"})
-        self.assertEqual((inbox / "3.md").read_text(), "继续记录")
-
     def test_adopt_refuses_duplicate_contracts_of_the_previous_owner(self):
         contract = self.open_goal()
         child = subprocess.Popen([sys.executable, "-c", "pass"])
         child.wait()
         metadata = (contract / "goal.md").read_text()
         (contract / "goal.md").write_text(metadata.replace(f'"{self.pid}"', f'"{child.pid}"'))
-        shutil.copytree(contract, self.root / "duplicate-old-owner")
+        shutil.copytree(contract, self.project / "duplicate-old-owner" / "xy-goal")
         self.session = "new-session"
         self.rejects("adopt", str(contract), message="多份契约")
 
