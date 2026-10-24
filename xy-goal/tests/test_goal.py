@@ -118,6 +118,81 @@ class GoalTests(unittest.TestCase):
         self.assertIn(str(self.pid), metadata)
         self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
 
+    def replace_project_with_symlink(self):
+        outside = Path(self.temporary.name) / f"outside-{self.root.name}"
+        if self.project.exists():
+            self.project.rename(outside)
+        else:
+            outside.mkdir()
+        (outside / "keep.md").write_bytes(b"outside data must stay unchanged")
+        self.project.symlink_to(outside, target_is_directory=True)
+        return outside
+
+    @staticmethod
+    def directory_entries(directory):
+        return {str(path.relative_to(directory)): path.read_bytes() if path.is_file() else None
+                for path in directory.rglob("*")}
+
+    def test_open_rejects_symlink_project_without_writing_outside(self):
+        outside = self.replace_project_with_symlink()
+        before = self.directory_entries(outside)
+        self.rejects("open", "release", "交付新版本", message="项目目录")
+        self.assertEqual(self.directory_entries(outside), before)
+        self.assertTrue(self.project.is_symlink())
+
+    def test_inbox_hooks_reject_symlink_project_without_writing_outside(self):
+        outside = self.replace_project_with_symlink()
+        for operation, fields in (
+            ("hook-prompt", {"prompt": "不要写到 runs 外面"}),
+            ("hook-answer", {"tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"}),
+        ):
+            with self.subTest(operation=operation):
+                before = self.directory_entries(outside)
+                payload = {"session_id": self.session,
+                           "transcript_path": str(self.projects / self.project_name / f"{self.session}.jsonl"),
+                           **fields}
+                code, output, errors = self.run_goal(
+                    operation, session=None, pid=None, stdin=json.dumps(payload),
+                )
+                self.assertEqual(code, 1, output + errors)
+                self.assertIn("项目目录", errors)
+                self.assertEqual(self.directory_entries(outside), before)
+
+    def test_existing_contract_writes_reject_symlink_project_without_writing_outside(self):
+        original_root = self.root
+        for operation in ("add", "update", "dismiss", "accept", "cancel", "close", "adopt",
+                          "hook-prompt", "hook-answer"):
+            with self.subTest(operation=operation):
+                self.root = original_root / operation
+                self.root.mkdir()
+                contract = self.open_goal()
+                self.quote(contract, 1, "发布要求")
+                self.add_task(1)
+                if operation == "close":
+                    self.succeeds("accept", "T1", "--verdict", "通过")
+                outside = self.replace_project_with_symlink()
+                before = self.directory_entries(outside)
+                arguments = {
+                    "add": ("add", "--title", "另一项", "--criteria", "通过", "--source", "1",
+                            "--state", "在办", "--pointer", "无"),
+                    "update": ("update", "T1", "--field", "标题", "--value", "不能越界"),
+                    "dismiss": ("dismiss", "1", "--reason", "已答"),
+                    "accept": ("accept", "T1", "--verdict", "通过"),
+                    "cancel": ("cancel", "T1", "--quote", "1"),
+                    "close": ("close",),
+                    "adopt": ("adopt", str(contract)),
+                    "hook-prompt": ("hook-prompt",),
+                    "hook-answer": ("hook-answer",),
+                }[operation]
+                payload = {"session_id": self.session, "prompt": "不能越界",
+                           "tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"}
+                code, output, errors = self.run_goal(
+                    *arguments, session=self.session, pid=self.pid, stdin=json.dumps(payload),
+                )
+                self.assertEqual(code, 1, output + errors)
+                self.assertEqual(self.directory_entries(outside), before)
+                self.assertTrue(self.project.is_symlink())
+
     def test_open_requires_exactly_one_session_record_before_creating_directories(self):
         record = self.projects / self.project_name / f"{self.session}.jsonl"
         record.unlink()

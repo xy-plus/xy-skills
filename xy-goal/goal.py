@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -426,6 +427,12 @@ def require_project_name(name):
     return name
 
 
+def require_project_directory(root, project):
+    # 清理器不沿项目软链走；写入也只接受根下的真实项目目录。
+    if project.parent != root or not stat.S_ISDIR(project.lstat().st_mode):
+        raise GoalError(f"项目目录必须是根目录下的真实目录，不能是软链接：{project}")
+
+
 def session_project(session_id):
     projects = Path.home() / ".claude" / "projects"
     records = [path for path in projects.glob(f"*/{session_id}.jsonl") if path.is_file()]
@@ -487,10 +494,11 @@ def publish_contract(root, destination, metadata, quotes, links, input_paths):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     item = destination.parent
     project = item.parent
+    project.mkdir(exist_ok=True)
+    require_project_directory(root, project)
     if item.exists():
         raise GoalError(f"事项目录已存在：{item}")
     temporary = Path(tempfile.mkdtemp(dir=root, prefix=".goal-"))
-    created_project = False
     try:
         staging = temporary / "item" / "xy-goal"
         staging.mkdir(parents=True)
@@ -501,16 +509,9 @@ def publish_contract(root, destination, metadata, quotes, links, input_paths):
         (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
         (staging / "links.md").write_text(links, encoding="utf-8")
         Contract(staging)
-        if not project.exists():
-            project.mkdir()
-            created_project = True
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
         with consume_inputs(input_paths):
             staging.parent.rename(item)
-    except BaseException:
-        if created_project:
-            project.rmdir()
-        raise
     finally:
         remove_temporary_path(temporary)
 
@@ -544,6 +545,7 @@ def hook_input(command):
 def record_hook(root, session_id, text, transcript_path):
     path = find_contract(root, session_id)
     if path is not None:
+        require_project_directory(root, path.parents[1])
         contract = Contract(path)
         directory = path / "quotes"
         number = max(contract.quotes, default=0) + 1
@@ -554,7 +556,10 @@ def record_hook(root, session_id, text, transcript_path):
         if not transcript.is_absolute():
             raise GoalError("hook transcript_path 必须是绝对路径")
         project_name = require_project_name(transcript.parent.name)
-        directory = root / project_name / "xy-goal-inbox" / session_id
+        project = root / project_name
+        project.mkdir(exist_ok=True)
+        require_project_directory(root, project)
+        directory = project / "xy-goal-inbox" / session_id
         quotes = read_inbox(directory)
         directory.mkdir(parents=True, exist_ok=True)
         number = max(quotes, default=0) + 1
@@ -591,6 +596,8 @@ def require_pid(claude_pid):
 
 def execute(options, *, root, session_id, claude_pid, now):
     path = find_contract(root, session_id)
+    if path is not None and options.command not in ("show", "check"):
+        require_project_directory(root, path.parents[1])
     if options.command in ("open", "adopt"):
         require_pid(claude_pid)
         if path is not None and not (options.command == "adopt"
@@ -612,6 +619,7 @@ def execute(options, *, root, session_id, claude_pid, now):
             parts = path.relative_to(root).parts if path.is_relative_to(root) else ()
             if len(parts) != 3 or not parts[0].startswith("-") or parts[2] != "xy-goal":
                 raise GoalError(f"契约目录必须是 <根>/<以 - 开头的项目目录>/<一件事>/xy-goal：{path}")
+            require_project_directory(root, path.parents[1])
             contract = Contract(path)
             if contract.metadata["session_id"] == session_id:
                 # --resume 沿用会话 id。同会话只刷新 PID，不领取或改动其他内容。
@@ -629,6 +637,8 @@ def execute(options, *, root, session_id, claude_pid, now):
                 else:
                     raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
                 inbox = root / session_project(session_id) / "xy-goal-inbox" / session_id
+                if inbox.exists():
+                    require_project_directory(root, inbox.parents[1])
                 quotes, reasons = incoming_quotes(inbox, path, max(contract.quotes, default=0))
                 contract.metadata.update(session_id=session_id, claude_pid=str(claude_pid))
                 contract.dismissed.update(reasons)
