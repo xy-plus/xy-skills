@@ -95,8 +95,6 @@ class GoalTests(unittest.TestCase):
 
     def test_all_commands_refuse_missing_or_non_directory_root_without_writes(self):
         original_root = self.root
-        environment = os.environ.copy()
-        environment["CLAUDE_CODE_SESSION_ID"] = self.session
         commands = (
             (("hook-prompt",), {"session_id": self.session, "prompt": "不能丢失的原话"}),
             (("hook-answer",), {"session_id": self.session, "tool_name": "AskUserQuestion",
@@ -122,32 +120,27 @@ class GoalTests(unittest.TestCase):
                     if state == "file":
                         self.root.parent.mkdir()
                         self.root.write_bytes(b"keep root file unchanged")
-                    result = subprocess.run(
-                        [sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
-                         "--root", str(self.root), *arguments],
-                        input=json.dumps(payload), env=environment,
-                        text=True, capture_output=True, check=False,
+                    code, output, errors = self.run_goal(
+                        *arguments, session=self.session, pid=None, stdin=json.dumps(payload),
                     )
                     if state == "missing":
                         self.assertEqual(list(directory.iterdir()), [], "失败不能创建根目录或父目录")
                     else:
                         self.assertEqual(self.root.read_bytes(), b"keep root file unchanged")
                         self.assertEqual(list(self.root.parent.iterdir()), [self.root])
-                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertEqual(result.stdout, "")
-                    self.assertIn(str(self.root), result.stderr)
+                    self.assertEqual(code, 1, output + errors)
+                    self.assertEqual(output, "")
+                    self.assertIn(str(self.root), errors)
 
     def wait_until_root_is_open(self, process, descriptor):
-        locked = os.fstat(descriptor)
         deadline = time.monotonic() + 10
         while process.poll() is None and time.monotonic() < deadline:
             for path in (Path("/proc") / str(process.pid) / "fd").iterdir():
                 try:
-                    opened = path.stat()
+                    if os.path.samefile(path, descriptor):
+                        return
                 except FileNotFoundError:
                     continue  # 子进程可能刚关闭导入模块时打开的文件。
-                if (opened.st_dev, opened.st_ino) == (locked.st_dev, locked.st_ino):
-                    return
             time.sleep(0.01)
         self.fail("子进程未在超时前打开已锁住的根目录")
 
@@ -156,13 +149,20 @@ class GoalTests(unittest.TestCase):
         environment = os.environ.copy()
         environment["CLAUDE_CODE_SESSION_ID"] = self.session
         for operation in ("hook-prompt", "open"):
-            for change in ("deleted", "replaced"):
-                with self.subTest(operation=operation, change=change):
-                    directory = original_root / f"{operation}-{change}"
+            for root_type, change in (("directory", "deleted"), ("directory", "replaced"),
+                                      ("symlink", "deleted"), ("symlink", "replaced")):
+                with self.subTest(operation=operation, root_type=root_type, change=change):
+                    directory = original_root / f"{operation}-{root_type}-{change}"
                     directory.mkdir()
                     self.root = directory / "root"
-                    self.root.mkdir()
-                    (self.root / "keep.md").write_bytes(b"original root")
+                    target = directory / "original" if root_type == "symlink" else self.root
+                    target.mkdir()
+                    (target / "keep.md").write_bytes(b"original root")
+                    replacement = directory / "replacement"
+                    replacement.mkdir()
+                    (replacement / "keep.md").write_bytes(b"replacement root")
+                    if root_type == "symlink":
+                        self.root.symlink_to(target, target_is_directory=True)
                     arguments = (("hook-prompt",) if operation == "hook-prompt" else
                                  ("open", "release", "交付新版本", "--claude-pid", str(self.pid)))
                     descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
@@ -180,12 +180,15 @@ class GoalTests(unittest.TestCase):
                                 try:
                                     # 观察真实 CLI 的目录 fd；父进程持锁，子进程还不能执行命令。
                                     self.wait_until_root_is_open(process, descriptor)
-                                    if change == "deleted":
+                                    if root_type == "symlink":
+                                        self.root.unlink()
+                                        if change == "replaced":
+                                            self.root.symlink_to(replacement, target_is_directory=True)
+                                    elif change == "deleted":
                                         shutil.rmtree(self.root)
                                     else:
                                         self.root.rename(directory / "retired")
-                                        self.root.mkdir()
-                                        (self.root / "keep.md").write_bytes(b"replacement root")
+                                        replacement.rename(self.root)
                                     before = {str(path.relative_to(directory)):
                                               path.read_bytes() if path.is_file() else None
                                               for path in directory.rglob("*")}
@@ -203,7 +206,6 @@ class GoalTests(unittest.TestCase):
                                 finally:
                                     if process.poll() is None:
                                         process.kill()
-                                    process.communicate(timeout=10)
                     finally:
                         os.close(descriptor)
 

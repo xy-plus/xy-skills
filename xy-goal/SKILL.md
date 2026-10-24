@@ -25,8 +25,6 @@ xy-goal 在 goal 的基础上做简单优化，只管五件事：用户原话自
 
 写入只经脚本，不手改契约；读取直接用 Read 或 cat。`--root` 必须显式提供，且指向事先创建的目录（首次安装步骤见 README）。根目录不存在或不是目录就报错退出，脚本不会自动创建。
 
-所有命令拿到根目录锁后，还会核对根路径与已锁目录的设备号和 inode；路径已删除或被替换就报错退出，不建目录、不写文件。
-
 ```bash
 python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal open <slug> '<目标>' --claude-pid "$PPID"
 python3 ~/.claude/skills/xy-goal/goal.py --root ~/.claude/xy-goal show

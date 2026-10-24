@@ -19,7 +19,7 @@ mkdir -p ~/.claude/skills
 for d in ~/xy-skills/*/; do ln -sfn "${d%/}" ~/.claude/skills/$(basename "$d"); done
 ```
 
-再按 [xy-goal/README.md](xy-goal/README.md) 的安装步骤，先创建根目录，再将 `UserPromptSubmit` 与 `PostToolUse`（matcher `AskUserQuestion`）两个 hook 合并到 `~/.claude/settings.json`，保留已有配置。配好后，用户原话和选择题回答会自动记录，开契约时领取之前的消息。
+再按 [xy-goal/README.md](xy-goal/README.md) 的安装步骤，将 `UserPromptSubmit` 与 `PostToolUse`（matcher `AskUserQuestion`）两个 hook 合并到 `~/.claude/settings.json`，保留已有配置。配好后，用户原话和选择题回答会自动记录，开契约时领取之前的消息。
 
 然后在 `~/.claude/CLAUDE.md` 或仓库的 `CLAUDE.md` 里写引用，两行 `@` 让两把尺子启动即全文载入：
 

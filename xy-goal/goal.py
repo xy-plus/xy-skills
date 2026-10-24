@@ -402,9 +402,7 @@ def root_lock(root):
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         # 根必须已存在；等锁期间路径可能被删除或替换，不能向失效的根写入。
-        locked = os.fstat(descriptor)
-        current = os.stat(root)
-        if (current.st_dev, current.st_ino) != (locked.st_dev, locked.st_ino):
+        if not os.path.samefile(root, descriptor):
             raise GoalError(f"根目录已被替换：{root}")
         yield
     finally:
@@ -674,8 +672,9 @@ def main(arguments, *, session_id, now):
                 return 0
         else:
             require_name(session_id, "CLAUDE_CODE_SESSION_ID")
-        root = Path(options.root).expanduser().resolve()
+        root = Path(options.root).expanduser()
         with root_lock(root):
+            root = root.resolve()
             if incoming is not None:
                 record_hook(root, *incoming)
                 return 0

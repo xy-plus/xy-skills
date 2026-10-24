@@ -50,7 +50,7 @@ mkdir -p "$HOME/.claude/xy-goal"
 
 在 Claude Code 的 Bash 工具中运行；所有命令必填 `--root`，agent 命令还需要环境变量 `CLAUDE_CODE_SESSION_ID`。根目录必须事先存在且为目录，脚本不会自动创建；不存在或不是目录就报错退出。
 
-拿到根目录锁后，脚本还会核对根路径与已锁目录的设备号和 inode；路径已删除或被替换就报错退出，不建目录、不写文件。以下变量必须明确赋值：
+以下变量必须明确赋值：
 
 ```bash
 goal_script="$HOME/.claude/skills/xy-goal/goal.py"
@@ -123,6 +123,6 @@ python3 "$goal_script" --root "$goal_root" close
 python3 -B -m unittest discover -s xy-goal/tests
 ```
 
-测试均用临时目录。根目录和 PID 走正式参数解析，覆盖全部命令拒绝不存在或不是目录的根、真实 CLI 等待 flock 期间根目录被删除或替换、一次真实 Bash → CLI 的 PID 往返、拒绝非祖先 PID、同会话恢复、其他会话坏元数据隔离、Unicode 字段、旧账本 `done/` 读取及真实只读权限下的提交与回滚。
+测试均用临时目录。根目录和 PID 走正式参数解析，覆盖一次真实 Bash → CLI 的 PID 往返、拒绝非祖先 PID、同会话恢复、其他会话坏元数据隔离、Unicode 字段、旧账本 `done/` 读取及真实只读权限下的提交与回滚。
 
 合入前还需隔离会话（claude-deepseek，`--setting-sources project`，只加载临时测试目录配置）实测：中途插话的 `UserPromptSubmit`、`AskUserQuestion` 回答、开契约前消息领取、原生子代理 hook 的 `agent_id` 排除。单元测试不代替这一步。
