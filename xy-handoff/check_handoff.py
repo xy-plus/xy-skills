@@ -15,6 +15,16 @@ FIELDS = {
 }
 
 
+def object_without_duplicate_keys(pairs):
+    """解码每层对象时拒绝重复键，避免后值覆盖前值。"""
+    document = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"重复键：{key}")
+        document[key] = value
+    return document
+
+
 def check_value(where, value, shape):
     """按固定结构检查每个字段，返回所有问题及其位置。"""
     if isinstance(shape, dict):
@@ -30,8 +40,6 @@ def check_value(where, value, shape):
     if isinstance(shape, list):
         if not isinstance(value, list):
             return [f"{where} 必须是数组"]
-        if not value:
-            return [f"{where} 不能为空"]
         return [problem for index, item in enumerate(value)
                 for problem in check_value(f"{where}[{index}]", item, shape[0])]
     if not isinstance(value, str):
@@ -42,8 +50,11 @@ def check_value(where, value, shape):
 def check(document):
     """返回问题列表，为空即合格。"""
     problems = check_value("交接说明", document, FIELDS)
-    if isinstance(document, dict) and "reply" in document and document["reply"] not in ("要", "不要"):
-        problems.append("reply 只能是「要」或「不要」")
+    if isinstance(document, dict):
+        if document.get("quotes") == []:
+            problems.append("交接说明.quotes 不能为空")
+        if "reply" in document and document["reply"] not in ("要", "不要"):
+            problems.append("reply 只能是「要」或「不要」")
     return problems
 
 
@@ -53,8 +64,8 @@ def main(argv):
         return 2
     try:
         with open(argv[1], encoding="utf-8") as stream:
-            document = json.load(stream)
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            document = json.load(stream, object_pairs_hook=object_without_duplicate_keys)
+    except (OSError, ValueError) as error:
         print(f"无法读取 JSON「{argv[1]}」：{error}")
         return 1
     problems = check(document)

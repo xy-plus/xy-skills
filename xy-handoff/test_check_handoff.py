@@ -27,7 +27,10 @@ class CheckHandoffTest(unittest.TestCase):
         self.path = Path(directory.name) / "交接.json"
 
     def run_check(self, document):
-        self.path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        return self.run_text(json.dumps(document, ensure_ascii=False))
+
+    def run_text(self, text):
+        self.path.write_text(text, encoding="utf-8")
         before = self.path.read_bytes()
         result = self.run_command(self.path)
         self.assertEqual(self.path.read_bytes(), before, "校验不能修改交接文件")
@@ -54,6 +57,29 @@ class CheckHandoffTest(unittest.TestCase):
                 result = self.run_check(document)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout + result.stderr, "")
+
+    def test_facts_decisions_and_boundaries_may_be_empty(self):
+        document = handoff()
+        document.update(facts=[], decide_yourself=[], boundaries=[])
+        result = self.run_check(document)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout + result.stderr, "")
+
+    def test_conflicting_duplicate_reply_is_rejected(self):
+        text = json.dumps(handoff(), ensure_ascii=False)
+        result = self.run_text(text[:-1] + ', "reply": "不要"}')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("reply", result.stdout)
+        self.assertIn("重复", result.stdout)
+        self.assertEqual(result.stderr, "")
+
+    def test_nested_duplicate_from_name_is_rejected(self):
+        text = json.dumps(handoff(), ensure_ascii=False)
+        result = self.run_text(text.replace('"from": {', '"from": {"name": "另一派方",', 1))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("name", result.stdout)
+        self.assertIn("重复", result.stdout)
+        self.assertEqual(result.stderr, "")
 
     def test_extra_keys_are_rejected(self):
         for path in ((), ("from",), ("task",), ("quotes", 0)):
@@ -96,12 +122,10 @@ class CheckHandoffTest(unittest.TestCase):
                     target[path[-1]] = value
                     self.assert_rejected(document, str(path[0]), "不能为空")
 
-    def test_empty_arrays_are_rejected(self):
-        for key in ("quotes", "facts", "decide_yourself", "boundaries"):
-            with self.subTest(key=key):
-                document = handoff()
-                document[key] = []
-                self.assert_rejected(document, key, "不能为空")
+    def test_quotes_must_not_be_empty(self):
+        document = handoff()
+        document["quotes"] = []
+        self.assert_rejected(document, "quotes", "不能为空")
 
     def test_reply_must_be_one_of_the_two_values(self):
         for reply in ("", "不需要", "不要：直接向用户汇报", None, True):
