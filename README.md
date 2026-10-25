@@ -63,6 +63,4 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 `xy-handoff` 管会话的大任务归属、拆分交出和后台会话收尾；`xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。`xy-handoff` 与后两者分别互不引用。交出去的会话归它自己，原会话收尾时不把它算进清理范围。
 
-后台会话名也是 SendMessage 的收件地址，要用不重名的中文短名；记录启动输出里的实际名字和短 id，按短 id 核对，并用实际值告知用户。
-
 新加 skill：建目录、写 `SKILL.md`，再按上面的方式软链。只在有 SKILL.md 装不下的东西时，比如代码、前提、测试命令，才给 skill 目录加 README。
