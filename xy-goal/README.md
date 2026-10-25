@@ -130,4 +130,4 @@ python3 -B -m unittest discover -s xy-goal/tests
 
 测试均用临时目录与隔离 HOME。根目录和 PID 走正式参数解析，覆盖项目记录定位、工具共用事项目录、回收目录隔离、关闭后的 inbox 与再开契约，以及真实 Bash → CLI 的 PID 往返、拒绝非祖先 PID、同会话恢复、其他会话坏元数据隔离、Unicode 字段、旧账本 `done/` 读取及真实只读权限下的提交与回滚。
 
-合入前还需隔离会话（claude-deepseek，`--setting-sources project`，只加载临时测试目录配置）实测：中途插话的 `UserPromptSubmit`、`AskUserQuestion` 回答、开契约前消息领取、原生子代理 hook 的 `agent_id` 排除。单元测试不代替这一步。
+合入前还需隔离会话（`--setting-sources project`，只加载临时测试目录配置）实测：中途插话的 `UserPromptSubmit`、`AskUserQuestion` 回答、开契约前消息领取、原生子代理 hook 的 `agent_id` 排除。单元测试不代替这一步。
