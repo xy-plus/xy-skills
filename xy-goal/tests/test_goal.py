@@ -87,6 +87,23 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(self.files(), before, "拒绝前必须完整校验，不可写半截")
         return errors
 
+    def assert_hook_error(self, result, command, *, message, record):
+        code, output, errors = result
+        self.assertEqual(code, 0, output + errors)
+        self.assertEqual(errors, "")
+        self.assertEqual(output.count("\n"), 1, "hook 错误只输出一行 JSON")
+        payload = json.loads(output)
+        self.assertEqual(set(payload), {"hookSpecificOutput"})
+        hook = payload["hookSpecificOutput"]
+        self.assertEqual(hook["hookEventName"], {
+            "hook-prompt": "UserPromptSubmit", "hook-answer": "PostToolUse",
+        }[command])
+        context = hook["additionalContext"]
+        self.assertTrue(context.startswith("请优先修复本会话契约或 hook 问题，再做别的。" + record))
+        self.assertIn(message, context.split("原始错误：", 1)[1])
+        self.assertNotIn("Traceback", context)
+        return context
+
     def files(self):
         return {str(p.relative_to(self.root)): p.read_bytes()
                 for p in self.root.rglob("*") if p.is_file()}
@@ -154,8 +171,8 @@ class GoalTests(unittest.TestCase):
                 code, output, errors = self.run_goal(
                     operation, session=None, pid=None, stdin=json.dumps(payload),
                 )
-                self.assertEqual(code, 1, output + errors)
-                self.assertIn("项目目录", errors)
+                self.assert_hook_error((code, output, errors), operation,
+                                       message="项目目录", record="这次输入没有记入契约。")
                 self.assertEqual(self.directory_entries(outside), before)
 
     def test_existing_contract_writes_reject_symlink_project_without_writing_outside(self):
@@ -189,7 +206,11 @@ class GoalTests(unittest.TestCase):
                 code, output, errors = self.run_goal(
                     *arguments, session=self.session, pid=self.pid, stdin=json.dumps(payload),
                 )
-                self.assertEqual(code, 1, output + errors)
+                if operation in ("hook-prompt", "hook-answer"):
+                    self.assert_hook_error((code, output, errors), operation,
+                                           message="项目目录", record="这次输入没有记入契约。")
+                else:
+                    self.assertEqual(code, 1, output + errors)
                 self.assertEqual(self.directory_entries(outside), before)
                 self.assertTrue(self.project.is_symlink())
 
@@ -288,8 +309,8 @@ class GoalTests(unittest.TestCase):
                     operation, session=None, pid=None,
                     stdin=json.dumps({"session_id": self.session, **fields}),
                 )
-                self.assertEqual(code, 1, output + errors)
-                self.assertIn("transcript_path", errors)
+                self.assert_hook_error((code, output, errors), operation,
+                                       message="transcript_path", record="这次输入没有记入契约。")
                 self.assertEqual(list(self.root.rglob("*")), before)
 
     def test_existing_contract_commands_and_hooks_do_not_need_session_record(self):
@@ -423,9 +444,13 @@ class GoalTests(unittest.TestCase):
                     else:
                         self.assertEqual(self.root.read_bytes(), b"keep root file unchanged")
                         self.assertEqual(list(self.root.parent.iterdir()), [self.root])
-                    self.assertEqual(code, 1, output + errors)
-                    self.assertEqual(output, "")
-                    self.assertIn(str(self.root), errors)
+                    if arguments[0] in ("hook-prompt", "hook-answer"):
+                        self.assert_hook_error((code, output, errors), arguments[0],
+                                               message=str(self.root), record="这次输入没有记入契约。")
+                    else:
+                        self.assertEqual(code, 1, output + errors)
+                        self.assertEqual(output, "")
+                        self.assertIn(str(self.root), errors)
 
     def wait_until_root_is_open(self, process, descriptor):
         deadline = time.monotonic() + 10
@@ -495,9 +520,14 @@ class GoalTests(unittest.TestCase):
                                          for path in directory.rglob("*")}, before,
                                         "根目录失效后不能创建目录或写入文件",
                                     )
-                                    self.assertEqual(process.returncode, 1, output + errors)
-                                    self.assertEqual(output, "")
-                                    self.assertIn(str(self.root), errors)
+                                    if operation == "hook-prompt":
+                                        self.assert_hook_error((process.returncode, output, errors), operation,
+                                                               message=str(self.root),
+                                                               record="这次输入没有记入契约。")
+                                    else:
+                                        self.assertEqual(process.returncode, 1, output + errors)
+                                        self.assertEqual(output, "")
+                                        self.assertIn(str(self.root), errors)
                                 finally:
                                     if process.poll() is None:
                                         process.kill()
@@ -633,6 +663,151 @@ class GoalTests(unittest.TestCase):
         self.succeeds("update", "T1", "--source", "2", "3", "2")
         self.assertEqual((contract / "tasks" / "T1.md").read_bytes(), before_task)
         self.assertEqual((contract / "links.md").read_text(), "1 T1\n2 T1\n3 T1\n")
+
+    def test_relink_repairs_an_open_tasks_only_dangling_source(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "真实出处")
+        self.add_task(1)
+        (contract / "links.md").write_text("9 T1\n")
+        before = self.files()
+        output = self.succeeds("relink", "T1", "--source", "1")
+        self.assertIn("9 T1", output)
+        self.assertIn("原话 9 不存在", output)
+        self.assertTrue(output.endswith(f"修复完成：{contract}\n"))
+        before[str((contract / "links.md").relative_to(self.root))] = b"1 T1\n"
+        self.assertEqual(self.files(), before, "relink 只写 links.md")
+        self.succeeds("check")
+
+    def test_relink_commits_each_repair_before_remaining_contract_validation(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "第一项")
+        self.quote(contract, 2, "第二项")
+        self.add_task(1)
+        self.add_task(2)
+        (contract / "links.md").write_text("9 T1\n10 T2\n")
+        before = self.files()
+        code, output, errors = self.command("relink", "T1", "--source", "1")
+        self.assertEqual(code, 1, output + errors)
+        self.assertIn("9 T1", output)
+        self.assertIn("10 T2", output)
+        self.assertIn(f"{contract / 'tasks' / 'T2.md'}: 开放事项没有出处", errors)
+        self.assertNotIn("修复完成", output)
+        before[str((contract / "links.md").relative_to(self.root))] = b"1 T1\n"
+        self.assertEqual(self.files(), before, "返回 1 仍保留本次修复，才能逐项收敛")
+        self.assertIn("修复完成", self.succeeds("relink", "T2", "--source", "2"))
+        self.assertEqual((contract / "links.md").read_text(), "1 T1\n2 T2\n")
+        self.succeeds("check")
+
+    def test_relink_keeps_valid_links_and_dismissals_and_prints_every_bad_line(self):
+        contract = self.open_goal()
+        for number in (1, 2, 3):
+            self.quote(contract, number, "已有原话")
+        self.add_task(1)
+        self.add_task(3)
+        self.succeeds("accept", "T2", "--verdict", "已验收")
+        self.succeeds("dismiss", "2", "--reason", "已答")
+        valid = "1 T1\n2 不必跟进 已答\n3 T2\n"
+        bad = (("格式错误", "关系格式错误"),
+               ("9 T1", "原话 9 不存在"),
+               ("1 T99", "事项 T99 不存在"),
+               ("1 T1", "关系重复"),
+               ("2 不必跟进 重复", "不必跟进原因为空或重复"),
+               ("3 不必跟进    ", "不必跟进原因为空或重复"))
+        (contract / "links.md").write_text(valid + "".join(line + "\n" for line, _ in bad))
+        before = self.files()
+        output = self.succeeds("relink")
+        for row, (line, reason) in zip(output.splitlines(), bad):
+            self.assertIn(line, row)
+            self.assertIn(reason, row)
+        self.assertEqual(len(output.splitlines()), len(bad) + 1)
+        before[str((contract / "links.md").relative_to(self.root))] = valid.encode("utf-8")
+        self.assertEqual(self.files(), before)
+        self.succeeds("check")
+
+    def test_relink_refuses_healthy_contract_without_writes(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "正常要求")
+        self.add_task(1)
+        self.rejects("relink", message="契约完好，挂出处用 update")
+        self.rejects("relink", "T1", "--source", "1", message="契约完好，挂出处用 update")
+
+    def test_relink_requires_task_and_source_together_before_writing(self):
+        contract = self.open_goal()
+        (contract / "links.md").write_text("坏映射\n")
+        for arguments in (("T1",), ("--source", "1")):
+            with self.subTest(arguments=arguments):
+                self.rejects("relink", *arguments, message="同时")
+        self.rejects("relink", "T1", "--source", "不是数字", message="invalid int value")
+
+    def test_relink_rejects_closed_or_missing_tasks_and_missing_quotes_without_writes(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "原要求")
+        self.add_task(1)
+        self.add_task(1)
+        self.succeeds("accept", "T2", "--verdict", "已验收")
+        with (contract / "links.md").open("a") as output:
+            output.write("坏映射\n")
+        for task in ("T2", "T9"):
+            with self.subTest(task=task):
+                self.rejects("relink", task, "--source", "1", message=f"开放事项 {task} 不存在")
+        self.rejects("relink", "T1", "--source", "1", "9", message="原话 9 不存在")
+
+    def test_relink_refuses_unreadable_links_or_quotes_without_writes(self):
+        original_root = self.root
+        for problem in ("missing-links", "invalid-links", "missing-quotes", "invalid-quote"):
+            with self.subTest(problem=problem):
+                self.root = original_root / problem
+                self.root.mkdir()
+                contract = self.open_goal()
+                if problem == "missing-quotes":
+                    bad_path = contract / "quotes"
+                    bad_path.rmdir()
+                elif problem == "invalid-quote":
+                    bad_path = contract / "quotes" / "1.md"
+                    bad_path.write_bytes(b'\xff')
+                else:
+                    bad_path = contract / "links.md"
+                    if problem == "missing-links":
+                        bad_path.unlink()
+                    else:
+                        bad_path.write_bytes(b'\xff')
+                self.rejects("relink", message=str(bad_path))
+
+    def test_hook_with_empty_quotes_can_be_repaired_without_claiming_dangling_number(self):
+        contract = self.open_goal()
+        (contract / "tasks" / "T1.md").write_text(
+            'title: "手写事项"\ncriteria: "完成要求"\nstate: "在办"\npointer: "无"\n')
+        (contract / "links.md").write_text("1 T1\n")
+        before = self.files()
+        result = self.run_goal("hook-prompt", session=None, pid=None,
+                               stdin=json.dumps({"session_id": self.session, "prompt": "本次输入"}))
+        quote = contract / "quotes" / "2.md"
+        self.assert_hook_error(result, "hook-prompt", message="原话 1 不存在",
+                               record=f"这次输入已记为原话 2（{quote}）。")
+        before[str(quote.relative_to(self.root))] = "本次输入".encode("utf-8")
+        self.assertEqual(self.files(), before)
+        self.succeeds("relink", "T1", "--source", "2")
+        self.assertFalse((contract / "quotes" / "1.md").exists())
+        self.assertEqual((contract / "links.md").read_text(), "2 T1\n")
+        self.succeeds("check")
+
+    def test_link_validation_errors_include_repair_hint(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "原要求")
+        self.add_task(1)
+        hint = "；用 relink [<事项> --source <编号>…] 修复，编号看 quotes/\n"
+        cases = (("坏映射\n", "关系格式错误"),
+                 ("9 T1\n", "原话 9 不存在"),
+                 ("1 T9\n", "事项 T9 不存在"),
+                 ("1 T1\n1 T1\n", "关系重复"),
+                 ("1 T1\n1 不必跟进    \n", "不必跟进原因为空或重复"),
+                 ("1 T1\n1 不必跟进 已答\n1 不必跟进 重复\n", "不必跟进原因为空或重复"),
+                 ("", "开放事项没有出处"))
+        for links, message in cases:
+            with self.subTest(message=message, links=links):
+                (contract / "links.md").write_text(links)
+                errors = self.rejects("check", message=message)
+                self.assertTrue(errors.endswith(hint), errors)
 
     def test_update_refuses_unknown_field_missing_reason_and_missing_task(self):
         contract = self.open_goal()
@@ -948,7 +1123,7 @@ class GoalTests(unittest.TestCase):
         self.assertIn("1 不必跟进 ", (contract / "links.md").read_text())
         self.succeeds("check")
 
-    def test_hooks_return_one_with_reason_and_no_writes_on_bad_input(self):
+    def test_hooks_report_bad_input_as_context_without_writes(self):
         cases = (("hook-prompt", "bad-json",
                   "hook 输入必须是 JSON 对象：Expecting value: line 1 column 1 (char 0)"),
                  ("hook-prompt", "[]", "hook 输入必须是 JSON 对象"),
@@ -969,27 +1144,30 @@ class GoalTests(unittest.TestCase):
             with self.subTest(command=command, data=data):
                 before = self.files()
                 code, output, errors = self.run_goal(command, session=None, pid=None, stdin=data)
-                self.assertEqual(code, 1, output + errors)
-                self.assertEqual(output, "")
-                self.assertEqual(errors, f"请优先修复本会话契约或 hook 问题，再做别的。原始错误：{reason}\n")
+                context = self.assert_hook_error((code, output, errors), command,
+                                                 message=reason, record="这次输入没有记入契约。")
+                self.assertTrue(context.endswith("原始错误：" + reason))
                 self.assertEqual(self.files(), before)
 
-    def test_hook_refuses_corrupt_contract_and_duplicate_ownership(self):
+    def test_hooks_record_corrupt_contract_but_refuse_duplicate_ownership(self):
         contract = self.open_goal()
         original = (contract / "links.md").read_bytes()
         (contract / "links.md").write_text("坏映射")
         cases = (("hook-prompt", {"session_id": self.session, "prompt": "不丢"}),
                  ("hook-answer", {"session_id": self.session, "tool_name": "AskUserQuestion",
                                   "tool_input": {}, "tool_response": {}}))
-        for command, payload in cases:
+        for number, (command, payload) in enumerate(cases, start=1):
             with self.subTest(state="corrupt", command=command):
                 before = self.files()
                 code, output, errors = self.run_goal(command, session=None, pid=None,
                                                      stdin=json.dumps(payload))
-                self.assertEqual(code, 1)
-                self.assertEqual(output, "")
-                self.assertEqual(errors, "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
-                                 f"{contract / 'links.md'}: 关系格式错误：坏映射\n")
+                quote = contract / "quotes" / f"{number}.md"
+                self.assert_hook_error((code, output, errors), command,
+                                       message=f"{contract / 'links.md'}: 关系格式错误：坏映射",
+                                       record=f"这次输入已记为原话 {number}（{quote}）。")
+                expected = (payload["prompt"] if command == "hook-prompt" else
+                            json.dumps({"tool_input": {}, "tool_response": {}}, ensure_ascii=False, indent=2))
+                before[str(quote.relative_to(self.root))] = expected.encode("utf-8")
                 self.assertEqual(self.files(), before)
         (contract / "links.md").write_bytes(original)
         duplicate = self.project / "duplicate" / "xy-goal"
@@ -999,10 +1177,9 @@ class GoalTests(unittest.TestCase):
                 before = self.files()
                 code, output, errors = self.run_goal(command, session=None, pid=None,
                                                      stdin=json.dumps(payload))
-                self.assertEqual(code, 1)
-                self.assertEqual(output, "")
-                self.assertEqual(errors, "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
-                                 f"会话 {self.session} 对应多份契约：{contract}、{duplicate}\n")
+                self.assert_hook_error((code, output, errors), command,
+                                       message=f"会话 {self.session} 对应多份契约：{contract}、{duplicate}",
+                                       record="这次输入没有记入契约。")
                 self.assertEqual(self.files(), before)
 
     def test_hook_error_preserves_original_line_breaks(self):
@@ -1014,37 +1191,163 @@ class GoalTests(unittest.TestCase):
         before = self.files()
         code, output, errors = self.run_goal("hook-prompt", session=None, pid=None,
                                             stdin=json.dumps({"session_id": self.session, "prompt": "不丢"}))
-        self.assertEqual(code, 1)
-        self.assertEqual(output, "")
-        self.assertEqual(errors, "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
-                         f"{contract / 'links.md'}: 关系格式错误：坏映射\n")
+        quote = contract / "quotes" / "1.md"
+        self.assert_hook_error((code, output, errors), "hook-prompt",
+                               message=f"{contract / 'links.md'}: 关系格式错误：坏映射",
+                               record=f"这次输入已记为原话 1（{quote}）。")
+        before[str(quote.relative_to(self.root))] = "不丢".encode("utf-8")
+        self.assertEqual(self.files(), before)
+
+    def test_bad_contract_hook_skips_every_number_at_the_start_of_links_lines(self):
+        contract = self.open_goal()
+        self.quote(contract, 4, "已有要求")
+        self.add_task(4)
+        (contract / "links.md").write_text("4 T1\n9 T1\n120 无：hook error 已修\n")
+        before = self.files()
+        text = goal.timer_prompt(contract)
+        result = self.run_goal("hook-prompt", session=None, pid=None,
+                               stdin=json.dumps({"session_id": self.session, "prompt": text}))
+        quote = contract / "quotes" / "121.md"
+        self.assert_hook_error(result, "hook-prompt", message="原话 9 不存在",
+                               record=f"这次输入已记为原话 121（{quote}）。")
+        before[str(quote.relative_to(self.root))] = text.encode("utf-8")
+        self.assertEqual(self.files(), before, "坏契约上只新增原话，不让悬空行认领，不自动分类")
+
+    def test_hook_records_input_when_own_metadata_cannot_be_decoded(self):
+        contract = self.open_goal()
+        metadata = contract / "goal.md"
+        metadata.write_bytes(b'target: "\xff"\nsession_id: "session-main"\nclaude_pid: "123"\n')
+        before = self.files()
+        result = self.run_goal("hook-prompt", session=None, pid=None,
+                               stdin=json.dumps({"session_id": self.session, "prompt": "逐字\r\n保留"}))
+        quote = contract / "quotes" / "1.md"
+        self.assert_hook_error(result, "hook-prompt", message=str(metadata),
+                               record=f"这次输入已记为原话 1（{quote}）。")
+        before[str(quote.relative_to(self.root))] = "逐字\r\n保留".encode("utf-8")
+        self.assertEqual(self.files(), before)
+
+    def test_hooks_do_not_record_when_quotes_or_links_cannot_be_read(self):
+        original_root = self.root
+        for problem in ("missing-quotes", "invalid-quote", "missing-links", "invalid-links"):
+            for command in ("hook-prompt", "hook-answer"):
+                with self.subTest(problem=problem, command=command):
+                    self.root = original_root / f"{problem}-{command}"
+                    self.root.mkdir()
+                    contract = self.open_goal()
+                    if problem == "missing-quotes":
+                        (contract / "quotes").rmdir()
+                        bad_path = contract / "quotes"
+                    elif problem == "invalid-quote":
+                        bad_path = contract / "quotes" / "1.md"
+                        bad_path.write_bytes(b'\xff')
+                    else:
+                        bad_path = contract / "links.md"
+                        if problem == "missing-links":
+                            bad_path.unlink()
+                        else:
+                            bad_path.write_bytes(b'\xff')
+                    before = self.files()
+                    payload = {"session_id": self.session, "prompt": "不能假装记录",
+                               "tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"}
+                    result = self.run_goal(command, session=None, pid=None, stdin=json.dumps(payload))
+                    self.assert_hook_error(result, command, message=str(bad_path),
+                                           record="这次输入没有记入契约。")
+                    self.assertEqual(self.files(), before)
+
+    def test_hook_keeps_complete_quote_pending_when_classification_write_fails(self):
+        contract = self.open_goal()
+        before = self.files()
+        text = goal.timer_prompt(contract)
+        with self.readonly_directory(contract):
+            result = self.run_goal("hook-prompt", session=None, pid=None,
+                                   stdin=json.dumps({"session_id": self.session, "prompt": text}))
+        quote = contract / "quotes" / "1.md"
+        self.assert_hook_error(result, "hook-prompt", message="PermissionError:",
+                               record=f"这次输入已记为原话 1（{quote}）。")
+        before[str(quote.relative_to(self.root))] = text.encode("utf-8")
+        self.assertEqual(self.files(), before)
+        self.rejects("check", message="原话 1 还没处理")
+
+    def test_hook_removes_incomplete_quote_after_real_utf8_write_failure(self):
+        contract = self.open_goal()
+        before = self.files()
+        result = self.run_goal("hook-prompt", session=None, pid=None,
+                               stdin=json.dumps({"session_id": self.session, "prompt": "\ud800"}))
+        self.assert_hook_error(result, "hook-prompt", message="UnicodeEncodeError:",
+                               record="这次输入没有记入契约。")
+        self.assertEqual(self.files(), before)
+        self.assertEqual(list((contract / "quotes").iterdir()), [])
+
+    def test_hook_reports_incomplete_quote_when_cleanup_also_fails(self):
+        contract = self.open_goal()
+        quote = contract / "quotes" / "1.md"
+        before = self.files()
+        real_unlink = Path.unlink
+        def cannot_remove_quote(path, *arguments, **options):
+            if path == quote:
+                raise PermissionError("模拟残缺原话删除失败")
+            return real_unlink(path, *arguments, **options)
+        with mock.patch.object(Path, "unlink", new=cannot_remove_quote):
+            result = self.run_goal("hook-prompt", session=None, pid=None,
+                                   stdin=json.dumps({"session_id": self.session, "prompt": "\ud800"}))
+        context = self.assert_hook_error(result, "hook-prompt", message="UnicodeEncodeError:",
+                                         record=f"这次输入的原话文件可能残缺（{quote}），先删掉它。")
+        self.assertIn("PermissionError: 模拟残缺原话删除失败", context)
+        before[str(quote.relative_to(self.root))] = b""
+        self.assertEqual(self.files(), before)
+
+    def test_hooks_report_unexpected_exceptions_before_creating_quotes(self):
+        self.open_goal()
+        for command in ("hook-prompt", "hook-answer"):
+            with self.subTest(command=command):
+                before = self.files()
+                payload = {"session_id": self.session, "prompt": "原话尚未创建",
+                           "tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"}
+                with mock.patch("goal.find_contract", side_effect=RuntimeError("模拟定位意外失败")):
+                    try:
+                        result = self.run_goal(command, session=None, pid=None, stdin=json.dumps(payload))
+                    except RuntimeError as error:
+                        self.fail(f"hook 应把意外异常放进上下文：{error}")
+                self.assert_hook_error(result, command, message="RuntimeError: 模拟定位意外失败",
+                                       record="这次输入没有记入契约。")
+                self.assertEqual(self.files(), before)
+
+    def test_non_hook_commands_still_raise_unexpected_exceptions(self):
+        before = self.files()
+        with mock.patch("goal.find_contract", side_effect=RuntimeError("模拟定位意外失败")):
+            with self.assertRaisesRegex(RuntimeError, "模拟定位意外失败"):
+                self.command("show")
         self.assertEqual(self.files(), before)
 
     def test_parse_errors_hint_hooks_without_treating_root_values_as_commands(self):
         missing_fields = "the following arguments are required: --title, --criteria, --state, --pointer, --source\n"
-        cases = [(["show"], "the following arguments are required: --root\n")]
+        cases = [(["show"], None, "the following arguments are required: --root\n")]
         for command in ("hook-prompt", "hook-answer"):
             cases.extend((
-                ([command], "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
-                 "the following arguments are required: --root\n"),
-                (["--root", str(self.root), command, "--unexpected"],
-                 "请优先修复本会话契约或 hook 问题，再做别的。原始错误：unrecognized arguments: --unexpected\n"),
-                (["--root", "--bad", command], "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
-                 "argument --root: expected one argument\n"),
-                (["--root", "--root", command, "show"], "argument --root: expected one argument\n"),
-                (["--root", command, "add"], missing_fields),
-                (["--roo", command, "add"], missing_fields),
-                ([f"--root={command}", "add"], missing_fields),
-                (["--root", command], "the following arguments are required: command\n"),
-                ([f"--root={command}"], "the following arguments are required: command\n"),
+                ([command], command, "the following arguments are required: --root"),
+                (["--root", str(self.root), command, "--unexpected"], command,
+                 "unrecognized arguments: --unexpected"),
+                (["--root", "--bad", command], command, "argument --root: expected one argument"),
+                (["--root", "--root", command, "show"], None, "argument --root: expected one argument\n"),
+                (["--root", command, "add"], None, missing_fields),
+                (["--roo", command, "add"], None, missing_fields),
+                ([f"--root={command}", "add"], None, missing_fields),
+                (["--root", command], None, "the following arguments are required: command\n"),
+                ([f"--root={command}"], None, "the following arguments are required: command\n"),
             ))
-        for arguments, expected in cases:
+        for arguments, command, expected in cases:
             with self.subTest(arguments=arguments):
                 before = self.files()
                 output, errors = StringIO(), StringIO()
                 with redirect_stdout(output), redirect_stderr(errors):
                     code = goal.main(arguments, session_id=self.session, now=self.now)
-                self.assertEqual((code, output.getvalue(), errors.getvalue()), (1, "", expected))
+                result = code, output.getvalue(), errors.getvalue()
+                if command is None:
+                    self.assertEqual(result, (1, "", expected))
+                else:
+                    context = self.assert_hook_error(result, command, message=expected,
+                                                     record="这次输入没有记入契约。")
+                    self.assertTrue(context.endswith("原始错误：" + expected))
                 self.assertEqual(self.files(), before)
 
     def test_cli_errors_preserve_exact_output(self):

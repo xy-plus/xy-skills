@@ -25,6 +25,7 @@ TOTAL_LIMIT = 5000
 TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
 GOAL_FIELDS = ("target", "session_id", "claude_pid")
 HOOK_COMMANDS = ("hook-prompt", "hook-answer")
+RELINK_USAGE = "；用 relink [<事项> --source <编号>…] 修复，编号看 quotes/"
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
 PID_USAGE = ('请在 Claude Code 的 Bash 工具中运行，在 open/adopt 命令后传入 '
              '--claude-pid "$PPID"（由该 Bash 展开）')
@@ -36,6 +37,10 @@ LEDGER_CANCELLED = re.compile(r"^-\s+\[~\]\s+(T[1-9][0-9]*)\s+.+（原话\s+([1-
 
 class GoalError(ValueError):
     """可向调用者直接说明的契约或用法错误。"""
+
+
+class HookRecordError(GoalError):
+    """原话已完整写入或有残缺文件；消息携带最终记录结果与原始错误。"""
 
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -179,6 +184,32 @@ def encode_links(links, dismissed):
     return "".join(f"{number} {landing}\n" for number, landing in rows)
 
 
+def parse_links(text, quotes, tasks):
+    """逐行检查，返回合格映射、不必跟进及不合格的原行与原因。"""
+    links, dismissed, invalid = set(), {}, []
+    for line in text.splitlines():
+        try:
+            match = re.fullmatch(r"([1-9][0-9]*) (T[1-9][0-9]*|不必跟进 .+)", line)
+            if match is None:
+                raise GoalError(f"关系格式错误：{line}")
+            number, landing = int(match[1]), match[2]
+            if number not in quotes:
+                raise GoalError(f"原话 {number} 不存在")
+            if landing.startswith("不必跟进 "):
+                if number in dismissed or not landing[5:].strip():
+                    raise GoalError("不必跟进原因为空或重复")
+                dismissed[number] = landing[5:]
+            else:
+                if landing not in tasks:
+                    raise GoalError(f"事项 {landing} 不存在")
+                if (number, landing) in links:
+                    raise GoalError(f"关系重复：{line}")
+                links.add((number, landing))
+        except GoalError as error:
+            invalid.append((line, str(error)))
+    return links, dismissed, invalid
+
+
 class Contract:
     def __init__(self, path):
         self.path = path
@@ -191,29 +222,14 @@ class Contract:
         overlap = self.tasks.keys() & self.done.keys()
         if overlap:
             raise GoalError(f"{path / 'done'}: 事项同时开放和关闭：{sorted(overlap)}")
-        self.links = set()
-        self.dismissed = {}
         links_path = path / "links.md"
-        for line in read_text(links_path).splitlines():
-            match = re.fullmatch(r"([1-9][0-9]*) (T[1-9][0-9]*|不必跟进 .+)", line)
-            if match is None:
-                raise GoalError(f"{links_path}: 关系格式错误：{line}")
-            number, landing = int(match[1]), match[2]
-            if number not in self.quotes:
-                raise GoalError(f"{links_path}: 原话 {number} 不存在")
-            if landing.startswith("不必跟进 "):
-                if number in self.dismissed or not landing[5:].strip():
-                    raise GoalError(f"{links_path}: 不必跟进原因为空或重复")
-                self.dismissed[number] = landing[5:]
-            else:
-                if landing not in self.tasks and landing not in self.done:
-                    raise GoalError(f"{links_path}: 事项 {landing} 不存在")
-                if (number, landing) in self.links:
-                    raise GoalError(f"{links_path}: 关系重复：{line}")
-                self.links.add((number, landing))
+        self.links, self.dismissed, invalid = parse_links(
+            read_text(links_path), self.quotes, self.tasks.keys() | self.done.keys())
+        if invalid:
+            raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
         for task in self.tasks:
             if not self.sources(task):
-                raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处")
+                raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
         for task, values in self.done.items():
             if "legacy_line" in values:
                 if bool(self.sources(task)) == values["without_source"]:
@@ -382,6 +398,9 @@ def parser():
     updating.add_argument("--field")
     updating.add_argument("--value")
     updating.add_argument("--source", type=int, nargs="+")
+    relinking = commands.add_parser("relink")
+    relinking.add_argument("task", nargs="?")
+    relinking.add_argument("--source", type=int, nargs="+")
     dismissing = commands.add_parser("dismiss")
     dismissing.add_argument("quote", type=int)
     dismissing.add_argument("--reason", required=True)
@@ -543,11 +562,19 @@ def hook_input(command):
 
 def record_hook(root, session_id, text, transcript_path):
     path = find_contract(root, session_id)
+    validation_error = None
     if path is not None:
         require_project_directory(root, path.parents[1])
-        contract = Contract(path)
+        try:
+            contract = Contract(path)
+        except GoalError as error:
+            validation_error = error
         directory = path / "quotes"
-        number = max(contract.quotes, default=0) + 1
+        quotes = quote_files(directory)
+        # 坏契约也要保住输入；跳过坏行开头的编号，避免悬空映射认领新原话。
+        reserved = {int(match[1]) for match in re.finditer(
+            r"^([0-9]+)", read_text(path / "links.md"), re.MULTILINE)}
+        number = max(quotes.keys() | reserved, default=0) + 1
     else:
         contract = None
         require_text(transcript_path, "hook transcript_path")
@@ -567,14 +594,27 @@ def record_hook(root, session_id, text, transcript_path):
     try:
         with output:
             output.write(text)
-        if contract is not None:
+    except Exception as error:
+        try:
+            quote.unlink()
+        except Exception as cleanup_error:
+            detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
+            raise HookRecordError(
+                f"这次输入的原话文件可能残缺（{quote}），先删掉它。原始错误：{detail}；"
+                f"删除失败：{type(cleanup_error).__name__}: {cleanup_error}") from error
+        raise
+    # 原话完整写入就是提交点。校验或分类失败都留给后续处理，不能再删除原话。
+    if path is not None:
+        try:
+            if validation_error is not None:
+                raise validation_error
             reason = automatic_reason(text, path)
             if reason is not None:
                 contract.dismissed[number] = reason
                 write_files({contract.path / "links.md": contract.links_text()}, [])
-    except BaseException:
-        quote.unlink()
-        raise
+        except Exception as error:
+            detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
+            raise HookRecordError(f"这次输入已记为原话 {number}（{quote}）。原始错误：{detail}") from error
 
 
 def require_pid(claude_pid):
@@ -591,6 +631,42 @@ def require_pid(claude_pid):
     except (OSError, ValueError, IndexError) as error:
         raise GoalError(f"无法核对调用进程的祖先：{error}；{PID_USAGE}") from error
     raise GoalError(f"进程 {claude_pid} 不是当前调用进程的祖先；{PID_USAGE}")
+
+
+def relink(path, task, sources):
+    """唯一先写后整体校验的入口：多个无出处事项须逐项修，进度不能因剩余错误回滚。
+
+    不并入 update，保持正常命令先校验、拒绝时不写入的含义。
+    """
+    if (task is None) != (sources is None):
+        raise GoalError("事项与 --source 必须同时给或同时不给")
+    try:
+        Contract(path)
+    except GoalError:
+        pass
+    else:
+        raise GoalError("契约完好，挂出处用 update")
+    links_path = path / "links.md"
+    text = read_text(links_path)
+    quotes = quote_files(path / "quotes")
+    # 修复不能依赖事项正文有效；这里只按开放、关闭目录下的文件名判断归属。
+    tasks = {file.stem for file in (path / "tasks").glob("*.md") if file.is_file()}
+    done = {file.stem for file in (path / "done").glob("*.md") if file.is_file()}
+    if task is not None:
+        if task not in tasks:
+            raise GoalError(f"开放事项 {task} 不存在")
+        for number in sources:
+            if number not in quotes:
+                raise GoalError(f"原话 {number} 不存在：{path / 'quotes'}")
+    links, dismissed, invalid = parse_links(text, quotes, tasks | done)
+    for line, reason in invalid:
+        print(f"丢弃：{line}；{reason}")
+    if task is not None:
+        links.update((number, task) for number in sources)
+    write_files({links_path: encode_links(links, dismissed)}, [])
+    Contract(path)
+    print(f"修复完成：{path}")
+    return 0
 
 
 def execute(options, *, root, session_id, claude_pid, now):
@@ -650,6 +726,8 @@ def execute(options, *, root, session_id, claude_pid, now):
         return 0
     if path is None:
         raise GoalError("本会话没有契约")
+    if options.command == "relink":
+        return relink(path, options.task, options.source)
     contract = Contract(path)
     if options.command == "show":
         contract.show()
@@ -694,7 +772,7 @@ def main(arguments, *, session_id, now):
                 record_hook(root, *incoming)
                 return 0
             return execute(options, root=root, session_id=session_id, claude_pid=claude_pid, now=now)
-    except (GoalError, OSError, UnicodeError) as error:
+    except Exception as error:
         if options is not None:
             command = options.command
         else:
@@ -710,9 +788,16 @@ def main(arguments, *, session_id, now):
                     command = argument
                     break
         if command in HOOK_COMMANDS:
-            # 退出 1 的 stderr 不会自动进入模型上下文；非阻断通知只呈现首行。
-            # 提示必须前置，原错误（含换行）仍逐字保留。
-            error = f"请优先修复本会话契约或 hook 问题，再做别的。原始错误：{error}"
+            # 退出 1 的非阻断错误不进模型上下文；退出 0 的 additionalContext 才会送达。
+            detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
+            record = "" if isinstance(error, HookRecordError) else "这次输入没有记入契约。原始错误："
+            context = f"请优先修复本会话契约或 hook 问题，再做别的。{record}{detail}"
+            event = "UserPromptSubmit" if command == "hook-prompt" else "PostToolUse"
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": event, "additionalContext": context}}, ensure_ascii=False))
+            return 0
+        if not isinstance(error, (GoalError, OSError, UnicodeError)):
+            raise
         print(error, file=sys.stderr)
         return 1
 

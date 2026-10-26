@@ -44,7 +44,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 脚本文件打不开时 Python 解释器退出 2，而 `UserPromptSubmit` 退出 2 会拦下并丢弃这条用户消息、影响每个装了 hook 的会话，因此用 `|| exit 1` 把一切失败转成不拦消息的报错；`PostToolUse` 退出 2 只向模型反馈错误，配置保持原样（[官方 hooks 文档](https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event)）。
 
-`hook-prompt` 读取官方 hook JSON 的 `session_id`、`transcript_path`、`prompt`，逐字保存 `prompt`；`hook-answer` 将 `AskUserQuestion` 的 `tool_input`、`tool_response` 原值存成 JSON，不解析回答结构或改写问题。成功无输出，失败写 stderr、退出 1，Claude Code 仍会送达消息。编号、子代理排除及自动分类规则见 [契约与命令](SKILL.md#契约与命令)。
+`hook-prompt` 读取官方 hook JSON 的 `session_id`、`transcript_path`、`prompt`，逐字保存 `prompt`；`hook-answer` 将 `AskUserQuestion` 的 `tool_input`、`tool_response` 原值存成 JSON，不解析回答结构或改写问题。成功时 stdout、stderr 都为空；脚本运行起来后的失败输出一行 JSON、退出 0，错误全文由 `hookSpecificOutput.additionalContext` 进入模型上下文，stderr 为空。`hookEventName` 分别是 `UserPromptSubmit`、`PostToolUse`。三种记录结果见[失败与输入领取](#失败与输入领取)；编号、子代理排除及自动分类规则见 [契约与命令](SKILL.md#契约与命令)。
 
 ## 命令示例
 
@@ -70,12 +70,17 @@ python3 "$goal_script" --root "$RUNS_ROOT" update T1 --field 状态 --value '等
 python3 "$goal_script" --root "$RUNS_ROOT" update T1 --field 指针 --value '/absolute/path/to/report.md'
 python3 "$goal_script" --root "$RUNS_ROOT" update T1 --field 判据 --value '连续两轮测试通过并完成发布' --source 3
 python3 "$goal_script" --root "$RUNS_ROOT" update T1 --source 4 5
+# 仅在契约校验失败时修 links.md；编号先查看 quotes/。
+python3 "$goal_script" --root "$RUNS_ROOT" relink T1 --source 4 5
+python3 "$goal_script" --root "$RUNS_ROOT" relink
 python3 "$goal_script" --root "$RUNS_ROOT" dismiss 6 --reason '问题已答，无后续要求'
 python3 "$goal_script" --root "$RUNS_ROOT" accept T1 --verdict '两轮测试退出码均为 0，发布检查通过'
 python3 "$goal_script" --root "$RUNS_ROOT" cancel T2 --quote 7
 ```
 
 `update --field` 只认 `标题`、`判据`、`状态`、`指针`；改判据必带 `--source`，单独传 `--source` 只追加出处。状态只认 `在办`、`等用户：待定的事`，还没有指针就显式写 `无`。验收与取消移入 `done/`，T 号不复用。维护规矩见 [维护事项](SKILL.md#维护事项)。
+
+`relink [<事项> --source N…]` 只用于坏契约，links.md、quotes/ 必须读得出来；健康契约会拒绝并提示用 `update`。事项与 `--source` 同时给或同时不给，给出时事项必须在 tasks/、原话必须全部存在。不带参数只丢掉不合格行。每条丢掉的行和原因都会打印；写后校验与返回码语义见[失败与输入领取](#失败与输入领取)。
 
 新会话接管或同会话恢复，都用：
 
@@ -114,9 +119,21 @@ $RUNS_ROOT/<项目目录名>/<YYYYMMDD-HHMMSS>-<slug>/xy-goal/
 
 `close` 校验通过后只删 `xy-goal/goal.md`，其余文件保留；之后 hook 回到 inbox，同会话可以再开契约。事项目录和 inbox 的生命周期见 [契约生命周期](SKILL.md#契约生命周期)。
 
-写命令先校验；本契约坏文件会指出路径，不诊断其他会话的数据。普通多文件写入 I/O 失败会回滚。`open` 要求本会话还没有契约；`adopt` 可接管或刷新自己的契约；其他 agent 命令要求恰好一份，本会话重复绑定会拒绝。
+普通写命令先校验；本契约坏文件会指出路径，不诊断其他会话的数据。普通多文件写入 I/O 失败会回滚；hook 原话与 `relink` 的提交边界见下节。`open` 要求本会话还没有契约；`adopt` 可接管或刷新自己的契约；其他 agent 命令要求恰好一份，本会话重复绑定会拒绝。
 
 ## 失败与输入领取
+
+hook 错误上下文以「请优先修复本会话契约或 hook 问题，再做别的。」开头，随后按最终文件状态三选一，末尾附「原始错误：<detail>」；`GoalError` 保留原文，其他异常附类型名，不输出 traceback：
+
+- 「这次输入没有记入契约。」：尚未创建原话，或写入失败且残缺文件已经删掉。
+- 「这次输入已记为原话 N（<路径>）。」：原话完整写入，之后校验或自动分类失败，完整原话保留待处理。
+- 「这次输入的原话文件可能残缺（<路径>），先删掉它。」：写入失败且清理失败，须先删除提示中的残缺文件。
+
+本会话契约校验失败时，hook 仍逐字记录输入，避免修复期间继续丢失用户原话。编号取 quotes/ 已有号与 links.md 每行开头数字的最大值加一，防止未来的悬空编号静默认领新输入。原话文件完整写入即提交，后续校验或分类失败都不删除；写入失败才清理残缺文件。输入不合法、根或项目目录有问题、会话对应多份契约、quotes/ 或 links.md 读不出来时仍不记录。未开契约时的 inbox 逻辑保持原样。坏契约期间跳过自动分类，修复后原话仍待处理，机器输入用 `dismiss` 处理。
+
+`relink` 是唯一先写后整体校验的修复入口，只写 links.md。写前须确认契约当前校验失败、links.md 与 quotes/ 可读，且给定的事项开放、原话都存在。它与 Contract 共用逐行校验，保留合格映射与不必跟进，逐条打印丢掉的行和原因，加上给定映射后写入；再整体校验。通过时打印「修复完成：<路径>」、返回 0；仍失败则向 stderr 报剩余错误、返回 1，已写修复保留，可接着修下一个事项。缺失或读不出的文件不会当成空文件。
+
+两个开放事项都只剩悬空出处时，写前整体校验会让两次修复互相卡住；格式错行也会挡住正常命令。`relink` 写后校验让修复能逐项推进。修复不并进 `update`，以保留正常命令「先校验、拒绝时不写」的含义。
 
 `open`、新会话 `adopt` 在主体提交前，将已校验的输入在原父目录内临时改名。提交前失败会放回输入，返回 1，可安全重试；同会话 `adopt` 只更新 PID。主体已提交后，临时输入删除失败只向 stderr 警告，照常返回 0 并输出定时提示；警告给出残留路径，已领取原话不会再次导入。
 

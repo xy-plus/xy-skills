@@ -37,7 +37,15 @@ python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" check
 
 尚未开契约时，hook 把消息原文暂记在 `$RUNS_ROOT/<项目目录名>/xy-goal-inbox/<会话 id>/`，不存分类副本；`open`、新会话 `adopt` 领走全部原话，按原顺序接着编号，领取时统一计算自动分类。触发开契约的那条消息也在其中。子代理输入带 `agent_id`，两个 hook 都跳过。主代理的输入每条都记，同一 `prompt_id` 也不去重：中途插话可能与该轮共用这个 id。
 
-与本契约定时提示逐字一致的输入，以及首尾为 `<task-notification>`、`</task-notification>` 且带齐 `<task-id>`、`<status>`、`<summary>` 成对子标签的完整后台通知，原文保留并自动标为不必跟进。不能只凭「本次契约」或一个标签就排除要求；来源字段不足以辨认机器输入，用户完整粘贴通知也会命中，所以关闭前必须复核自动标记。其他会话发来的消息照记，由 agent 处理。hook 错误写到 stderr、退出 1；消息照常送达，看到提示后要处理记录失败，不能把它当作已记下。
+与本契约定时提示逐字一致的输入，以及首尾为 `<task-notification>`、`</task-notification>` 且带齐 `<task-id>`、`<status>`、`<summary>` 成对子标签的完整后台通知，原文保留并自动标为不必跟进。不能只凭「本次契约」或一个标签就排除要求；来源字段不足以辨认机器输入，用户完整粘贴通知也会命中，所以关闭前必须复核自动标记。其他会话发来的消息照记，由 agent 处理。
+
+hook 成功时 stdout、stderr 都为空；运行起来后的失败输出一行 JSON、退出 0，错误全文经 `hookSpecificOutput.additionalContext` 进入模型上下文，stderr 为空。`hook-prompt` 的事件名是 `UserPromptSubmit`，`hook-answer` 是 `PostToolUse`。提示以「请优先修复本会话契约或 hook 问题，再做别的。」开头，随后按最终文件状态说明记录结果，末尾附原始错误：
+
+- 「这次输入没有记入契约。」：没有完整原话，也没有残缺文件。
+- 「这次输入已记为原话 N（<路径>）。」：原话已完整写入，后续校验或分类失败；按编号处理待办原话。
+- 「这次输入的原话文件可能残缺（<路径>），先删掉它。」：写入失败且残缺文件删不掉，先清理提示中的文件。
+
+本会话契约坏了，hook 仍逐字记录原话；新编号跳过 quotes/ 和 links.md 行首所有已出现的号，避免悬空映射认领新输入。完整原话写入后不再删除；坏契约期间不自动分类，修复后按未处理原话处理，机器输入可用 `dismiss` 标掉。输入不合法、根或项目目录有问题、重复归属、quotes/ 或 links.md 读不出、原话写不完时不记录。
 
 ## 维护事项
 
@@ -48,12 +56,15 @@ python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" add --title '<标�
 python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --field 标题 --value '<新标题>'
 python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --field 判据 --value '<新判据>' --source <N>
 python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --source <N> <M>
+python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" relink [<T> --source <N> <M>]
 python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" dismiss <N> --reason '<不必跟进的原因>'
 python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" accept <T> --verdict '<按判据核过的结论，如命令和退出码、审查结论>'
 python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" cancel <T> --quote <N>
 ```
 
 `update --field` 只认 `标题`、`判据`、`状态`、`指针`。改判据必须同时带原话；`--source` 只追加出处。出处和取消依据必须引用已存在的原话。取消必须有用户原话依据，未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明一行原因，不必硬建事项；原因含 Unicode 分行符也会写前拒绝。
+
+`relink` 只用于当前校验失败、links.md 与 quotes/ 都读得出的契约；健康契约挂出处用 `update`。不带参数只清理坏行；事项与 `--source` 必须同时给，事项必须开放，编号须先查看 quotes/、全部存在。它逐条打印丢掉的行与原因，保留合格映射并添加给定出处，只写 links.md。写后整体校验，通过时打印「修复完成：<路径>」并退出 0；仍有错误时向 stderr 报告、退出 1，已写修复保留，可接着对下一个事项用 `relink`。
 
 `show` 只列目标、每个开放事项四行（标题、判据、出处、状态与指针）、未处理原话编号，不重复输出全部原话和已关闭事项。每项四行超过 300 字、清单全文超过 5000 字会在末尾提示压短，这是用户要求的，保留；它是软约束，不拒绝写入。`check` 只检查本契约，逐条报未处理原话；通过退出 0，有问题退出 1，直接看输出，不接管道截取。
 
@@ -104,4 +115,4 @@ python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" adopt <契约目录
 
 `close` 后其余文件随事项目录按同一规则过期；hook 回到项目下的 `xy-goal-inbox`，同会话可以再开契约。`xy-goal-inbox` 整体及其中各会话的 inbox 也按统一规则清理。每条命令都持有 runs 根目录锁，与清理程序互斥。
 
-主体已提交后，临时输入删除失败只警告，仍返回 0、输出定时提示；返回 1 的操作可重试，不会重复领取。残留路径与提交边界见 README 的[失败与输入领取](README.md#失败与输入领取)。
+`open`、新会话 `adopt` 主体已提交后，临时输入删除失败只警告，仍返回 0、输出定时提示；它们返回 1 时可重试，不会重复领取。残留路径、hook 原话提交点与 `relink` 写后校验见 README 的[失败与输入领取](README.md#失败与输入领取)。
