@@ -1031,6 +1031,7 @@ class GoalTests(unittest.TestCase):
                  "请优先修复本会话契约或 hook 问题，再做别的。原始错误：unrecognized arguments: --unexpected\n"),
                 (["--root", "--bad", command], "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
                  "argument --root: expected one argument\n"),
+                (["--root", "--root", command, "show"], "argument --root: expected one argument\n"),
                 (["--root", command, "add"], missing_fields),
                 (["--roo", command, "add"], missing_fields),
                 ([f"--root={command}", "add"], missing_fields),
@@ -1044,18 +1045,6 @@ class GoalTests(unittest.TestCase):
                 with redirect_stdout(output), redirect_stderr(errors):
                     code = goal.main(arguments, session_id=self.session, now=self.now)
                 self.assertEqual((code, output.getvalue(), errors.getvalue()), (1, "", expected))
-                self.assertEqual(self.files(), before)
-
-    def test_repeated_root_options_do_not_hint_for_hook_named_paths(self):
-        for root_value in ("hook-prompt", "hook-answer"):
-            with self.subTest(root_value=root_value):
-                before = self.files()
-                output, errors = StringIO(), StringIO()
-                with redirect_stdout(output), redirect_stderr(errors):
-                    code = goal.main(["--root", "--root", root_value, "show"],
-                                     session_id=self.session, now=self.now)
-                self.assertEqual((code, output.getvalue(), errors.getvalue()),
-                                 (1, "", "argument --root: expected one argument\n"))
                 self.assertEqual(self.files(), before)
 
     def test_cli_errors_preserve_exact_output(self):
