@@ -699,12 +699,14 @@ def main(arguments, *, session_id, now):
             command = options.command
         else:
             command = None
-            argument_values = iter(arguments)
-            for argument in argument_values:
-                # argparse 也接受 --root 的缩写，其取值不能误认成 hook 命令。
-                if argument.startswith("--r") and "--root".startswith(argument):
-                    next(argument_values, None)
-                elif not argument.startswith("-"):
+            skip_root_value = False
+            for argument in arguments:
+                if skip_root_value and not argument.startswith("-"):
+                    skip_root_value = False
+                    continue
+                # argparse 也接受 --root 的缩写；以 - 开头的 token 继续作为选项扫描。
+                skip_root_value = argument.startswith("--r") and "--root".startswith(argument)
+                if not argument.startswith("-"):
                     command = argument
                     break
         if command in HOOK_COMMANDS:
