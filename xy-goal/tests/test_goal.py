@@ -949,38 +949,115 @@ class GoalTests(unittest.TestCase):
         self.succeeds("check")
 
     def test_hooks_return_one_with_reason_and_no_writes_on_bad_input(self):
-        cases = (("hook-prompt", "bad-json"),
-                 ("hook-prompt", "[]"),
-                 ("hook-prompt", '{"session_id":"s"}'),
-                 ("hook-prompt", '{"session_id":"s","prompt":12}'),
-                 ("hook-prompt", '{"session_id":"../escape","prompt":"a"}'),
-                 ("hook-answer", '{"session_id":"s","tool_name":"Other","tool_input":{},"tool_response":{}}'),
-                 ("hook-answer", '{"session_id":"s","tool_name":"AskUserQuestion","tool_input":{}}'))
-        for command, data in cases:
+        cases = (("hook-prompt", "bad-json",
+                  "hook 输入必须是 JSON 对象：Expecting value: line 1 column 1 (char 0)"),
+                 ("hook-prompt", "[]", "hook 输入必须是 JSON 对象"),
+                 ("hook-prompt", '{"session_id":"s"}', "hook 输入缺少字符串 prompt"),
+                 ("hook-prompt", '{"session_id":"s","prompt":12}', "hook 输入缺少字符串 prompt"),
+                 ("hook-prompt", '{"session_id":"../escape","prompt":"a"}',
+                  "hook session_id 必须是单个目录名"),
+                 ("hook-answer", "bad-json",
+                  "hook 输入必须是 JSON 对象：Expecting value: line 1 column 1 (char 0)"),
+                 ("hook-answer", "{}", "hook session_id不能为空"),
+                 ("hook-answer", '{"session_id":"s","tool_name":"Other","tool_input":{},"tool_response":{}}',
+                  "hook-answer 只接收 AskUserQuestion"),
+                 ("hook-answer", '{"session_id":"s","tool_name":"AskUserQuestion","tool_input":{}}',
+                  "hook-answer 缺少 tool_input 或 tool_response"),
+                 ("hook-answer", '{"session_id":"s","tool_name":"AskUserQuestion","tool_response":{}}',
+                  "hook-answer 缺少 tool_input 或 tool_response"))
+        for command, data, reason in cases:
             with self.subTest(command=command, data=data):
                 before = self.files()
                 code, output, errors = self.run_goal(command, session=None, pid=None, stdin=data)
                 self.assertEqual(code, 1, output + errors)
-                self.assertTrue(errors.strip())
+                self.assertEqual(output, "")
+                self.assertEqual(errors, f"请优先修复本会话契约或 hook 问题，再做别的。原始错误：{reason}\n")
                 self.assertEqual(self.files(), before)
 
     def test_hook_refuses_corrupt_contract_and_duplicate_ownership(self):
         contract = self.open_goal()
         original = (contract / "links.md").read_bytes()
         (contract / "links.md").write_text("坏映射")
-        before = self.files()
-        code, _, errors = self.run_goal("hook-prompt", session=None, pid=None,
-                                        stdin=json.dumps({"session_id": self.session, "prompt": "不丢"}))
-        self.assertEqual(code, 1)
-        self.assertIn("links.md", errors)
-        self.assertEqual(self.files(), before)
+        cases = (("hook-prompt", {"session_id": self.session, "prompt": "不丢"}),
+                 ("hook-answer", {"session_id": self.session, "tool_name": "AskUserQuestion",
+                                  "tool_input": {}, "tool_response": {}}))
+        for command, payload in cases:
+            with self.subTest(state="corrupt", command=command):
+                before = self.files()
+                code, output, errors = self.run_goal(command, session=None, pid=None,
+                                                     stdin=json.dumps(payload))
+                self.assertEqual(code, 1)
+                self.assertEqual(output, "")
+                self.assertEqual(errors, "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
+                                 f"{contract / 'links.md'}: 关系格式错误：坏映射\n")
+                self.assertEqual(self.files(), before)
         (contract / "links.md").write_bytes(original)
-        shutil.copytree(contract, self.project / "duplicate" / "xy-goal")
-        code, _, errors = self.run_goal("hook-answer", session=None, pid=None,
-                                        stdin=json.dumps({"session_id": self.session, "tool_name": "AskUserQuestion",
-                                                          "tool_input": {}, "tool_response": {}}))
+        duplicate = self.project / "duplicate" / "xy-goal"
+        shutil.copytree(contract, duplicate)
+        for command, payload in cases:
+            with self.subTest(state="duplicate", command=command):
+                before = self.files()
+                code, output, errors = self.run_goal(command, session=None, pid=None,
+                                                     stdin=json.dumps(payload))
+                self.assertEqual(code, 1)
+                self.assertEqual(output, "")
+                self.assertEqual(errors, "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
+                                 f"会话 {self.session} 对应多份契约：{contract}、{duplicate}\n")
+                self.assertEqual(self.files(), before)
+
+    def test_hook_error_preserves_original_line_breaks(self):
+        contract = self.open_goal()
+        destination = self.project / "task\nwith-line-break"
+        contract.parent.rename(destination)
+        contract = destination / "xy-goal"
+        (contract / "links.md").write_text("坏映射")
+        before = self.files()
+        code, output, errors = self.run_goal("hook-prompt", session=None, pid=None,
+                                            stdin=json.dumps({"session_id": self.session, "prompt": "不丢"}))
         self.assertEqual(code, 1)
-        self.assertIn("多份契约", errors)
+        self.assertEqual(output, "")
+        self.assertEqual(errors, "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
+                         f"{contract / 'links.md'}: 关系格式错误：坏映射\n")
+        self.assertEqual(self.files(), before)
+
+    def test_parse_errors_hint_hooks_without_treating_root_values_as_commands(self):
+        missing_fields = "the following arguments are required: --title, --criteria, --state, --pointer, --source\n"
+        cases = [(["show"], "the following arguments are required: --root\n")]
+        for command in ("hook-prompt", "hook-answer"):
+            cases.extend((
+                ([command], "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
+                 "the following arguments are required: --root\n"),
+                (["--root", str(self.root), command, "--unexpected"],
+                 "请优先修复本会话契约或 hook 问题，再做别的。原始错误：unrecognized arguments: --unexpected\n"),
+                (["--root", "--bad", command], "请优先修复本会话契约或 hook 问题，再做别的。原始错误："
+                 "argument --root: expected one argument\n"),
+                (["--root", command, "add"], missing_fields),
+                (["--roo", command, "add"], missing_fields),
+                ([f"--root={command}", "add"], missing_fields),
+                (["--root", command], "the following arguments are required: command\n"),
+                ([f"--root={command}"], "the following arguments are required: command\n"),
+            ))
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                before = self.files()
+                output, errors = StringIO(), StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
+                    code = goal.main(arguments, session_id=self.session, now=self.now)
+                self.assertEqual((code, output.getvalue(), errors.getvalue()), (1, "", expected))
+                self.assertEqual(self.files(), before)
+
+    def test_cli_errors_preserve_exact_output(self):
+        cases = ((("show",), "本会话没有契约\n"),
+                 (("add",), "the following arguments are required: --title, --criteria, --state, --pointer, --source\n"),
+                 (("unknown",), "argument command: invalid choice: 'unknown' (choose from open, show, check, "
+                  "close, hook-prompt, hook-answer, adopt, add, update, dismiss, accept, cancel)\n"),
+                 (("update", "hook-prompt", "--source", "1"), "本会话没有契约\n"),
+                 (("open", "release", ""), "目标不能为空\n"))
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                before = self.files()
+                self.assertEqual(self.command(*arguments), (1, "", expected))
+                self.assertEqual(self.files(), before)
 
     def test_concurrent_cli_hooks_allocate_unique_numbers_and_do_not_lose_links(self):
         contract = self.open_goal()

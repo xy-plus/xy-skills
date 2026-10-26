@@ -24,6 +24,7 @@ ITEM_LIMIT = 300
 TOTAL_LIMIT = 5000
 TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
 GOAL_FIELDS = ("target", "session_id", "claude_pid")
+HOOK_COMMANDS = ("hook-prompt", "hook-answer")
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
 PID_USAGE = ('请在 Claude Code 的 Bash 工具中运行，在 open/adopt 命令后传入 '
              '--claude-pid "$PPID"（由该 Bash 展开）')
@@ -365,7 +366,7 @@ def parser():
     opening.add_argument("target")
     for name in ("show", "check", "close"):
         commands.add_parser(name)
-    for name in ("hook-prompt", "hook-answer"):
+    for name in HOOK_COMMANDS:
         commands.add_parser(name)
     adopting = commands.add_parser("adopt")
     adopting.add_argument("directory")
@@ -672,6 +673,7 @@ def execute(options, *, root, session_id, claude_pid, now):
 
 def main(arguments, *, session_id, now):
     """根目录与进程号都从命令参数取；会话和时钟显式传入。"""
+    options = None
     try:
         options = parser().parse_args(arguments)
         require_text(options.root, "--root")
@@ -693,6 +695,22 @@ def main(arguments, *, session_id, now):
                 return 0
             return execute(options, root=root, session_id=session_id, claude_pid=claude_pid, now=now)
     except (GoalError, OSError, UnicodeError) as error:
+        if options is not None:
+            command = options.command
+        else:
+            command = None
+            argument_values = iter(arguments)
+            for argument in argument_values:
+                # argparse 也接受 --root 的缩写，其取值不能误认成 hook 命令。
+                if argument.startswith("--r") and "--root".startswith(argument):
+                    next(argument_values, None)
+                elif not argument.startswith("-"):
+                    command = argument
+                    break
+        if command in HOOK_COMMANDS:
+            # 退出 1 的 stderr 不会自动进入模型上下文；非阻断通知只呈现首行。
+            # 提示必须前置，原错误（含换行）仍逐字保留。
+            error = f"请优先修复本会话契约或 hook 问题，再做别的。原始错误：{error}"
         print(error, file=sys.stderr)
         return 1
 
