@@ -567,7 +567,7 @@ def record_hook(root, session_id, text, transcript_path):
         require_project_directory(root, path.parents[1])
         try:
             contract = Contract(path)
-        except GoalError as error:
+        except (GoalError, OSError) as error:
             validation_error = error
         directory = path / "quotes"
         quotes = quote_files(directory)
@@ -653,7 +653,7 @@ def relink(path, task, sources):
     tasks = {file.stem for file in (path / "tasks").glob("*.md") if file.is_file()}
     done = {file.stem for file in (path / "done").glob("*.md") if file.is_file()}
     if task is not None:
-        if task not in tasks:
+        if re.fullmatch(r"T[1-9][0-9]*", task) is None or task not in tasks:
             raise GoalError(f"开放事项 {task} 不存在")
         for number in sources:
             if number not in quotes:

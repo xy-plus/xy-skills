@@ -752,6 +752,21 @@ class GoalTests(unittest.TestCase):
                 self.rejects("relink", task, "--source", "1", message=f"开放事项 {task} 不存在")
         self.rejects("relink", "T1", "--source", "1", "9", message="原话 9 不存在")
 
+    def test_relink_rejects_invalid_task_number_before_writing(self):
+        contract = self.open_goal()
+        self.quote(contract, 1, "真实原话")
+        (contract / "tasks" / "T0.md").write_text(
+            'title: "错误编号事项"\ncriteria: "完成要求"\nstate: "在办"\npointer: "无"\n')
+        links = contract / "links.md"
+        before_links = links.read_bytes()
+        before = self.files()
+        code, output, errors = self.command("relink", "T0", "--source", "1")
+        self.assertEqual(code, 1, output + errors)
+        self.assertEqual(links.read_bytes(), before_links, "非法事项编号必须在写入之前拒绝")
+        self.assertEqual(output, "")
+        self.assertIn("T0", errors)
+        self.assertEqual(self.files(), before)
+
     def test_relink_refuses_unreadable_links_or_quotes_without_writes(self):
         original_root = self.root
         for problem in ("missing-links", "invalid-links", "missing-quotes", "invalid-quote"):
@@ -1250,6 +1265,30 @@ class GoalTests(unittest.TestCase):
                                record=f"这次输入已记为原话 1（{quote}）。")
         before[str(quote.relative_to(self.root))] = "逐字\r\n保留".encode("utf-8")
         self.assertEqual(self.files(), before)
+
+    def test_hooks_record_input_when_task_directories_are_missing(self):
+        original_root = self.root
+        for missing in ("tasks", "done"):
+            for command, fields, text in (
+                ("hook-prompt", {"prompt": "这条用户输入应保留\r\n"}, "这条用户输入应保留\r\n"),
+                ("hook-answer", {"tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"},
+                 '{\n  "tool_input": {},\n  "tool_response": "继续"\n}'),
+            ):
+                with self.subTest(missing=missing, command=command):
+                    self.root = original_root / f"{missing}-{command}"
+                    self.root.mkdir()
+                    contract = self.open_goal()
+                    (contract / missing).rmdir()
+                    before = self.files()
+                    result = self.run_goal(command, session=None, pid=None,
+                                           stdin=json.dumps({"session_id": self.session, **fields}))
+                    quote = contract / "quotes" / "1.md"
+                    context = self.assert_hook_error(result, command, message="FileNotFoundError:",
+                                                     record=f"这次输入已记为原话 1（{quote}）。")
+                    self.assertIn(str(contract / missing), context)
+                    before[str(quote.relative_to(self.root))] = text.encode("utf-8")
+                    self.assertEqual(self.files(), before, "事项目录读不出时也只新增原话")
+                    self.assertFalse((contract / missing).exists())
 
     def test_hooks_do_not_record_when_quotes_or_links_cannot_be_read(self):
         original_root = self.root
