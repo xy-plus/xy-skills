@@ -1213,6 +1213,31 @@ class GoalTests(unittest.TestCase):
         before[str(quote.relative_to(self.root))] = text.encode("utf-8")
         self.assertEqual(self.files(), before, "坏契约上只新增原话，不让悬空行认领，不自动分类")
 
+    def test_bad_contract_hook_reserves_numbers_after_splitlines_separators(self):
+        original_root = self.root
+        for separator in ("\u2028", "\x1c"):
+            with self.subTest(separator=repr(separator)):
+                self.root = original_root / str(ord(separator))
+                self.root.mkdir()
+                contract = self.open_goal()
+                for number in (1, 2, 3, 4):
+                    self.quote(contract, number, "已有原话")
+                self.add_task(1)
+                (contract / "links.md").write_text(
+                    f"1 T1{separator}5 T1\n2 不必跟进 已答\n3 不必跟进 已答\n4 不必跟进 已答\n")
+                before = self.files()
+                result = self.run_goal("hook-prompt", session=None, pid=None,
+                                       stdin=json.dumps({"session_id": self.session, "prompt": "本次新输入"}))
+                self.assertFalse((contract / "quotes" / "5.md").exists(),
+                                 "逐行检查认可的行首编号不能被新原话占用")
+                quote = contract / "quotes" / "6.md"
+                self.assert_hook_error(result, "hook-prompt", message="原话 5 不存在",
+                                       record=f"这次输入已记为原话 6（{quote}）。")
+                before[str(quote.relative_to(self.root))] = "本次新输入".encode("utf-8")
+                self.assertEqual(self.files(), before, "悬空映射保留，只新增原话 6")
+                with self.assertRaisesRegex(goal.GoalError, "原话 5 不存在"):
+                    goal.Contract(contract)
+
     def test_hook_records_input_when_own_metadata_cannot_be_decoded(self):
         contract = self.open_goal()
         metadata = contract / "goal.md"
@@ -1276,6 +1301,30 @@ class GoalTests(unittest.TestCase):
         self.assert_hook_error(result, "hook-prompt", message="UnicodeEncodeError:",
                                record="这次输入没有记入契约。")
         self.assertEqual(self.files(), before)
+        self.assertEqual(list((contract / "quotes").iterdir()), [])
+
+    def test_hook_removes_partial_quote_on_keyboard_interrupt(self):
+        contract = self.open_goal()
+        quote = contract / "quotes" / "1.md"
+        before = self.files()
+        interruption = KeyboardInterrupt("模拟写入中断")
+        real_open = Path.open
+        def interrupt_quote_write(path, *arguments, **options):
+            output = real_open(path, *arguments, **options)
+            if path == quote and arguments == ("x",):
+                write = output.write
+                def write_partial_then_interrupt(text):
+                    write(text[:2])
+                    output.flush()
+                    raise interruption
+                output.write = write_partial_then_interrupt
+            return output
+        with mock.patch.object(Path, "open", new=interrupt_quote_write):
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                self.run_goal("hook-prompt", session=None, pid=None,
+                              stdin=json.dumps({"session_id": self.session, "prompt": "中断时也清理残缺文件"}))
+        self.assertIs(raised.exception, interruption, "写入中断必须原样抛出")
+        self.assertEqual(self.files(), before, "KeyboardInterrupt 后不能留下残缺原话")
         self.assertEqual(list((contract / "quotes").iterdir()), [])
 
     def test_hook_reports_incomplete_quote_when_cleanup_also_fails(self):

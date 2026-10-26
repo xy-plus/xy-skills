@@ -571,9 +571,9 @@ def record_hook(root, session_id, text, transcript_path):
             validation_error = error
         directory = path / "quotes"
         quotes = quote_files(directory)
-        # 坏契约也要保住输入；跳过坏行开头的编号，避免悬空映射认领新原话。
-        reserved = {int(match[1]) for match in re.finditer(
-            r"^([0-9]+)", read_text(path / "links.md"), re.MULTILINE)}
+        # 与 parse_links 一样按 splitlines 分行，跳过所有行首编号，避免悬空映射认领新原话。
+        reserved = {int(match[0]) for line in read_text(path / "links.md").splitlines()
+                    if (match := re.match(r"[0-9]+", line)) is not None}
         number = max(quotes.keys() | reserved, default=0) + 1
     else:
         contract = None
@@ -594,7 +594,7 @@ def record_hook(root, session_id, text, transcript_path):
     try:
         with output:
             output.write(text)
-    except Exception as error:
+    except BaseException as error:
         try:
             quote.unlink()
         except Exception as cleanup_error:
