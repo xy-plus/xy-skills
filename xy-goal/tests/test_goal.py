@@ -1047,16 +1047,20 @@ class GoalTests(unittest.TestCase):
                 self.assertEqual(self.files(), before)
 
     def test_cli_errors_preserve_exact_output(self):
+        # argparse 的候选列表文案随 Python 版本变化，比较当前解释器的原始错误。
+        with self.assertRaises(goal.GoalError) as parse_error:
+            goal.parser().parse_args(["--root", str(self.root), "unknown"])
         cases = ((("show",), "本会话没有契约\n"),
                  (("add",), "the following arguments are required: --title, --criteria, --state, --pointer, --source\n"),
-                 (("unknown",), "argument command: invalid choice: 'unknown' (choose from open, show, check, "
-                  "close, hook-prompt, hook-answer, adopt, add, update, dismiss, accept, cancel)\n"),
+                 (("unknown",), str(parse_error.exception) + "\n"),
                  (("update", "hook-prompt", "--source", "1"), "本会话没有契约\n"),
                  (("open", "release", ""), "目标不能为空\n"))
         for arguments, expected in cases:
             with self.subTest(arguments=arguments):
                 before = self.files()
-                self.assertEqual(self.command(*arguments), (1, "", expected))
+                code, output, errors = self.command(*arguments)
+                self.assertEqual((code, output, errors), (1, "", expected))
+                self.assertNotIn("请优先修复本会话契约或 hook 问题，再做别的。", errors)
                 self.assertEqual(self.files(), before)
 
     def test_concurrent_cli_hooks_allocate_unique_numbers_and_do_not_lose_links(self):
