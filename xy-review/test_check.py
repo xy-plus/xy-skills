@@ -33,15 +33,15 @@ def main_report(**overrides):
 def razor_report(**overrides):
     """剃刀的剃刀报告。"""
     fields = {
-        "留下清单": "参数 x：原话 1 要求可配置",
+        "留下清单": "参数 x：离开它，用户原话 1「参数可配置」",
         "删除清单": "无，逐样问过",
-        "旧代码删减": "无，没碰到旧代码",
+        "要用户定": "无，逐项判断后没有拿不准的项",
         "结论": "通过",
     }
     fields.update(overrides)
     return (
         "## 铁律 3 奥卡姆剃刀\n"
-        f"留下清单：{fields['留下清单']}\n删除清单：{fields['删除清单']}\n旧代码删减：{fields['旧代码删减']}\n"
+        f"留下清单：{fields['留下清单']}\n删除清单：{fields['删除清单']}\n要用户定：{fields['要用户定']}\n"
         "## 结论\n"
         f"{fields['结论']}\n"
     )
@@ -91,7 +91,7 @@ class CheckTest(unittest.TestCase):
 
     def test_report_must_match_one_kind(self):
         self.assertProblems("## 结论\n通过\n", "要么是审查报告")
-        mixed = main_report().replace("## 结论\n", "## 铁律 3 奥卡姆剃刀\n留下清单：a：原话 1\n删除清单：无，问过\n旧代码删减：无，没有\n## 结论\n")
+        mixed = main_report().replace("## 结论\n", "## 铁律 3 奥卡姆剃刀\n留下清单：a：原话 1\n删除清单：无，问过\n要用户定：无，没有\n## 结论\n")
         self.assertProblems(mixed, "不认识的节「## 铁律 3 奥卡姆剃刀」")
 
     def test_missing_section(self):
@@ -200,8 +200,15 @@ class CheckTest(unittest.TestCase):
         self.assertProblems(razor_report(留下清单="- ：用户要求必须保留"), "留下清单每行")
         self.assertProblems(razor_report(删除清单="- ；删了不丢要求", 结论="不通过"), "删除清单每行")
 
-    def test_old_code_does_not_block(self):
-        self.assertEqual(check(razor_report(旧代码删减="old.py:10 死分支")), [])
+    def test_user_decisions_do_not_block(self):
+        self.assertEqual(check(razor_report(要用户定="old.py：一个分支；改成不保留；能省一段")), [])
+
+    def test_user_decision_line_requires_entity_and_details(self):
+        self.assertProblems(
+            razor_report(要用户定="old.py 不确定能否删"),
+            "要用户定每行",
+            "实体：现在多大、改成什么、能省多少",
+        )
 
     def test_round3_failure_reminder(self):
         cases = [("round3", "不通过", True), ("round3", "改了就过", False), ("round2", "不通过", False)]
