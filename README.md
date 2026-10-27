@@ -61,6 +61,6 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 `xy-workflow` 依赖 Claude Code 插件 `superpowers` 不低于 6.4.1（装法：`/plugin install superpowers@claude-plugins-official`），以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 与定时任务工具 CronCreate、CronList、CronDelete，运行前提见它的 README。`xy-handoff` 只单向依赖 `xy-runs`（交接说明放哪），以及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、SendMessage、PushNotification。
 
-`xy-handoff` 管会话的大任务归属、拆分交出和后台会话收尾；`xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。`xy-handoff` 与后两者分别互不引用。回复「要」的仍由接手会话自删，便于判断自身保留条件；收到派方验收通过的通知再删，避免验收前自删造成返工时恢复会话。
+`xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。`xy-handoff` 与这两者分别互不引用。回复「要」的仍由接手会话自删，便于判断自身保留条件；收到派方验收通过的通知再删，避免验收前自删造成返工时恢复会话。
 
 新加 skill：建目录、写 `SKILL.md`，再按上面的方式软链。只在有 SKILL.md 装不下的东西时，比如代码、前提、测试命令，才给 skill 目录加 README。
