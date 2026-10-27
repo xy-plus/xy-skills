@@ -243,6 +243,25 @@ class ListingTests(CleanerTestCase):
         self.assertIn(str(missing), errors)
         self.assertEqual(status, 0)
 
+    # Escapes must preserve control characters, quotes and non-UTF-8 filename bytes.
+    def test_list_uses_one_json_string_per_arbitrary_filename(self):
+        names = ["line\nbreak", "carriage\rreturn", 'quote"back\\slash',
+                 os.fsdecode(b"byte-\xff")]
+        items = [self.root / name for name in names]
+        for item in items:
+            item.touch()
+        output, errors = io.StringIO(), io.StringIO()
+        status = clean.clean_roots(
+            [str(self.root)], "list", self.cutoff, output, errors
+        )
+        try:
+            encoded = output.getvalue().encode("ascii")
+            paths = [json.loads(line) for line in encoded.splitlines()]
+        except (UnicodeError, ValueError) as error:
+            self.fail(f"each path must have an unambiguous ASCII JSON record: {error}")
+        self.assertEqual(set(paths), {str(item) for item in items})
+        self.assertEqual((status, errors.getvalue()), (0, ""))
+
 
 class DeletionTests(CleanerTestCase):
     # Deleting just descendants would leave half of the expired unit behind.
@@ -332,27 +351,6 @@ class DeletionTests(CleanerTestCase):
         self.assertEqual(paths, [str(second)])
         self.assertNotEqual(status, 0)
         self.assertIn("test interrupted first removal", errors)
-
-
-class ListingIdentityTests(CleanerTestCase):
-    # Escapes must preserve control characters, quotes and non-UTF-8 filename bytes.
-    def test_list_uses_one_json_string_per_arbitrary_filename(self):
-        names = ["line\nbreak", "carriage\rreturn", 'quote"back\\slash',
-                 os.fsdecode(b"byte-\xff")]
-        items = [self.root / name for name in names]
-        for item in items:
-            item.touch()
-        output, errors = io.StringIO(), io.StringIO()
-        status = clean.clean_roots(
-            [str(self.root)], "list", self.cutoff, output, errors
-        )
-        try:
-            encoded = output.getvalue().encode("ascii")
-            paths = [json.loads(line) for line in encoded.splitlines()]
-        except (UnicodeError, ValueError) as error:
-            self.fail(f"each path must have an unambiguous ASCII JSON record: {error}")
-        self.assertEqual(set(paths), {str(item) for item in items})
-        self.assertEqual((status, errors.getvalue()), (0, ""))
 
 
 class ProcessTests(CleanerTestCase):

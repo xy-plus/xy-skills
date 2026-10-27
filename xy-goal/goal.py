@@ -29,6 +29,8 @@ RELINK_USAGE = "；用 relink [<事项> --source <编号>…] 修复，编号看
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
 PID_USAGE = ('请在 Claude Code 的 Bash 工具中运行，在 open/adopt 命令后传入 '
              '--claude-pid "$PPID"（由该 Bash 展开）')
+
+
 class GoalError(ValueError):
     """可向调用者直接说明的契约或用法错误。"""
 

@@ -91,5 +91,6 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(set(roots), {runs, project, inbox})
         self.assertEqual(errors.getvalue(), "")
 
+
 if __name__ == "__main__":
     unittest.main()

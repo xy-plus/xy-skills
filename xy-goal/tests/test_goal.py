@@ -420,7 +420,7 @@ class GoalTests(unittest.TestCase):
                     else:
                         self.assertEqual(self.root.read_bytes(), b"keep root file unchanged")
                         self.assertEqual(list(self.root.parent.iterdir()), [self.root])
-                    if arguments[0] in ("hook-prompt", "hook-answer"):
+                    if arguments[0] == "hook-prompt":
                         self.assert_hook_error((code, output, errors), arguments[0],
                                                message=str(self.root), record="这次输入没有记入契约。")
                     else:
