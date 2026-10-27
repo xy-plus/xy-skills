@@ -12,12 +12,12 @@ description: 每个会话都遵守的文件去处、runs 布局与定期清理�
 
 **什么时候删**：runs 里每件事的目录，30 天没有任何改动、本用户也没有任何进程在用（任何会话、tmux、服务都算），就整项删除；项目目录空了 30 天也删。确定作废、没有会话或服务在用的 `-<项目>/<事>` 事目录或其中产物，不用等 30 天，会话自己提前删，不交给用户；逐个写字面绝对路径，在同一条命令里核对真实路径就是写出的路径（runs 里有指向仓库和缓存的软链，真实位置在 runs 内即属 xy，不另核属主）、无进程在用、无 `~/.config/systemd/user` 单元引用（timer 暂无活进程也可能还要用），提前只删事目录或其中的东西，不删 runs 本身、项目目录和整个 `xy-goal-inbox`，删前还要想想别的会话是否仍要用它（如 `sub-agent-runner --dir` 续跑，这类依赖分类器查不到）。
 
-把 `RUNS_ROOT` 的值写成字面绝对路径，不要写 `"$RUNS_ROOT"`；分类器看不到环境变量的值，会把它当作核实不了的目标。`lsof -Q -t` 仅在退出 0 且 stdout 空时确认无占用，stderr 诊断丢弃；`grep -RlF` 跟随单元软链按字面路径查引用，仅退出 1 且 stdout/stderr 均空时继续，其他情况停下不删：
+把 `RUNS_ROOT` 的值写成字面绝对路径，不要写 `"$RUNS_ROOT"`；分类器看不到环境变量的值，会把它当作核实不了的目标：
 
 ```bash
 p='<RUNS_ROOT 的字面值>/-<项目>/<事>/obsolete-build'
 [ "$(realpath -e -- "$p")" = "$p" ] &&
-{ process_output=$(if [ -d "$p" ]; then lsof -Q -t +D "$p"; else lsof -Q -t -- "$p"; fi 2>/dev/null); process_status=$?; [ "$process_status" -eq 0 ] && [ -z "$process_output" ] || { printf '%s\n' "lsof failed or target in use ($process_status): $process_output" >&2; false; }; } &&
+{ lsof_output=$(if [ -d "$p" ]; then lsof -Q -t +w +D "$p"; else lsof -Q -t +w -- "$p"; fi 2>&1); lsof_status=$?; [ "$lsof_status" -eq 0 ] && ! printf '%s\n' "$lsof_output" | grep -qxE '[0-9]+' && ! printf '%s\n' "$lsof_output" | grep -qF -- "$p" || { printf '%s\n' "lsof failed, target in use or target scan incomplete ($lsof_status): $lsof_output" >&2; false; }; } &&
 { unit_output=$(grep -RlF -- "$p" ~/.config/systemd/user 2>&1); unit_status=$?; [ "$unit_status" -eq 1 ] && [ -z "$unit_output" ] || { printf '%s\n' "systemd reference or scan error ($unit_status): $unit_output" >&2; false; }; } &&
 rm -rf -- "$p"
 ```
