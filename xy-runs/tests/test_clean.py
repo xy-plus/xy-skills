@@ -97,21 +97,6 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("roots", result.stderr)
 
-    # A review list is mandatory only for delete-listed.
-    def test_listed_argument_matches_mode(self):
-        listing = self.root / "review.txt"
-        listing.write_text("")
-        for mode in ("list", "delete"):
-            with self.subTest(mode=mode):
-                result = self.command(
-                    "--mode", mode, "--listed", str(listing), str(self.root)
-                )
-                self.assertEqual(result.returncode, 2)
-                self.assertIn("--listed", result.stderr)
-        result = self.command("--mode", "delete-listed", str(self.root))
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("--listed", result.stderr)
-
     # Retention is not user configurable through a second CLI policy.
     def test_days_argument_is_rejected(self):
         result = self.command("--mode", "list", "--days", "1", str(self.root))
@@ -127,9 +112,9 @@ class CleanerTestCase(unittest.TestCase):
         self.root.mkdir()
         self.cutoff = time.time() + 60
 
-    def run_cleaner(self, roots, mode, listed, cutoff):
+    def run_cleaner(self, roots, mode, cutoff):
         output, errors = io.StringIO(), io.StringIO()
-        status = clean.clean_roots(roots, mode, listed, cutoff, output, errors)
+        status = clean.clean_roots(roots, mode, cutoff, output, errors)
         return status, [json.loads(line) for line in output.getvalue().splitlines()], errors.getvalue()
 
     def start_process(self, item, action, arguments):
@@ -172,7 +157,7 @@ class ListingTests(CleanerTestCase):
         new_file.write_text("new")
         os.utime(new_file, (self.cutoff + 1, self.cutoff + 1))
         status, paths, errors = self.run_cleaner(
-            [str(self.root)], "list", None, self.cutoff
+            [str(self.root)], "list", self.cutoff
         )
         self.assertEqual(paths, [str(expired)])
         self.assertEqual(status, 0)
@@ -192,7 +177,7 @@ class ListingTests(CleanerTestCase):
         moved = self.root / "moved"
         source.rename(moved)
         status, paths, errors = self.run_cleaner(
-            [str(self.root)], "list", None, cutoff
+            [str(self.root)], "list", cutoff
         )
         self.assertEqual(paths, [str(expired)])
         self.assertTrue(moved.exists())
@@ -205,7 +190,7 @@ class ListingTests(CleanerTestCase):
         boundary = self.root / "boundary"
         boundary.touch()
         os.utime(boundary, (self.cutoff, self.cutoff))
-        _, paths, _ = self.run_cleaner([str(self.root)], "list", None, self.cutoff)
+        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
         self.assertEqual(paths, [str(expired)])
 
     # Symlink targets, even fresh directories, are not part of an item's age.
@@ -217,7 +202,7 @@ class ListingTests(CleanerTestCase):
         link.symlink_to(target, target_is_directory=True)
         dangling = self.root / "dangling"
         dangling.symlink_to(target / "missing")
-        _, paths, _ = self.run_cleaner([str(self.root)], "list", None, self.cutoff)
+        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
         self.assertEqual(paths, [str(dangling), str(link)])
         self.assertTrue(link.is_symlink())
 
@@ -229,7 +214,7 @@ class ListingTests(CleanerTestCase):
         trash.mkdir()
         leftover = trash / "leftover"
         leftover.write_text("from interrupted delete")
-        _, paths, _ = self.run_cleaner([str(self.root)], "list", None, self.cutoff)
+        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
         self.assertEqual(paths, [str(expired)])
         self.assertTrue(leftover.exists())
 
@@ -242,7 +227,7 @@ class ListingTests(CleanerTestCase):
         (first / "one").touch()
         (second / "two").touch()
         _, paths, _ = self.run_cleaner(
-            [str(self.root / "-*")], "list", None, self.cutoff
+            [str(self.root / "-*")], "list", self.cutoff
         )
         self.assertEqual(paths, [str(first / "one"), str(second / "two")])
 
@@ -252,7 +237,7 @@ class ListingTests(CleanerTestCase):
         expired.touch()
         missing = Path(self.temporary.name) / "missing"
         status, paths, errors = self.run_cleaner(
-            [str(missing), str(self.root)], "list", None, self.cutoff
+            [str(missing), str(self.root)], "list", self.cutoff
         )
         self.assertEqual(paths, [str(expired)])
         self.assertIn(str(missing), errors)
@@ -266,7 +251,7 @@ class DeletionTests(CleanerTestCase):
         (item / "nested").mkdir(parents=True)
         (item / "nested" / "data").write_text("old")
         status, paths, errors = self.run_cleaner(
-            [str(self.root)], "delete", None, self.cutoff
+            [str(self.root)], "delete", self.cutoff
         )
         self.assertFalse(item.exists())
         self.assertEqual(paths, [str(item)])
@@ -280,7 +265,7 @@ class DeletionTests(CleanerTestCase):
         data.write_text("keep")
         link = self.root / "link"
         link.symlink_to(target, target_is_directory=True)
-        self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+        self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertFalse(link.is_symlink())
         self.assertEqual(data.read_text(), "keep")
 
@@ -290,48 +275,11 @@ class DeletionTests(CleanerTestCase):
         (trash / "leftover" / "nested").mkdir(parents=True)
         (trash / "leftover" / "nested" / "data").touch()
         _, paths, errors = self.run_cleaner(
-            [str(self.root)], "delete", None, self.cutoff
+            [str(self.root)], "delete", self.cutoff
         )
         self.assertEqual(list(trash.iterdir()), [])
         self.assertEqual(paths, [])
         self.assertEqual(errors, "")
-
-    # An unreviewed sibling, a newly changed item and an outside path all survive.
-    def test_delete_listed_only_removes_reviewed_still_expired_items(self):
-        approved = self.root / "approved"
-        approved.touch()
-        unlisted = self.root / "unlisted"
-        unlisted.touch()
-        changed = self.root / "changed"
-        changed.touch()
-        os.utime(changed, (self.cutoff + 1, self.cutoff + 1))
-        outside = Path(self.temporary.name) / "outside"
-        outside.touch()
-        listing = Path(self.temporary.name) / "review.txt"
-        listing.write_text("".join(json.dumps(str(path)) + "\n"
-                                   for path in (approved, changed, outside)))
-        status, paths, errors = self.run_cleaner(
-            [str(self.root)], "delete-listed", str(listing), self.cutoff
-        )
-        self.assertFalse(approved.exists())
-        self.assertTrue(unlisted.exists())
-        self.assertTrue(changed.exists())
-        self.assertTrue(outside.exists())
-        self.assertEqual(paths, [str(approved)])
-        self.assertEqual((status, errors), (0, ""))
-
-    # Failing to open the review file must not turn delete-listed into delete.
-    def test_unreadable_listing_reports_error_without_deleting(self):
-        item = self.root / "item"
-        item.touch()
-        missing = Path(self.temporary.name) / "missing-list"
-        status, paths, errors = self.run_cleaner(
-            [str(self.root)], "delete-listed", str(missing), self.cutoff
-        )
-        self.assertNotEqual(status, 0)
-        self.assertIn(str(missing), errors)
-        self.assertTrue(item.exists())
-        self.assertEqual(paths, [])
 
     # A per-item rename failure must be reported while a later item is deleted.
     def test_item_error_reports_and_continues(self):
@@ -347,7 +295,7 @@ class DeletionTests(CleanerTestCase):
 
         with mock.patch("clean.os.rename", side_effect=fail_first):
             status, paths, errors = self.run_cleaner(
-                [str(self.root)], "delete", None, self.cutoff
+                [str(self.root)], "delete", self.cutoff
             )
         self.assertFalse(second.exists())
         self.assertTrue(first.exists())
@@ -375,7 +323,7 @@ class DeletionTests(CleanerTestCase):
         with mock.patch("clean.uuid.uuid4", side_effect=names), \
                 mock.patch("clean.remove_item", side_effect=interrupt_first):
             status, paths, errors = self.run_cleaner(
-                [str(self.root)], "delete", None, self.cutoff
+                [str(self.root)], "delete", self.cutoff
             )
         self.assertFalse(second.exists())
         self.assertFalse(first.exists())
@@ -387,34 +335,8 @@ class DeletionTests(CleanerTestCase):
 
 
 class ListingIdentityTests(CleanerTestCase):
-    # A newline in one approved name must not approve its previously busy sibling.
-    def test_newline_item_round_trip_does_not_approve_plain_sibling(self):
-        plain = self.root / "a"
-        plain.mkdir()
-        (plain / "data").touch()
-        notified = self.root / "a\nb"
-        notified.mkdir()
-        (notified / "data").touch()
-        writer = self.start_process(plain, "file", [])
-        output, errors = io.StringIO(), io.StringIO()
-        list_status = clean.clean_roots(
-            [str(self.root)], "list", None, self.cutoff, output, errors
-        )
-        listing = Path(self.temporary.name) / "review.jsonl"
-        listing.write_text(output.getvalue(), encoding="utf-8")
-        self.stop_process(writer)
-        delete_status = clean.clean_roots(
-            [str(self.root)], "delete-listed", str(listing), self.cutoff,
-            io.StringIO(), errors,
-        )
-        self.assertTrue(plain.exists(), "the plain sibling was never approved")
-        self.assertFalse(notified.exists())
-        self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()],
-                         [str(notified)])
-        self.assertEqual((list_status, delete_status, errors.getvalue()), (0, 0, ""))
-
     # Escapes must preserve control characters, quotes and non-UTF-8 filename bytes.
-    def test_listing_uses_one_json_string_per_arbitrary_filename(self):
+    def test_list_uses_one_json_string_per_arbitrary_filename(self):
         names = ["line\nbreak", "carriage\rreturn", 'quote"back\\slash',
                  os.fsdecode(b"byte-\xff")]
         items = [self.root / name for name in names]
@@ -422,7 +344,7 @@ class ListingIdentityTests(CleanerTestCase):
             item.touch()
         output, errors = io.StringIO(), io.StringIO()
         status = clean.clean_roots(
-            [str(self.root)], "list", None, self.cutoff, output, errors
+            [str(self.root)], "list", self.cutoff, output, errors
         )
         try:
             encoded = output.getvalue().encode("ascii")
@@ -430,32 +352,7 @@ class ListingIdentityTests(CleanerTestCase):
         except (UnicodeError, ValueError) as error:
             self.fail(f"each path must have an unambiguous ASCII JSON record: {error}")
         self.assertEqual(set(paths), {str(item) for item in items})
-        listing = Path(self.temporary.name) / "review.jsonl"
-        listing.write_bytes(encoded)
-        delete_status = clean.clean_roots(
-            [str(self.root)], "delete-listed", str(listing), self.cutoff,
-            io.StringIO(), errors,
-        )
-        self.assertTrue(all(not item.exists() for item in items))
-        self.assertEqual((status, delete_status, errors.getvalue()), (0, 0, ""))
-
-    # Validate the entire file before deleting anything; do not accept raw-path fallback.
-    def test_invalid_listing_is_rejected_before_any_deletion(self):
-        approved, unlisted = self.root / "approved", self.root / "unlisted"
-        listing = Path(self.temporary.name) / "review.jsonl"
-        invalid_records = [str(unlisted), "[]", '"unterminated']
-        for invalid in invalid_records:
-            with self.subTest(record=invalid):
-                approved.touch()
-                unlisted.touch()
-                listing.write_text(json.dumps(str(approved)) + "\n" + invalid + "\n")
-                status, _, errors = self.run_cleaner(
-                    [str(self.root)], "delete-listed", str(listing), self.cutoff
-                )
-                self.assertTrue(approved.exists())
-                self.assertTrue(unlisted.exists())
-                self.assertNotEqual(status, 0)
-                self.assertIn(str(listing), errors)
+        self.assertEqual((status, errors.getvalue()), (0, ""))
 
 
 class ProcessTests(CleanerTestCase):
@@ -473,7 +370,7 @@ class ProcessTests(CleanerTestCase):
                 if action == "executable":
                     shutil.copy2(sys.executable, item / "python")
                 process = self.start_process(item, action, [])
-                self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+                self.run_cleaner([str(self.root)], "delete", self.cutoff)
                 self.assertTrue(item.exists(), action)
                 self.stop_process(process)
 
@@ -483,7 +380,7 @@ class ProcessTests(CleanerTestCase):
             with self.subTest(suffix=suffix):
                 item = self.make_item("command")
                 process = self.start_process(item, "idle", [f"--output={item}{suffix}"])
-                self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+                self.run_cleaner([str(self.root)], "delete", self.cutoff)
                 self.assertTrue(item.exists())
                 self.stop_process(process)
                 shutil.rmtree(item)
@@ -492,21 +389,21 @@ class ProcessTests(CleanerTestCase):
     def test_command_path_prefix_does_not_keep_item(self):
         item = self.make_item("command")
         self.start_process(item, "idle", [str(item) + "-other"])
-        self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+        self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertFalse(item.exists())
 
     # A path preceded by a different absolute path is not a complete path match.
     def test_embedded_command_path_does_not_keep_item(self):
         item = self.make_item("command")
         self.start_process(item, "idle", ["/elsewhere" + str(item)])
-        self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+        self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertFalse(item.exists())
 
     # A non-dumpable process still exposes its own user's command line.
     def test_hidden_process_with_command_path_keeps_item(self):
         item = self.make_item("hidden")
         self.start_process(item, "hidden-cwd", [str(item)])
-        self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+        self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertTrue(item.exists())
 
     # Hidden references without a command path are the explicitly accepted blind spot.
@@ -515,20 +412,16 @@ class ProcessTests(CleanerTestCase):
         process = self.start_process(item, "hidden-cwd", [])
         with self.assertRaises(PermissionError):
             os.readlink(f"/proc/{process.pid}/cwd")
-        self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+        self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertFalse(item.exists())
 
-    # list and delete-listed must honor exactly the same occupancy protection.
-    def test_list_and_delete_listed_keep_in_use_item(self):
+    # The candidate list omits items in use by this user's processes.
+    def test_list_keeps_in_use_item(self):
         item = self.make_item("busy")
         self.start_process(item, "file", [])
-        listing = Path(self.temporary.name) / "review.txt"
-        listing.write_text(json.dumps(str(item)) + "\n")
-        for mode, listed in (("list", None), ("delete-listed", str(listing))):
-            with self.subTest(mode=mode):
-                _, paths, _ = self.run_cleaner([str(self.root)], mode, listed, self.cutoff)
-                self.assertEqual(paths, [])
-                self.assertTrue(item.exists())
+        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
+        self.assertEqual(paths, [])
+        self.assertTrue(item.exists())
 
 
 class NestedRootTests(CleanerTestCase):
@@ -579,7 +472,7 @@ class NestedRootTests(CleanerTestCase):
 
         with mock.patch("clean.os.rename", side_effect=verify_move), \
                 mock.patch("clean.remove_item", side_effect=verify_remove):
-            status, _, errors = self.run_cleaner(self.roots(), "delete", None, self.cutoff)
+            status, _, errors = self.run_cleaner(self.roots(), "delete", self.cutoff)
         self.assertEqual(set(moved), {old_project, matter, session})
         self.assertEqual((status, errors), (0, ""))
         self.assertFalse((project / ".runs-cleaner-trash").exists())
@@ -604,7 +497,7 @@ class NestedRootTests(CleanerTestCase):
 
         with mock.patch("clean.remove_item", side_effect=interrupt_remove):
             status, _, errors = self.run_cleaner(
-                self.roots()[:2], "delete", None, self.cutoff
+                self.roots()[:2], "delete", self.cutoff
             )
         trash = self.root / ".runs-cleaner-trash"
         self.assertTrue(trash.is_dir(), "trash belongs in the outermost root")
@@ -613,7 +506,7 @@ class NestedRootTests(CleanerTestCase):
         self.assertTrue(all(not item.exists() for item in items))
         self.assertNotEqual(status, 0)
         self.assertIn("test interrupted removal", errors)
-        status, _, errors = self.run_cleaner(self.roots()[:2], "delete", None, self.cutoff)
+        status, _, errors = self.run_cleaner(self.roots()[:2], "delete", self.cutoff)
         self.assertEqual(list((self.root / ".runs-cleaner-trash").iterdir()), [])
         self.assertEqual((status, errors), (0, ""))
 
@@ -628,7 +521,7 @@ class NestedRootTests(CleanerTestCase):
         old_flat = self.root / "old-legacy"
         old_flat.mkdir()
         (old_flat / "data").touch()
-        status, paths, _ = self.run_cleaner(self.roots(), "delete", None, self.cutoff)
+        status, paths, _ = self.run_cleaner(self.roots(), "delete", self.cutoff)
         self.assertTrue(old_child.exists())
         self.assertFalse(old_flat.exists())
         self.assertEqual(paths, [str(old_flat)])
@@ -667,7 +560,7 @@ class LockAndBoundaryTests(CleanerTestCase):
 
         with mock.patch("clean.expand_roots", side_effect=expand_then_replace):
             status, paths, errors = self.run_cleaner(
-                self.roots()[:2], "delete", None, self.cutoff
+                self.roots()[:2], "delete", self.cutoff
             )
         self.assertTrue(victim.exists())
         self.assertEqual(paths, [])
@@ -685,7 +578,7 @@ class LockAndBoundaryTests(CleanerTestCase):
 
         with mock.patch("clean.fcntl.flock", side_effect=lock_then_replace):
             status, paths, errors = self.run_cleaner(
-                self.roots()[:2], "delete", None, self.cutoff
+                self.roots()[:2], "delete", self.cutoff
             )
         self.assertTrue(victim.exists())
         self.assertEqual(paths, [])
@@ -708,7 +601,7 @@ class LockAndBoundaryTests(CleanerTestCase):
 
         with mock.patch("clean.expand_roots", side_effect=expand_then_replace):
             status, paths, errors = self.run_cleaner(
-                self.roots()[:2], "delete", None, self.cutoff
+                self.roots()[:2], "delete", self.cutoff
             )
         self.assertTrue((project / "matter" / "data").exists())
         self.assertEqual(paths, [])
@@ -727,7 +620,7 @@ class LockAndBoundaryTests(CleanerTestCase):
             return real_rename(source, destination, **options)
 
         with mock.patch("clean.os.rename", side_effect=replace_then_rename):
-            clean.clean_roots(self.roots()[:2], "delete", None, self.cutoff,
+            clean.clean_roots(self.roots()[:2], "delete", self.cutoff,
                               io.StringIO(), io.StringIO())
         self.assertTrue(victim.exists())
 
@@ -746,7 +639,7 @@ class LockAndBoundaryTests(CleanerTestCase):
 
         with mock.patch("clean.fcntl.flock", side_effect=change_at_lock):
             status, paths, errors = self.run_cleaner(
-                [str(self.root)], "delete", None, self.cutoff
+                [str(self.root)], "delete", self.cutoff
             )
         self.assertTrue((item / "new").exists())
         self.assertEqual((status, paths, errors), (0, [], ""))
@@ -763,7 +656,7 @@ class LockAndBoundaryTests(CleanerTestCase):
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             os.close(descriptor)
-        status, paths, _ = self.run_cleaner(self.roots()[:2], "delete", None, self.cutoff)
+        status, paths, _ = self.run_cleaner(self.roots()[:2], "delete", self.cutoff)
         self.assertTrue(item.exists())
         self.assertTrue(project.exists())
         self.assertEqual((status, paths), (0, []))
@@ -796,7 +689,7 @@ os.close(handle)
         child = int(wrapper.stdout.readline())
         self.assertEqual(wrapper.wait(timeout=5), 0)
         self.assertTrue(Path(f"/proc/{child}").exists())
-        _, paths, _ = self.run_cleaner(self.roots()[:2], "delete", None, self.cutoff)
+        _, paths, _ = self.run_cleaner(self.roots()[:2], "delete", self.cutoff)
         self.assertTrue(item.exists())
         self.assertTrue(project.exists())
         self.assertEqual(paths, [])
@@ -839,7 +732,7 @@ os.close(handle)
 
         with mock.patch("clean.os.rename", side_effect=rename_then_start_writer):
             status, paths, errors = self.run_cleaner(
-                [str(self.root)], "delete", None, self.cutoff
+                [str(self.root)], "delete", self.cutoff
             )
         self.assertEqual(len(writers), 1)
         self.assertEqual(writers[0].wait(timeout=5), 2)
@@ -858,7 +751,7 @@ os.close(handle)
         self.addCleanup(lambda: blocked.chmod(0o700) if blocked.exists() else None)
         other = self.root / "other"
         other.touch()
-        _, paths, _ = self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+        _, paths, _ = self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertTrue(blocked.exists())
         self.assertFalse(other.exists())
         self.assertEqual(paths, [str(other)])
@@ -872,7 +765,7 @@ os.close(handle)
         link = self.root / "-link"
         link.symlink_to(outside, target_is_directory=True)
         os.utime(link, (self.cutoff + 1, self.cutoff + 1), follow_symlinks=False)
-        self.run_cleaner(self.roots(), "delete", None, self.cutoff)
+        self.run_cleaner(self.roots(), "delete", self.cutoff)
         self.assertTrue((session / "data").exists())
         self.assertTrue(link.is_symlink())
 
@@ -885,7 +778,7 @@ os.close(handle)
         (self.root / ".runs-cleaner-trash").symlink_to(outside, target_is_directory=True)
         item = self.root / "item"
         item.touch()
-        status, _, errors = self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+        status, _, errors = self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertTrue(data.exists())
         self.assertTrue(item.exists())
         self.assertNotEqual(status, 0)
@@ -914,7 +807,7 @@ class ProcessBoundaryTests(CleanerTestCase):
         process, fixture = self.process_fixture(os.getuid())
         (process / "root").symlink_to(item, target_is_directory=True)
         with fixture:
-            self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+            self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertTrue(item.exists())
 
     # References from another account, including root, must not prevent deletion.
@@ -925,7 +818,7 @@ class ProcessBoundaryTests(CleanerTestCase):
         (process / "cmdline").write_bytes(os.fsencode(item) + b"\0")
         (process / "fd" / "3").symlink_to(item, target_is_directory=True)
         with fixture:
-            self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+            self.run_cleaner([str(self.root)], "delete", self.cutoff)
         self.assertFalse(item.exists())
 
     # Process names are bytes; a non-UTF-8 name must not hide the UID or abort a run.
@@ -939,7 +832,7 @@ class ProcessBoundaryTests(CleanerTestCase):
         (process / "fd" / "3").symlink_to(item, target_is_directory=True)
         try:
             with fixture:
-                self.run_cleaner([str(self.root)], "delete", None, self.cutoff)
+                self.run_cleaner([str(self.root)], "delete", self.cutoff)
         except UnicodeError as error:
             self.fail(f"reading the UID must not decode the process name: {error}")
         self.assertTrue(item.exists())

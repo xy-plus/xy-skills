@@ -142,21 +142,8 @@ def remove_item(path):
         path.unlink()
 
 
-def clean_roots(patterns, mode, listed, cutoff, output, errors):
+def clean_roots(patterns, mode, cutoff, output, errors):
     """Use an explicit cutoff internally; the CLI always keeps thirty days."""
-    approved = None
-    if mode == "delete-listed":
-        try:
-            with open(listed, encoding="utf-8") as review:
-                approved = set()
-                for number, line in enumerate(review, 1):
-                    path = json.loads(line)
-                    if not isinstance(path, str) or not os.path.isabs(path) or "\x00" in path:
-                        raise ValueError(f"record {number} must be a JSON absolute-path string")
-                    approved.add(path)
-        except (OSError, ValueError) as error:
-            print(f"error: {listed}: {error}", file=errors)
-            return 1
     status = 0
     roots = expand_roots(patterns, errors)
     outer_roots = {root: next(outer for outer in roots if root.is_relative_to(outer))
@@ -191,7 +178,7 @@ def clean_roots(patterns, mode, listed, cutoff, output, errors):
             with checked_directory(root, roots[root]) as root_descriptor:
                 for name in sorted(os.listdir(root_descriptor)):
                     item = root / name
-                    if name == TRASH_NAME or (approved is not None and str(item) not in approved):
+                    if name == TRASH_NAME:
                         continue
                     if not is_expired(Path(f"/proc/self/fd/{root_descriptor}") / name, cutoff):
                         continue
@@ -234,13 +221,10 @@ def clean_roots(patterns, mode, listed, cutoff, output, errors):
 def main(arguments):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", required=True,
-                        choices=("list", "delete", "delete-listed"))
-    parser.add_argument("--listed")
+                        choices=("list", "delete"))
     parser.add_argument("roots", nargs="+", help="root directories or quoted globs")
     options = parser.parse_args(arguments)
-    if (options.mode == "delete-listed") != (options.listed is not None):
-        parser.error("--listed is required only with --mode delete-listed")
-    return clean_roots(options.roots, options.mode, options.listed,
+    return clean_roots(options.roots, options.mode,
                        time.time() - RETENTION_SECONDS, sys.stdout, sys.stderr)
 
 

@@ -64,13 +64,15 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("RUNS_ROOT", result.stderr)
 
-    # An empty root must not become a relative path or a filesystem-root glob.
-    def test_empty_runs_setting_fails_before_cleaner_starts(self):
-        self.settings.write_text('{"env": {"RUNS_ROOT": ""}}')
-        result = self.launch()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("RUNS_ROOT", result.stderr)
+    # Empty and relative roots must not become an implicit filesystem location.
+    def test_empty_or_relative_runs_setting_fails_before_cleaner_starts(self):
+        for value in ("", "runs"):
+            with self.subTest(value=value):
+                self.settings.write_text(json.dumps({"env": {"RUNS_ROOT": value}}))
+                result = self.launch()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("RUNS_ROOT", result.stderr)
 
     # The configured root is a literal path; only the added project levels are globs.
     def test_literal_glob_characters_do_not_select_a_sibling_root(self):
@@ -88,15 +90,6 @@ class ServiceTests(unittest.TestCase):
         roots = clean.expand_roots(patterns, errors)
         self.assertEqual(set(roots), {runs, project, inbox})
         self.assertEqual(errors.getvalue(), "")
-
-    # A relative value must fail before the cleaner is started in any working directory.
-    def test_relative_runs_setting_fails_before_cleaner_starts(self):
-        self.settings.write_text('{"env": {"RUNS_ROOT": "runs"}}')
-        result = self.launch()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("RUNS_ROOT", result.stderr)
-
 
 if __name__ == "__main__":
     unittest.main()
