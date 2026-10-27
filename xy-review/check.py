@@ -2,7 +2,7 @@
 剃刀的剃刀报告（铁律 3、结论）和判因报告（判因、结论），节集合必须正好是其中一种，节外没有内容。
 审查报告和剃刀报告：字段外、编号外没有内容；必填字段齐全、不重复、写法标准（顶格、全角冒号、不加粗）、
 没有照抄模板占位符；「无」必须单独成项、独占一行，后面写对照了什么，「本质」和「留下清单」不能写「无」；
-留下清单每行有实体和理由，删除清单每行有实体和删了丢什么，「要用户定」每行有实体和改动规模；仓库规范 1 到 7 条齐全且不重复；
+留下清单每行有实体和理由，删除清单每行有实体和删了丢什么，「要用户定」每行有实体、现在多大、改成什么、能省多少；仓库规范 1 到 7 条齐全且不重复；
 结论只有一行，是「通过」「改了就过」或「不通过」，并与各节一致：
 通过时查问题的地方（偏离、问题、删除清单、仓库规范七条）全是「无」，另两种至少一处不是。
 判因报告：「判因」非空、没有照抄模板占位符；结论只有一行，走法只能是「拆分」「重想」「问用户」「顶回」
@@ -128,14 +128,15 @@ def check_value(where, value):
 
 
 def check_lines(where, value, separators, shape):
-    """清单一行一样：去掉列表符后，分隔符前后都要有字；写「无」的清单不查行。"""
+    """清单一行一样：去掉列表符后，按顺序被各组分隔符隔开的每段都要有字；写「无」的清单不查行。"""
     if is_none(value):
         return []
+    pattern = "".join(rf"([^{group}]*)[{group}]" for group in separators) + "(.*)"
     problems = []
     for line in value.splitlines():
         item = re.sub(r"^[-*]\s+", "", line.strip())
-        parts = re.fullmatch(rf"([^{separators}]*)[{separators}](.*)", item)
-        if item and not (parts and parts.group(1).strip() and parts.group(2).strip()):
+        parts = re.fullmatch(pattern, item)
+        if item and not (parts and all(part.strip() for part in parts.groups())):
             problems.append(f"{where}每行要写「{shape}」，这行不是：{line.strip()}")
     return problems
 
@@ -170,11 +171,14 @@ def check(text):
                 problems.append(f"{name}：「{key}」不能写「无」，它本来就该有内容")
             values[key] = fields[key]
     if "留下清单" in values:
-        problems += check_lines("留下清单", values["留下清单"], "：", "实体：离开它，用户原话哪条做不到")
+        problems += check_lines("留下清单", values["留下清单"], ("：",), "实体：离开它，用户原话哪条做不到")
     if "删除清单" in values:
-        problems += check_lines("删除清单", values["删除清单"], "；;", "实体；删了丢什么")
+        problems += check_lines("删除清单", values["删除清单"], ("；;",), "实体；删了丢什么")
     if "要用户定" in values:
-        problems += check_lines("要用户定", values["要用户定"], "：", "实体：现在多大、改成什么、能省多少")
+        problems += check_lines(
+            "要用户定", values["要用户定"], ("：", "；;", "；;"),
+            "实体：现在多大；改成什么；能省多少",
+        )
     if "仓库规范" in sections:
         rules, rule_problems = split_rules(sections["仓库规范"])
         problems += rule_problems

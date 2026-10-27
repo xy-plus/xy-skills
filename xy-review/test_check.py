@@ -1,4 +1,3 @@
-"""check.py 的测试，一个用例守一条规则。运行：cd xy-review && python3 -B -m unittest test_check"""
 import contextlib
 import io
 import os
@@ -201,13 +200,24 @@ class CheckTest(unittest.TestCase):
         self.assertProblems(razor_report(删除清单="- ；删了不丢要求", 结论="不通过"), "删除清单每行")
 
     def test_user_decisions_do_not_block(self):
-        self.assertEqual(check(razor_report(要用户定="old.py：一个分支；改成不保留；能省一段")), [])
+        self.assertEqual(check(razor_report(要用户定="old.py：4 行;保留现状；省 1 行")), [])
+
+    def test_user_decision_requires_entity_and_each_details_segment(self):
+        incomplete = [
+            "：4 行；保留现状；省 1 行",
+            "old.py：；保留现状；省 1 行",
+            "old.py：4 行；；省 1 行",
+            "old.py：4 行；保留现状；",
+        ]
+        for value in incomplete:
+            with self.subTest(value=value):
+                self.assertProblems(razor_report(要用户定=value))
 
     def test_user_decision_line_requires_entity_and_details(self):
         self.assertProblems(
             razor_report(要用户定="old.py 不确定能否删"),
             "要用户定每行",
-            "实体：现在多大、改成什么、能省多少",
+            "实体：现在多大；改成什么；能省多少",
         )
 
     def test_round3_failure_reminder(self):
