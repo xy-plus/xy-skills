@@ -3,7 +3,7 @@ Description=List expired and unused temporary items
 
 [Service]
 Type=oneshot
-# Keep --mode list until the reviewed first-deletion process in README is complete.
+# Keep --mode list until its output has been reviewed (see README).
 # systemd passes the quoted globs literally; clean.py expands them.
 ExecStart=/usr/bin/python3 -c "import glob, json, os, sys; from pathlib import Path; runs = json.loads((Path.home() / '.claude/settings.json').read_text())['env']['RUNS_ROOT']; (isinstance(runs, str) and os.path.isabs(runs)) or sys.exit('env.RUNS_ROOT must be an absolute path'); runs = glob.escape(runs); os.execv(sys.executable, [sys.executable, sys.argv[1], *sys.argv[2:], runs, runs + '/-*', runs + '/-*/xy-goal-inbox'])" "%h/xy-skills/xy-runs/clean.py" --mode list /data/user/xy/agent-scratch /data/user/xy/evidence "%h/.claude/xy-workflow" "%h/.codex-subagent*/sessions/*/*"
 StandardOutput=journal
