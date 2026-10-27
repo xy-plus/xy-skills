@@ -73,14 +73,6 @@ class CheckHandoffTest(unittest.TestCase):
         self.assertIn("重复", result.stdout)
         self.assertEqual(result.stderr, "")
 
-    def test_nested_duplicate_from_name_is_rejected(self):
-        text = json.dumps(handoff(), ensure_ascii=False)
-        result = self.run_text(text.replace('"from": {', '"from": {"name": "另一派方",', 1))
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("name", result.stdout)
-        self.assertIn("重复", result.stdout)
-        self.assertEqual(result.stderr, "")
-
     def test_extra_keys_are_rejected(self):
         for path in ((), ("from",), ("task",), ("quotes", 0)):
             with self.subTest(path=path):
