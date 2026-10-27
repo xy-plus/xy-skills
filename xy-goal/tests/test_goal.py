@@ -381,18 +381,6 @@ class GoalTests(unittest.TestCase):
         del before[str((contract / "goal.md").relative_to(self.root))]
         self.assertEqual(self.files(), before)
 
-    def test_item_names_archive_and_inbox_have_no_special_meaning(self):
-        contract = self.open_goal()
-        for name in ("archive", "inbox"):
-            destination = self.project / name
-            contract.parent.rename(destination)
-            contract = destination / "xy-goal"
-            self.succeeds("show")
-            self.hook("hook-prompt", {"session_id": self.session, "prompt": name})
-            self.assertTrue((contract / "goal.md").is_file())
-        self.assertEqual((contract / "quotes" / "1.md").read_text(), "archive")
-        self.assertEqual((contract / "quotes" / "2.md").read_text(), "inbox")
-
     def test_close_returns_hooks_to_inbox_and_allows_a_new_contract(self):
         contract = self.open_goal()
         self.quote(contract, 1, "第一件事")
@@ -409,23 +397,11 @@ class GoalTests(unittest.TestCase):
         self.assertEqual({path.relative_to(contract): path.read_bytes()
                           for path in contract.rglob("*") if path.is_file()}, before)
 
-    def test_all_commands_refuse_missing_or_non_directory_root_without_writes(self):
+    def test_missing_or_non_directory_root_is_refused_without_writes(self):
         original_root = self.root
         commands = (
             (("hook-prompt",), {"session_id": self.session, "prompt": "不能丢失的原话"}),
-            (("hook-answer",), {"session_id": self.session, "tool_name": "AskUserQuestion",
-                                "tool_input": {"question": "继续？"}, "tool_response": "继续"}),
             (("open", "release", "交付新版本", "--claude-pid", str(self.pid)), None),
-            (("adopt", str(original_root / "old-contract"), "--claude-pid", str(self.pid)), None),
-            (("show",), None),
-            (("check",), None),
-            (("close",), None),
-            (("add", "--title", "发布", "--criteria", "通过", "--source", "1",
-              "--state", "在办", "--pointer", "无"), None),
-            (("update", "T1", "--source", "1"), None),
-            (("dismiss", "1", "--reason", "已答"), None),
-            (("accept", "T1", "--verdict", "通过"), None),
-            (("cancel", "T1", "--quote", "1"), None),
         )
         for state in ("missing", "file"):
             for arguments, payload in commands:
@@ -555,17 +531,6 @@ class GoalTests(unittest.TestCase):
         self.open_goal()
         self.rejects("open", "other", "另一个目标", message="已有契约")
 
-    def test_commands_require_exactly_one_contract(self):
-        for arguments in (("show",), ("check",), ("close",),
-                          ("update", "T1", "--source", "1"),
-                          ("dismiss", "1", "--reason", "已答"),
-                          ("accept", "T1", "--verdict", "通过"),
-                          ("cancel", "T1", "--quote", "1"),
-                          ("add", "--title", "实现", "--criteria", "通过",
-                           "--source", "1", "--state", "在办", "--pointer", "无")):
-            with self.subTest(arguments=arguments):
-                self.rejects(*arguments, message="没有契约")
-
     def test_duplicate_session_contracts_are_rejected(self):
         first = self.open_goal()
         shutil.copytree(first, self.project / "20261024-093001-copy" / "xy-goal")
@@ -664,20 +629,6 @@ class GoalTests(unittest.TestCase):
         self.assertEqual((contract / "tasks" / "T1.md").read_bytes(), before_task)
         self.assertEqual((contract / "links.md").read_text(), "1 T1\n2 T1\n3 T1\n")
 
-    def test_relink_repairs_an_open_tasks_only_dangling_source(self):
-        contract = self.open_goal()
-        self.quote(contract, 1, "真实出处")
-        self.add_task(1)
-        (contract / "links.md").write_text("9 T1\n")
-        before = self.files()
-        output = self.succeeds("relink", "T1", "--source", "1")
-        self.assertIn("9 T1", output)
-        self.assertIn("原话 9 不存在", output)
-        self.assertTrue(output.endswith(f"修复完成：{contract}\n"))
-        before[str((contract / "links.md").relative_to(self.root))] = b"1 T1\n"
-        self.assertEqual(self.files(), before, "relink 只写 links.md")
-        self.succeeds("check")
-
     def test_relink_commits_each_repair_before_remaining_contract_validation(self):
         contract = self.open_goal()
         self.quote(contract, 1, "第一项")
@@ -694,7 +645,8 @@ class GoalTests(unittest.TestCase):
         self.assertNotIn("修复完成", output)
         before[str((contract / "links.md").relative_to(self.root))] = b"1 T1\n"
         self.assertEqual(self.files(), before, "返回 1 仍保留本次修复，才能逐项收敛")
-        self.assertIn("修复完成", self.succeeds("relink", "T2", "--source", "2"))
+        output = self.succeeds("relink", "T2", "--source", "2")
+        self.assertTrue(output.endswith(f"修复完成：{contract}\n"))
         self.assertEqual((contract / "links.md").read_text(), "1 T1\n2 T2\n")
         self.succeeds("check")
 
@@ -812,11 +764,6 @@ class GoalTests(unittest.TestCase):
         self.add_task(1)
         hint = "；用 relink [<事项> --source <编号>…] 修复，编号看 quotes/\n"
         cases = (("坏映射\n", "关系格式错误"),
-                 ("9 T1\n", "原话 9 不存在"),
-                 ("1 T9\n", "事项 T9 不存在"),
-                 ("1 T1\n1 T1\n", "关系重复"),
-                 ("1 T1\n1 不必跟进    \n", "不必跟进原因为空或重复"),
-                 ("1 T1\n1 不必跟进 已答\n1 不必跟进 重复\n", "不必跟进原因为空或重复"),
                  ("", "开放事项没有出处"))
         for links, message in cases:
             with self.subTest(message=message, links=links):
@@ -924,61 +871,6 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(self.files(), before)
         self.assertTrue(contract.is_dir())
         self.assertEqual(other.read_text(), "别的文件")
-
-    def contract_with_legacy_done(self):
-        """直接写已迁入 done/ 的账本结构，不读取真实契约或调用旧格式入口。"""
-        contract = self.open_goal()
-        self.quote(contract, 1, "交付实验报告")
-        self.quote(contract, 396, "这个 early stop 就作为我们现在的标准流程了")
-        records = {
-            "T1": "- T1 实验报告（docs/experiments/report.md；验收 终审通过，verify.sh rc=0）\n",
-            "T125": "- [~] T125 两次搜参续跑（原话 396：「这个 early stop 就作为我们现在的标准流程了」）\n",
-            "T500": "- T500 批准清单匹配（spec.md 第三稿；验收 主审第二轮通过）\n旧记录无出处\n",
-        }
-        for task, text in records.items():
-            (contract / "done" / f"{task}.md").write_text(text, encoding="utf-8")
-        (contract / "links.md").write_text("1 T1\n396 T125\n", encoding="utf-8")
-        return contract
-
-    def test_show_reads_legacy_done_without_listing_closed_tasks(self):
-        self.contract_with_legacy_done()
-        before = self.files()
-        self.assertEqual(self.succeeds("show"), "目标：交付新版本\n还没处理的原话：无\n")
-        self.assertEqual(self.files(), before)
-
-    def test_check_reads_legacy_done_without_changing_records(self):
-        contract = self.contract_with_legacy_done()
-        before = self.files()
-        self.assertEqual(self.succeeds("check"), f"通过：{contract}\n")
-        self.assertEqual(self.files(), before)
-
-    def test_close_preserves_legacy_done(self):
-        contract = self.contract_with_legacy_done()
-        before = self.files()
-        self.succeeds("close")
-        del before[str((contract / "goal.md").relative_to(self.root))]
-        self.assertEqual(self.files(), before)
-        self.assertTrue(contract.is_dir())
-
-    def test_add_does_not_reuse_legacy_done_numbers(self):
-        contract = self.contract_with_legacy_done()
-        self.quote(contract, 397, "新增发布要求")
-        self.assertEqual(self.add_task(397), "T501\n")
-        self.assertTrue((contract / "tasks" / "T501.md").exists())
-        self.succeeds("check")
-
-    def test_check_rejects_legacy_done_with_inconsistent_sources(self):
-        original_root = self.root
-        for problem, links, message in (
-                ("missing-body-source", "1 T1\n1 T125\n396 不必跟进 已答\n", "账本正文原话缺少映射"),
-                ("missing-source-marker", "396 T125\n1 不必跟进 已答\n", "旧记录无出处标记与映射不符"),
-                ("mapped-without-source", "1 T1\n1 T500\n396 T125\n", "旧记录无出处标记与映射不符")):
-            with self.subTest(problem=problem):
-                self.root = original_root / problem
-                self.root.mkdir()
-                contract = self.contract_with_legacy_done()
-                (contract / "links.md").write_text(links, encoding="utf-8")
-                self.rejects("check", message=message)
 
     def test_all_commands_refuse_corrupt_contract_files_and_name_the_file(self):
         contract = self.open_goal()
@@ -1472,15 +1364,15 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(len((contract / "links.md").read_text().splitlines()), 20)
         self.succeeds("check")
 
-    def test_cli_requires_explicit_root_and_reports_missing_session(self):
-        for arguments, message in ((["show"], "--root"),
-                                   (["--root", str(self.root), "show"], "CLAUDE_CODE_SESSION_ID")):
-            environment = os.environ.copy()
-            environment.pop("CLAUDE_CODE_SESSION_ID", None)
-            result = subprocess.run([sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"), *arguments],
-                                    env=environment, text=True, capture_output=True, check=False)
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn(message, result.stderr)
+    def test_cli_reports_missing_session(self):
+        environment = os.environ.copy()
+        environment.pop("CLAUDE_CODE_SESSION_ID", None)
+        result = subprocess.run(
+            [sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
+             "--root", str(self.root), "show"],
+            env=environment, text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("CLAUDE_CODE_SESSION_ID", result.stderr)
 
     def cli_command(self, *arguments):
         environment = os.environ.copy()

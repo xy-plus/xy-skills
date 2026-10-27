@@ -29,12 +29,6 @@ RELINK_USAGE = "；用 relink [<事项> --source <编号>…] 修复，编号看
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
 PID_USAGE = ('请在 Claude Code 的 Bash 工具中运行，在 open/adopt 命令后传入 '
              '--claude-pid "$PPID"（由该 Bash 展开）')
-# 旧契约迁移后的 done/ 仍存着账本原行；删掉读取分支会让这些契约无法 show/check/close。
-# 旧记录没有完整的新字段，不能补造判据、状态或验收字段。
-LEDGER_ACCEPTED = re.compile(r"^-\s+(T[1-9][0-9]*)\s+.+（.+；验收\s+[^）]+）$")
-LEDGER_CANCELLED = re.compile(r"^-\s+\[~\]\s+(T[1-9][0-9]*)\s+.+（原话\s+([1-9][0-9]*)：「[^」]+」）$")
-
-
 class GoalError(ValueError):
     """可向调用者直接说明的契约或用法错误。"""
 
@@ -162,20 +156,6 @@ def write_files(changes, removals):
             temporary.unlink(missing_ok=True)
 
 
-def ledger_task_id(line):
-    match = LEDGER_ACCEPTED.fullmatch(line) or LEDGER_CANCELLED.fullmatch(line)
-    if match is None:
-        raise GoalError("账本行必须是验收记录或带原话编号的取消记录")
-    return match[1]
-
-
-def source_numbers(text):
-    numbers = set()
-    for match in re.finditer(r"原话\s+([0-9]+(?:\s*、\s*[0-9]+)*)", text):
-        numbers.update(int(part) for part in re.split(r"\s*、\s*", match[1]))
-    return numbers
-
-
 def encode_links(links, dismissed):
     rows = list(links)
     rows.extend((number, "不必跟进 " + reason) for number, reason in dismissed.items())
@@ -231,12 +211,6 @@ class Contract:
             if not self.sources(task):
                 raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
         for task, values in self.done.items():
-            if "legacy_line" in values:
-                if bool(self.sources(task)) == values["without_source"]:
-                    raise GoalError(f"{path / 'done' / (task + '.md')}: 旧记录无出处标记与映射不符")
-                for number in source_numbers(values["legacy_line"]):
-                    if (number, task) not in self.links:
-                        raise GoalError(f"{path / 'done' / (task + '.md')}: 账本正文原话缺少映射")
             if "cancel_quote" in values:
                 number = int(values["cancel_quote"])
                 if number not in self.quotes or (number, task) not in self.links:
@@ -250,17 +224,6 @@ class Contract:
             fields = list(TASK_FIELDS.values())
             if directory == "done":
                 text = read_text(path)
-                if text.startswith("- "):
-                    rows = text.splitlines()
-                    try:
-                        if ledger_task_id(rows[0]) != path.stem:
-                            raise GoalError("账本 T 号与文件名不符")
-                        if len(rows) > 2 or (len(rows) == 2 and rows[1] != "旧记录无出处"):
-                            raise GoalError("旧账本只能保留原行和无出处标记")
-                    except GoalError as error:
-                        raise GoalError(f"{path}: {error}") from error
-                    tasks[path.stem] = {"legacy_line": rows[0], "without_source": len(rows) == 2}
-                    continue
                 fields.append("verdict" if "\nverdict: " in text else "cancel_quote")
             values = read_fields(path, fields)
             try:
@@ -618,7 +581,7 @@ def record_hook(root, session_id, text, transcript_path):
 
 
 def require_pid(claude_pid):
-    if not isinstance(claude_pid, int) or isinstance(claude_pid, bool) or claude_pid <= 0:
+    if claude_pid <= 0:
         raise GoalError("本会话的 claude 进程号必须是正整数；" + PID_USAGE)
     # 只核数字父链，不按 comm/argv[0] 认程序；抄别人的活 PID 也不能取得归属。
     current = os.getpid()
