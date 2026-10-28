@@ -210,7 +210,7 @@ class Contract:
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
         for task in self.tasks:
-            if not self.sources(task):
+            if task != "T1" and not self.sources(task):
                 raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
         for task, values in self.done.items():
             if "cancel_quote" in values:
@@ -307,6 +307,8 @@ class Contract:
                 if options.field == "判据" and options.source is None:
                     raise GoalError("改判据必须带 --source")
             if options.source is not None:
+                if task == "T1" and not self.sources(task):
+                    raise GoalError("T1 是固定的清扫事项，不接受出处")
                 self.require_sources(options.source)
                 self.links.update((number, task) for number in options.source)
             if options.field is not None:
@@ -325,6 +327,8 @@ class Contract:
                 require_text(options.verdict, "验收结论")
                 conclusion = {"verdict": options.verdict}
             else:
+                if task == "T1" and not self.sources(task):
+                    raise GoalError("T1 是固定的清扫事项，只能 accept，不能取消")
                 self.require_sources([options.quote])
                 conclusion = {"cancel_quote": str(options.quote)}
                 self.links.add((options.quote, task))
@@ -473,7 +477,7 @@ def consume_inputs(paths):
             remove_temporary_path(destination)
 
 
-def publish_contract(root, destination, metadata, quotes, links, input_paths):
+def publish_contract(root, destination, metadata, quotes, links, input_paths, builtin_task):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     item = destination.parent
     project = item.parent
@@ -491,6 +495,7 @@ def publish_contract(root, destination, metadata, quotes, links, input_paths):
             (staging / "quotes" / f"{number}.md").write_bytes(text.encode("utf-8"))
         (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
         (staging / "links.md").write_text(links, encoding="utf-8")
+        (staging / "tasks" / "T1.md").write_text(encode_fields(builtin_task), encoding="utf-8")
         Contract(staging)
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
         with consume_inputs(input_paths):
@@ -606,10 +611,12 @@ def relink(path, task, sources):
     if (task is None) != (sources is None):
         raise GoalError("事项与 --source 必须同时给或同时不给")
     try:
-        Contract(path)
+        contract = Contract(path)
     except GoalError:
         pass
     else:
+        if task == "T1" and task in contract.tasks and not contract.sources(task):
+            raise GoalError("T1 是固定的清扫事项，不接受出处")
         raise GoalError("契约完好，挂出处用 update")
     links_path = path / "links.md"
     text = read_text(links_path)
@@ -624,6 +631,8 @@ def relink(path, task, sources):
             if number not in quotes:
                 raise GoalError(f"原话 {number} 不存在：{path / 'quotes'}")
     links, dismissed, invalid = parse_links(text, quotes, tasks | done)
+    if task == "T1" and not any(target == task for _, target in links):
+        raise GoalError("T1 是固定的清扫事项，不接受出处")
     for line, reason in invalid:
         print(f"丢弃：{line}；{reason}")
     if task is not None:
@@ -652,8 +661,26 @@ def execute(options, *, root, session_id, claude_pid, now):
             quotes, reasons = incoming_quotes(inbox, path, 0)
             metadata = {"target": options.target, "session_id": session_id, "claude_pid": str(claude_pid)}
             links = "".join(f"{number} 不必跟进 {reason}\n" for number, reason in reasons.items())
+            builtin_task = {
+                "title": "清扫",
+                "criteria": (
+                    "收尾前核本会话改没改过文件——每个碰过的仓库/工作树，本会话都应该在第一次动手改之前记两件事："
+                    "当时所在的提交（`git rev-parse HEAD`）、当时 `git status` 的输出。收尾核验时，"
+                    "`git diff <基线提交>..HEAD` 和「当前 `git status` 相对基线 status 的变化」只是缩小范围的材料，"
+                    "不是最终答案——这中间列出的每一条，仍要本会话自己核对是不是自己造成的：基线之后这个仓库可能有别的会话或外部提交混进来；"
+                    "同一个路径基线时就已经脏、现在还脏，也看不出这期间是不是本会话又改了它。这两类情况都一样处理："
+                    "回想自己有没有在这个路径上做过 Edit/Write/commit，拿不准就问用户，不要把工具结果直接当成范围。"
+                    "某个仓库/工作树漏记了基线：同样不要猜一个退路当基线，停下来问用户这次改动涉及哪些文件。"
+                    "改过：按 xy-handoff 交出去一个清扫任务，范围是改过的每个文件；它按 xy-review 派主审和剃刀，"
+                    "剃刀按「清扫」那条范围审（见 xy-review/SKILL.md 铁律 3）；回复「要」；"
+                    "它自己改动涉及的文件不再派下一层清扫，到它为止；收到验收通过的消息后 accept，写清交接说明路径和对方会话名、短 id。"
+                    "没改过：直接 accept，写「本会话未改动文件，无需清扫」。"
+                ),
+                "state": "在办",
+                "pointer": "无",
+            }
             publish_contract(root, path, metadata, quotes, links,
-                             [inbox] if inbox.exists() else [])
+                             [inbox] if inbox.exists() else [], builtin_task)
         else:
             path = Path(options.directory).expanduser().resolve()
             parts = path.relative_to(root).parts if path.is_relative_to(root) else ()
@@ -708,6 +735,13 @@ def execute(options, *, root, session_id, claude_pid, now):
         if contract.pending():
             raise GoalError("仍有还没处理的原话：" + "、".join(map(str, contract.pending())))
         # 子代理整体复核、CronDelete 和汇报由 agent 按 SKILL.md 完成。
+        has_source_free_cleaning = any(
+            task == "T1" and not contract.sources(task)
+            for task in contract.done.keys()
+        )
+        if not has_source_free_cleaning:
+            print("本契约没有清扫事项，是在新机制合入之前创建的；如果本会话改过文件，"
+                  "确认是否需要按 `xy-goal/SKILL.md` 的清扫判据手动处理")
         (contract.path / "goal.md").unlink()
     else:
         contract.change(options)
