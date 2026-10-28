@@ -5,11 +5,11 @@ import pathlib
 import re
 import sys
 
-from check import split_sections
+from check import report_kind, split_sections
 
 
-GROUP_RE = re.compile(r"group([1-9]\d*)")
-ROUND_RE = re.compile(r"round([1-9]\d*)")
+GROUP_RE = re.compile(r"group(\d+)")
+ROUND_RE = re.compile(r"round(\d+)")
 REPORT_ROUND_RE = re.compile(r"report-round([1-9]\d*)\.md")
 
 
@@ -18,23 +18,56 @@ def _round_failed(round_path):
         if not report_path.is_file():
             continue
         sections, _ = split_sections(report_path.read_text(encoding="utf-8"))
-        if "结论" in sections and "\n".join(sections["结论"]).strip() == "不通过":
+        if (report_kind(sections) in ("审查报告", "剃刀报告") and "结论" in sections
+                and "\n".join(sections["结论"]).strip() == "不通过"):
             return True
     return False
+
+
+def _missing_ranges(numbers):
+    previous = 0
+    for number in sorted(numbers):
+        if number > previous + 1:
+            yield previous + 1, number - 1
+        previous = number
+
+
+def _missing_label(prefix, start, end):
+    if start == end:
+        return f"{prefix}{start}"
+    return f"{prefix}{start} 到 {prefix}{end}"
 
 
 def audit(directory):
     """返回事项目录中发现的结构问题。"""
     root = pathlib.Path(directory)
+    problems = []
     groups_by_object = defaultdict(dict)
     for group_path in root.rglob("group*"):
         if not group_path.is_dir():
             continue
         matched = GROUP_RE.fullmatch(group_path.name)
-        if matched is not None:
-            groups_by_object[group_path.parent][int(matched.group(1))] = group_path
+        if matched is None:
+            continue
+        group_text = matched.group(1)
+        group_number = int(group_text)
+        if group_number < 1 or str(group_number) != group_text:
+            problems.append(
+                f"{group_path.parent}：分组编号格式错误，{group_path.name} 必须从 group1 起且不能有前导零"
+            )
+        else:
+            groups_by_object[group_path.parent][group_number] = group_path
+        for round_path in group_path.iterdir():
+            round_match = ROUND_RE.fullmatch(round_path.name)
+            if not round_path.is_dir() or round_match is None:
+                continue
+            round_text = round_match.group(1)
+            round_number = int(round_text)
+            if round_number < 1 or str(round_number) != round_text:
+                problems.append(
+                    f"{group_path}：轮次编号格式错误，{round_path.name} 必须从 round1 起且不能有前导零"
+                )
 
-    problems = []
     for object_path, groups in sorted(groups_by_object.items()):
         groups_with_rounds = {}
         for number, group_path in sorted(groups.items()):
@@ -42,20 +75,23 @@ def audit(directory):
             for round_path in group_path.iterdir():
                 matched = ROUND_RE.fullmatch(round_path.name)
                 if round_path.is_dir() and matched is not None:
-                    rounds[int(matched.group(1))] = round_path
+                    round_text = matched.group(1)
+                    round_number = int(round_text)
+                    if round_number > 0 and str(round_number) == round_text:
+                        rounds[round_number] = round_path
             if rounds:
                 groups_with_rounds[number] = rounds
 
         if not groups_with_rounds:
             continue
-        missing_groups = sorted(set(range(1, max(groups_with_rounds) + 1)) - set(groups_with_rounds))
-        for number in missing_groups:
-            problems.append(f"{object_path}：分组编号不连续，缺少 group{number}")
+        for start, end in _missing_ranges(groups_with_rounds):
+            missing = _missing_label("group", start, end)
+            problems.append(f"{object_path}：分组编号不连续，缺少 {missing}")
 
         for group_number, rounds in sorted(groups_with_rounds.items()):
-            missing_rounds = sorted(set(range(1, max(rounds) + 1)) - set(rounds))
-            for number in missing_rounds:
-                problems.append(f"{groups[group_number]}：轮次编号不连续，缺少 round{number}")
+            for start, end in _missing_ranges(rounds):
+                missing = _missing_label("round", start, end)
+                problems.append(f"{groups[group_number]}：轮次编号不连续，缺少 {missing}")
             later_rounds = sorted(number for number in rounds if number >= 4)
             if later_rounds:
                 problems.append(
