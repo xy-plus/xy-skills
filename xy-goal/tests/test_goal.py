@@ -269,32 +269,6 @@ class GoalTests(unittest.TestCase):
         self.assertTrue((contract / "tasks" / "T1.md").is_file())
         self.assertFalse((contract / "done" / "T1.md").exists())
 
-    def test_close_does_not_warn_for_a_source_free_T1(self):
-        reminder = ("本契约没有清扫事项，是在新机制合入之前创建的；如果本会话改过文件，"
-                    "确认是否需要按 `xy-goal/SKILL.md` 的清扫判据手动处理")
-        seeded = self.open_seeded_goal("seeded-close")
-        self.succeeds("accept", "T1", "--verdict", "清扫完成")
-        self.assertNotIn(reminder, self.succeeds("close"))
-        self.assertFalse((seeded / "goal.md").exists())
-
-    def test_close_warns_for_a_source_backed_T1_in_done(self):
-        reminder = ("本契约没有清扫事项，是在新机制合入之前创建的；如果本会话改过文件，"
-                    "确认是否需要按 `xy-goal/SKILL.md` 的清扫判据手动处理")
-        legacy = self.open_legacy_goal("legacy-close")
-        self.quote(legacy, 1, "旧契约事项")
-        self.add_task(1)
-        self.succeeds("accept", "T1", "--verdict", "通过")
-        output = self.succeeds("close")
-        self.assertIn(reminder, output)
-
-    def test_close_warns_when_contract_has_no_T1(self):
-        reminder = ("本契约没有清扫事项，是在新机制合入之前创建的；如果本会话改过文件，"
-                    "确认是否需要按 `xy-goal/SKILL.md` 的清扫判据手动处理")
-        without_T1 = self.open_legacy_goal("without-t1-close")
-        output = self.succeeds("close")
-        self.assertIn(reminder, output)
-        self.assertFalse((without_T1 / "goal.md").exists())
-
     def replace_project_with_symlink(self):
         outside = Path(self.temporary.name) / f"outside-{self.root.name}"
         if self.project.exists():

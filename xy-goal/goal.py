@@ -735,13 +735,6 @@ def execute(options, *, root, session_id, claude_pid, now):
         if contract.pending():
             raise GoalError("仍有还没处理的原话：" + "、".join(map(str, contract.pending())))
         # 子代理整体复核、CronDelete 和汇报由 agent 按 SKILL.md 完成。
-        has_source_free_cleaning = any(
-            task == "T1" and not contract.sources(task)
-            for task in contract.done.keys()
-        )
-        if not has_source_free_cleaning:
-            print("本契约没有清扫事项，是在新机制合入之前创建的；如果本会话改过文件，"
-                  "确认是否需要按 `xy-goal/SKILL.md` 的清扫判据手动处理")
         (contract.path / "goal.md").unlink()
     else:
         contract.change(options)
