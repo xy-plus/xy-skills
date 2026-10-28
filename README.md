@@ -7,7 +7,7 @@
 | `xy-iron-law` | 三条铁律 |
 | `xy-repo-rules` | 仓库规范 |
 | `xy-workflow` | 标准工作流程 |
-| `xy-review` | 对抗审查：主审加剃刀两个子代理、报告格式、`check.py` 格式检查和 `audit.py` 结构对账（`python3 ~/.claude/skills/xy-review/audit.py <目录路径>`）、怎么处理结果；xy-workflow 的所有审查都用它 |
+| `xy-review` | 对抗审查：主审加剃刀两个子代理、报告格式、`check.py` 格式检查和 `audit.py` 结构对账、怎么处理结果；xy-workflow 的所有审查都用它 |
 | `xy-goal` | 长目标契约与定时自查 |
 | `xy-runs` | 文件去处、runs 布局与定期清理规则 |
 | `xy-handoff` | 会话大任务归属、拆分交接与后台会话收尾 |
