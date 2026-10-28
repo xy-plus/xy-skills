@@ -105,6 +105,10 @@ def is_in_use(item):
         except OSError:
             pass
         for reference in process_paths(process):
+            # A real name may itself end with " (deleted)"; compare the raw
+            # reference first, then the kernel-appended marker version.
+            if reference == path or reference.startswith(path + "/"):
+                return True
             reference = reference.removesuffix(" (deleted)")
             if reference == path or reference.startswith(path + "/"):
                 return True

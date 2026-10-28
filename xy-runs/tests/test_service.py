@@ -50,8 +50,6 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), [
                     "--mode", "list",
-                    "/data/user/xy/agent-scratch", "/data/user/xy/evidence",
-                    str(self.home / ".claude" / "xy-workflow"),
                     str(self.home / ".codex-subagent*" / "sessions" / "*" / "*"),
                     str(runs), str(runs / "-*"), str(runs / "-*" / "xy-goal-inbox"),
                 ])

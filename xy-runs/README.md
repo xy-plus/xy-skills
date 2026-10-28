@@ -39,12 +39,9 @@ service 每次运行都读取这个文件，不依赖登录 shell 的 `RUNS_ROOT
 
 以下本机根目录直接写在 `systemd/runs-cleaner.service`，不在 Python 代码中：
 
-- `/data/user/xy/agent-scratch`
-- `/data/user/xy/evidence`
-- `%h/.claude/xy-workflow`
 - `%h/.codex-subagent*/sessions/*/*`，清理单位为按日的会话目录。
 
-前三个退役位置完成迁移、清空后，从 service 中去掉。账号目录中的 `tasks/`、`reports/`、`logs/`、`brief-*.md` 由 runner 迁移，不另配根；各工具自己的配置目录、harness 的持久记忆不纳入。
+2026-10-29 已把旧的 `agent-scratch`、`evidence`、`~/.claude/xy-workflow` 迁到 `RUNS_ROOT/retired-roots-20261029`，由 runs 清理器按 30 天规则删除。账号目录中的 `tasks/`、`reports/`、`logs/`、`brief-*.md` 由 runner 迁移，不另配根；各工具自己的配置目录、harness 的持久记忆不纳入。
 
 复制两个用户单元；交付的 service 使用 `--mode list`：
 

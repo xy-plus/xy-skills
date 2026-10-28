@@ -372,6 +372,16 @@ class ProcessTests(CleanerTestCase):
                 self.assertTrue(item.exists(), action)
                 self.stop_process(process)
 
+    # A real name ending in " (deleted)" must still count as in use.
+    def test_name_ending_with_deleted_marker_keeps_item(self):
+        for action in ("cwd", "directory"):
+            with self.subTest(action=action):
+                item = self.make_item(f"kept-{action} (deleted)")
+                process = self.start_process(item, action, [])
+                self.run_cleaner([str(self.root)], "delete", self.cutoff)
+                self.assertTrue(item.exists(), action)
+                self.stop_process(process)
+
     # The real argv match must accept descendants, equals options and whitespace.
     def test_complete_command_paths_keep_items(self):
         for suffix in ("", "/data", " extra"):
