@@ -61,6 +61,11 @@ def split_sections(text):
     return sections, problems
 
 
+def report_kind(sections):
+    """按报告首节识别报告种类，供内容检查和路径提醒共用。"""
+    return next((name for name, headings in REPORT_KINDS.items() if headings[0] in sections), None)
+
+
 def split_fields(name, lines, keys):
     """「字段：值」，值可以接着写多行，直到下一个字段。字段名要顶格、全角冒号、不加粗，
     写法不标准的同名行当场报错，不能悄悄并进上一个字段；带列表符的行是清单内容，实体恰好叫字段名也不算。
@@ -144,7 +149,7 @@ def check_lines(where, value, separators, shape):
 def check(text):
     """返回问题列表，为空即格式合格。"""
     sections, problems = split_sections(text)
-    kind = next((name for name, headings in REPORT_KINDS.items() if headings[0] in sections), None)
+    kind = report_kind(sections)
     if kind is None:
         problems.append("报告要么是" + "，要么是".join(f"{kind}（{'、'.join(names)}）" for kind, names in REPORT_KINDS.items()))
         return problems
@@ -231,14 +236,19 @@ def main(argv):
     path = pathlib.Path(argv[1]).resolve()
     round_name, group = path.parent.name, path.parent.parent.name
     sections, _ = split_sections(text)
+    kind = report_kind(sections)
     # 报告放哪、第几轮后派判因，SKILL.md 都写明了；派子代理所用的工具不属于 xy-skills，所以这里只提醒、不拦截。
-    if "判因" in sections:
+    if kind == "判因报告":
         if not (path.name == "diagnosis.md" and re.fullmatch(r"group[1-9]\d*", round_name)):
             print("提醒：判因报告按 xy-review 写在 group<G>/diagnosis.md")
-    elif not (re.fullmatch(r"round[123]", round_name) and re.fullmatch(r"group[1-9]\d*", group)):
-        print("提醒：报告路径不是 group<G>/round<R>/（R 只能是 1、2、3），按 xy-review 同一对象的每轮都写到那里，第 3 轮仍不通过就先派判因子代理")
-    elif round_name == "round3" and "\n".join(sections["结论"]).strip() == "不通过":
-        print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.md，按结论处理后再开下一组")
+    else:
+        expected_name = "review-main.md" if kind == "审查报告" else "review-razor.md"
+        if path.name != expected_name:
+            print(f"提醒：{kind}按 xy-review 写到 {expected_name}")
+        if not (re.fullmatch(r"round[123]", round_name) and re.fullmatch(r"group[1-9]\d*", group)):
+            print("提醒：报告路径不是 group<G>/round<R>/（R 只能是 1、2、3），按 xy-review 同一对象的每轮都写到那里，第 3 轮仍不通过就先派判因子代理")
+        elif round_name == "round3" and "\n".join(sections["结论"]).strip() == "不通过":
+            print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.md，按结论处理后再开下一组")
     return 0
 
 

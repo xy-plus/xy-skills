@@ -226,14 +226,14 @@ class CheckTest(unittest.TestCase):
             with self.subTest(round=round_name, conclusion=conclusion), tempfile.TemporaryDirectory() as root:
                 directory = os.path.join(root, "group7", round_name)
                 os.makedirs(directory)
-                path = os.path.join(directory, "review.md")
+                path = os.path.join(directory, "review-main.md")
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(main_report(问题="check.py:100 漏检", 结论=conclusion))
                 paths = [(directory, path)]
                 if expected_reminder:
                     previous_directory = os.path.join(root, "group7", "round2")
                     os.makedirs(previous_directory)
-                    paths += [(directory, "review.md"), (previous_directory, "../round3/review.md")]
+                    paths += [(directory, "review-main.md"), (previous_directory, "../round3/review-main.md")]
                 for working_directory, report_path in paths:
                     with self.subTest(path=report_path):
                         output = io.StringIO()
@@ -251,11 +251,11 @@ class CheckTest(unittest.TestCase):
     def test_report_outside_group_round_reminder(self):
         """round4、没有 group 的 round2、放错地方的判因报告都提醒，仍退出 0；放对的不提醒。"""
         cases = [
-            (("group7", "round4"), "review.md", main_report(问题="check.py:100 漏检", 结论="不通过"), "报告路径不是 group<G>/round<R>/"),
-            (("round2",), "review.md", razor_report(), "报告路径不是 group<G>/round<R>/"),
+            (("group7", "round4"), "review-main.md", main_report(问题="check.py:100 漏检", 结论="不通过"), "报告路径不是 group<G>/round<R>/"),
+            (("round2",), "review-razor.md", razor_report(), "报告路径不是 group<G>/round<R>/"),
             (("group7", "round1"), "diagnosis.md", diagnosis_report("三轮都在审新部分，见 round1～3。", "拆分"), "判因报告按 xy-review 写在 group<G>/diagnosis.md"),
             (("group7",), "diagnosis.md", diagnosis_report("三轮都在审新部分，见 round1～3。", "拆分"), None),
-            (("group7", "round1"), "review.md", razor_report(), None),
+            (("group7", "round1"), "review-razor.md", razor_report(), None),
         ]
         for parts, name, text, expected_reminder in cases:
             with self.subTest(path="/".join(parts + (name,))), tempfile.TemporaryDirectory() as root:
@@ -272,6 +272,29 @@ class CheckTest(unittest.TestCase):
                     self.assertTrue(any(line.startswith("提醒：") and expected_reminder in line for line in output.getvalue().splitlines()), output.getvalue())
                 else:
                     self.assertNotIn("提醒：", output.getvalue())
+
+    def test_review_report_filename_must_match_report_kind(self):
+        cases = [
+            (("group7", "round1"), "review.md", main_report(), "review-main.md"),
+            (("group7", "round1"), "review-razor.md", main_report(), "review-main.md"),
+            (("group7", "round1"), "review.md", razor_report(), "review-razor.md"),
+            (("group7", "round1"), "review-main.md", razor_report(), "review-razor.md"),
+        ]
+        for parts, name, report, expected_name in cases:
+            with self.subTest(path="/".join(parts + (name,))), tempfile.TemporaryDirectory() as root:
+                directory = os.path.join(root, *parts)
+                os.makedirs(directory)
+                path = os.path.join(directory, name)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(report)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = main(["check.py", path])
+                self.assertEqual(code, 0, output.getvalue())
+                self.assertTrue(
+                    any(line.startswith("提醒：") and expected_name in line for line in output.getvalue().splitlines()),
+                    output.getvalue(),
+                )
 
     def test_exit_codes(self):
         cases = [(main_report(), 0), (razor_report(删除清单="参数 x；丢什么：无", 结论="改了就过"), 0), (main_report(偏离=""), 1)]
