@@ -191,8 +191,8 @@ class CheckTest(unittest.TestCase):
         handoff = self.write_cleanup_handoff(changed)
         document = razor_report(
             keep=[
-                {"entity": "/repo/deleted.py:12", "reason": "保留处理记录"},
-                {"entity": "正在使用 用户@主机:/项目/scripts/active.py 的流程", "reason": "仍在运行"},
+                {"entity": "/repo/deleted.py", "reason": "保留处理记录"},
+                {"entity": "用户@主机:/项目/scripts/active.py", "reason": "仍在运行"},
             ],
             cleanup_handoff=str(handoff),
         )
@@ -207,10 +207,10 @@ class CheckTest(unittest.TestCase):
         )
         self.assert_rejected("review-razor.json", document, "/repo/second.py")
 
-    def test_cleanup_path_coverage_uses_both_boundaries(self):
+    def test_cleanup_path_coverage_requires_exact_entity_match(self):
         changed = "/a/b"
         handoff = self.write_cleanup_handoff([changed])
-        invalid_entities = ("/a/bc", "/a/b/c.py", "/x/a/b", "host:/a/b")
+        invalid_entities = ("/a/b 的 f 函数", "/a/b文件")
         for entity in invalid_entities:
             with self.subTest(entity=entity):
                 document = razor_report(
@@ -219,14 +219,11 @@ class CheckTest(unittest.TestCase):
                 )
                 self.assert_rejected("review-razor.json", document, changed)
 
-        valid_entities = ("/a/b 的 f 函数", "/a/b:12", "「/a/b」")
-        for entity in valid_entities:
-            with self.subTest(entity=entity):
-                document = razor_report(
-                    keep=[{"entity": entity, "reason": "完整路径被提及"}],
-                    cleanup_handoff=str(handoff),
-                )
-                self.assertEqual(self.run_report("review-razor.json", document), (0, []))
+        document = razor_report(
+            keep=[{"entity": "/a/b", "reason": "函数 f 的实现路径"}],
+            cleanup_handoff=str(handoff),
+        )
+        self.assertEqual(self.run_report("review-razor.json", document), (0, []))
 
     def test_parent_directory_does_not_cover_changed_file(self):
         changed = "/repo/dir/file.py"

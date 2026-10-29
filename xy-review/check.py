@@ -87,23 +87,6 @@ def item_list(document, *path):
     return value if isinstance(value, list) else []
 
 
-def path_is_covered(entity, path):
-    """路径两侧不能粘着 ASCII 路径字符，避免前缀或目录冒充完整路径。"""
-    right_path_characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./"
-    left_path_characters = right_path_characters + "@:~"
-    start = 0
-    while True:
-        index = entity.find(path, start)
-        if index < 0:
-            return False
-        before = entity[index - 1] if index else ""
-        after_index = index + len(path)
-        after = entity[after_index] if after_index < len(entity) else ""
-        if (not before or before not in left_path_characters) and (not after or after not in right_path_characters):
-            return True
-        start = index + 1
-
-
 def check_cleanup_handoff(document):
     """校验清扫剃刀报告引用的交接，并核对其中每个 changed 路径。"""
     razor = document.get("occams_razor")
@@ -139,7 +122,7 @@ def check_cleanup_handoff(document):
         if not isinstance(item, dict):
             continue
         path = item.get("path")
-        if isinstance(path, str) and path.strip() and not any(path_is_covered(entity, path) for entity in entities):
+        if isinstance(path, str) and path.strip() and path not in entities:
             problems.append(f"清扫交接 changed 路径未被三张清单覆盖：{path}")
     return problems
 
