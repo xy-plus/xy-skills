@@ -252,6 +252,18 @@ class CheckTest(unittest.TestCase):
         self.assertIn("发回去要求先询问，也不代用户作答", handoff_skill)
         self.assertIn("ask_user.items 不计入剃刀报告结论", checker)
 
+    def test_xy_goal_cleanup_runs_in_parallel_with_closing_review(self):
+        goal_skill = Path(__file__).parents[1].joinpath("xy-goal", "SKILL.md").read_text(encoding="utf-8")
+        handoff_skill = Path(__file__).parents[1].joinpath("xy-handoff", "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("除 T1 外没有开放事项", goal_skill)
+        self.assertIn("T1 清扫交出去后不等它", goal_skill)
+        self.assertIn("两者并行", goal_skill)
+        self.assertIn("复核不判 T1", goal_skill)
+        self.assertIn("T1 按「清扫」一节收到验收通过再 accept", goal_skill)
+        self.assertIn("T1 已验收后", goal_skill)
+        self.assertIn("xy-goal 的清扫不在此列", handoff_skill)
+        self.assertIn("与关闭前复核并行", handoff_skill)
+
     def test_cleanup_handoff_must_be_a_valid_cleanup_handoff(self):
         contract = Path(self.root) / "ordinary-contract"
         (contract / "quotes").mkdir(parents=True)
