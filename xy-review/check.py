@@ -7,6 +7,7 @@ import sys
 
 HANDOFF_DIRECTORY = pathlib.Path(__file__).resolve().parents[1] / "xy-handoff"
 sys.path.insert(0, str(HANDOFF_DIRECTORY))
+from check_handoff import check as check_handoff  # noqa: E402
 from check_handoff import check_value, object_without_duplicate_keys  # noqa: E402
 
 
@@ -86,6 +87,63 @@ def item_list(document, *path):
     return value if isinstance(value, list) else []
 
 
+def path_is_covered(entity, path):
+    """路径两侧不能粘着 ASCII 路径字符，避免前缀或目录冒充完整路径。"""
+    right_path_characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./"
+    left_path_characters = right_path_characters + "@:~"
+    start = 0
+    while True:
+        index = entity.find(path, start)
+        if index < 0:
+            return False
+        before = entity[index - 1] if index else ""
+        after_index = index + len(path)
+        after = entity[after_index] if after_index < len(entity) else ""
+        if (not before or before not in left_path_characters) and (not after or after not in right_path_characters):
+            return True
+        start = index + 1
+
+
+def check_cleanup_handoff(document):
+    """校验清扫剃刀报告引用的交接，并核对其中每个 changed 路径。"""
+    razor = document.get("occams_razor")
+    if not isinstance(razor, dict):
+        return []
+    handoff_value = document.get("cleanup_handoff")
+    if handoff_value == "无":
+        return []
+    if not isinstance(handoff_value, str) or not pathlib.Path(handoff_value).is_absolute():
+        return ["cleanup_handoff 必须是「无」或清扫交接说明的绝对路径"]
+    try:
+        handoff_text = pathlib.Path(handoff_value).read_text(encoding="utf-8")
+        handoff = read_document(handoff_text)
+    except (OSError, UnicodeDecodeError, ValueError, TypeError) as error:
+        return [f"cleanup_handoff 无法读取交接说明「{handoff_value}」：{error}"]
+
+    problems = [f"cleanup_handoff 指向的交接不合格：{problem}"
+                for problem in check_handoff(handoff)]
+    if not isinstance(handoff, dict) or handoff.get("kind") != "清扫":
+        problems.append("cleanup_handoff 必须是 kind 为「清扫」的交接")
+        return problems
+
+    entities = []
+    for item in item_list(razor, "keep"):
+        if isinstance(item, dict) and isinstance(item.get("entity"), str):
+            entities.append(item["entity"])
+    for name in ("delete", "ask_user"):
+        for item in item_list(razor, name, "items"):
+            if isinstance(item, dict) and isinstance(item.get("entity"), str):
+                entities.append(item["entity"])
+
+    for item in item_list(handoff, "changed"):
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if isinstance(path, str) and path.strip() and not any(path_is_covered(entity, path) for entity in entities):
+            problems.append(f"清扫交接 changed 路径未被三张清单覆盖：{path}")
+    return problems
+
+
 def check(text, filename):
     """按文件名选报告结构并返回所有内容问题。"""
     if filename not in REPORTS:
@@ -159,6 +217,13 @@ def main(argv):
 
     problems = check(text, path.name)
     kind = REPORTS.get(path.name, (None, None))[0]
+    if kind == "剃刀报告":
+        try:
+            document = read_document(text)
+        except (ValueError, TypeError):
+            document = None
+        if isinstance(document, dict):
+            problems += check_cleanup_handoff(document)
     if kind == "判因报告":
         group_path = path.parent
         group_match = re.fullmatch(r"group([1-9]\d*)", group_path.name)

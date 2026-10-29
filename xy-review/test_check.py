@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+from pathlib import Path
 import tempfile
 import unittest
 
@@ -63,6 +64,21 @@ class CheckTest(unittest.TestCase):
 
     def create_round1(self, group="group1"):
         os.makedirs(os.path.join(self.root, group, "round1"), exist_ok=True)
+
+    def write_sweep_handoff(self, changed):
+        contract = Path(self.root) / "contract"
+        (contract / "quotes").mkdir(parents=True, exist_ok=True)
+        (contract / "quotes" / "1.md").write_text("用户原话\n", encoding="utf-8")
+        document = {
+            "kind": "清扫",
+            "from": {"name": "派方", "short_id": "a1b2c3d4"},
+            "reply": "要",
+            "contract": str(contract),
+            "changed": [{"path": path, "in_use_by": "无"} for path in changed],
+        }
+        path = Path(self.root) / "handoff.json"
+        path.write_text(json_text(document), encoding="utf-8")
+        return path
 
     def assert_rejected(self, name, document, *needles, folders=("group1", "round1")):
         code, problems = self.run_report(name, document, folders)
@@ -165,6 +181,91 @@ class CheckTest(unittest.TestCase):
         deletion = [{"entity": "unused.py", "loss": "失去过时脚本"}]
         self.assert_rejected("review-razor.json", razor_report(delete=deletion), "通过」但 delete.items")
         self.assert_rejected("review-razor.json", razor_report(verdict="不通过"), "但 delete.items 为空")
+
+    def test_cleanup_handoff_requires_absolute_path_or_none(self):
+        self.assert_rejected("review-razor.json", razor_report(cleanup_handoff="相对路径/handoff.json"), "绝对路径")
+
+    def test_cleanup_report_covers_every_changed_path(self):
+        changed = ["/repo/deleted.py", "用户@主机:/项目/scripts/active.py"]
+        handoff = self.write_sweep_handoff(changed)
+        document = razor_report(
+            keep=[
+                {"entity": "/repo/deleted.py:12", "reason": "保留处理记录"},
+                {"entity": "正在使用 用户@主机:/项目/scripts/active.py 的流程", "reason": "仍在运行"},
+            ],
+            cleanup_handoff=str(handoff),
+        )
+        self.assertEqual(self.run_report("review-razor.json", document), (0, []))
+
+    def test_cleanup_report_reports_each_uncovered_path(self):
+        changed = ["/repo/first.py", "/repo/second.py"]
+        handoff = self.write_sweep_handoff(changed)
+        document = razor_report(
+            keep=[{"entity": "/repo/first.py", "reason": "仍有用"}],
+            cleanup_handoff=str(handoff),
+        )
+        self.assert_rejected("review-razor.json", document, "/repo/second.py")
+
+    def test_cleanup_path_coverage_uses_both_boundaries(self):
+        changed = "/a/b"
+        handoff = self.write_sweep_handoff([changed])
+        invalid_entities = ("/a/bc", "/a/b/c.py", "/x/a/b", "host:/a/b")
+        for entity in invalid_entities:
+            with self.subTest(entity=entity):
+                document = razor_report(
+                    keep=[{"entity": entity, "reason": "应判为未覆盖"}],
+                    cleanup_handoff=str(handoff),
+                )
+                self.assert_rejected("review-razor.json", document, changed)
+
+        valid_entities = ("/a/b 的 f 函数", "/a/b:12", "「/a/b」")
+        for entity in valid_entities:
+            with self.subTest(entity=entity):
+                document = razor_report(
+                    keep=[{"entity": entity, "reason": "完整路径被提及"}],
+                    cleanup_handoff=str(handoff),
+                )
+                self.assertEqual(self.run_report("review-razor.json", document), (0, []))
+
+    def test_parent_directory_does_not_cover_changed_file(self):
+        changed = "/repo/dir/file.py"
+        handoff = self.write_sweep_handoff([changed])
+        document = razor_report(
+            keep=[{"entity": "/repo/dir", "reason": "目录仍保留"}],
+            cleanup_handoff=str(handoff),
+        )
+        self.assert_rejected("review-razor.json", document, changed)
+
+    def test_none_cleanup_handoff_skips_coverage(self):
+        document = razor_report(keep=[{"entity": "没有改动路径", "reason": "一般任务"}], cleanup_handoff="无")
+        self.assertEqual(self.run_report("review-razor.json", document), (0, []))
+
+    def test_cleanup_handoff_must_be_a_valid_cleanup_handoff(self):
+        contract = Path(self.root) / "ordinary-contract"
+        (contract / "quotes").mkdir(parents=True)
+        ordinary = {
+            "kind": "普通",
+            "from": {"name": "派方", "short_id": "a1b2c3d4"},
+            "task": {"what": "任务", "done_when": "完成", "others": "无"},
+            "reply": "要",
+            "quotes": [{"text": "原话", "source": "/quotes/1.md"}],
+            "rules": "无",
+            "facts": [],
+            "decide_yourself": [],
+            "boundaries": [],
+        }
+        ordinary_path = Path(self.root) / "ordinary.json"
+        ordinary_path.write_text(json_text(ordinary), encoding="utf-8")
+        document = razor_report(keep=[{"entity": "/repo/file.py", "reason": "理由"}],
+                               cleanup_handoff=str(ordinary_path))
+        self.assert_rejected("review-razor.json", document, "必须是 kind 为「清扫」的交接")
+
+        sweep_path = self.write_sweep_handoff(["/repo/file.py"])
+        malformed = json.loads(sweep_path.read_text(encoding="utf-8"))
+        del malformed["changed"]
+        sweep_path.write_text(json_text(malformed), encoding="utf-8")
+        document["cleanup_handoff"] = str(sweep_path)
+        self.assert_rejected("review-razor.json", document, "缺少字段：交接说明.changed")
 
     def test_diagnosis_report_validates_structure_and_actions(self):
         self.create_round1()
