@@ -1,5 +1,3 @@
-"""Run with python3 -m unittest discover -s /absolute/path/to/tests -v."""
-
 from pathlib import Path
 import fcntl
 import io

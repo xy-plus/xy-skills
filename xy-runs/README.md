@@ -47,12 +47,15 @@ systemctl --user daemon-reload
 
 ## 首次启用定时清理
 
-首次启用前，先把 shell 中的 `RUNS_ROOT` 设为全局 `settings.json` 的 `env.RUNS_ROOT` 同一个绝对路径。按 service 使用的同一组根手动运行清理器，并逐项检查输出的清单：
+首次启用前，下面的命令从与 service 相同的 `$HOME/.claude/settings.json` 读取并校验 `env.RUNS_ROOT`。它先对根路径做 `glob.escape`，再追加 `/-*` 和 `/-*/xy-goal-inbox` 两层模式；Codex 会话的 glob 保持原样。手动运行后逐项检查输出的清单：
 
 ```bash
+RUNS_ROOT="$(python3 -c 'import json, os; from pathlib import Path; root = json.loads((Path.home() / ".claude/settings.json").read_text())["env"]["RUNS_ROOT"]; assert isinstance(root, str) and os.path.isabs(root), "env.RUNS_ROOT must be an absolute path"; print(root)')" &&
+: "${RUNS_ROOT:?settings.json env.RUNS_ROOT must be an absolute path}" &&
+RUNS_ROOT_GLOB="$(python3 -c 'import glob, sys; print(glob.escape(sys.argv[1]))' "$RUNS_ROOT")" &&
 python3 "$HOME/xy-skills/xy-runs/clean.py" --mode list \
   "$HOME/.codex-subagent*/sessions/*/*" \
-  "$RUNS_ROOT" "$RUNS_ROOT/-*" "$RUNS_ROOT/-*/xy-goal-inbox"
+  "$RUNS_ROOT_GLOB" "$RUNS_ROOT_GLOB/-*" "$RUNS_ROOT_GLOB/-*/xy-goal-inbox"
 ```
 
 确认清单中的范围和候选项后，在根目录建立预览门槛，再启用每天一次的定时清理：
