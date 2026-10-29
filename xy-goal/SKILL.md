@@ -9,6 +9,10 @@ xy-goal 只管五件事：用户原话自动逐字记录，事项与原话对得
 
 前提与 hook 配置见 [README.md](README.md)。用户消息和选择题回答由 hook 记录、编号，agent 不抄。原话是权威；判据是它的索引，不能悄悄放宽要求。
 
+## 清扫
+
+每份契约自带 T1 清扫。第一次改文件前，记下要改的每个仓库或工作树的 `git rev-parse HEAD` 和 `git status`。收尾时列出本会话改过的文件：以自己做过的 Edit、Write、commit 为准，基线只用来缩小范围，拿不准就问用户。改过：按 xy-handoff 交出去一个清扫任务，回复「要」；它按 xy-review 清扫审，它自己的改动不再派清扫；收到验收通过再 accept。没改过：直接 accept。
+
 ## 契约与命令
 
 契约文件放在一件事的工具私有子目录 `$RUNS_ROOT/<项目目录名>/<YYYYMMDD-HHMMSS>-<slug>/xy-goal/`：
@@ -21,14 +25,16 @@ xy-goal 只管五件事：用户原话自动逐字记录，事项与原话对得
 | `done/T1.md` … | 原事项字段加验收结论或取消依据 |
 | `links.md` | 全契约唯一映射：`1 T1` 或 `1 不必跟进 原因`，一行一条 |
 
-一条原话可挂多个事项，一个事项可挂多条原话；出处与去向都从 `links.md` 算。每个开放事项必须有出处，T1 是契约创建时原子种下的固定「清扫」事项，是唯一例外；每条原话要么挂到事项，要么标明不必跟进。`open` 成功后先 `show` 看一遍开放事项，T1 的判据要求在第一次改动任何文件之前记录基线，照它做。
+一条原话可挂多个事项，一个事项可挂多条原话；出处与去向都从 `links.md` 算。每个开放事项必须有出处，T1 是契约创建时原子种下的固定「清扫」事项，是唯一例外；每条原话要么挂到事项，要么标明不必跟进。`open` 成功后先 `show` 看一遍开放事项，T1 的判据是「按 xy-goal 的「清扫」一节做」。
 
 写入只经脚本，不手改契约；读取直接用 Read 或 cat。`--root` 必须显式提供，且指向事先创建的目录（首次安装步骤见 README）。根目录不存在或不是目录就报错退出，脚本不会自动创建。
 
+下文 `<本 skill 目录>` 是这份 SKILL.md 所在的目录：用 Skill 工具加载时就是 Claude Code 给出的 Base directory，经 CLAUDE.md 引入时就是引入路径所在的目录。
+
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" open <slug> '<目标>' --claude-pid "$PPID"
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" show
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" check
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" open <slug> '<目标>' --claude-pid "$PPID"
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" show
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" check
 ```
 
 `open`、`adopt` 必须在 Claude Code 的 Bash 工具里运行，显式传 `--claude-pid "$PPID"`。该 Bash 的 `$PPID` 就是本会话 claude 进程号，可在同一个 Bash 里用 `echo "$PPID"` 核对；让它直接展开。脚本核对传入的正整数 PID 是本次调用进程的祖先，否则拒绝并说明调用方式，不能抄别的会话的 PID 来接管。
@@ -52,17 +58,19 @@ hook 成功时 stdout、stderr 都为空；运行起来后的失败输出一行 
 所有参数都显式给出；状态只认 `在办` 或 `等用户：<待定的事>`，还没有指针就写 `无`。脚本分配 T 号，不复用已关闭编号。
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> <M> --state '在办' --pointer '无'
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --field 标题 --value '<新标题>'
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --field 判据 --value '<新判据>' --source <N>
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" update <T> --source <N> <M>
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" relink [<T> --source <N> <M>]
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" dismiss <N> --reason '<不必跟进的原因>'
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" accept <T> --verdict '<按判据核过的结论，如命令和退出码、审查结论>'
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" cancel <T> --quote <N>
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> <M> --state '在办' --pointer '无'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --title '<新标题>'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --criteria '<新判据>' --source <N>
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --state '等用户：<待定的事>'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --pointer '<新指针>'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --source <N> <M>
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" relink [<T> --source <N> <M>]
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" dismiss <N> --reason '<不必跟进的原因>'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" accept <T> --verdict '<按判据核过的结论，如命令和退出码、审查结论>'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" cancel <T> --quote <N>
 ```
 
-`update --field` 只认 `标题`、`判据`、`状态`、`指针`。改判据必须同时带原话；`--source` 只追加出处。出处和取消依据必须引用已存在的原话。取消必须有用户原话依据，未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明一行原因，不必硬建事项；原因含 Unicode 分行符也会写前拒绝。
+`update` 至少要改一个字段或追加出处；改判据必须同时带原话；`--source` 只追加出处。出处和取消依据必须引用已存在的原话。取消必须有用户原话依据，未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明一行原因，不必硬建事项；原因含 Unicode 分行符也会写前拒绝。
 
 `relink` 只用于当前校验失败、links.md 与 quotes/ 都读得出的契约；健康契约挂出处用 `update`。不带参数只清理坏行；事项与 `--source` 必须同时给，事项必须是编号合法的开放事项，原话编号须先查看 quotes/、全部存在。它逐条打印丢掉的行与原因，保留合格映射并添加给定出处，只写 links.md。写后整体校验，通过时打印「修复完成：<路径>」并退出 0；仍有错误时向 stderr 报告、退出 1，已写修复保留，可接着对下一个事项用 `relink`。
 
@@ -73,8 +81,10 @@ python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" cancel <T> --quote 
 `open`、`adopt` 都会输出下面这一行定时提示，照抄进 `CronCreate(cron="*/30 * * * *", recurring=true, prompt=<输出原文>)`，不要加换行或改字。`CronList` 按其中的契约绝对路径核对只有一个本契约定时器，不把编号存进契约：
 
 ```text
-本次契约：<契约目录绝对路径>。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做
+本次契约：<契约目录绝对路径>。按 xy-goal 的「定时自查」一节做
 ```
+
+已有定时器在 7 天内仍可能发旧提示；旧文字与新提示不匹配，不会自动标为不必跟进，需手动用 `dismiss` 标掉。
 
 提示只指向本节，不复制步骤，规则更新后下一轮就生效。每半小时依次做：
 
@@ -89,7 +99,7 @@ python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" cancel <T> --quote 
 ## 换会话接管
 
 ```bash
-python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" adopt <契约目录绝对路径> --claude-pid "$PPID"
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" adopt <契约目录绝对路径> --claude-pid "$PPID"
 ```
 
 `adopt` 只接受 `$RUNS_ROOT/<以 - 开头的项目目录>/<一件事>/xy-goal` 这一层的契约路径。新会话必须还没有契约，原会话的 claude 进程必须已不在；还在就先在原会话 `CronDelete` 并结束它，不能抢接。脚本改会话 id 与进程号、领走新会话 inbox，输出定时提示；照抄重建，再 `CronList` 核对只有一个。
@@ -105,7 +115,7 @@ python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" adopt <契约目录
 1. 没有开放事项、没有未处理原话后，先回溯本会话里说过稍后做、顺手发现未记录、用户中途改口的事项，补进来并做完。
 2. 开一个新开的子代理，交给它契约目录，让它对照**全部原话与全部事项**（`tasks/`、`done/`）：每条要求是否都已做完，所有「不必跟进」是否真的不带要求，已关闭事项的结论是否站得住。
 3. 它指出未完成的，补成事项、做完再查；它确认全部完成后，`CronList` 找出本契约定时器，`CronDelete` 并确认成功，汇报逐项状态与验收证据。
-4. 最后运行 `python3 ~/.claude/skills/xy-goal/goal.py --root "$RUNS_ROOT" close`，只删除本契约的 `xy-goal/goal.md`，解除会话绑定；其余文件留在原处，由定期清理统一处理。
+4. 最后运行 `python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" close`，只删除本契约的 `xy-goal/goal.md`，解除会话绑定；其余文件留在原处，由定期清理统一处理。
 
 ## 契约生命周期
 

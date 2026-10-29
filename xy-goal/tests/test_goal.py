@@ -138,24 +138,12 @@ class GoalTests(unittest.TestCase):
         self.assertIn("交付新版本", metadata)
         self.assertIn("session-main", metadata)
         self.assertIn(str(self.pid), metadata)
-        self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
+        self.assertEqual(output, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做\n")
 
     def test_open_seeds_exactly_one_source_free_cleaning_T1(self):
         self.succeeds("open", "release", "交付新版本")
         contract = self.project / "20261024-093000-release" / "xy-goal"
-        criteria = (
-            "收尾前核本会话改没改过文件——每个碰过的仓库/工作树，本会话都应该在第一次动手改之前记两件事："
-            "当时所在的提交（`git rev-parse HEAD`）、当时 `git status` 的输出。收尾核验时，"
-            "`git diff <基线提交>..HEAD` 和「当前 `git status` 相对基线 status 的变化」只是缩小范围的材料，"
-            "不是最终答案——这中间列出的每一条，仍要本会话自己核对是不是自己造成的：基线之后这个仓库可能有别的会话或外部提交混进来；"
-            "同一个路径基线时就已经脏、现在还脏，也看不出这期间是不是本会话又改了它。这两类情况都一样处理："
-            "回想自己有没有在这个路径上做过 Edit/Write/commit，拿不准就问用户，不要把工具结果直接当成范围。"
-            "某个仓库/工作树漏记了基线：同样不要猜一个退路当基线，停下来问用户这次改动涉及哪些文件。"
-            "改过：按 xy-handoff 交出去一个清扫任务；它按 xy-review 派主审和剃刀，"
-            "剃刀按「清扫」那条范围审（见 xy-review/SKILL.md 铁律 3）；回复「要」；"
-            "它自己改动涉及的文件不再派下一层清扫，到它为止；收到验收通过的消息后 accept，写清交接说明路径和对方会话名、短 id。"
-            "没改过：直接 accept，写「本会话未改动文件，无需清扫」。"
-        )
+        criteria = "按 xy-goal 的「清扫」一节做"
         self.assertEqual({path.name for path in (contract / "tasks").iterdir()}, {"T1.md"})
         item = goal.Contract(contract)
         self.assertEqual(item.tasks, {"T1": {
@@ -171,7 +159,7 @@ class GoalTests(unittest.TestCase):
 
     def test_source_free_T1_can_change_state_and_be_accepted(self):
         contract = self.open_seeded_goal("release")
-        self.succeeds("update", "T1", "--field", "状态", "--value", "等用户：确认清扫范围")
+        self.succeeds("update", "T1", "--state", "等用户：确认清扫范围")
         self.assertEqual(goal.Contract(contract).tasks["T1"]["state"], "等用户：确认清扫范围")
         self.succeeds("accept", "T1", "--verdict", "清扫判据已核")
         self.assertNotIn("T1", goal.Contract(contract).tasks)
@@ -179,7 +167,7 @@ class GoalTests(unittest.TestCase):
 
     def test_renamed_source_free_T1_remains_valid_and_can_be_accepted(self):
         contract = self.open_seeded_goal("release")
-        self.succeeds("update", "T1", "--field", "标题", "--value", "清扫（已处理）")
+        self.succeeds("update", "T1", "--title", "清扫（已处理）")
         self.assertIn("T1 清扫（已处理）", self.succeeds("show"))
         self.succeeds("accept", "T1", "--verdict", "更名后仍可验收")
         self.assertEqual(goal.Contract(contract).done["T1"]["title"], "清扫（已处理）")
@@ -240,8 +228,9 @@ class GoalTests(unittest.TestCase):
         contract = self.open_seeded_goal("release")
         original_criteria = goal.Contract(contract).tasks["T1"]["criteria"]
         (contract / "links.md").write_text("", encoding="utf-8")
-        for field, value in (("标题", "清扫改名"), ("状态", "等用户：等清扫结果"), ("指针", "/tmp/report")):
-            self.succeeds("update", "T1", "--field", field, "--value", value)
+        for option, value in (("--title", "清扫改名"), ("--state", "等用户：等清扫结果"),
+                              ("--pointer", "/tmp/report")):
+            self.succeeds("update", "T1", option, value)
         self.assertEqual(goal.Contract(contract).tasks["T1"], {
             "title": "清扫改名", "criteria": original_criteria,
             "state": "等用户：等清扫结果", "pointer": "/tmp/report",
@@ -326,7 +315,7 @@ class GoalTests(unittest.TestCase):
                 arguments = {
                     "add": ("add", "--title", "另一项", "--criteria", "通过", "--source", "1",
                             "--state", "在办", "--pointer", "无"),
-                    "update": ("update", "T1", "--field", "标题", "--value", "不能越界"),
+                    "update": ("update", "T1", "--title", "不能越界"),
                     "dismiss": ("dismiss", "1", "--reason", "已答"),
                     "accept": ("accept", "T1", "--verdict", "通过"),
                     "cancel": ("cancel", "T1", "--quote", "1"),
@@ -456,7 +445,7 @@ class GoalTests(unittest.TestCase):
         shutil.rmtree(self.projects)
         self.succeeds("adopt", str(contract))
         self.succeeds("show")
-        self.succeeds("update", "T1", "--field", "标题", "--value", "更新后")
+        self.succeeds("update", "T1", "--title", "更新后")
         self.succeeds("dismiss", "2", "--reason", "已答")
         self.succeeds("check")
         code, output, errors = self.run_goal(
@@ -508,7 +497,7 @@ class GoalTests(unittest.TestCase):
         self.add_task(1)
         self.succeeds("show")
         self.succeeds("check")
-        self.succeeds("update", "T1", "--field", "指针", "--value", str(contract.parent / "report.md"))
+        self.succeeds("update", "T1", "--pointer", str(contract.parent / "report.md"))
         self.succeeds("accept", "T1", "--verdict", "通过")
         before = self.files()
         self.succeeds("close")
@@ -738,16 +727,14 @@ class GoalTests(unittest.TestCase):
             with self.subTest(state=state):
                 self.rejects(*base, "--source", "1", "--state", state, message="状态")
 
-    def test_update_each_allowed_field_preserves_quotes_and_changes_show(self):
+    def test_update_multiple_fields_preserves_quotes_and_changes_show(self):
         contract = self.open_legacy_goal("release")
         self.quote(contract, 1, "发布要求")
         self.quote(contract, 2, "必须两轮通过")
         self.add_task(1)
         before_quotes = {p.name: p.read_bytes() for p in (contract / "quotes").iterdir()}
-        for field, value in (("标题", "新发布"), ("状态", "等用户：确认时间"),
-                             ("指针", "/tmp/report")):
-            self.succeeds("update", "T1", "--field", field, "--value", value)
-        self.succeeds("update", "T1", "--field", "判据", "--value", "两轮通过", "--source", "2")
+        self.succeeds("update", "T1", "--title", "新发布", "--criteria", "两轮通过",
+                      "--state", "等用户：确认时间", "--pointer", "/tmp/report", "--source", "2")
         output = self.succeeds("show")
         for value in ("新发布", "两轮通过", "等用户：确认时间", "/tmp/report", "原话 1、2"):
             self.assertIn(value, output)
@@ -905,23 +892,22 @@ class GoalTests(unittest.TestCase):
                 errors = self.rejects("check", message=message)
                 self.assertTrue(errors.endswith(hint), errors)
 
-    def test_update_refuses_unknown_field_missing_reason_and_missing_task(self):
+    def test_update_refuses_legacy_options_missing_source_and_missing_task(self):
         contract = self.open_legacy_goal("release")
         self.quote(contract, 1, "要求")
         self.add_task(1)
         cases = (
-            (("T1", "--field", "判据", "--value", "变更"), "--source"),
-            (("T1", "--field", "出处", "--value", "1"), "字段"),
-            (("T1", "--field", "状态", "--value", "等用户："), "状态"),
-            (("T1", "--field", "标题"), "--value"),
-            (("T1", "--value", "文字"), "--field"),
-            (("T1",), "--source"),
+            (("T1", "--criteria", "变更"), "--source"),
+            (("T1", "--state", "等用户："), "状态"),
+            (("T1",), "至少改一项"),
             (("T9", "--source", "1"), "T9"),
-            (("T1", "--field", "标题", "--value", "发布", "--source", "9"), "原话 9 不存在"),
+            (("T1", "--title", "发布", "--source", "9"), "原话 9 不存在"),
         )
         for arguments, message in cases:
             with self.subTest(arguments=arguments):
                 self.rejects("update", *arguments, message=message)
+        self.rejects("update", "T1", "--field", "标题", "--value", "发布",
+                     message="unrecognized arguments")
 
     def test_dismiss_handles_quote_without_touching_original_text(self):
         contract = self.open_legacy_goal("release")
@@ -1053,7 +1039,7 @@ class GoalTests(unittest.TestCase):
                     else:
                         self.add_task(1)
                         if operation == "update":
-                            self.succeeds("update", "T1", "--field", "指针", "--value", text)
+                            self.succeeds("update", "T1", "--pointer", text)
                         else:
                             self.succeeds("accept", "T1", "--verdict", text)
                     self.succeeds("check")
@@ -1141,7 +1127,7 @@ class GoalTests(unittest.TestCase):
 
     def test_machine_prompts_are_recorded_and_dismissed_only_on_complete_match(self):
         contract = self.open_legacy_goal("release")
-        timer = f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做"
+        timer = f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做"
         notification = "<task-notification>\n<task-id>job-1</task-id><status>completed</status><summary>已完成</summary>\n</task-notification>"
         for text in (timer, notification):
             self.hook("hook-prompt", {"session_id": self.session, "prompt": text})
@@ -1481,6 +1467,17 @@ class GoalTests(unittest.TestCase):
                 self.assertNotIn("请优先修复本会话契约或 hook 问题，再做别的。", errors)
                 self.assertEqual(self.files(), before)
 
+    def test_relative_root_is_rejected_without_expanding_user(self):
+        for root in ("relative-runs", "~/runs"):
+            with self.subTest(root=root):
+                output, errors = StringIO(), StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
+                    code = goal.main(["--root", root, "show"],
+                                     session_id=self.session, now=self.now)
+                self.assertEqual(code, 1, output.getvalue() + errors.getvalue())
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("--root 必须是绝对路径", errors.getvalue())
+
     def test_concurrent_cli_hooks_allocate_unique_numbers_and_do_not_lose_links(self):
         contract = self.open_legacy_goal("release")
         notification = "<task-notification><task-id>j</task-id><status>done</status><summary>完成</summary></task-notification>"
@@ -1611,7 +1608,7 @@ class GoalTests(unittest.TestCase):
         (contract / "goal.md").write_text(metadata.replace(f'"{self.pid}"', f'"{dead_pid}"'))
         self.hook("hook-prompt", {"session_id": self.session, "prompt": "接管前的话"})
         self.assertEqual(self.succeeds("adopt", str(contract)),
-                         f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
+                         f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做\n")
         self.assertIn("new-session", (contract / "goal.md").read_text())
         self.assertIn(str(self.pid), (contract / "goal.md").read_text())
         self.assertEqual((contract / "quotes" / "6.md").read_text(), "接管前的话")
@@ -1667,7 +1664,7 @@ class GoalTests(unittest.TestCase):
                 raise PermissionError("模拟映射文件写入失败")
             return real_replace(source, destination)
         with mock.patch("goal.os.replace", side_effect=cannot_replace_links):
-            self.rejects("update", "T1", "--field", "判据", "--value", "两轮通过",
+            self.rejects("update", "T1", "--criteria", "两轮通过",
                          "--source", "2", message="模拟映射文件写入失败")
 
     @contextmanager
@@ -1708,7 +1705,7 @@ class GoalTests(unittest.TestCase):
                 with self.readonly_directory(inbox):
                     code, output, errors = self.command(*arguments)
                     self.assertEqual(code, 0, errors)
-                    self.assertEqual(output, f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做\n")
+                    self.assertEqual(output, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做\n")
                     self.assertIn("警告", errors)
                     self.assertFalse(inbox.exists(), "已领原话不能继续留在可被再次领取的位置")
                     self.assertEqual(len(list((contract / "quotes").iterdir())), 1)

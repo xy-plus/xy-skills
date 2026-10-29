@@ -111,7 +111,7 @@ def find_contract(root, session_id):
 
 
 def timer_prompt(contract):
-    return f"本次契约：{contract}。按 `~/.claude/skills/xy-goal/SKILL.md`「定时自查」一节做"
+    return f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做"
 
 
 def quote_files(directory):
@@ -292,27 +292,27 @@ class Contract:
         elif command == "update":
             task = options.task
             self.require_task(task)
-            if options.field is None and options.value is not None:
-                raise GoalError("--value 必须同时带 --field")
-            if options.field is None and options.source is None:
-                raise GoalError("必须指定 --field 和 --value，或 --source")
-            if options.field is not None:
-                if options.field not in TASK_FIELDS:
-                    raise GoalError(f"不认识的字段：{options.field}")
-                if options.value is None:
-                    raise GoalError("--field 必须同时带 --value")
-                require_text(options.value, options.field)
-                if options.field == "状态":
-                    require_state(options.value)
-                if options.field == "判据" and options.source is None:
-                    raise GoalError("改判据必须带 --source")
+            updated_values = {
+                name: getattr(options, name)
+                for name in TASK_FIELDS.values()
+                if getattr(options, name) is not None
+            }
+            if not updated_values and options.source is None:
+                raise GoalError("至少改一项")
+            labels = {name: label for label, name in TASK_FIELDS.items()}
+            for name, value in updated_values.items():
+                require_text(value, labels[name])
+                if name == "state":
+                    require_state(value)
+            if "criteria" in updated_values and options.source is None:
+                raise GoalError("改判据必须带 --source")
             if options.source is not None:
                 if task == "T1" and not self.sources(task):
                     raise GoalError("T1 是固定的清扫事项，不接受出处")
                 self.require_sources(options.source)
                 self.links.update((number, task) for number in options.source)
-            if options.field is not None:
-                self.tasks[task][TASK_FIELDS[options.field]] = options.value
+            if updated_values:
+                self.tasks[task].update(updated_values)
                 changes[self.path / "tasks" / f"{task}.md"] = encode_fields(self.tasks[task])
         elif command == "dismiss":
             self.require_sources([options.quote])
@@ -364,8 +364,8 @@ def parser():
     adding.add_argument("--source", type=int, nargs="+", required=True)
     updating = commands.add_parser("update")
     updating.add_argument("task")
-    updating.add_argument("--field")
-    updating.add_argument("--value")
+    for name in TASK_FIELDS.values():
+        updating.add_argument(f"--{name}")
     updating.add_argument("--source", type=int, nargs="+")
     relinking = commands.add_parser("relink")
     relinking.add_argument("task", nargs="?")
@@ -663,19 +663,7 @@ def execute(options, *, root, session_id, claude_pid, now):
             links = "".join(f"{number} 不必跟进 {reason}\n" for number, reason in reasons.items())
             builtin_task = {
                 "title": "清扫",
-                "criteria": (
-                    "收尾前核本会话改没改过文件——每个碰过的仓库/工作树，本会话都应该在第一次动手改之前记两件事："
-                    "当时所在的提交（`git rev-parse HEAD`）、当时 `git status` 的输出。收尾核验时，"
-                    "`git diff <基线提交>..HEAD` 和「当前 `git status` 相对基线 status 的变化」只是缩小范围的材料，"
-                    "不是最终答案——这中间列出的每一条，仍要本会话自己核对是不是自己造成的：基线之后这个仓库可能有别的会话或外部提交混进来；"
-                    "同一个路径基线时就已经脏、现在还脏，也看不出这期间是不是本会话又改了它。这两类情况都一样处理："
-                    "回想自己有没有在这个路径上做过 Edit/Write/commit，拿不准就问用户，不要把工具结果直接当成范围。"
-                    "某个仓库/工作树漏记了基线：同样不要猜一个退路当基线，停下来问用户这次改动涉及哪些文件。"
-                    "改过：按 xy-handoff 交出去一个清扫任务；它按 xy-review 派主审和剃刀，"
-                    "剃刀按「清扫」那条范围审（见 xy-review/SKILL.md 铁律 3）；回复「要」；"
-                    "它自己改动涉及的文件不再派下一层清扫，到它为止；收到验收通过的消息后 accept，写清交接说明路径和对方会话名、短 id。"
-                    "没改过：直接 accept，写「本会话未改动文件，无需清扫」。"
-                ),
+                "criteria": "按 xy-goal 的「清扫」一节做",
                 "state": "在办",
                 "pointer": "无",
             }
@@ -747,6 +735,9 @@ def main(arguments, *, session_id, now):
     try:
         options = parser().parse_args(arguments)
         require_text(options.root, "--root")
+        root = Path(options.root)
+        if not root.is_absolute():
+            raise GoalError("--root 必须是绝对路径")
         # Claude Code 的 Bash 的 $PPID 是本会话 claude。由该 Bash 展开后传入，
         # 不依赖进程名、argv[0]，也不依赖未公开保证的 CLAUDE_PID 环境变量。
         claude_pid = options.claude_pid if options.command in ("open", "adopt") else None
@@ -757,7 +748,6 @@ def main(arguments, *, session_id, now):
                 return 0
         else:
             require_name(session_id, "CLAUDE_CODE_SESSION_ID")
-        root = Path(options.root).expanduser()
         with root_lock(root):
             root = root.resolve()
             if incoming is not None:
@@ -765,6 +755,10 @@ def main(arguments, *, session_id, now):
                 return 0
             return execute(options, root=root, session_id=session_id, claude_pid=claude_pid, now=now)
     except Exception as error:
+        # Claude Code 只把退出 0 的 hook 输出（additionalContext）交给 agent：退出 1 时
+        # stderr 进不了 agent 上下文，UserPromptSubmit 退出 2 还会拦下用户消息（见 README）。
+        # 所以 hook 的任何失败都输出 JSON、退出 0，不写 stderr；参数解析失败时 argparse
+        # 不给出子命令，下面按它的规则自己扫一遍参数，认出是不是 hook。
         if options is not None:
             command = options.command
         else:
@@ -780,7 +774,6 @@ def main(arguments, *, session_id, now):
                     command = argument
                     break
         if command in HOOK_COMMANDS:
-            # 退出 1 的非阻断错误不进模型上下文；退出 0 的 additionalContext 才会送达。
             detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
             record = "" if isinstance(error, HookRecordError) else "这次输入没有记入契约。原始错误："
             context = f"请优先修复本会话契约或 hook 问题，再做别的。{record}{detail}"

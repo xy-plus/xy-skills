@@ -6,7 +6,7 @@
 
 前提：Linux、Python 3.10 及以上，Claude Code 的 `UserPromptSubmit`、`PostToolUse` hook 和 `CronCreate`、`CronList`、`CronDelete`。脚本使用目录文件锁及 Linux `/proc` 的父进程关系。
 
-按[仓库安装步骤](../README.md#安装)设好并创建 `RUNS_ROOT` 后，把下面配置合并到 `~/.claude/settings.json` 的 `hooks`，保留已有配置：
+按[仓库安装步骤](../README.md#安装)设好并创建 `RUNS_ROOT` 后，把 `<xy-goal 目录>` 换成自己安装 xy-goal 的绝对路径，再把下面配置合并到 `~/.claude/settings.json` 的 `hooks`，保留已有配置：
 
 ```json
 {
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$HOME/.claude/skills/xy-goal/goal.py\" --root \"$RUNS_ROOT\" hook-prompt || exit 1"
+            "command": "python3 \"<xy-goal 目录>/goal.py\" --root \"$RUNS_ROOT\" hook-prompt || exit 1"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$HOME/.claude/skills/xy-goal/goal.py\" --root \"$RUNS_ROOT\" hook-answer"
+            "command": "python3 \"<xy-goal 目录>/goal.py\" --root \"$RUNS_ROOT\" hook-answer"
           }
         ]
       }
@@ -40,12 +40,6 @@
 
 `hook-prompt` 读取官方 hook JSON 的 `session_id`、`transcript_path`、`prompt`，逐字保存 `prompt`；`hook-answer` 将 `AskUserQuestion` 的 `tool_input`、`tool_response` 原值存成 JSON，不解析回答结构或改写问题。
 
-## 测试
-
-仓库根目录运行：
-
-```bash
-python3 -B -m unittest discover -s xy-goal/tests
-```
+## 合入前的隔离会话实测
 
 合入前还需隔离会话（`--setting-sources project`，只加载临时测试目录配置）实测：中途插话的 `UserPromptSubmit`、`AskUserQuestion` 回答、开契约前消息领取、原生子代理 hook 的 `agent_id` 排除。单元测试不代替这一步。
