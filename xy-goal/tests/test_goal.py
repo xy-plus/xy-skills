@@ -224,6 +224,21 @@ class GoalTests(unittest.TestCase):
         self.rejects("reopen", "T1", message="已关闭事项 T1 没有出处，不能重开")
         self.assertEqual(done_task.read_bytes(), original)
 
+    def test_reopen_rejects_cancelled_task_without_non_cancellation_source(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 1, "取消依据")
+        done_task = contract / "done" / "T1.md"
+        done_task.write_text(
+            'title: "旧事项"\ncriteria: "原判据"\nstate: "在办"\npointer: "无"\n'
+            'cancel_quote: "1"\n', encoding="utf-8")
+        (contract / "links.md").write_text("1 T1\n", encoding="utf-8")
+        original = done_task.read_bytes()
+        self.rejects(
+            "reopen", "T1",
+            message="已关闭事项 T1 除取消依据外没有出处，不能重开",
+        )
+        self.assertEqual(done_task.read_bytes(), original)
+
     def replace_project_with_symlink(self):
         outside = Path(self.temporary.name) / f"outside-{self.root.name}"
         if self.project.exists():

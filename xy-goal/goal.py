@@ -324,8 +324,13 @@ class Contract:
             task = options.task
             if task not in self.done:
                 raise GoalError(f"已关闭事项 {task} 不存在")
-            if not self.sources(task):
-                raise GoalError(f"已关闭事项 {task} 没有出处，不能重开")
+            cancel_quote = self.done[task].get("cancel_quote")
+            sources = self.sources(task)
+            if cancel_quote is not None:
+                sources = [number for number in sources if number != int(cancel_quote)]
+            if not sources:
+                detail = "除取消依据外没有出处" if cancel_quote is not None else "没有出处"
+                raise GoalError(f"已关闭事项 {task} {detail}，不能重开")
             # 只恢复四个开放字段；旧结论丢弃，取消依据映射仍保留在 links.md。
             values = {name: self.done[task][name] for name in TASK_FIELDS.values()}
             changes[self.path / "tasks" / f"{task}.md"] = encode_fields(values)
