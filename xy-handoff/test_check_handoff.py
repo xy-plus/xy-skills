@@ -9,7 +9,6 @@ import unittest
 
 def handoff():
     return {
-        "kind": "普通",
         "from": {"name": "行情重建", "short_id": "a1b2c3d4"},
         "task": {"what": "数据服务", "done_when": "导入样例验收通过", "others": "引擎由引擎会话负责"},
         "reply": "要",
@@ -21,24 +20,12 @@ def handoff():
     }
 
 
-def cleanup_handoff(contract):
-    return {
-        "kind": "清扫",
-        "from": {"name": "清扫派方", "short_id": "a1b2c3d4"},
-        "reply": "要",
-        "contract": str(contract),
-        "changed": [{"path": "/repo/deleted.py", "in_use_by": "无"}],
-    }
-
 
 class CheckHandoffTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "交接.json"
-        self.contract = Path(directory.name) / "契约"
-        (self.contract / "quotes").mkdir(parents=True)
-        (self.contract / "quotes" / "1.md").write_text("原话\n", encoding="utf-8")
 
     def run_check(self, document):
         return self.run_text(json.dumps(document, ensure_ascii=False))
@@ -72,102 +59,6 @@ class CheckHandoffTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout + result.stderr, "")
 
-    def test_valid_cleanup_handoff_and_remote_changed_path(self):
-        document = cleanup_handoff(self.contract)
-        document["changed"].append({
-            "path": "用户@主机:/项目/scripts/active.py",
-            "in_use_by": "总仓位RL-ETH（f0a9ec51）",
-        })
-        result = self.run_check(document)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout + result.stderr, "")
-
-    def test_cleanup_changed_path_need_not_exist(self):
-        result = self.run_check(cleanup_handoff(self.contract))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_kind_is_required_and_limits_the_structure(self):
-        document = handoff()
-        del document["kind"]
-        self.assert_rejected(document, "缺少字段：交接说明.kind")
-
-        document = handoff()
-        document["kind"] = "清扫任务"
-        result = self.run_check(document)
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "kind 只能是「普通」或「清扫」\n")
-
-    def test_cleanup_handoff_has_only_its_five_fields(self):
-        for field in ("task", "quotes", "rules", "facts", "decide_yourself", "boundaries"):
-            with self.subTest(field=field):
-                document = cleanup_handoff(self.contract)
-                document[field] = []
-                self.assert_rejected(document, f"多余字段：{field}")
-
-    def test_cleanup_handoff_requires_contract_and_changed(self):
-        for field in ("contract", "changed"):
-            with self.subTest(field=field):
-                document = cleanup_handoff(self.contract)
-                del document[field]
-                self.assert_rejected(document, f"缺少字段：交接说明.{field}")
-
-    def test_cleanup_reply_must_be_yes(self):
-        document = cleanup_handoff(self.contract)
-        document["reply"] = "不要"
-        self.assert_rejected(document, "reply 只能是「要」")
-
-    def test_cleanup_changed_must_not_be_empty(self):
-        document = cleanup_handoff(self.contract)
-        document["changed"] = []
-        self.assert_rejected(document, "changed 不能为空")
-
-    def test_cleanup_changed_paths_must_be_absolute(self):
-        for path in ("repo/file.py", "用户@主机:项目/file.py"):
-            with self.subTest(path=path):
-                document = cleanup_handoff(self.contract)
-                document["changed"][0]["path"] = path
-                self.assert_rejected(document, "changed[0].path", "绝对路径")
-
-    def test_cleanup_in_use_by_must_not_be_blank(self):
-        document = cleanup_handoff(self.contract)
-        document["changed"][0]["in_use_by"] = " \n\t"
-        self.assert_rejected(document, "changed[0].in_use_by", "不能为空")
-
-    def test_cleanup_contract_must_exist_and_contain_a_numbered_quote(self):
-        cases = (
-            ("missing", "contract 必须是已存在的目录"),
-            ("no_quotes", "contract 目录下缺少 quotes/"),
-            ("empty_quotes", "quotes/ 里至少要有一个内容非空的 <N>.md"),
-        )
-        for case, message in cases:
-            with self.subTest(case=case):
-                document = cleanup_handoff(self.contract)
-                if case == "missing":
-                    document["contract"] = str(self.contract / "missing")
-                elif case == "no_quotes":
-                    empty_contract = self.contract / "无原话目录"
-                    empty_contract.mkdir()
-                    document["contract"] = str(empty_contract)
-                else:
-                    (self.contract / "quotes" / "1.md").unlink()
-                    (self.contract / "quotes" / "readme.md").write_text("说明\n", encoding="utf-8")
-                    (self.contract / "quotes" / "0.md").write_text("编号不合法\n", encoding="utf-8")
-                self.assert_rejected(document, message)
-
-    def test_cleanup_contract_rejects_only_empty_numbered_quote(self):
-        (self.contract / "quotes" / "1.md").write_text(" \n\t", encoding="utf-8")
-        self.assert_rejected(
-            cleanup_handoff(self.contract),
-            "quotes/ 里至少要有一个内容非空的 <N>.md",
-        )
-
-    def test_cleanup_contract_accepts_a_nonempty_numbered_quote(self):
-        (self.contract / "quotes" / "1.md").write_text(" \n\t", encoding="utf-8")
-        (self.contract / "quotes" / "2.md").write_text("原话内容\n", encoding="utf-8")
-        result = self.run_check(cleanup_handoff(self.contract))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout + result.stderr, "")
-
     def test_facts_decisions_and_boundaries_may_be_empty(self):
         document = handoff()
         document.update(facts=[], decide_yourself=[], boundaries=[])
@@ -194,7 +85,7 @@ class CheckHandoffTest(unittest.TestCase):
                 self.assert_rejected(document, "cleanup", "多余")
 
     def test_missing_top_level_keys_are_reported(self):
-        for key in ("kind", "from", "task", "reply", "quotes", "rules", "facts", "decide_yourself", "boundaries"):
+        for key in ("from", "task", "reply", "quotes", "rules", "facts", "decide_yourself", "boundaries"):
             with self.subTest(key=key):
                 document = handoff()
                 del document[key]

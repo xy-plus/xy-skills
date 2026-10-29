@@ -324,6 +324,10 @@ class Contract:
             task = options.task
             if task not in self.done:
                 raise GoalError(f"已关闭事项 {task} 不存在")
+            if not self.sources(task):
+                raise GoalError(
+                    f"{self.path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}"
+                )
             # 只恢复四个开放字段；旧结论丢弃，取消依据映射仍保留在 links.md。
             values = {name: self.done[task][name] for name in TASK_FIELDS.values()}
             changes[self.path / "tasks" / f"{task}.md"] = encode_fields(values)
@@ -485,7 +489,7 @@ def consume_inputs(paths):
             remove_temporary_path(destination)
 
 
-def publish_contract(root, destination, metadata, quotes, links, input_paths, builtin_task):
+def publish_contract(root, destination, metadata, quotes, links, input_paths):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     item = destination.parent
     project = item.parent
@@ -503,7 +507,6 @@ def publish_contract(root, destination, metadata, quotes, links, input_paths, bu
             (staging / "quotes" / f"{number}.md").write_bytes(text.encode("utf-8"))
         (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
         (staging / "links.md").write_text(links, encoding="utf-8")
-        (staging / "tasks" / "T1.md").write_text(encode_fields(builtin_task), encoding="utf-8")
         Contract(staging)
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
         with consume_inputs(input_paths):
@@ -665,14 +668,8 @@ def execute(options, *, root, session_id, claude_pid, now):
             quotes, reasons = incoming_quotes(inbox, path, 0)
             metadata = {"target": options.target, "session_id": session_id, "claude_pid": str(claude_pid)}
             links = "".join(f"{number} 不必跟进 {reason}\n" for number, reason in reasons.items())
-            builtin_task = {
-                "title": "清扫",
-                "criteria": "按 xy-goal 的「清扫」一节做",
-                "state": "在办",
-                "pointer": "无",
-            }
             publish_contract(root, path, metadata, quotes, links,
-                             [inbox] if inbox.exists() else [], builtin_task)
+                             [inbox] if inbox.exists() else [])
         else:
             path = Path(options.directory).expanduser().resolve()
             parts = path.relative_to(root).parts if path.is_relative_to(root) else ()

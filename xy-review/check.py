@@ -7,7 +7,6 @@ import sys
 
 HANDOFF_DIRECTORY = pathlib.Path(__file__).resolve().parents[1] / "xy-handoff"
 sys.path.insert(0, str(HANDOFF_DIRECTORY))
-from check_handoff import check as check_handoff  # noqa: E402
 from check_handoff import check_value, object_without_duplicate_keys  # noqa: E402
 
 
@@ -34,7 +33,6 @@ REVIEW_RAZOR = {
             "checked": str,
         },
     },
-    "cleanup_handoff": str,
     "verdict": str,
 }
 DIAGNOSIS = {"diagnosis": str, "actions": [str]}
@@ -94,46 +92,6 @@ def item_list(document, *path):
     return value if isinstance(value, list) else []
 
 
-def check_cleanup_handoff(document):
-    """校验清扫剃刀报告引用的交接，并核对其中每个 changed 路径。"""
-    razor = document.get("occams_razor")
-    if not isinstance(razor, dict):
-        return []
-    handoff_value = document.get("cleanup_handoff")
-    if handoff_value == "无":
-        return []
-    if not isinstance(handoff_value, str) or not pathlib.Path(handoff_value).is_absolute():
-        return ["cleanup_handoff 必须是「无」或清扫交接说明的绝对路径"]
-    try:
-        handoff_text = pathlib.Path(handoff_value).read_text(encoding="utf-8")
-        handoff = read_document(handoff_text)
-    except (OSError, UnicodeDecodeError, ValueError, TypeError) as error:
-        return [f"cleanup_handoff 无法读取交接说明「{handoff_value}」：{error}"]
-
-    problems = [f"cleanup_handoff 指向的交接不合格：{problem}"
-                for problem in check_handoff(handoff)]
-    if not isinstance(handoff, dict) or handoff.get("kind") != "清扫":
-        problems.append("cleanup_handoff 必须是 kind 为「清扫」的交接")
-        return problems
-
-    entities = []
-    for item in item_list(razor, "keep"):
-        if isinstance(item, dict) and isinstance(item.get("entity"), str):
-            entities.append(item["entity"])
-    for name in ("delete", "ask_user"):
-        for item in item_list(razor, name, "items"):
-            if isinstance(item, dict) and isinstance(item.get("entity"), str):
-                entities.append(item["entity"])
-
-    for item in item_list(handoff, "changed"):
-        if not isinstance(item, dict):
-            continue
-        path = item.get("path")
-        if isinstance(path, str) and path.strip() and path not in entities:
-            problems.append(f"清扫交接 changed 路径未被三张清单覆盖：{path}")
-    return problems
-
-
 def check(text, filename):
     """按文件名选报告结构并返回所有内容问题。"""
     if filename not in REPORTS:
@@ -182,7 +140,6 @@ def check(text, filename):
             problems.append("剃刀 verdict 写「通过」但 delete.items 有发现")
         elif verdict in ("改了就过", "不通过") and not deleted:
             problems.append(f"剃刀 verdict 写「{verdict}」但 delete.items 为空")
-        problems += check_cleanup_handoff(document)
     else:
         actions = document.get("actions")
         if isinstance(actions, list):
