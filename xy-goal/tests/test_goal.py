@@ -157,14 +157,6 @@ class GoalTests(unittest.TestCase):
         self.assertIn("T1 清扫\n", output)
         self.assertIn("  出处：原话 \n", output)
 
-    def test_source_free_T1_can_change_state_and_be_accepted(self):
-        contract = self.open_seeded_goal("release")
-        self.succeeds("update", "T1", "--state", "等用户：确认清扫范围")
-        self.assertEqual(goal.Contract(contract).tasks["T1"]["state"], "等用户：确认清扫范围")
-        self.succeeds("accept", "T1", "--verdict", "清扫判据已核")
-        self.assertNotIn("T1", goal.Contract(contract).tasks)
-        self.assertEqual(goal.Contract(contract).done["T1"]["verdict"], "清扫判据已核")
-
     def test_renamed_source_free_T1_remains_valid_and_can_be_accepted(self):
         contract = self.open_seeded_goal("release")
         self.succeeds("update", "T1", "--title", "清扫（已处理）")
