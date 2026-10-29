@@ -16,7 +16,7 @@ ORDINARY_FIELDS = {
     "decide_yourself": [str],
     "boundaries": [str],
 }
-SWEEP_FIELDS = {
+CLEANUP_FIELDS = {
     "kind": str,
     "from": {"name": str, "short_id": str},
     "reply": str,
@@ -68,7 +68,7 @@ def check(document):
     if kind not in ("普通", "清扫"):
         return ["kind 只能是「普通」或「清扫」"]
 
-    shape = ORDINARY_FIELDS if kind == "普通" else SWEEP_FIELDS
+    shape = ORDINARY_FIELDS if kind == "普通" else CLEANUP_FIELDS
     problems = check_value("交接说明", document, shape)
     if "reply" in document:
         allowed_replies = ("要", "不要") if kind == "普通" else ("要",)

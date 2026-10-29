@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -65,7 +66,7 @@ class CheckTest(unittest.TestCase):
     def create_round1(self, group="group1"):
         os.makedirs(os.path.join(self.root, group, "round1"), exist_ok=True)
 
-    def write_sweep_handoff(self, changed):
+    def write_cleanup_handoff(self, changed):
         contract = Path(self.root) / "contract"
         (contract / "quotes").mkdir(parents=True, exist_ok=True)
         (contract / "quotes" / "1.md").write_text("用户原话\n", encoding="utf-8")
@@ -187,7 +188,7 @@ class CheckTest(unittest.TestCase):
 
     def test_cleanup_report_covers_every_changed_path(self):
         changed = ["/repo/deleted.py", "用户@主机:/项目/scripts/active.py"]
-        handoff = self.write_sweep_handoff(changed)
+        handoff = self.write_cleanup_handoff(changed)
         document = razor_report(
             keep=[
                 {"entity": "/repo/deleted.py:12", "reason": "保留处理记录"},
@@ -199,7 +200,7 @@ class CheckTest(unittest.TestCase):
 
     def test_cleanup_report_reports_each_uncovered_path(self):
         changed = ["/repo/first.py", "/repo/second.py"]
-        handoff = self.write_sweep_handoff(changed)
+        handoff = self.write_cleanup_handoff(changed)
         document = razor_report(
             keep=[{"entity": "/repo/first.py", "reason": "仍有用"}],
             cleanup_handoff=str(handoff),
@@ -208,7 +209,7 @@ class CheckTest(unittest.TestCase):
 
     def test_cleanup_path_coverage_uses_both_boundaries(self):
         changed = "/a/b"
-        handoff = self.write_sweep_handoff([changed])
+        handoff = self.write_cleanup_handoff([changed])
         invalid_entities = ("/a/bc", "/a/b/c.py", "/x/a/b", "host:/a/b")
         for entity in invalid_entities:
             with self.subTest(entity=entity):
@@ -229,7 +230,7 @@ class CheckTest(unittest.TestCase):
 
     def test_parent_directory_does_not_cover_changed_file(self):
         changed = "/repo/dir/file.py"
-        handoff = self.write_sweep_handoff([changed])
+        handoff = self.write_cleanup_handoff([changed])
         document = razor_report(
             keep=[{"entity": "/repo/dir", "reason": "目录仍保留"}],
             cleanup_handoff=str(handoff),
@@ -261,8 +262,9 @@ class CheckTest(unittest.TestCase):
         self.assertIn("复核不判 T1", goal_skill)
         self.assertIn("T1 按「清扫」一节收到验收通过再 accept", goal_skill)
         self.assertIn("T1 已验收后", goal_skill)
-        self.assertIn("xy-goal 的清扫不在此列", handoff_skill)
-        self.assertIn("与关闭前复核并行", handoff_skill)
+        self.assertIn("除 xy-goal 清扫外的所有「要」交接任务", handoff_skill)
+        self.assertIn("xy-goal 清扫与关闭前复核并行，不阻塞这段集成和整体验收", handoff_skill)
+        self.assertIn("仍按 xy-goal 等 T1 清扫验收", handoff_skill)
 
     def test_cleanup_handoff_must_be_a_valid_cleanup_handoff(self):
         contract = Path(self.root) / "ordinary-contract"
@@ -284,11 +286,11 @@ class CheckTest(unittest.TestCase):
                                cleanup_handoff=str(ordinary_path))
         self.assert_rejected("review-razor.json", document, "必须是 kind 为「清扫」的交接")
 
-        sweep_path = self.write_sweep_handoff(["/repo/file.py"])
-        malformed = json.loads(sweep_path.read_text(encoding="utf-8"))
+        cleanup_path = self.write_cleanup_handoff(["/repo/file.py"])
+        malformed = json.loads(cleanup_path.read_text(encoding="utf-8"))
         del malformed["changed"]
-        sweep_path.write_text(json_text(malformed), encoding="utf-8")
-        document["cleanup_handoff"] = str(sweep_path)
+        cleanup_path.write_text(json_text(malformed), encoding="utf-8")
+        document["cleanup_handoff"] = str(cleanup_path)
         self.assert_rejected("review-razor.json", document, "缺少字段：交接说明.changed")
 
     def test_diagnosis_report_validates_structure_and_actions(self):
@@ -314,6 +316,29 @@ class CheckTest(unittest.TestCase):
         self.create_round1()
         self.assert_rejected("diagnosis.json", diagnosis_report(diagnosis="<这组为什么没过，引用各轮报告的阻断项和证据>"),
                              "模板占位符", folders=("group1",))
+
+    def test_diagnosis_template_actions_are_rejected_when_copied(self):
+        skill = Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8")
+        templates = [json.loads(block) for block in re.findall(r"```json\s*\n(.*?)```", skill, re.S)]
+        diagnosis_template = next(template for template in templates if "diagnosis" in template)
+        self.create_round1()
+        copied_actions = {"diagnosis": "引用阻断项和证据说明根因。", "actions": diagnosis_template["actions"]}
+        self.assert_rejected("diagnosis.json", copied_actions, "模板占位符", folders=("group1",))
+
+    def test_review_report_guidance_is_not_repeated(self):
+        skill = Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8")
+        report_section = skill.split("## 报告", 1)[1].split("## 收到报告后", 1)[0]
+        self.assertEqual(report_section.count("剃刀结论只看 `delete.items` 是否为空"), 1)
+        self.assertEqual(report_section.count("`keep`、`delete.items`、`ask_user.items` 至少一项"), 1)
+        self.assertNotIn("报告三张清单合起来至少有一项", report_section)
+        self.assertEqual(report_section.count("用户原话编号与原文"), 1)
+
+        templates = [json.loads(block) for block in re.findall(r"```json\s*\n(.*?)```", report_section, re.S)]
+        razor_template = next(template for template in templates if "occams_razor" in template)
+        reason = razor_template["occams_razor"]["keep"][0]["reason"]
+        self.assertNotIn("实体：", reason)
+        self.assertIn("同一文件里和这次改动不相干的旧东西可以合成一项", reason)
+        self.assertIn("entity 写各样的名字", reason)
 
     def test_duplicate_json_keys_are_rejected(self):
         text = '{"verdict":"通过","verdict":"不通过"}'
