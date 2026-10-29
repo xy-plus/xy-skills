@@ -160,7 +160,10 @@ def write_files(changes, removals):
 
 def encode_links(links, dismissed):
     rows = list(links)
-    rows.extend((number, "不必跟进 " + reason) for number, reason in dismissed.items())
+    # 挂接意味着要跟进；在唯一编码处作废不必跟进，读入仍可按挂接解释旧并存行。
+    linked = {number for number, _ in links}
+    rows.extend((number, "不必跟进 " + reason) for number, reason in dismissed.items()
+                if number not in linked)
     rows.sort(key=lambda row: (row[0], 0 if row[1].startswith("T") else 1,
                                int(row[1][1:]) if row[1].startswith("T") else row[1]))
     return "".join(f"{number} {landing}\n" for number, landing in rows)
@@ -210,6 +213,7 @@ class Contract:
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
         for task in self.tasks:
+            # T1 的唯一特例是可无出处；挂接与取消仍按普通事项处理。
             if task != "T1" and not self.sources(task):
                 raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
         for task, values in self.done.items():
@@ -307,8 +311,6 @@ class Contract:
             if "criteria" in updated_values and options.source is None:
                 raise GoalError("改判据必须带 --source")
             if options.source is not None:
-                if task == "T1" and not self.sources(task):
-                    raise GoalError("T1 是固定的清扫事项，不接受出处")
                 self.require_sources(options.source)
                 self.links.update((number, task) for number in options.source)
             if updated_values:
@@ -319,7 +321,19 @@ class Contract:
             require_text(options.reason, "原因")
             if any(char in options.reason for char in LINE_BREAKS):
                 raise GoalError("原因必须写成一行")
+            targets = sorted(target for number, target in self.links if number == options.quote)
+            if targets:
+                # 删除挂接会丢开放事项的出处或已关闭事项的取消依据。
+                raise GoalError(f"原话 {options.quote} 已挂事项 " + "、".join(targets))
             self.dismissed[options.quote] = options.reason
+        elif command == "reopen":
+            task = options.task
+            if task not in self.done:
+                raise GoalError(f"已关闭事项 {task} 不存在")
+            # 只恢复四个开放字段；旧结论丢弃，取消依据映射仍保留在 links.md。
+            values = {name: self.done[task][name] for name in TASK_FIELDS.values()}
+            changes[self.path / "tasks" / f"{task}.md"] = encode_fields(values)
+            removals.append(self.path / "done" / f"{task}.md")
         else:
             task = options.task
             self.require_task(task)
@@ -327,8 +341,6 @@ class Contract:
                 require_text(options.verdict, "验收结论")
                 conclusion = {"verdict": options.verdict}
             else:
-                if task == "T1" and not self.sources(task):
-                    raise GoalError("T1 是固定的清扫事项，只能 accept，不能取消")
                 self.require_sources([options.quote])
                 conclusion = {"cancel_quote": str(options.quote)}
                 self.links.add((options.quote, task))
@@ -336,7 +348,8 @@ class Contract:
             # 统一编码已解析字段与结论，不依赖被接受的原文件是否带末尾 LF。
             changes[self.path / "done" / f"{task}.md"] = encode_fields({**self.tasks[task], **conclusion})
             removals.append(original)
-        changes[self.path / "links.md"] = self.links_text()
+        if command != "reopen":
+            changes[self.path / "links.md"] = self.links_text()
         write_files(changes, removals)
         if command == "add":
             print(task)
@@ -379,6 +392,8 @@ def parser():
     cancelling = commands.add_parser("cancel")
     cancelling.add_argument("task")
     cancelling.add_argument("--quote", type=int, required=True)
+    reopening = commands.add_parser("reopen")
+    reopening.add_argument("task")
     return result
 
 
@@ -615,8 +630,6 @@ def relink(path, task, sources):
     except GoalError:
         pass
     else:
-        if task == "T1" and task in contract.tasks and not contract.sources(task):
-            raise GoalError("T1 是固定的清扫事项，不接受出处")
         raise GoalError("契约完好，挂出处用 update")
     links_path = path / "links.md"
     text = read_text(links_path)
@@ -631,8 +644,6 @@ def relink(path, task, sources):
             if number not in quotes:
                 raise GoalError(f"原话 {number} 不存在：{path / 'quotes'}")
     links, dismissed, invalid = parse_links(text, quotes, tasks | done)
-    if task == "T1" and not any(target == task for _, target in links):
-        raise GoalError("T1 是固定的清扫事项，不接受出处")
     for line, reason in invalid:
         print(f"丢弃：{line}；{reason}")
     if task is not None:
