@@ -36,7 +36,7 @@ description: 对抗审查：主审加剃刀两个子代理、报告格式和格�
 
 合入研究产出时，只是研究时需要的，不算留下的理由。
 
-`xy-repo-rules` 七条，逐条查。
+`xy-repo-rules` 七条，逐条查。第 7 条含文件长度判据，对象所在仓跑 `python3 ~/.claude/skills/xy-repo-rules/check_file_length.py --root <仓绝对路径>` 核实，不只读条文。
 
 ## 报告
 
