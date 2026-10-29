@@ -11,7 +11,7 @@ xy-goal 只管五件事：用户原话自动逐字记录，事项与原话对得
 
 ## 清扫
 
-每份契约自带 T1 清扫。第一次改文件前，记下要改的每个仓库或工作树的 `git rev-parse HEAD` 和 `git status`。收尾时列出本会话改过的文件：以自己做过的 Edit、Write、commit 为准，基线只用来缩小范围，拿不准就问用户。改过：按 xy-handoff 交出去一个清扫任务，回复「要」；它按 xy-review 清扫审，它自己的改动不再派清扫；收到验收通过再 accept。没改过：直接 accept。
+每份契约自带 T1 清扫。第一次改文件前，记下要改的每个仓库或工作树的 `git rev-parse HEAD` 和 `git status`。收尾时列出本会话改过的文件：以自己做过的 Edit、Write、commit 为准，基线只用来缩小范围，拿不准就问用户。改过：按 xy-handoff 写 `kind` 为「清扫」的交接交出去，回复「要」；它按 xy-review 清扫审，它自己的改动不再派清扫；收到验收通过再 accept。没改过：直接 accept。
 
 ## 契约与命令
 

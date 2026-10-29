@@ -15,10 +15,13 @@ description: 每个会话常驻；收到用户消息、拆大任务、把事交�
 
 ## 交出去
 
-交接说明由派方写，接手方只读，不修改。按 `xy-runs` 放 `handoff.json`，结构固定：
+交接说明由派方写，接手方只读，不修改。按 `xy-runs` 放 `handoff.json`，`kind` 必填，只能是「普通」或「清扫」：
+
+普通交接：
 
 ```json
-{"from": {"name": "派你的会话名", "short_id": "短 id"},
+{"kind": "普通",
+ "from": {"name": "派你的会话名", "short_id": "短 id"},
  "task": {"what": "接哪一件", "done_when": "做到什么算完", "others": "原话里其余的事归谁"},
  "reply": "要",
  "quotes": [{"text": "逐字原话", "source": "原件路径"}],
@@ -28,9 +31,23 @@ description: 每个会话常驻；收到用户消息、拆大任务、把事交�
  "boundaries": ["不碰的东西"]}
 ```
 
-`reply` 只写「要」（子任务，汇报派方）或「不要」（独立任务，自己交付用户并保留）。接手会话只做分给自己的这一件；接手任务也按「归属与拆分」中的同一规则判断是否继续拆分。`rules` 不抄自动加载的全局说明；`boundaries` 还须写明派方已定的共用接口和格式，要改先问它。
+清扫交接只用于 xy-goal 的 T1 清扫，只有以下五个字段：
 
-`quotes` 至少一条，其余数组可为 `[]`。下文 `<本 skill 目录>` 是这份 SKILL.md 所在的目录：用 Skill 工具加载时就是 Claude Code 给出的 Base directory，经 CLAUDE.md 引入时就是引入路径所在的目录。派方写完自己运行 `python3 <本 skill 目录>/check_handoff.py <路径>`，按报错改到退出 0 才启动接手会话。
+```json
+{"kind": "清扫",
+ "from": {"name": "派你的会话名", "short_id": "短 id"},
+ "reply": "要",
+ "contract": "派方契约目录的绝对路径",
+ "changed": [{"path": "改过的文件的绝对路径", "in_use_by": "还有谁在用，没有写 无"}]}
+```
+
+普通交接的 `reply` 写「要」（子任务，汇报派方）或「不要」（独立任务，自己交付用户并保留）；清扫交接的 `reply` 只能写「要」。接手会话只做分给自己的这一件；接手任务也按「归属与拆分」中的同一规则判断是否继续拆分。普通交接的 `rules` 不抄自动加载的全局说明；`boundaries` 还须写明派方已定的共用接口和格式，要改先问它。
+
+普通交接的 `quotes` 至少一条，其余数组可为 `[]`。清扫交接的 `changed` 至少一项，按 xy-goal「清扫」一节列出；`in_use_by` 写还在使用该文件的会话或人，没人用写「无」。`contract` 必须是已有契约目录的绝对路径，目录下的 `quotes/` 至少有一个原话文件。
+
+接手方见到 `kind` 为「清扫」的交接，就按 xy-review 的清扫审查规则处理：从 `changed` 列出的路径起审，用户原话从 `contract` 下的 `quotes/` 读取。
+
+下文 `<本 skill 目录>` 是这份 SKILL.md 所在的目录：用 Skill 工具加载时就是 Claude Code 给出的 Base directory，经 CLAUDE.md 引入时就是引入路径所在的目录。派方写完自己运行 `python3 <本 skill 目录>/check_handoff.py <路径>`，按报错改到退出 0 才启动接手会话。
 
 目录取这件事所在仓库的主检出根目录；与仓库无关就用原会话的启动目录。启动前用 `claude agents --json` 查现有名字；`-n` 必填，取一个说清这件事的短名，尽量用中文，不与现有会话重名，名字也是 SendMessage 的收件地址。用子 shell，原会话自己的工作目录不变：
 

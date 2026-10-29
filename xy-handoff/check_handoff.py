@@ -1,9 +1,12 @@
 """只读校验 handoff.json：合格退出 0，不合格逐条报错并退出 1，用法错误退出 2。"""
 import json
+import pathlib
+import re
 import sys
 
 
-FIELDS = {
+ORDINARY_FIELDS = {
+    "kind": str,
     "from": {"name": str, "short_id": str},
     "task": {"what": str, "done_when": str, "others": str},
     "reply": str,
@@ -13,6 +16,14 @@ FIELDS = {
     "decide_yourself": [str],
     "boundaries": [str],
 }
+SWEEP_FIELDS = {
+    "kind": str,
+    "from": {"name": str, "short_id": str},
+    "reply": str,
+    "contract": str,
+    "changed": [{"path": str, "in_use_by": str}],
+}
+REMOTE_ABSOLUTE_PATH = re.compile(r"[^@\s:/]+@[^@\s:/]+:(/.*)")
 
 
 def object_without_duplicate_keys(pairs):
@@ -49,12 +60,56 @@ def check_value(where, value, shape):
 
 def check(document):
     """返回问题列表，为空即合格。"""
-    problems = check_value("交接说明", document, FIELDS)
-    if isinstance(document, dict):
+    if not isinstance(document, dict):
+        return ["交接说明 必须是对象"]
+    if "kind" not in document:
+        return ["缺少字段：交接说明.kind"]
+    kind = document["kind"]
+    if kind not in ("普通", "清扫"):
+        return ["kind 只能是「普通」或「清扫」"]
+
+    shape = ORDINARY_FIELDS if kind == "普通" else SWEEP_FIELDS
+    problems = check_value("交接说明", document, shape)
+    if "reply" in document:
+        allowed_replies = ("要", "不要") if kind == "普通" else ("要",)
+        if document["reply"] not in allowed_replies:
+            problems.append("reply 只能是「要」或「不要」" if kind == "普通" else "reply 只能是「要」")
+
+    if kind == "普通":
         if document.get("quotes") == []:
             problems.append("交接说明.quotes 不能为空")
-        if "reply" in document and document["reply"] not in ("要", "不要"):
-            problems.append("reply 只能是「要」或「不要」")
+        return problems
+
+    if document.get("changed") == []:
+        problems.append("交接说明.changed 不能为空")
+    contract = document.get("contract")
+    if isinstance(contract, str) and contract.strip():
+        contract_path = pathlib.Path(contract)
+        if not contract_path.is_absolute():
+            problems.append("contract 必须是绝对路径")
+        elif not contract_path.is_dir():
+            problems.append("contract 必须是已存在的目录")
+        else:
+            quotes_path = contract_path / "quotes"
+            if not quotes_path.is_dir():
+                problems.append("contract 目录下缺少 quotes/")
+            elif not any(re.fullmatch(r"[1-9]\d*\.md", path.name) for path in quotes_path.iterdir()
+                         if path.is_file()):
+                problems.append("quotes/ 里至少要有一个 <N>.md")
+
+    changed = document.get("changed")
+    if isinstance(changed, list):
+        for index, item in enumerate(changed):
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            if isinstance(path, str) and path.strip():
+                local_absolute = pathlib.Path(path).is_absolute()
+                remote_absolute = REMOTE_ABSOLUTE_PATH.fullmatch(path) is not None
+                if not (local_absolute or remote_absolute):
+                    problems.append(
+                        f"交接说明.changed[{index}].path 必须是本机绝对路径或「用户@主机:/绝对路径」"
+                    )
     return problems
 
 
