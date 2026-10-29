@@ -1,221 +1,148 @@
-"""检查一份 xy-review 报告的格式和正式报告结构。
-
-check(text) 只查内容格式：报告种类与节、字段、清单、仓库规范和结论。
-main 另把正式报告的位置与文件名、组内轮次目录名与连续性、开新组门槛作为硬错误；
-这些错误退出 1。它只读当前报告，不读其他报告，也不判断上一组哪一轮未通过。
-格式和结构都合格、当前 round3 报告结论为「不通过」时，只提醒先派判因，不拦截。
-
-退出码：0 格式和结构合格；1 有格式或结构错误，逐条打印问题；2 用法错误。
-"""
+"""只读检查 xy-review 的 JSON 报告结构、结论和正式轮次位置。"""
+import json
 import pathlib
 import re
 import sys
 
-# 三节铁律各自的必填字段。
-LAW_FIELDS = {
-    "铁律 1 第一性原理": ["本质", "偏离"],
-    "铁律 2 难误用": ["问题"],
-    "铁律 3 奥卡姆剃刀": ["留下清单", "删除清单", "要用户定"],
+
+HANDOFF_DIRECTORY = pathlib.Path(__file__).resolve().parents[1] / "xy-handoff"
+sys.path.insert(0, str(HANDOFF_DIRECTORY))
+from check_handoff import check_value, object_without_duplicate_keys  # noqa: E402
+
+
+SECTION = {"items": [{"problem": str, "evidence": str}], "checked": str}
+REVIEW_MAIN = {
+    "first_principles": {"essence": str, "deviations": SECTION},
+    "hard_to_misuse": SECTION,
+    "repo_rules": {str(number): SECTION for number in range(1, 8)},
+    "verdict": str,
 }
-# 三种报告各自的节。
-REPORT_KINDS = {
-    "审查报告": ["铁律 1 第一性原理", "铁律 2 难误用", "仓库规范", "结论"],
-    "剃刀报告": ["铁律 3 奥卡姆剃刀", "结论"],
-    "判因报告": ["判因", "结论"],
+REVIEW_RAZOR = {
+    "occams_razor": {
+        "keep": [{"entity": str, "reason": str}],
+        "delete": {"items": [{"entity": str, "loss": str}], "checked": str},
+        "ask_user": {
+            "items": [{"entity": str, "now": str, "change_to": str, "saving": str}],
+            "checked": str,
+        },
+    },
+    "cleanup_handoff": str,
+    "verdict": str,
 }
-RULE_COUNT = 7  # 仓库规范条数
-# 不是「无」就算查出了问题的字段。「本质」「留下清单」本来就该有内容；「要用户定」不计入结论：其他任务只在最后汇报问，清扫任务两份报告处理完后用提问工具问用户，等答复再收尾。
-PROBLEM_FIELDS = ["偏离", "问题", "删除清单"]
-MUST_HAVE_CONTENT = ["本质", "留下清单"]
+DIAGNOSIS = {"diagnosis": str, "actions": [str]}
+REPORTS = {
+    "review-main.json": ("主审报告", REVIEW_MAIN),
+    "review-razor.json": ("剃刀报告", REVIEW_RAZOR),
+    "diagnosis.json": ("判因报告", DIAGNOSIS),
+}
 VERDICTS = ("通过", "改了就过", "不通过")
-# 「无」必须单独成项：后面紧跟标点、括号或行尾；前面可以有列表符。「无法」「无用」这类词，以及「无 docstring」这种空格隔开的真发现，都不算「无」。
-NONE_RE = re.compile(r"(?:[-*]\s+)?无(?:[，,、。；;：:（(]|$)")
-BARE_NONE_RE = re.compile(r"(?:[-*]\s+)?无[，,、。；;：:（(]*[）)]?")
-# 模板占位符就是 SKILL.md 各报告模板里尖括号包着的那些话，从那里读，不另抄一份。
+DIAGNOSIS_ACTIONS = ("拆分", "重想", "问用户", "顶回")
 TEMPLATE_PLACEHOLDERS = [
-    piece
-    for block in re.findall(r"```markdown\n(.*?)```", pathlib.Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8"), re.S)
-    for piece in re.findall(r"<([^<>]+)>", block)
+    placeholder
+    for block in re.findall(
+        r"```json\s*\n(.*?)```",
+        pathlib.Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8"),
+        re.S,
+    )
+    for placeholder in re.findall(r"<([^<>]+)>", block)
 ]
 
 
-def split_sections(text):
-    """按「## 标题」切分，返回 ({标题: 行列表}, 问题列表)。重复的标题、第一节之前的内容都是问题；标题认不认识由 check 按报告种类判。"""
-    sections, problems, name = {}, [], None
-    for line in text.splitlines():
-        heading = re.fullmatch(r"##\s+(.+?)\s*", line)
-        if heading is None:
-            if name is not None:
-                sections[name].append(line)
-            elif line.strip():
-                problems.append(f"第一节之前不能有内容：{line.strip()}")
-            continue
-        name = heading.group(1)
-        if name in sections:
-            problems.append(f"「## {name}」出现了两次")
-        sections.setdefault(name, [])
-    return sections, problems
-
-
-def report_kind(sections):
-    """按报告首节识别报告种类，供内容检查和路径提醒共用。"""
-    return next((name for name, headings in REPORT_KINDS.items() if headings[0] in sections), None)
-
-
-def split_fields(name, lines, keys):
-    """「字段：值」，值可以接着写多行，直到下一个字段。字段名要顶格、全角冒号、不加粗，
-    写法不标准的同名行当场报错，不能悄悄并进上一个字段；带列表符的行是清单内容，实体恰好叫字段名也不算。
-    第一个字段之前不能有内容，否则那里写的发现没人看。返回 ({字段: 值}, 问题列表)。"""
-    near_miss = re.compile(r"\W*(" + "|".join(map(re.escape, keys)) + r")\W*[:：]")
-    fields, problems, key = {}, [], None
-    for line in lines:
-        matched = re.match(r"([^\s：]+)：(.*)", line)
-        if matched and matched.group(1) in keys:
-            key = matched.group(1)
-            if key in fields:
-                problems.append(f"「{key}」出现了两次")
-            fields.setdefault(key, []).append(matched.group(2))
-        elif not re.match(r"\s*[-*]\s", line) and near_miss.match(line):
-            problems.append(f"「{near_miss.match(line).group(1)}」要顶格写、用全角冒号「：」、不加粗")
-        elif key is not None:
-            fields[key].append(line)
-        elif line.strip():
-            problems.append(f"「{name}」里字段之外有内容：{line.strip()}")
-    return {k: "\n".join(v).strip() for k, v in fields.items()}, problems
-
-
-def split_rules(lines):
-    """「N. 内容」，内容可以接着写多行，直到下一个编号。第 1 条之前不能有内容。返回 ({N: 内容}, 问题列表)。"""
-    rules, problems, number = {}, [], None
-    for line in lines:
-        matched = re.match(r"(\d+)\.\s*(.*)", line)
-        if matched:
-            number = int(matched.group(1))
-            if not 1 <= number <= RULE_COUNT:
-                problems.append(f"仓库规范只有 1 到 {RULE_COUNT} 条，出现了第 {number} 条")
-            elif number in rules:
-                problems.append(f"仓库规范第 {number} 条出现了两次；子列表要缩进，不要顶格编号")
-            rules.setdefault(number, []).append(matched.group(2))
-        elif number is not None:
-            rules[number].append(line)
-        elif line.strip():
-            problems.append(f"仓库规范第 1 条之前有内容：{line.strip()}")
-    return {k: "\n".join(v).strip() for k, v in rules.items()}, problems
-
-
-def is_none(value):
-    return NONE_RE.match(value) is not None
-
-
 def has_placeholder(value):
-    """尖括号里的话是模板占位符或它的片段，就是照抄模板没填。<仓库名>、<路径/文件> 这类不在模板里，不算。"""
-    return any(len(piece) >= 2 and any(piece in template for template in TEMPLATE_PLACEHOLDERS)
-               for piece in re.findall(r"<([^<>]+)>", value))
+    """报告值含模板占位符或它的片段时返回 True。"""
+    return any(
+        len(piece) >= 2 and any(piece in template for template in TEMPLATE_PLACEHOLDERS)
+        for piece in re.findall(r"<([^<>]+)>", value)
+    )
 
 
-def check_value(where, value):
-    """字段和规范条目的通用检查：非空、没抄占位符、写了「无」就要带对照且只有这一行。返回问题列表。"""
-    if not value:
-        return [f"{where}为空"]
-    problems = []
-    if has_placeholder(value):
-        problems.append(f"{where}还留着模板占位符")
-    if is_none(value):
-        if BARE_NONE_RE.fullmatch(value):
-            problems.append(f"{where}只写了「无」，后面要写对照了什么")
-        if len(value.splitlines()) > 1:
-            problems.append(f"{where}写了「无」就只能有这一行，下面不能再列条目")
-    return problems
-
-
-def check_lines(where, value, separators, shape):
-    """清单一行一样：去掉列表符后，按顺序被各组分隔符隔开的每段都要有字；写「无」的清单不查行。"""
-    if is_none(value):
+def find_placeholders(where, value):
+    """递归检查所有值，不复制 SKILL.md 中的占位符。"""
+    if isinstance(value, str):
+        if has_placeholder(value):
+            return [f"{where} 还留着模板占位符"]
         return []
-    pattern = "".join(rf"([^{group}]*)[{group}]" for group in separators) + "(.*)"
-    problems = []
-    for line in value.splitlines():
-        item = re.sub(r"^[-*]\s+", "", line.strip())
-        parts = re.fullmatch(pattern, item)
-        if item and not (parts and all(part.strip() for part in parts.groups())):
-            problems.append(f"{where}每行要写「{shape}」，这行不是：{line.strip()}")
-    return problems
+    if isinstance(value, dict):
+        return [problem for key, item in value.items()
+                for problem in find_placeholders(f"{where}.{key}", item)]
+    if isinstance(value, list):
+        return [problem for index, item in enumerate(value)
+                for problem in find_placeholders(f"{where}[{index}]", item)]
+    return []
 
 
-def check(text):
-    """只查报告内容格式，返回问题列表；为空即格式合格，不检查报告路径或轮次结构。"""
-    sections, problems = split_sections(text)
-    kind = report_kind(sections)
-    if kind is None:
-        problems.append("报告要么是" + "，要么是".join(f"{kind}（{'、'.join(names)}）" for kind, names in REPORT_KINDS.items()))
+def read_document(text):
+    """用交接检查器的重复键规则解析 JSON。"""
+    return json.loads(text, object_pairs_hook=object_without_duplicate_keys)
+
+
+def item_list(document, *path):
+    """从结构正确的报告中取数组；结构错误由 check_value 报告。"""
+    value = document
+    for key in path:
+        if not isinstance(value, dict):
+            return []
+        value = value.get(key)
+    return value if isinstance(value, list) else []
+
+
+def check(text, filename):
+    """按文件名选报告结构并返回所有内容问题。"""
+    if filename not in REPORTS:
+        return ["报告文件名只能是 review-main.json、review-razor.json 或 diagnosis.json"]
+    report_kind, shape = REPORTS[filename]
+    try:
+        document = read_document(text)
+    except (ValueError, TypeError) as error:
+        return [f"JSON 无效：{error}"]
+
+    problems = check_value("报告", document, shape)
+    if isinstance(document, (dict, list)):
+        problems += find_placeholders("报告", document)
+    if not isinstance(document, dict):
         return problems
-    expected = REPORT_KINDS[kind]
-    for name in sections:
-        if name not in expected:
-            problems.append(f"不认识的节「## {name}」，{kind}只能有：" + "、".join(expected))
-    for name in expected:
-        if name not in sections:
-            problems.append(f"缺少「## {name}」")
 
-    values, rules = {}, {}
-    for name, keys in LAW_FIELDS.items():
-        if name not in sections:
-            continue
-        fields, field_problems = split_fields(name, sections[name], keys)
-        problems += field_problems
-        for key in keys:
-            if key not in fields:
-                problems.append(f"{name}：缺少「{key}」")
-                continue
-            problems += check_value(f"{name}：「{key}」", fields[key])
-            if key in MUST_HAVE_CONTENT and is_none(fields[key]):
-                problems.append(f"{name}：「{key}」不能写「无」，它本来就该有内容")
-            values[key] = fields[key]
-    if "留下清单" in values:
-        problems += check_lines("留下清单", values["留下清单"], ("：",), "实体：留下理由")
-    if "删除清单" in values:
-        problems += check_lines("删除清单", values["删除清单"], ("；;",), "实体；删了丢什么")
-    if "要用户定" in values:
-        problems += check_lines(
-            "要用户定", values["要用户定"], ("：", "；;", "；;"),
-            "实体：现在多大；改成什么；能省多少",
-        )
-    if "仓库规范" in sections:
-        rules, rule_problems = split_rules(sections["仓库规范"])
-        problems += rule_problems
-        for number in range(1, RULE_COUNT + 1):
-            if number not in rules:
-                problems.append(f"仓库规范第 {number} 条缺失")
-            else:
-                problems += check_value(f"仓库规范第 {number} 条", rules[number])
+    if report_kind == "主审报告":
+        verdict = document.get("verdict")
+        if isinstance(verdict, str) and verdict not in VERDICTS:
+            problems.append("报告.verdict 只能是「通过」「改了就过」或「不通过」")
+        findings = []
+        for label, path in (
+            ("first_principles.deviations", ("first_principles", "deviations", "items")),
+            ("hard_to_misuse", ("hard_to_misuse", "items")),
+        ):
+            if item_list(document, *path):
+                findings.append(label)
+        for number in range(1, 8):
+            if item_list(document, "repo_rules", str(number), "items"):
+                findings.append(f"repo_rules.{number}")
+        if verdict == "通过" and findings:
+            problems.append("主审 verdict 写「通过」但有发现：" + "、".join(findings))
+        elif verdict in ("改了就过", "不通过") and not findings:
+            problems.append(f"主审 verdict 写「{verdict}」但没有发现（所有 items 都为空）")
+    elif report_kind == "剃刀报告":
+        verdict = document.get("verdict")
+        if isinstance(verdict, str) and verdict not in VERDICTS:
+            problems.append("报告.verdict 只能是「通过」「改了就过」或「不通过」")
+        keep = item_list(document, "occams_razor", "keep")
+        deleted = item_list(document, "occams_razor", "delete", "items")
+        asked = item_list(document, "occams_razor", "ask_user", "items")
+        if not keep and not deleted and not asked:
+            problems.append("剃刀报告三张清单合计至少要有一项")
+        if verdict == "通过" and deleted:
+            problems.append("剃刀 verdict 写「通过」但 delete.items 有发现")
+        elif verdict in ("改了就过", "不通过") and not deleted:
+            problems.append(f"剃刀 verdict 写「{verdict}」但 delete.items 为空")
+    else:
+        actions = document.get("actions")
+        if isinstance(actions, list):
+            if not actions:
+                problems.append("报告.actions 不能为空")
+            if any(action not in DIAGNOSIS_ACTIONS for action in actions):
+                problems.append("报告.actions 只能包含「拆分」「重想」「问用户」「顶回」")
+            if all(isinstance(action, str) for action in actions) and len(actions) != len(set(actions)):
+                problems.append("报告.actions 不能重复")
 
-    # 查出了问题的地方，带上首行，报错时让人看出是写法问题还是真发现。
-    findings = [f"「{key}」（{values[key].splitlines()[0]}）" for key in PROBLEM_FIELDS
-                if values.get(key) and not is_none(values[key])]
-    findings += [f"仓库规范第 {number} 条（{rules[number].splitlines()[0]}）" for number in range(1, RULE_COUNT + 1)
-                 if rules.get(number) and not is_none(rules[number])]
-
-    if "结论" not in sections:
-        return problems
-    conclusion_lines = [line.strip() for line in sections["结论"] if line.strip()]
-    verdict = conclusion_lines[0] if conclusion_lines else ""
-    if kind == "判因报告":
-        diagnosis = "\n".join(sections["判因"]).strip()
-        if not diagnosis:
-            problems.append("判因为空")
-        if has_placeholder(diagnosis):
-            problems.append("判因还留着模板占位符")
-        actions = verdict.split("、")
-        if (len(conclusion_lines) != 1 or any(action not in ("拆分", "重想", "问用户", "顶回") for action in actions)
-                or len(actions) != len(set(actions))):
-            problems.append("判因结论只能有一行，走法只能是「拆分」「重想」「问用户」「顶回」中的一种或几种，用「、」隔开、不重复")
-        return problems
-    if len(conclusion_lines) != 1 or verdict not in VERDICTS:
-        problems.append("结论只能有一行，写「通过」「改了就过」或「不通过」")
-    elif verdict == "通过" and findings:
-        problems.append("结论写通过，但有的地方不是「无，」开头：" + "、".join(findings))
-    elif verdict != "通过" and not findings:
-        problems.append(f"结论写{verdict}，但各节都是「无」")
     return problems
 
 
@@ -224,34 +151,30 @@ def main(argv):
         print("用法：check.py <报告路径>")
         return 2
     path = pathlib.Path(argv[1]).resolve()
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    problems = check(text)
-    if problems:
-        print("\n".join(problems))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        print(f"无法读取「{path}」：{error}")
         return 1
-    sections, _ = split_sections(text)
-    kind = report_kind(sections)
 
-    # 正式结构错误都在本入口拦截；这里只看目录名和当前报告的位置，不打开其他报告。
+    problems = check(text, path.name)
+    kind = REPORTS.get(path.name, (None, None))[0]
     if kind == "判因报告":
         group_path = path.parent
         group_match = re.fullmatch(r"group([1-9]\d*)", group_path.name)
-        if path.name != "diagnosis.md" or group_match is None:
-            problems.append("判因报告必须写在 group<G>/diagnosis.md，G 从 1 起且不能有前导零")
-    else:
-        expected_name = "review-main.md" if kind == "审查报告" else "review-razor.md"
-        if path.name != expected_name:
-            problems.append(f"{kind}必须命名为 {expected_name}")
+        if group_match is None:
+            problems.append("判因报告必须写在 group<G>/diagnosis.json，G 从 1 起且不能有前导零")
+    elif kind in ("主审报告", "剃刀报告"):
         round_path = path.parent
         group_path = round_path.parent
         group_match = re.fullmatch(r"group([1-9]\d*)", group_path.name)
         if group_match is None or re.fullmatch(r"round[123]", round_path.name) is None:
             problems.append("审查报告和剃刀报告必须写在 group<G>/round<R>/，G 从 1 起且不能有前导零，R 只能是 1、2、3")
+    else:
+        group_match = None
 
     if group_match is not None:
         group_number = int(group_match.group(1))
-        # 每个现有 round 目录都用 round1、round2 或 round3；编号连续，最多三轮。
         round_numbers = set()
         for child in group_path.iterdir():
             if not child.is_dir() or not child.name.startswith("round"):
@@ -266,10 +189,8 @@ def main(argv):
             for number in range(1, max(round_numbers) + 1):
                 if number not in round_numbers:
                     problems.append(f"{group_path}：轮次编号不连续，缺少 round{number}")
-
-        # 下一组只能在上一组完成三轮仍不通过并留下判因后开启；不读取报告来判断是否满足。
         if group_number >= 2:
-            previous_diagnosis = group_path.parent / f"group{group_number - 1}" / "diagnosis.md"
+            previous_diagnosis = group_path.parent / f"group{group_number - 1}" / "diagnosis.json"
             if not previous_diagnosis.is_file():
                 problems.append(
                     f"{previous_diagnosis} 不存在；一组要复审到第 3 轮仍不通过、派判因写下原因后才能开新组"
@@ -279,11 +200,11 @@ def main(argv):
         print("\n".join(problems))
         return 1
 
-    # 第 3 轮仍不通过时只提醒先派判因；是否真的复审到第 3 轮不从其他报告推断。
-    if (kind in ("审查报告", "剃刀报告") and path.parent.name == "round3"
-            and "\n".join(sections["结论"]).strip() == "不通过"):
-        group = path.parent.parent.name
-        print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.md，按结论处理后再开下一组")
+    if kind in ("主审报告", "剃刀报告") and path.parent.name == "round3":
+        document = read_document(text)
+        if document.get("verdict") == "不通过":
+            group = path.parent.parent.name
+            print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.json，按结论处理后再开下一组")
     return 0
 
 

@@ -1,348 +1,287 @@
+"""xy-review JSON 报告的结构、内容和正式位置测试。"""
 import contextlib
 import io
+import json
 import os
 import tempfile
 import unittest
 
-from check import check, main
+from check import main
 
 
-def main_report(**overrides):
-    """主审的审查报告。"""
-    fields = {
-        "本质": "用户要的是 X",
-        "偏离": "无，对照了 spec 第 1、2 条",
-        "问题": "无，试了两种用错的写法都当场报错",
-        "规范": "\n".join(f"{i}. 无，查了 Y" for i in range(1, 8)),
-        "结论": "通过",
+def section(items=None, checked="核对了实现与 spec"):
+    return {"items": [] if items is None else items, "checked": checked}
+
+
+def main_report(verdict="通过", deviations=None, hard_to_misuse=None, repo_rules=None):
+    return {
+        "first_principles": {"essence": "用户要的是明确且可检查的行为", "deviations": section(deviations)},
+        "hard_to_misuse": section(hard_to_misuse),
+        "repo_rules": {str(number): section() for number in range(1, 8)} if repo_rules is None else repo_rules,
+        "verdict": verdict,
     }
-    fields.update(overrides)
-    return (
-        "## 铁律 1 第一性原理\n"
-        f"本质：{fields['本质']}\n偏离：{fields['偏离']}\n"
-        "## 铁律 2 难误用\n"
-        f"问题：{fields['问题']}\n"
-        "## 仓库规范\n"
-        f"{fields['规范']}\n"
-        "## 结论\n"
-        f"{fields['结论']}\n"
-    )
 
 
-def razor_report(**overrides):
-    """剃刀的剃刀报告。"""
-    fields = {
-        "留下清单": "参数 x：离开它，用户原话 1「参数可配置」",
-        "删除清单": "无，逐样问过",
-        "要用户定": "无，逐项判断后没有拿不准的项",
-        "结论": "通过",
+def razor_report(verdict="通过", keep=None, delete=None, ask_user=None, cleanup_handoff="无"):
+    return {
+        "occams_razor": {
+            "keep": [{"entity": "check.py", "reason": "xy-review 的在用入口"}] if keep is None else keep,
+            "delete": {"items": [] if delete is None else delete, "checked": "核对了依赖与调用方"},
+            "ask_user": {"items": [] if ask_user is None else ask_user, "checked": "核对了行为变化"},
+        },
+        "cleanup_handoff": cleanup_handoff,
+        "verdict": verdict,
     }
-    fields.update(overrides)
-    return (
-        "## 铁律 3 奥卡姆剃刀\n"
-        f"留下清单：{fields['留下清单']}\n删除清单：{fields['删除清单']}\n要用户定：{fields['要用户定']}\n"
-        "## 结论\n"
-        f"{fields['结论']}\n"
-    )
 
 
-def diagnosis_report(diagnosis, conclusion):
-    """判因报告，正文和结论都显式传入。"""
-    return f"## 判因\n{diagnosis}\n## 结论\n{conclusion}\n"
+def diagnosis_report(diagnosis="问题在于目标被拆成互相矛盾的两种格式。", actions=None):
+    return {"diagnosis": diagnosis, "actions": ["重想"] if actions is None else actions}
 
 
-def write_report(path, text):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+def json_text(document):
+    return json.dumps(document, ensure_ascii=False)
 
 
 class CheckTest(unittest.TestCase):
-    def assertProblems(self, text, *needles):
-        problems = check(text)
-        self.assertTrue(problems, "应该报错却通过了")
-        for needle in needles:
-            self.assertTrue(any(needle in p for p in problems), f"没报「{needle}」：{problems}")
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = directory.name
 
-    def run_main(self, path):
+    def run_main(self, path_parts, text):
+        path = os.path.join(self.root, *path_parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write(text)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             code = main(["check.py", path])
         return code, output.getvalue().splitlines()
 
-    def test_clean_reports_pass(self):
-        self.assertEqual(check(main_report()), [])
-        self.assertEqual(check(razor_report()), [])
+    def run_report(self, name, document, folders=("group1", "round1")):
+        return self.run_main((*folders, name), json_text(document))
 
-    def test_diagnosis_report_passes(self):
-        self.assertEqual(check(diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "拆分、重想、问用户、顶回")), [])
+    def create_round1(self, group="group1"):
+        os.makedirs(os.path.join(self.root, group, "round1"), exist_ok=True)
 
-    def test_diagnosis_extra_section(self):
-        text = diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "拆分")
-        self.assertProblems(text + "## 备注\n补充说明\n", "不认识的节「## 备注」")
+    def assert_rejected(self, name, document, *needles, folders=("group1", "round1")):
+        code, problems = self.run_report(name, document, folders)
+        self.assertEqual(code, 1, problems)
+        for needle in needles:
+            self.assertTrue(any(needle in problem for problem in problems), f"没报「{needle}」：{problems}")
 
-    def test_diagnosis_conclusion_single_line(self):
-        self.assertProblems(diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "拆分\n重想"), "判因结论只能有一行")
+    def test_clean_json_reports_pass(self):
+        self.assertEqual(self.run_report("review-main.json", main_report()), (0, []))
+        self.assertEqual(self.run_report("review-razor.json", razor_report()), (0, []))
 
-    def test_diagnosis_action_must_be_known(self):
-        self.assertProblems(diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "通过"), "判因结论", "走法")
+    def test_main_report_requires_exact_keys_and_types(self):
+        cases = []
+        document = main_report()
+        del document["verdict"]
+        cases.append((document, "缺少字段：报告.verdict"))
 
-    def test_diagnosis_actions_must_not_repeat(self):
-        self.assertProblems(diagnosis_report("三轮审查仍混合多个目标，见 group1/round3。", "拆分、拆分"), "判因结论", "不重复")
+        document = main_report()
+        document["extra"] = "多余"
+        cases.append((document, "多余字段：extra"))
 
-    def test_diagnosis_must_not_be_empty(self):
-        self.assertProblems(diagnosis_report(" \n\t", "拆分"), "判因为空")
+        document = main_report()
+        document["first_principles"]["deviations"] = {"items": [], "checked": "对照"}
+        document["first_principles"]["deviations"]["extra"] = "多余"
+        cases.append((document, "first_principles.deviations 多余字段：extra"))
 
-    def test_diagnosis_must_not_copy_placeholder(self):
-        self.assertProblems(diagnosis_report("<用户真正要的是什么；若是修错，根源在哪>", "拆分"), "判因还留着模板占位符")
+        document = main_report()
+        document["hard_to_misuse"]["items"] = "无"
+        cases.append((document, "报告.hard_to_misuse.items 必须是数组"))
 
-    def test_fail_with_findings(self):
-        self.assertEqual(check(main_report(偏离="a.py:3 没改根源，在 b.py 兜底", 结论="不通过")), [])
-        self.assertEqual(check(razor_report(删除清单="- 参数 x；删了丢什么：无\n- 分支 y；删了丢什么：无", 结论="改了就过")), [])
+        document = main_report()
+        document["first_principles"]["deviations"]["items"] = [{"problem": "问题"}]
+        cases.append((document, "缺少字段：报告.first_principles.deviations.items[0].evidence"))
 
-    def test_report_must_match_one_kind(self):
-        self.assertProblems("## 结论\n通过\n", "要么是审查报告")
-        mixed = main_report().replace("## 结论\n", "## 铁律 3 奥卡姆剃刀\n留下清单：a：原话 1\n删除清单：无，问过\n要用户定：无，没有\n## 结论\n")
-        self.assertProblems(mixed, "不认识的节「## 铁律 3 奥卡姆剃刀」")
+        document = main_report()
+        document["first_principles"]["essence"] = " \n\t"
+        cases.append((document, "报告.first_principles.essence 不能为空"))
 
-    def test_missing_section(self):
-        self.assertProblems(main_report().replace("## 铁律 2 难误用\n", ""), "缺少「## 铁律 2 难误用」")
-        self.assertProblems(razor_report().replace("## 结论\n通过\n", ""), "缺少「## 结论」")
+        document = main_report()
+        document["hard_to_misuse"]["checked"] = []
+        cases.append((document, "报告.hard_to_misuse.checked 必须是字符串"))
 
-    def test_unknown_section(self):
-        self.assertProblems(main_report() + "## 备注\n随便写\n", "不认识的节")
-        self.assertProblems(razor_report() + "## 仓库规范\n1. 无，查了\n", "不认识的节「## 仓库规范」")
+        for document, message in cases:
+            with self.subTest(message=message):
+                self.assert_rejected("review-main.json", document, message)
 
-    def test_duplicate_section(self):
-        text = main_report().replace("## 铁律 2 难误用\n", "## 铁律 2 难误用\n问题：check.py:100 漏检\n## 铁律 2 难误用\n")
-        self.assertProblems(text, "「## 铁律 2 难误用」出现了两次")
+    def test_main_report_requires_repository_rules_one_through_seven(self):
+        rules = {str(number): section() for number in range(1, 8)}
+        del rules["5"]
+        rules["8"] = section()
+        document = main_report(repo_rules=rules)
+        self.assert_rejected("review-main.json", document,
+                             "缺少字段：报告.repo_rules.5", "repo_rules 多余字段：8")
 
-    def test_content_outside_fields_is_rejected(self):
-        finding = "- check.py:35 发现被丢弃\n"
-        self.assertProblems(finding + main_report(), "第一节之前不能有内容")
-        self.assertProblems(main_report().replace("## 铁律 2 难误用\n", "## 铁律 2 难误用\n" + finding), "字段之外有内容")
-        self.assertProblems(main_report().replace("## 仓库规范\n", "## 仓库规范\n" + finding), "第 1 条之前有内容")
+    def test_main_verdict_matches_findings(self):
+        findings = [{"problem": "增量：漏掉新约束；用户原话 4「格式规范」", "evidence": "check.py:25"}]
+        self.assertEqual(self.run_report("review-main.json", main_report(verdict="改了就过", deviations=findings)), (0, []))
+        self.assert_rejected("review-main.json", main_report(verdict="通过", deviations=findings), "通过」但有发现")
+        self.assert_rejected("review-main.json", main_report(verdict="不通过"), "但没有发现")
+        self.assert_rejected("review-main.json", main_report(verdict="未知"), "verdict 只能是")
 
-    def test_empty_field(self):
-        self.assertProblems(main_report(偏离=""), "「偏离」为空")
+    def test_razor_report_requires_exact_keys_types_and_nonblank_strings(self):
+        cases = []
+        document = razor_report()
+        del document["cleanup_handoff"]
+        cases.append((document, "缺少字段：报告.cleanup_handoff"))
 
-    def test_missing_field(self):
-        self.assertProblems(main_report().replace("偏离：无，对照了 spec 第 1、2 条\n", ""), "缺少「偏离」")
+        document = razor_report()
+        document["occams_razor"]["delete"]["extra"] = "多余"
+        cases.append((document, "occams_razor.delete 多余字段：extra"))
 
-    def test_duplicate_field(self):
-        self.assertProblems(main_report(问题="check.py:100 漏检\n问题：无，查了"), "「问题」出现了两次")
+        document = razor_report()
+        document["occams_razor"]["keep"] = [{"entity": "check.py", "reason": " "}]
+        cases.append((document, "报告.occams_razor.keep[0].reason 不能为空"))
 
-    def test_nonstandard_field_line(self):
-        self.assertProblems(main_report(问题="无，核过\n问题: a.py:10 仍漏检"), "全角冒号")
-        self.assertProblems(main_report(问题="无，核过\n**问题**：a.py:10 仍漏检"), "全角冒号")
-        self.assertProblems(main_report().replace("本质：用户要的是 X", "本质: 用户要的是 X"), "全角冒号", "缺少「本质」")
+        document = razor_report()
+        document["occams_razor"]["ask_user"]["items"] = [{"entity": "文件"}]
+        cases.append((document, "缺少字段：报告.occams_razor.ask_user.items[0].now"))
 
-    def test_list_item_named_like_a_field_is_content(self):
-        self.assertEqual(check(razor_report(留下清单="\n- 删除清单：原话 8 要求说明删了丢什么")), [])
-        self.assertEqual(check(razor_report(留下清单="\n  - 删除清单：原话 8 要求说明删了丢什么")), [])
+        document = razor_report()
+        document["occams_razor"]["delete"]["checked"] = None
+        cases.append((document, "报告.occams_razor.delete.checked 必须是字符串"))
 
-    def test_placeholder_whole_field(self):
-        self.assertProblems(main_report(本质="<用户真正要的是什么；若是修错，根源在哪>"), "占位符")
+        for document, message in cases:
+            with self.subTest(message=message):
+                self.assert_rejected("review-razor.json", document, message)
 
-    def test_placeholder_fragment_inside_line(self):
-        self.assertProblems(razor_report(留下清单="参数 x：<离开它，用户原话哪条做不到>"), "占位符")
+    def test_razor_report_needs_at_least_one_list_item(self):
+        document = razor_report(keep=[], delete=[], ask_user=[])
+        self.assert_rejected("review-razor.json", document, "三张清单合计至少要有一项")
 
-    def test_angle_brackets_outside_template_are_fine(self):
-        text = main_report(问题="依据 </home/xy/.claude/xy-workflow/原话.md> 的原话 7，缺少格式校验", 结论="改了就过")
-        self.assertEqual(check(text), [])
-        text = main_report(偏离="目录 ~/.claude/xy-workflow/<仓库名>-<主题>/ 第 8 步删了，账本还指着它", 结论="改了就过")
-        self.assertEqual(check(text), [])
+    def test_razor_keep_may_be_empty_when_delete_has_an_item(self):
+        deletion = [{"entity": "unused.py", "loss": "失去过时脚本"}]
+        document = razor_report(verdict="改了就过", keep=[], delete=deletion)
+        self.assertEqual(self.run_report("review-razor.json", document), (0, []))
 
-    def test_bare_none_needs_comparison(self):
-        self.assertProblems(main_report(偏离="无"), "后面要写对照了什么")
-        self.assertProblems(main_report(偏离="无（）"), "后面要写对照了什么")
+    def test_razor_verdict_depends_on_delete_items_only(self):
+        ask = [{"entity": "option", "now": "三个分支", "change_to": "删除一个", "saving": "少一个分支"}]
+        self.assertEqual(self.run_report("review-razor.json", razor_report(ask_user=ask)), (0, []))
+        deletion = [{"entity": "unused.py", "loss": "失去过时脚本"}]
+        self.assert_rejected("review-razor.json", razor_report(delete=deletion), "通过」但 delete.items")
+        self.assert_rejected("review-razor.json", razor_report(verdict="不通过"), "但 delete.items 为空")
 
-    def test_none_must_be_single_line(self):
-        self.assertProblems(razor_report(删除清单="无，逐样问过\n参数 x；删了丢什么：无"), "只能有这一行")
-        self.assertProblems(main_report(偏离="无，对照了 X\ncheck.py:12 没改根源"), "只能有这一行")
+    def test_diagnosis_report_validates_structure_and_actions(self):
+        self.create_round1()
+        self.assertEqual(self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",)), (0, []))
+        self.assert_rejected("diagnosis.json", diagnosis_report(actions=[]), "actions 不能为空", folders=("group1",))
+        self.assert_rejected("diagnosis.json", diagnosis_report(actions=["拆分", "拆分"]), "actions 不能重复",
+                             folders=("group1",))
+        self.assert_rejected("diagnosis.json", diagnosis_report(actions=["继续"]), "actions 只能包含",
+                             folders=("group1",))
+        self.assert_rejected("diagnosis.json", diagnosis_report(diagnosis=" \t\n"), "diagnosis 不能为空",
+                             folders=("group1",))
 
-    def test_none_with_parentheses_or_bullet_is_none(self):
-        self.assertEqual(check(main_report(偏离="无（对照了 spec）")), [])
-        self.assertEqual(check(main_report(偏离="\n- 无，对照了 spec")), [])
+    def test_reports_reject_template_placeholders_and_placeholder_fragments(self):
+        document = main_report()
+        document["first_principles"]["essence"] = "<用户真正要的是什么；若是修错，根源在哪>"
+        self.assert_rejected("review-main.json", document, "模板占位符")
 
-    def test_essence_and_keep_list_cannot_be_none(self):
-        self.assertProblems(main_report(本质="无，看不出"), "「本质」不能写「无」")
-        self.assertProblems(razor_report(留下清单="无，没什么要留"), "「留下清单」不能写「无」")
+        document = main_report()
+        document["first_principles"]["essence"] = "用户要的是 <用户真正要的是什么>"
+        self.assert_rejected("review-main.json", document, "模板占位符")
 
-    def test_space_after_none_is_a_finding(self):
-        self.assertProblems(main_report(问题="无 docstring 的函数 check_lines（check.py:120）"), "结论写通过，但有的地方不是「无，」开头")
+        self.create_round1()
+        self.assert_rejected("diagnosis.json", diagnosis_report(diagnosis="<这组为什么没过，引用各轮报告的阻断项和证据>"),
+                             "模板占位符", folders=("group1",))
 
-    def test_word_starting_with_none_is_a_finding(self):
-        self.assertProblems(main_report(问题="无法拒绝空路径，check.py:138 直接打开"),
-                            "结论写通过，但有的地方不是「无，」开头：「问题」（无法拒绝空路径")
+    def test_duplicate_json_keys_are_rejected(self):
+        text = '{"verdict":"通过","verdict":"不通过"}'
+        code, problems = self.run_main(("group1", "round1", "review-main.json"), text)
+        self.assertEqual(code, 1)
+        self.assertTrue(any("重复键" in problem and "verdict" in problem for problem in problems), problems)
 
-    def test_rule_missing(self):
-        self.assertProblems(main_report(规范="1. 无，查了\n…\n7. 无，查了"), "第 2 条缺失", "第 6 条缺失")
+    def test_filename_selects_report_kind_and_unknown_names_fail(self):
+        code, problems = self.run_report("review.md", main_report())
+        self.assertEqual(code, 1)
+        self.assertTrue(any("文件名只能是" in problem for problem in problems), problems)
 
-    def test_rule_duplicate(self):
-        text = main_report(规范="1. check.py:100 漏检\n1. 无，查了\n" + "\n".join(f"{i}. 无，查了" for i in range(2, 8)))
-        self.assertProblems(text, "第 1 条出现了两次")
+        self.assert_rejected("review-razor.json", main_report(), "occams_razor")
 
-    def test_rule_out_of_range(self):
-        self.assertProblems(main_report(规范="\n".join(f"{i}. 无，查了" for i in range(1, 9))), "只有 1 到 7 条")
+    def test_invalid_json_and_missing_file_are_reported_without_tracebacks(self):
+        code, problems = self.run_main(("group1", "round1", "review-main.json"), '{"verdict":')
+        self.assertEqual(code, 1)
+        self.assertTrue(any("JSON" in problem for problem in problems), problems)
 
-    def test_conclusion_single_line(self):
-        self.assertProblems(main_report(结论="通过；删除清单 0 条"), "结论只能有一行")
-        self.assertProblems(razor_report(结论="通过\n### Assessment\nReady"), "结论只能有一行")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["check.py", os.path.join(self.root, "group1", "round1", "missing.json")])
+        self.assertEqual(code, 1)
+        self.assertIn("无法读取", output.getvalue())
 
-    def test_pass_with_findings(self):
-        self.assertProblems(main_report(问题="缺省值静默生效"), "结论写通过")
-        self.assertProblems(razor_report(删除清单="参数 x；删了丢什么：无"), "结论写通过，但有的地方不是「无，」开头：「删除清单」")
-
-    def test_fix_and_pass_needs_findings(self):
-        self.assertEqual(check(main_report(问题="缺省值静默生效", 结论="改了就过")), [])
-        self.assertProblems(main_report(结论="改了就过"), "结论写改了就过，但各节都是「无」")
-
-    def test_fail_without_findings(self):
-        self.assertProblems(main_report(结论="不通过"), "结论写不通过")
-
-    def test_keep_line_without_reason(self):
-        self.assertProblems(razor_report(留下清单="参数 x：原话 1 要求可配置\n分支 y"), "留下清单每行")
-
-    def test_delete_line_without_loss(self):
-        self.assertProblems(razor_report(删除清单="参数 x", 结论="不通过"), "删除清单每行")
-
-    def test_list_marker_is_not_an_entity(self):
-        self.assertProblems(razor_report(留下清单="- ：用户要求必须保留"), "留下清单每行")
-        self.assertProblems(razor_report(删除清单="- ；删了不丢要求", 结论="不通过"), "删除清单每行")
-
-    def test_user_decisions_do_not_block(self):
-        self.assertEqual(check(razor_report(要用户定="old.py：4 行;保留现状；省 1 行")), [])
-
-    def test_user_decision_requires_entity_and_each_details_segment(self):
-        incomplete = [
-            "：4 行；保留现状；省 1 行",
-            "old.py：；保留现状；省 1 行",
-            "old.py：4 行；；省 1 行",
-            "old.py：4 行；保留现状；",
-        ]
-        for value in incomplete:
-            with self.subTest(value=value):
-                self.assertProblems(razor_report(要用户定=value))
-
-    def test_user_decision_line_requires_entity_and_details(self):
-        self.assertProblems(
-            razor_report(要用户定="old.py 不确定能否删"),
-            "要用户定每行",
-            "实体：现在多大；改成什么；能省多少",
-        )
-
-    def test_formal_review_location_and_filename_are_hard_errors(self):
+    def test_formal_report_location_and_round_are_hard_errors(self):
         cases = [
-            (("group1", "round1"), "review.md", main_report(), "review-main.md"),
-            (("group1", "round1"), "review-razor.md", main_report(), "review-main.md"),
-            (("group1", "round1"), "review.md", razor_report(), "review-razor.md"),
-            (("group1", "round1"), "review-main.md", razor_report(), "review-razor.md"),
-            (("round1",), "review-razor.md", razor_report(), "group<G>/round<R>/"),
-            (("group1", "round4"), "review-main.md", main_report(), "只能是 round1、round2、round3"),
-            (("group01", "round1"), "review-main.md", main_report(), "group<G>"),
-            (("group0", "round1"), "review-main.md", main_report(), "group<G>"),
+            (("group1", "round1"), "review-main-old.json", main_report(), "文件名只能是"),
+            (("round1",), "review-razor.json", razor_report(), "group<G>/round<R>/"),
+            (("group1", "round4"), "review-main.json", main_report(), "只能是 round1、round2、round3"),
+            (("group01", "round1"), "review-main.json", main_report(), "group<G>"),
+            (("group0", "round1"), "review-main.json", main_report(), "group<G>"),
         ]
-        for parts, name, report, expected in cases:
-            with self.subTest(path="/".join(parts + (name,))), tempfile.TemporaryDirectory() as root:
-                path = os.path.join(root, *parts, name)
-                write_report(path, report)
-                code, problems = self.run_main(path)
+        for folders, name, document, expected in cases:
+            with self.subTest(path="/".join((*folders, name))):
+                code, problems = self.run_report(name, document, folders)
                 self.assertEqual(code, 1, problems)
-                self.assertTrue(any(expected in line for line in problems), problems)
+                self.assertTrue(any(expected in problem for problem in problems), problems)
 
     def test_formal_diagnosis_location_and_filename_are_hard_errors(self):
-        report = diagnosis_report("三轮仍未通过，见 group1/round3。", "重想")
-        with tempfile.TemporaryDirectory() as root:
-            os.makedirs(os.path.join(root, "group1", "round1"))
-            correct = os.path.join(root, "group1", "diagnosis.md")
-            write_report(correct, report)
-            self.assertEqual(self.run_main(correct), (0, []))
+        self.create_round1()
+        report = diagnosis_report()
+        self.assertEqual(self.run_report("diagnosis.json", report, ("group1",)), (0, []))
+        code, problems = self.run_report("cause.json", report, ("group1",))
+        self.assertEqual(code, 1)
+        self.assertTrue(any("文件名只能是" in problem for problem in problems), problems)
 
-            wrong_name = os.path.join(root, "group1", "cause.md")
-            write_report(wrong_name, report)
-            code, problems = self.run_main(wrong_name)
-            self.assertEqual(code, 1)
-            self.assertTrue(any("diagnosis.md" in line for line in problems), problems)
-
-            wrong_location = os.path.join(root, "group1", "round1", "diagnosis.md")
-            write_report(wrong_location, report)
-            code, problems = self.run_main(wrong_location)
-            self.assertEqual(code, 1)
-            self.assertTrue(any("group<G>/diagnosis.md" in line for line in problems), problems)
+        code, problems = self.run_report("diagnosis.json", report, ("group1", "round1"))
+        self.assertEqual(code, 1)
+        self.assertTrue(any("group<G>/diagnosis.json" in problem for problem in problems), problems)
 
     def test_formal_group_must_start_with_round1(self):
-        with tempfile.TemporaryDirectory() as root:
-            path = os.path.join(root, "group1", "diagnosis.md")
-            write_report(path, diagnosis_report("缺少 round1。", "重想"))
-            code, problems = self.run_main(path)
+        code, problems = self.run_report("diagnosis.json", diagnosis_report(), ("group1",))
         self.assertEqual(code, 1)
-        self.assertTrue(any("缺少 round1" in line for line in problems), problems)
+        self.assertTrue(any("缺少 round1" in problem for problem in problems), problems)
 
     def test_formal_round_directories_are_continuous_and_limited_to_three(self):
-        with tempfile.TemporaryDirectory() as root:
-            path = os.path.join(root, "group1", "round3", "review-main.md")
-            write_report(path, main_report())
-            os.makedirs(os.path.join(root, "group1", "round1"))
-            code, problems = self.run_main(path)
-            self.assertEqual(code, 1)
-            self.assertTrue(any("缺少 round2" in line for line in problems), problems)
+        self.run_report("review-main.json", main_report(), ("group1", "round1"))
+        code, problems = self.run_report("review-main.json", main_report(), ("group1", "round3"))
+        self.assertEqual(code, 1)
+        self.assertTrue(any("缺少 round2" in problem for problem in problems), problems)
 
         for invalid_round in ("round0", "round02", "round4"):
-            with self.subTest(round=invalid_round), tempfile.TemporaryDirectory() as root:
-                path = os.path.join(root, "group1", "round1", "review-main.md")
-                write_report(path, main_report())
-                os.makedirs(os.path.join(root, "group1", invalid_round))
-                code, problems = self.run_main(path)
+            with self.subTest(round=invalid_round):
+                os.makedirs(os.path.join(self.root, "group1", invalid_round), exist_ok=True)
+                code, problems = self.run_report("review-main.json", main_report(), ("group1", "round1"))
                 self.assertEqual(code, 1)
-                self.assertTrue(any(invalid_round in line for line in problems), problems)
+                self.assertTrue(any(invalid_round in problem for problem in problems), problems)
 
-    def test_opening_a_group_requires_previous_diagnosis_only(self):
-        with tempfile.TemporaryDirectory() as root:
-            group1 = os.path.join(root, "group1")
-            group2_report = os.path.join(root, "group2", "round1", "review-main.md")
-            write_report(group2_report, main_report())
+    def test_opening_a_group_requires_previous_diagnosis_file(self):
+        folders = ("group2", "round1")
+        code, problems = self.run_report("review-main.json", main_report(), folders)
+        self.assertEqual(code, 1)
+        self.assertTrue(any("一组要复审到第 3 轮" in problem for problem in problems), problems)
 
-            code, problems = self.run_main(group2_report)
-            self.assertEqual(code, 1)
-            self.assertTrue(any("一组要复审到第 3 轮仍不通过、派判因写下原因后才能开新组" in line
-                                for line in problems), problems)
+        os.makedirs(os.path.join(self.root, "group1", "round1"), exist_ok=True)
+        with open(os.path.join(self.root, "group1", "diagnosis.json"), "w", encoding="utf-8") as stream:
+            stream.write("此文件存在即可，不读取内容。")
+        self.assertEqual(self.run_report("review-main.json", main_report(), folders), (0, []))
 
-            os.makedirs(group1, exist_ok=True)
-            write_report(os.path.join(group1, "diagnosis.md"), "这份文件的内容不读取。\n")
-            write_report(os.path.join(group1, "round3", "review-main.md"), "故意写成无效内容\n")
-            self.assertEqual(self.run_main(group2_report), (0, []))
-
-    def test_round3_failure_reminder_is_not_a_hard_error(self):
-        cases = [("round3", "不通过", True), ("round3", "改了就过", False), ("round2", "不通过", False)]
-        for round_name, conclusion, expected_reminder in cases:
-            with self.subTest(round=round_name, conclusion=conclusion), tempfile.TemporaryDirectory() as root:
-                group = os.path.join(root, "group1")
-                for number in range(1, int(round_name[-1]) + 1):
-                    os.makedirs(os.path.join(group, f"round{number}"))
-                path = os.path.join(group, round_name, "review-main.md")
-                write_report(path, main_report(问题="check.py:100 漏检", 结论=conclusion))
-                code, output = self.run_main(path)
-                self.assertEqual(code, 0, output)
-                if expected_reminder:
-                    self.assertTrue(any("先派判因" in line for line in output), output)
-                else:
-                    self.assertFalse(any(line.startswith("提醒：") for line in output), output)
+    def test_round3_failure_is_only_a_reminder(self):
+        self.create_round1()
+        os.makedirs(os.path.join(self.root, "group1", "round2"), exist_ok=True)
+        document = main_report(verdict="不通过", hard_to_misuse=[{"problem": "缺陷", "evidence": "check.py:5"}])
+        code, output = self.run_report("review-main.json", document, ("group1", "round3"))
+        self.assertEqual(code, 0, output)
+        self.assertTrue(any("先派判因" in line for line in output), output)
 
     def test_exit_codes(self):
-        with tempfile.TemporaryDirectory() as root:
-            cases = [
-                ("group1/round1/review-main.md", main_report(), 0),
-                ("group1/round1/review-razor.md", razor_report(删除清单="参数 x；丢什么：无", 结论="改了就过"), 0),
-                ("group1/round1/review-main.md", main_report(偏离=""), 1),
-            ]
-            for relative_path, text, expected in cases:
-                with self.subTest(path=relative_path, expected=expected):
-                    path = os.path.join(root, relative_path)
-                    write_report(path, text)
-                    code, _ = self.run_main(path)
-                    self.assertEqual(code, expected)
-        with contextlib.redirect_stdout(io.StringIO()):
+        self.assertEqual(self.run_report("review-main.json", main_report())[0], 0)
+        self.assertEqual(self.run_report("review-main.json", main_report(verdict="坏结论"))[0], 1)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
             self.assertEqual(main(["check.py"]), 2)
 
 
