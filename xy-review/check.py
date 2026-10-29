@@ -187,6 +187,7 @@ def check(text, filename):
         asked = item_list(document, "occams_razor", "ask_user", "items")
         if not keep and not deleted and not asked:
             problems.append("剃刀报告三张清单合计至少要有一项")
+        # ask_user.items 不计入剃刀报告结论。
         if verdict == "通过" and deleted:
             problems.append("剃刀 verdict 写「通过」但 delete.items 有发现")
         elif verdict in ("改了就过", "不通过") and not deleted:

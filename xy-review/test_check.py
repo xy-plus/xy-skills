@@ -240,6 +240,18 @@ class CheckTest(unittest.TestCase):
         document = razor_report(keep=[{"entity": "没有改动路径", "reason": "一般任务"}], cleanup_handoff="无")
         self.assertEqual(self.run_report("review-razor.json", document), (0, []))
 
+    def test_cleanup_question_recipient_is_decided_by_cleanup_author(self):
+        review_skill = Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8")
+        handoff_skill = Path(__file__).parents[1].joinpath("xy-handoff", "SKILL.md").read_text(encoding="utf-8")
+        checker = Path(__file__).with_name("check.py").read_text(encoding="utf-8")
+        self.assertIn("自己决定问用户还是问派方", review_skill)
+        self.assertIn("答复前不删", review_skill)
+        self.assertIn("不必先告诉派方", review_skill)
+        self.assertIn("接手方问的是用户还是本会话，由它定", handoff_skill)
+        self.assertIn("没问或没答复就不验收、不允许自删", handoff_skill)
+        self.assertIn("发回去要求先询问，也不代用户作答", handoff_skill)
+        self.assertIn("ask_user.items 不计入剃刀报告结论", checker)
+
     def test_cleanup_handoff_must_be_a_valid_cleanup_handoff(self):
         contract = Path(self.root) / "ordinary-contract"
         (contract / "quotes").mkdir(parents=True)
