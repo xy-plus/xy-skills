@@ -211,8 +211,7 @@ class Contract:
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
         for task in self.tasks:
-            # T1 的唯一特例是可无出处。
-            if task != "T1" and not self.sources(task):
+            if not self.sources(task):
                 raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
         for task, values in self.done.items():
             if "cancel_quote" in values:

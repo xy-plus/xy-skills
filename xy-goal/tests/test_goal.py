@@ -864,12 +864,10 @@ class GoalTests(unittest.TestCase):
     def test_link_validation_errors_include_repair_hint(self):
         contract = self.open_goal("release")
         self.quote(contract, 1, "原要求")
-        self.quote(contract, 2, "另一项要求")
         self.add_task(1)
-        self.add_task(2)
         hint = "；用 relink [<事项> --source <编号>…] 修复，编号看 quotes/\n"
         cases = (("坏映射\n", "关系格式错误", None),
-                 ("", "开放事项没有出处", "T2"))
+                 ("1 不必跟进 已答\n", "开放事项没有出处", "T1"))
         for links, message, task in cases:
             with self.subTest(message=message, links=links):
                 (contract / "links.md").write_text(links)
