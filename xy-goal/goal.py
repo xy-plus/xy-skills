@@ -323,7 +323,6 @@ class Contract:
                 raise GoalError("原因必须写成一行")
             targets = sorted(target for number, target in self.links if number == options.quote)
             if targets:
-                # 删除挂接会丢开放事项的出处或已关闭事项的取消依据。
                 raise GoalError(f"原话 {options.quote} 已挂事项 " + "、".join(targets))
             self.dismissed[options.quote] = options.reason
         elif command == "reopen":
