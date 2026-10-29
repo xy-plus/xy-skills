@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """xy-goal 的唯一写入口；读取可直接用 Read/cat，映射只存 links.md。
 
 Markdown 字段的值用 JSON 字符串编码，让换行和引号不会伪造新字段。
@@ -164,8 +163,7 @@ def encode_links(links, dismissed):
     linked = {number for number, _ in links}
     rows.extend((number, "不必跟进 " + reason) for number, reason in dismissed.items()
                 if number not in linked)
-    rows.sort(key=lambda row: (row[0], 0 if row[1].startswith("T") else 1,
-                               int(row[1][1:]) if row[1].startswith("T") else row[1]))
+    rows.sort(key=lambda row: (row[0], int(row[1][1:]) if row[1].startswith("T") else 0))
     return "".join(f"{number} {landing}\n" for number, landing in rows)
 
 
@@ -213,7 +211,7 @@ class Contract:
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
         for task in self.tasks:
-            # T1 的唯一特例是可无出处；挂接与取消仍按普通事项处理。
+            # T1 的唯一特例是可无出处。
             if task != "T1" and not self.sources(task):
                 raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
         for task, values in self.done.items():
@@ -256,9 +254,6 @@ class Contract:
     def require_task(self, task):
         if task not in self.tasks:
             raise GoalError(f"开放事项 {task} 不存在")
-
-    def links_text(self):
-        return encode_links(self.links, self.dismissed)
 
     def show(self):
         lines = [f"目标：{self.metadata['target']}"]
@@ -347,7 +342,7 @@ class Contract:
             # 统一编码已解析字段与结论，不依赖被接受的原文件是否带末尾 LF。
             changes[self.path / "done" / f"{task}.md"] = encode_fields({**self.tasks[task], **conclusion})
             removals.append(original)
-        changes[self.path / "links.md"] = self.links_text()
+        changes[self.path / "links.md"] = encode_links(self.links, self.dismissed)
         write_files(changes, removals)
         if command == "add":
             print(task)
@@ -594,7 +589,7 @@ def record_hook(root, session_id, text, transcript_path):
             reason = automatic_reason(text, path)
             if reason is not None:
                 contract.dismissed[number] = reason
-                write_files({contract.path / "links.md": contract.links_text()}, [])
+                write_files({contract.path / "links.md": encode_links(contract.links, contract.dismissed)}, [])
         except Exception as error:
             detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
             raise HookRecordError(f"这次输入已记为原话 {number}（{quote}）。原始错误：{detail}") from error
@@ -624,7 +619,7 @@ def relink(path, task, sources):
     if (task is None) != (sources is None):
         raise GoalError("事项与 --source 必须同时给或同时不给")
     try:
-        contract = Contract(path)
+        Contract(path)
     except GoalError:
         pass
     else:
@@ -708,7 +703,7 @@ def execute(options, *, root, session_id, claude_pid, now):
                 contract.dismissed.update(reasons)
                 changes = {path / "quotes" / f"{number}.md": text for number, text in quotes.items()}
                 changes[path / "goal.md"] = encode_fields(contract.metadata)
-                changes[path / "links.md"] = contract.links_text()
+                changes[path / "links.md"] = encode_links(contract.links, contract.dismissed)
                 with consume_inputs([inbox] if inbox.exists() else []):
                     write_files(changes, [])
         print(timer_prompt(path))

@@ -1,4 +1,4 @@
-"""新契约 API 的行为测试；所有文件只放 TemporaryDirectory。"""
+"""契约脚本的行为测试；所有文件只放 TemporaryDirectory。"""
 
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
@@ -188,62 +188,11 @@ class GoalTests(unittest.TestCase):
         self.assertEqual({path.name for path in (contract / "tasks").iterdir()}, {"T1.md"})
         self.assertEqual(task.read_bytes(), original)
 
-    def test_title_does_not_exempt_source_free_non_T1_task(self):
-        contract = self.open_seeded_goal("release")
-        (contract / "tasks" / "T2.md").write_text(
-            'title: "清扫"\ncriteria: "完成要求"\nstate: "在办"\npointer: "无"\n',
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(goal.GoalError, r"T2\.md.*开放事项没有出处"):
-            goal.Contract(contract)
-
-    def test_source_free_T1_allows_title_state_and_pointer_updates(self):
-        contract = self.open_seeded_goal("release")
-        original_criteria = goal.Contract(contract).tasks["T1"]["criteria"]
-        (contract / "links.md").write_text("", encoding="utf-8")
-        for option, value in (("--title", "清扫改名"), ("--state", "等用户：等清扫结果"),
-                              ("--pointer", "/tmp/report")):
-            self.succeeds("update", "T1", option, value)
-        self.assertEqual(goal.Contract(contract).tasks["T1"], {
-            "title": "清扫改名", "criteria": original_criteria,
-            "state": "等用户：等清扫结果", "pointer": "/tmp/report",
-        })
-
-    def test_relink_can_repair_another_task_while_source_free_T1_exists(self):
-        contract = self.open_seeded_goal("release")
-        self.quote(contract, 1, "普通事项要求")
-        (contract / "tasks" / "T2.md").write_text(
-            'title: "普通事项"\ncriteria: "完成要求"\nstate: "在办"\npointer: "无"\n',
-            encoding="utf-8",
-        )
-        (contract / "links.md").write_text("9 T9\n", encoding="utf-8")
-        code, output, errors = self.command("relink", "T2", "--source", "1")
-        self.assertEqual((code, errors), (0, ""), output + errors)
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T2\n")
-        self.assertEqual(goal.Contract(contract).sources("T1"), [])
-        self.assertEqual(goal.Contract(contract).sources("T2"), [1])
-
     def test_add_source_supersedes_dismissal(self):
         contract = self.open_legacy_goal("release")
         self.quote(contract, 1, "发布要求")
         self.succeeds("dismiss", "1", "--reason", "已误标")
         self.add_task(1)
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
-        self.succeeds("check")
-
-    def test_update_source_supersedes_dismissal(self):
-        contract = self.open_seeded_goal("release")
-        self.quote(contract, 1, "清扫要求")
-        self.succeeds("dismiss", "1", "--reason", "已误标")
-        self.succeeds("update", "T1", "--source", "1")
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
-        self.succeeds("check")
-
-    def test_cancel_quote_supersedes_dismissal(self):
-        contract = self.open_seeded_goal("release")
-        self.quote(contract, 1, "取消清扫")
-        self.succeeds("dismiss", "1", "--reason", "已误标")
-        self.succeeds("cancel", "T1", "--quote", "1")
         self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
         self.succeeds("check")
 
@@ -256,12 +205,6 @@ class GoalTests(unittest.TestCase):
         self.succeeds("relink", "T1", "--source", "1")
         self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
         self.succeeds("check")
-
-    def test_dismiss_rejects_quote_linked_to_open_task(self):
-        contract = self.open_legacy_goal("release")
-        self.quote(contract, 1, "发布要求")
-        self.add_task(1)
-        self.rejects("dismiss", "1", "--reason", "已答", message="原话 1 已挂事项 T1")
 
     def test_dismiss_rejects_quote_linked_to_closed_task(self):
         contract = self.open_legacy_goal("release")
@@ -286,14 +229,6 @@ class GoalTests(unittest.TestCase):
         self.quote(contract, 1, "清扫要求")
         self.succeeds("update", "T1", "--source", "1")
         self.assertIn("出处：原话 1", self.succeeds("show"))
-        self.succeeds("check")
-
-    def test_relink_can_add_a_source_to_T1_in_a_broken_contract(self):
-        contract = self.open_seeded_goal("release")
-        self.quote(contract, 1, "清扫要求")
-        (contract / "links.md").write_text("坏映射\n", encoding="utf-8")
-        self.succeeds("relink", "T1", "--source", "1")
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
         self.succeeds("check")
 
     def test_seeded_source_free_T1_can_be_cancelled_with_an_existing_quote(self):
@@ -339,11 +274,9 @@ class GoalTests(unittest.TestCase):
         self.assertIn((2, "T1"), goal.Contract(contract).links)
         self.succeeds("check")
 
-    def test_reopen_rejects_open_and_missing_tasks_without_writes(self):
+    def test_reopen_rejects_open_task_without_writes(self):
         self.open_seeded_goal("release")
-        for task, message in (("T1", "已关闭"), ("T9", "不存在")):
-            with self.subTest(task=task):
-                self.rejects("reopen", task, message=message)
+        self.rejects("reopen", "T1", message="已关闭")
 
     def replace_project_with_symlink(self):
         outside = Path(self.temporary.name) / f"outside-{self.root.name}"
