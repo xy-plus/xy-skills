@@ -182,6 +182,7 @@ def check(text, filename):
             problems.append("剃刀 verdict 写「通过」但 delete.items 有发现")
         elif verdict in ("改了就过", "不通过") and not deleted:
             problems.append(f"剃刀 verdict 写「{verdict}」但 delete.items 为空")
+        problems += check_cleanup_handoff(document)
     else:
         actions = document.get("actions")
         if isinstance(actions, list):
@@ -208,13 +209,6 @@ def main(argv):
 
     problems = check(text, path.name)
     kind = REPORTS.get(path.name, (None, None))[0]
-    if kind == "剃刀报告":
-        try:
-            document = read_document(text)
-        except (ValueError, TypeError):
-            document = None
-        if isinstance(document, dict):
-            problems += check_cleanup_handoff(document)
     if kind == "判因报告":
         group_path = path.parent
         group_match = re.fullmatch(r"group([1-9]\d*)", group_path.name)
