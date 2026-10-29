@@ -19,19 +19,13 @@ python3 /absolute/path/to/clean.py --mode delete ROOT_OR_GLOB [ROOT_OR_GLOB ...]
 
 以下按 xy-skills 仓库位于 `$HOME/xy-skills` 操作，清理程序在其中的 `xy-runs/`。放在其他路径时，替换下面的仓库路径，并修改 service 中的 `%h/xy-skills/xy-runs/clean.py`。在工作树中试用也要指向工作树中的 `xy-runs/clean.py`。
 
-先运行全部测试，测试数据均在临时目录中；工作树中用实际仓库路径替换下面的 `$HOME/xy-skills`：
-
-```bash
-PYTHONPATH="$HOME/xy-skills/xy-runs" python3 -B -m unittest discover -s "$HOME/xy-skills/xy-runs/tests" -v
-```
-
 按[仓库安装步骤](../README.md#安装)在 `$HOME/.claude/settings.json` 的 `env` 中设置 `RUNS_ROOT`。
 
 service 每次运行都读取这个文件，不依赖登录 shell 的 `RUNS_ROOT`；没有设置、值为空或不是绝对路径，都在启动清理器前报错。根路径中的 `*`、`?`、`[` 按字面处理，例如 `run[1]` 不会选中旁边的 `run1`；只有追加的 runs 层级模式参与通配。它传入三层根：
 
 | 根目录 | 直接子项，即清理单位 |
 | --- | --- |
-| `RUNS_ROOT` | 项目目录，或迁移期间的旧平铺项 |
+| `RUNS_ROOT` | 项目目录，以及根下其他不以 `-` 开头的项 |
 | `RUNS_ROOT/-*` | 一件事的目录 |
 | `RUNS_ROOT/-*/xy-goal-inbox` | 单个会话的 inbox |
 
@@ -41,9 +35,9 @@ service 每次运行都读取这个文件，不依赖登录 shell 的 `RUNS_ROOT
 
 - `%h/.codex-subagent*/sessions/*/*`，清理单位为按日的会话目录。
 
-2026-10-29 已把旧的 `agent-scratch`、`evidence`、`~/.claude/xy-workflow` 迁到 `RUNS_ROOT/retired-roots-20261029`，由 runs 清理器按 30 天规则删除。账号目录中的 `tasks/`、`reports/`、`logs/`、`brief-*.md` 由 runner 迁移，不另配根；各工具自己的配置目录、harness 的持久记忆不纳入。
+账号目录中的 `tasks/`、`reports/`、`logs/`、`brief-*.md` 不另配根；各工具自己的配置目录、harness 的持久记忆不纳入。
 
-复制两个用户单元；交付的 service 使用 `--mode list`：
+复制两个用户单元：
 
 ```bash
 install -D -m 644 "$HOME/xy-skills/xy-runs/systemd/runs-cleaner.service" "$HOME/.config/systemd/user/runs-cleaner.service"
@@ -51,22 +45,25 @@ install -D -m 644 "$HOME/xy-skills/xy-runs/systemd/runs-cleaner.timer" "$HOME/.c
 systemctl --user daemon-reload
 ```
 
-## 启用定时清理
+## 首次启用定时清理
 
-先手动运行 service 并检查日志中的清单：
+首次启用前，先把 shell 中的 `RUNS_ROOT` 设为全局 `settings.json` 的 `env.RUNS_ROOT` 同一个绝对路径。按 service 使用的同一组根手动运行清理器，并逐项检查输出的清单：
 
 ```bash
-systemctl --user start runs-cleaner.service
-journalctl --user -u runs-cleaner.service
+python3 "$HOME/xy-skills/xy-runs/clean.py" --mode list \
+  "$HOME/.codex-subagent*/sessions/*/*" \
+  "$RUNS_ROOT" "$RUNS_ROOT/-*" "$RUNS_ROOT/-*/xy-goal-inbox"
 ```
 
-确认候选项后，用 `systemctl --user edit --full runs-cleaner.service` 把 `ExecStart` 中的 `--mode list` 改为 `--mode delete`，再启用每天一次的定时清理：
+确认清单中的范围和候选项后，在根目录建立预览门槛，再启用每天一次的定时清理：
 
 ```bash
-systemctl --user daemon-reload
+touch "$RUNS_ROOT/.runs-cleaner-previewed"
 systemctl --user enable --now runs-cleaner.timer
 systemctl --user list-timers runs-cleaner.timer
 ```
+
+service 直接以 `--mode delete` 运行。每次启动都会先核对 `RUNS_ROOT` 是绝对路径，再检查该根下的 `.runs-cleaner-previewed`；门槛不存在时启动器报错，不会运行清理器。标记绑定当前根目录：修改 `RUNS_ROOT` 后，必须对新根重新运行 `--mode list`、检查清单，并在新根下重新建立门槛；旧根中的标记不生效。
 
 定时器使用 `OnCalendar=daily`，service 的标准输出、标准错误进入 journal。用户管理器需要持续运行；本机已开启 linger。
 

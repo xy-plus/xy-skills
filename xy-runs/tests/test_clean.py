@@ -15,9 +15,11 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
+SCRIPT_DIRECTORY = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPT_DIRECTORY))
 import clean
 
-SCRIPT = Path(__file__).resolve().parents[1] / "clean.py"
+SCRIPT = SCRIPT_DIRECTORY / "clean.py"
 
 
 def descriptor_directory(descriptor):
@@ -218,6 +220,16 @@ class ListingTests(CleanerTestCase):
         self.assertEqual(paths, [str(expired)])
         self.assertTrue(leftover.exists())
 
+    # The preview gate is metadata, never a cleanup unit.
+    def test_list_skips_preview_marker(self):
+        expired = self.root / "expired"
+        expired.touch()
+        marker = self.root / ".runs-cleaner-previewed"
+        marker.touch()
+        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
+        self.assertEqual(paths, [str(expired)])
+        self.assertTrue(marker.exists())
+
     # Quoting globs in the shell must still expand to all matching roots.
     def test_script_expands_root_globs(self):
         first = self.root / "-first"
@@ -299,6 +311,17 @@ class DeletionTests(CleanerTestCase):
         self.assertEqual(list(trash.iterdir()), [])
         self.assertEqual(paths, [])
         self.assertEqual(errors, "")
+
+    # Deletion must preserve the root-scoped first-run preview gate.
+    def test_delete_keeps_preview_marker(self):
+        marker = self.root / ".runs-cleaner-previewed"
+        marker.touch()
+        status, paths, errors = self.run_cleaner(
+            [str(self.root)], "delete", self.cutoff
+        )
+        self.assertTrue(marker.exists())
+        self.assertNotIn(str(marker), paths)
+        self.assertEqual((status, errors), (0, ""))
 
     # A per-item rename failure must be reported while a later item is deleted.
     def test_item_error_reports_and_continues(self):

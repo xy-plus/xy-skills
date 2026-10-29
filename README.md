@@ -7,7 +7,7 @@
 | `xy-iron-law` | 三条铁律 |
 | `xy-repo-rules` | 仓库规范 |
 | `xy-workflow` | 标准工作流程 |
-| `xy-review` | 对抗审查：主审加剃刀两个子代理、报告格式、`check.py` 格式检查和 `audit.py` 结构对账、怎么处理结果；xy-workflow 的所有审查都用它 |
+| `xy-review` | 对抗审查：主审加剃刀两个子代理、报告格式与轮次结构检查（`check.py`）、非正式改—测循环上限（`audit.py`）和怎么处理结果；xy-workflow 的所有审查都用它 |
 | `xy-goal` | 长目标契约与定时自查 |
 | `xy-runs` | 文件去处、runs 布局与定期清理规则 |
 | `xy-handoff` | 会话大任务归属、拆分交接与后台会话收尾 |
@@ -37,18 +37,12 @@ for d in ~/xy-skills/*/; do ln -sfn "${d%/}" ~/.claude/skills/$(basename "$d"); 
 mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT}"
 ```
 
-在全局 `~/.claude/CLAUDE.md` 按顺序加这两行，让每个会话常驻加载文件去处与交接规则：
+把下面这段按顺序写进全局 `~/.claude/CLAUDE.md`，让每个会话常驻加载文件去处、交接规则、铁律和仓库规范：
 
 ```markdown
 @~/xy-skills/xy-runs/SKILL.md
 @~/xy-skills/xy-handoff/SKILL.md
-```
 
-按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并按其中说明配置 runs 的清理范围。
-
-然后在 `~/.claude/CLAUDE.md` 或仓库的 `CLAUDE.md` 里写引用，两行 `@` 让两把尺子启动即全文载入：
-
-```markdown
 ## 规则
 
 - 铁律：skill `xy-iron-law`（https://github.com/xy-plus/xy-skills/blob/master/xy-iron-law/SKILL.md），任何情况下都要遵守。
@@ -61,6 +55,19 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 `xy-workflow` 依赖 Claude Code 插件 `superpowers` 不低于 6.4.1（装法：`/plugin install superpowers@claude-plugins-official`），以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 与定时任务工具 CronCreate、CronList、CronDelete，运行前提见它的 README；收尾交出清扫任务时还会用到 `xy-handoff`（交接机制）和 `xy-review`（清扫任务本身按它审）。`xy-handoff` 只单向依赖 `xy-runs`（交接说明放哪），以及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、SendMessage、PushNotification。
 
-`xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。`xy-handoff` 不反过来引用 `xy-goal`、`xy-workflow`。回复「要」的仍由接手会话自删，便于判断自身保留条件；收到派方验收通过的通知再删，避免验收前自删造成返工时恢复会话。
+`xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。
 
-新加 skill：建目录、写 `SKILL.md`，再按上面的方式软链。只在有 SKILL.md 装不下的东西时，比如代码、前提、测试命令，才给 skill 目录加 README。
+按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并按其中说明配置 runs 的清理范围。
+
+新加 skill：建目录、写 `SKILL.md`，再按上面的方式软链。只在有 SKILL.md 装不下的东西时，比如代码、前提，才给 skill 目录加 README。
+
+## 测试
+
+在仓库根目录依次运行：
+
+```bash
+python3 -B -m unittest discover -s xy-goal/tests
+python3 -B -m unittest discover -s xy-handoff
+python3 -B -m unittest discover -s xy-review
+python3 -B -m unittest discover -s xy-runs/tests
+```

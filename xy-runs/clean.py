@@ -18,6 +18,7 @@ import uuid
 
 RETENTION_SECONDS = 30 * 24 * 60 * 60
 TRASH_NAME = ".runs-cleaner-trash"
+PREVIEW_MARKER_NAME = ".runs-cleaner-previewed"
 DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
@@ -182,7 +183,7 @@ def clean_roots(patterns, mode, cutoff, output, errors):
             with checked_directory(root, roots[root]) as root_descriptor:
                 for name in sorted(os.listdir(root_descriptor)):
                     item = root / name
-                    if name == TRASH_NAME:
+                    if name in (TRASH_NAME, PREVIEW_MARKER_NAME):
                         continue
                     if not is_expired(Path(f"/proc/self/fd/{root_descriptor}") / name, cutoff):
                         continue
