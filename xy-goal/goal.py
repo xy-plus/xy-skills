@@ -348,8 +348,7 @@ class Contract:
             # 统一编码已解析字段与结论，不依赖被接受的原文件是否带末尾 LF。
             changes[self.path / "done" / f"{task}.md"] = encode_fields({**self.tasks[task], **conclusion})
             removals.append(original)
-        if command != "reopen":
-            changes[self.path / "links.md"] = self.links_text()
+        changes[self.path / "links.md"] = self.links_text()
         write_files(changes, removals)
         if command == "add":
             print(task)

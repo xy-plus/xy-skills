@@ -251,7 +251,8 @@ class GoalTests(unittest.TestCase):
         contract = self.open_seeded_goal("release")
         self.quote(contract, 1, "清扫要求")
         self.succeeds("dismiss", "1", "--reason", "已误标")
-        (contract / "links.md").write_text("坏映射\n", encoding="utf-8")
+        with (contract / "links.md").open("a", encoding="utf-8") as links:
+            links.write("坏映射\n")
         self.succeeds("relink", "T1", "--source", "1")
         self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
         self.succeeds("check")
@@ -260,7 +261,7 @@ class GoalTests(unittest.TestCase):
         contract = self.open_legacy_goal("release")
         self.quote(contract, 1, "发布要求")
         self.add_task(1)
-        self.rejects("dismiss", "1", "--reason", "已答", message="T1")
+        self.rejects("dismiss", "1", "--reason", "已答", message="原话 1 已挂事项 T1")
 
     def test_dismiss_rejects_quote_linked_to_closed_task(self):
         contract = self.open_legacy_goal("release")
@@ -268,7 +269,7 @@ class GoalTests(unittest.TestCase):
         self.quote(contract, 2, "取消依据")
         self.add_task(1)
         self.succeeds("cancel", "T1", "--quote", "2")
-        self.rejects("dismiss", "2", "--reason", "已答", message="T1")
+        self.rejects("dismiss", "2", "--reason", "已答", message="原话 2 已挂事项 T1")
 
     def test_existing_dismissal_for_linked_quote_is_ignored_and_next_write_cleans_it(self):
         contract = self.open_legacy_goal("release")
