@@ -39,7 +39,9 @@ python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" check
 
 `open`、`adopt` 必须在 Claude Code 的 Bash 工具里运行，显式传 `--claude-pid "$PPID"`。该 Bash 的 `$PPID` 就是本会话 claude 进程号，可在同一个 Bash 里用 `echo "$PPID"` 核对；让它直接展开。脚本核对传入的正整数 PID 是本次调用进程的祖先，否则拒绝并说明调用方式，不能抄别的会话的 PID 来接管。
 
-脚本只在 `$RUNS_ROOT/-*/*/xy-goal/goal.md` 中按会话 id 找契约，回收目录不参与查找。项目目录名直接取会话记录的父目录名：hook 定位 inbox 时用输入的 `transcript_path`；`open` 建契约、新会话 `adopt` 领取 inbox 时，用 `CLAUDE_CODE_SESSION_ID` 在 `~/.claude/projects/*/<会话号>.jsonl` 中找，必须恰好一份，否则报错、不建目录。已有契约的命令及同会话 `adopt` 不再查会话记录。一个会话一份契约。`open` 要求本会话还没有契约；`adopt` 可新会话接管，也可同会话恢复刷新 PID（见「换会话接管」）；其余 agent 命令要求恰好一份。本会话重复绑定会报错，不猜。标题等字段的值用 JSON 字符串保存，以保留换行和引号，按物理 LF 分行；原话正文不经过字段编码。
+脚本只在 `$RUNS_ROOT/-*/*/xy-goal/goal.md` 中按会话 id 查契约，回收目录不参与查找。项目目录名取会话记录的父目录名：hook 定位 inbox 时用输入的 `transcript_path`；`open` 建契约和新会话 `adopt` 领 inbox 时，用 `CLAUDE_CODE_SESSION_ID` 在 `~/.claude/projects/*/<会话号>.jsonl` 中查找。必须恰好找到一份，否则报错且不建目录。已有契约的命令及同会话 `adopt` 不查会话记录。
+
+每个会话只能有一份契约。`open` 要求本会话还没有契约；`adopt` 可由新会话接管，也可在同会话恢复时刷新 PID（见「换会话接管」）；其余 agent 命令要求恰好一份。重复绑定就报错，不猜。标题等字段用 JSON 字符串保存，保留换行和引号，并按物理 LF 分行；原话正文不编码。
 
 尚未开契约时，hook 把消息原文暂记在 `$RUNS_ROOT/<项目目录名>/xy-goal-inbox/<会话 id>/`，不存分类副本；`open`、新会话 `adopt` 领走全部原话，按原顺序接着编号，领取时统一计算自动分类。触发开契约的那条消息也在其中。子代理输入带 `agent_id`，两个 hook 都跳过。主代理的输入每条都记，同一 `prompt_id` 也不去重：中途插话可能与该轮共用这个 id。
 
