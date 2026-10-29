@@ -298,18 +298,6 @@ class DeletionTests(CleanerTestCase):
         self.assertFalse(link.is_symlink())
         self.assertEqual(data.read_text(), "keep")
 
-    # An interrupted deletion must be completed before scanning ordinary units.
-    def test_delete_clears_previous_trash(self):
-        trash = self.root / ".runs-cleaner-trash"
-        (trash / "leftover" / "nested").mkdir(parents=True)
-        (trash / "leftover" / "nested" / "data").touch()
-        _, paths, errors = self.run_cleaner(
-            [str(self.root)], "delete", self.cutoff
-        )
-        self.assertEqual(list(trash.iterdir()), [])
-        self.assertEqual(paths, [])
-        self.assertEqual(errors, "")
-
     # Deletion must preserve the root-scoped first-run preview gate.
     def test_delete_keeps_preview_marker(self):
         marker = self.root / ".runs-cleaner-previewed"
@@ -535,8 +523,9 @@ class NestedRootTests(CleanerTestCase):
         self.assertTrue(all(not item.exists() for item in items))
         self.assertNotEqual(status, 0)
         self.assertIn("test interrupted removal", errors)
-        status, _, errors = self.run_cleaner(self.roots()[:2], "delete", self.cutoff)
+        status, paths, errors = self.run_cleaner(self.roots()[:2], "delete", self.cutoff)
         self.assertEqual(list((self.root / ".runs-cleaner-trash").iterdir()), [])
+        self.assertEqual(paths, [])
         self.assertEqual((status, errors), (0, ""))
 
     # A legacy flat item is an indivisible unit, not a second-level root.
