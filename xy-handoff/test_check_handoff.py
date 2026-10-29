@@ -20,7 +20,6 @@ def handoff():
     }
 
 
-
 class CheckHandoffTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()

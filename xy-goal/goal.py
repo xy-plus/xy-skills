@@ -325,9 +325,7 @@ class Contract:
             if task not in self.done:
                 raise GoalError(f"已关闭事项 {task} 不存在")
             if not self.sources(task):
-                raise GoalError(
-                    f"{self.path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}"
-                )
+                raise GoalError(f"已关闭事项 {task} 没有出处，不能重开")
             # 只恢复四个开放字段；旧结论丢弃，取消依据映射仍保留在 links.md。
             values = {name: self.done[task][name] for name in TASK_FIELDS.values()}
             changes[self.path / "tasks" / f"{task}.md"] = encode_fields(values)

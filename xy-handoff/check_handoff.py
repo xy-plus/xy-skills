@@ -3,7 +3,7 @@ import json
 import sys
 
 
-ORDINARY_FIELDS = {
+FIELDS = {
     "from": {"name": str, "short_id": str},
     "task": {"what": str, "done_when": str, "others": str},
     "reply": str,
@@ -49,14 +49,12 @@ def check_value(where, value, shape):
 
 def check(document):
     """返回问题列表，为空即合格。"""
-    if not isinstance(document, dict):
-        return ["交接说明 必须是对象"]
-    problems = check_value("交接说明", document, ORDINARY_FIELDS)
-    if "reply" in document:
-        if document["reply"] not in ("要", "不要"):
+    problems = check_value("交接说明", document, FIELDS)
+    if isinstance(document, dict):
+        if document.get("quotes") == []:
+            problems.append("交接说明.quotes 不能为空")
+        if "reply" in document and document["reply"] not in ("要", "不要"):
             problems.append("reply 只能是「要」或「不要」")
-    if document.get("quotes") == []:
-        problems.append("交接说明.quotes 不能为空")
     return problems
 
 

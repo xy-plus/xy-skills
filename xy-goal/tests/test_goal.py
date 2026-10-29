@@ -221,7 +221,7 @@ class GoalTests(unittest.TestCase):
             'title: "旧事项"\ncriteria: "原判据"\nstate: "在办"\npointer: "无"\n'
             'verdict: "已验收"\n', encoding="utf-8")
         original = done_task.read_bytes()
-        self.rejects("reopen", "T1", message="开放事项没有出处")
+        self.rejects("reopen", "T1", message="已关闭事项 T1 没有出处，不能重开")
         self.assertEqual(done_task.read_bytes(), original)
 
     def replace_project_with_symlink(self):
