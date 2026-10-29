@@ -111,7 +111,10 @@ class CheckTest(unittest.TestCase):
         cases.append((document, "报告.hard_to_misuse.items 必须是数组"))
 
         document = main_report()
-        document["first_principles"]["deviations"]["items"] = [{"problem": "问题"}]
+        document["first_principles"]["deviations"]["items"] = [{
+            "problem": "问题",
+            "quote": {"source": "Q94", "text": "review的结果…是否用json更好？"},
+        }]
         cases.append((document, "缺少字段：报告.first_principles.deviations.items[0].evidence"))
 
         document = main_report()
@@ -126,6 +129,43 @@ class CheckTest(unittest.TestCase):
             with self.subTest(message=message):
                 self.assert_rejected("review-main.json", document, message)
 
+    def test_main_report_items_require_nonblank_quotes(self):
+        def finding():
+            return {
+                "problem": "发现一项阻断",
+                "evidence": "check.py:25",
+                "quote": {"source": "Q94", "text": "review的结果…是否用json更好？"},
+            }
+
+        cases = []
+        item = finding()
+        del item["quote"]
+        cases.append((item, "缺少字段：报告.first_principles.deviations.items[0].quote"))
+
+        item = finding()
+        del item["quote"]["source"]
+        cases.append((item, "缺少字段：报告.first_principles.deviations.items[0].quote.source"))
+
+        item = finding()
+        del item["quote"]["text"]
+        cases.append((item, "缺少字段：报告.first_principles.deviations.items[0].quote.text"))
+
+        item = finding()
+        item["quote"]["source"] = " \n\t"
+        cases.append((item, "报告.first_principles.deviations.items[0].quote.source 不能为空"))
+
+        item = finding()
+        item["quote"]["text"] = " \n\t"
+        cases.append((item, "报告.first_principles.deviations.items[0].quote.text 不能为空"))
+
+        for item, message in cases:
+            with self.subTest(message=message):
+                document = main_report(verdict="改了就过", deviations=[item])
+                self.assert_rejected("review-main.json", document, message)
+
+        document = main_report(verdict="改了就过", deviations=[finding()])
+        self.assertEqual(self.run_report("review-main.json", document), (0, []))
+
     def test_main_report_requires_repository_rules_one_through_seven(self):
         rules = {str(number): section() for number in range(1, 8)}
         del rules["5"]
@@ -135,7 +175,11 @@ class CheckTest(unittest.TestCase):
                              "缺少字段：报告.repo_rules.5", "repo_rules 多余字段：8")
 
     def test_main_verdict_matches_findings(self):
-        findings = [{"problem": "增量：漏掉新约束；用户原话 4「格式规范」", "evidence": "check.py:25"}]
+        findings = [{
+            "problem": "增量：漏掉新约束；用户原话 4「格式规范」",
+            "evidence": "check.py:25",
+            "quote": {"source": "Q94", "text": "review的结果…是否用json更好？"},
+        }]
         self.assertEqual(self.run_report("review-main.json", main_report(verdict="改了就过", deviations=findings)), (0, []))
         self.assert_rejected("review-main.json", main_report(verdict="通过", deviations=findings), "通过」但有发现")
         self.assert_rejected("review-main.json", main_report(verdict="不通过"), "但没有发现")
@@ -328,7 +372,8 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(report_section.count("剃刀结论只看 `delete.items` 是否为空"), 1)
         self.assertEqual(report_section.count("`keep`、`delete.items`、`ask_user.items` 至少一项"), 1)
         self.assertNotIn("报告三张清单合起来至少有一项", report_section)
-        self.assertEqual(report_section.count("用户原话编号与原文"), 1)
+        self.assertEqual(report_section.count("依据写入 `quote`"), 1)
+        self.assertNotIn("在 `problem` 里贴用户原话编号与原文", report_section)
 
         templates = [json.loads(block) for block in re.findall(r"```json\s*\n(.*?)```", report_section, re.S)]
         razor_template = next(template for template in templates if "occams_razor" in template)
@@ -419,7 +464,11 @@ class CheckTest(unittest.TestCase):
     def test_round3_failure_is_only_a_reminder(self):
         self.create_round1()
         os.makedirs(os.path.join(self.root, "group1", "round2"), exist_ok=True)
-        document = main_report(verdict="不通过", hard_to_misuse=[{"problem": "缺陷", "evidence": "check.py:5"}])
+        document = main_report(verdict="不通过", hard_to_misuse=[{
+            "problem": "缺陷",
+            "evidence": "check.py:5",
+            "quote": {"source": "xy-repo-rules 第 7 条", "text": "单个文件到 500 行就报警"},
+        }])
         code, output = self.run_report("review-main.json", document, ("group1", "round3"))
         self.assertEqual(code, 0, output)
         self.assertTrue(any("先派判因" in line for line in output), output)

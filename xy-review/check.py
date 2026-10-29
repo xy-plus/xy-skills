@@ -11,7 +11,14 @@ from check_handoff import check as check_handoff  # noqa: E402
 from check_handoff import check_value, object_without_duplicate_keys  # noqa: E402
 
 
-SECTION = {"items": [{"problem": str, "evidence": str}], "checked": str}
+SECTION = {
+    "items": [{
+        "problem": str,
+        "evidence": str,
+        "quote": {"source": str, "text": str},
+    }],
+    "checked": str,
+}
 REVIEW_MAIN = {
     "first_principles": {"essence": str, "deviations": SECTION},
     "hard_to_misuse": SECTION,
