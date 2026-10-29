@@ -137,7 +137,7 @@ class CheckHandoffTest(unittest.TestCase):
         cases = (
             ("missing", "contract 必须是已存在的目录"),
             ("no_quotes", "contract 目录下缺少 quotes/"),
-            ("empty_quotes", "quotes/ 里至少要有一个 <N>.md"),
+            ("empty_quotes", "quotes/ 里至少要有一个内容非空的 <N>.md"),
         )
         for case, message in cases:
             with self.subTest(case=case):
@@ -153,6 +153,20 @@ class CheckHandoffTest(unittest.TestCase):
                     (self.contract / "quotes" / "readme.md").write_text("说明\n", encoding="utf-8")
                     (self.contract / "quotes" / "0.md").write_text("编号不合法\n", encoding="utf-8")
                 self.assert_rejected(document, message)
+
+    def test_cleanup_contract_rejects_only_empty_numbered_quote(self):
+        (self.contract / "quotes" / "1.md").write_text(" \n\t", encoding="utf-8")
+        self.assert_rejected(
+            cleanup_handoff(self.contract),
+            "quotes/ 里至少要有一个内容非空的 <N>.md",
+        )
+
+    def test_cleanup_contract_accepts_a_nonempty_numbered_quote(self):
+        (self.contract / "quotes" / "1.md").write_text(" \n\t", encoding="utf-8")
+        (self.contract / "quotes" / "2.md").write_text("原话内容\n", encoding="utf-8")
+        result = self.run_check(cleanup_handoff(self.contract))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout + result.stderr, "")
 
     def test_facts_decisions_and_boundaries_may_be_empty(self):
         document = handoff()

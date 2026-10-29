@@ -58,6 +58,14 @@ def check_value(where, value, shape):
     return [] if value.strip() else [f"{where} 不能为空"]
 
 
+def quote_file_has_content(path):
+    """只把去掉空白后仍有内容的原话文件视为有效。"""
+    try:
+        return bool(path.read_text(encoding="utf-8").strip())
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def check(document):
     """返回问题列表，为空即合格。"""
     if not isinstance(document, dict):
@@ -93,9 +101,9 @@ def check(document):
             quotes_path = contract_path / "quotes"
             if not quotes_path.is_dir():
                 problems.append("contract 目录下缺少 quotes/")
-            elif not any(re.fullmatch(r"[1-9]\d*\.md", path.name) for path in quotes_path.iterdir()
-                         if path.is_file()):
-                problems.append("quotes/ 里至少要有一个 <N>.md")
+            elif not any(quote_file_has_content(path) for path in quotes_path.iterdir()
+                         if path.is_file() and re.fullmatch(r"[1-9]\d*\.md", path.name)):
+                problems.append("quotes/ 里至少要有一个内容非空的 <N>.md")
 
     changed = document.get("changed")
     if isinstance(changed, list):
