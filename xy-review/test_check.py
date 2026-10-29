@@ -51,12 +51,24 @@ def diagnosis_report(diagnosis, conclusion):
     return f"## 判因\n{diagnosis}\n## 结论\n{conclusion}\n"
 
 
+def write_report(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 class CheckTest(unittest.TestCase):
     def assertProblems(self, text, *needles):
         problems = check(text)
         self.assertTrue(problems, "应该报错却通过了")
         for needle in needles:
             self.assertTrue(any(needle in p for p in problems), f"没报「{needle}」：{problems}")
+
+    def run_main(self, path):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["check.py", path])
+        return code, output.getvalue().splitlines()
 
     def test_clean_reports_pass(self):
         self.assertEqual(check(main_report()), [])
@@ -220,92 +232,116 @@ class CheckTest(unittest.TestCase):
             "实体：现在多大；改成什么；能省多少",
         )
 
-    def test_round3_failure_reminder(self):
+    def test_formal_review_location_and_filename_are_hard_errors(self):
+        cases = [
+            (("group1", "round1"), "review.md", main_report(), "review-main.md"),
+            (("group1", "round1"), "review-razor.md", main_report(), "review-main.md"),
+            (("group1", "round1"), "review.md", razor_report(), "review-razor.md"),
+            (("group1", "round1"), "review-main.md", razor_report(), "review-razor.md"),
+            (("round1",), "review-razor.md", razor_report(), "group<G>/round<R>/"),
+            (("group1", "round4"), "review-main.md", main_report(), "只能是 round1、round2、round3"),
+            (("group01", "round1"), "review-main.md", main_report(), "group<G>"),
+            (("group0", "round1"), "review-main.md", main_report(), "group<G>"),
+        ]
+        for parts, name, report, expected in cases:
+            with self.subTest(path="/".join(parts + (name,))), tempfile.TemporaryDirectory() as root:
+                path = os.path.join(root, *parts, name)
+                write_report(path, report)
+                code, problems = self.run_main(path)
+                self.assertEqual(code, 1, problems)
+                self.assertTrue(any(expected in line for line in problems), problems)
+
+    def test_formal_diagnosis_location_and_filename_are_hard_errors(self):
+        report = diagnosis_report("三轮仍未通过，见 group1/round3。", "重想")
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "group1", "round1"))
+            correct = os.path.join(root, "group1", "diagnosis.md")
+            write_report(correct, report)
+            self.assertEqual(self.run_main(correct), (0, []))
+
+            wrong_name = os.path.join(root, "group1", "cause.md")
+            write_report(wrong_name, report)
+            code, problems = self.run_main(wrong_name)
+            self.assertEqual(code, 1)
+            self.assertTrue(any("diagnosis.md" in line for line in problems), problems)
+
+            wrong_location = os.path.join(root, "group1", "round1", "diagnosis.md")
+            write_report(wrong_location, report)
+            code, problems = self.run_main(wrong_location)
+            self.assertEqual(code, 1)
+            self.assertTrue(any("group<G>/diagnosis.md" in line for line in problems), problems)
+
+    def test_formal_group_must_start_with_round1(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "group1", "diagnosis.md")
+            write_report(path, diagnosis_report("缺少 round1。", "重想"))
+            code, problems = self.run_main(path)
+        self.assertEqual(code, 1)
+        self.assertTrue(any("缺少 round1" in line for line in problems), problems)
+
+    def test_formal_round_directories_are_continuous_and_limited_to_three(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "group1", "round3", "review-main.md")
+            write_report(path, main_report())
+            os.makedirs(os.path.join(root, "group1", "round1"))
+            code, problems = self.run_main(path)
+            self.assertEqual(code, 1)
+            self.assertTrue(any("缺少 round2" in line for line in problems), problems)
+
+        for invalid_round in ("round0", "round02", "round4"):
+            with self.subTest(round=invalid_round), tempfile.TemporaryDirectory() as root:
+                path = os.path.join(root, "group1", "round1", "review-main.md")
+                write_report(path, main_report())
+                os.makedirs(os.path.join(root, "group1", invalid_round))
+                code, problems = self.run_main(path)
+                self.assertEqual(code, 1)
+                self.assertTrue(any(invalid_round in line for line in problems), problems)
+
+    def test_opening_a_group_requires_previous_diagnosis_only(self):
+        with tempfile.TemporaryDirectory() as root:
+            group1 = os.path.join(root, "group1")
+            group2_report = os.path.join(root, "group2", "round1", "review-main.md")
+            write_report(group2_report, main_report())
+
+            code, problems = self.run_main(group2_report)
+            self.assertEqual(code, 1)
+            self.assertTrue(any("一组要复审到第 3 轮仍不通过、派判因写下原因后才能开新组" in line
+                                for line in problems), problems)
+
+            os.makedirs(group1, exist_ok=True)
+            write_report(os.path.join(group1, "diagnosis.md"), "这份文件的内容不读取。\n")
+            write_report(os.path.join(group1, "round3", "review-main.md"), "故意写成无效内容\n")
+            self.assertEqual(self.run_main(group2_report), (0, []))
+
+    def test_round3_failure_reminder_is_not_a_hard_error(self):
         cases = [("round3", "不通过", True), ("round3", "改了就过", False), ("round2", "不通过", False)]
         for round_name, conclusion, expected_reminder in cases:
             with self.subTest(round=round_name, conclusion=conclusion), tempfile.TemporaryDirectory() as root:
-                directory = os.path.join(root, "group7", round_name)
-                os.makedirs(directory)
-                path = os.path.join(directory, "review-main.md")
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(main_report(问题="check.py:100 漏检", 结论=conclusion))
-                paths = [(directory, path)]
+                group = os.path.join(root, "group1")
+                for number in range(1, int(round_name[-1]) + 1):
+                    os.makedirs(os.path.join(group, f"round{number}"))
+                path = os.path.join(group, round_name, "review-main.md")
+                write_report(path, main_report(问题="check.py:100 漏检", 结论=conclusion))
+                code, output = self.run_main(path)
+                self.assertEqual(code, 0, output)
                 if expected_reminder:
-                    previous_directory = os.path.join(root, "group7", "round2")
-                    os.makedirs(previous_directory)
-                    paths += [(directory, "review-main.md"), (previous_directory, "../round3/review-main.md")]
-                for working_directory, report_path in paths:
-                    with self.subTest(path=report_path):
-                        output = io.StringIO()
-                        with contextlib.chdir(working_directory), contextlib.redirect_stdout(output):
-                            code = main(["check.py", report_path])
-                        self.assertEqual(code, 0, output.getvalue())
-                        if expected_reminder:
-                            self.assertIn(
-                                "提醒：group7 第 3 轮仍不通过，按 xy-review 先派判因子代理写 group7/diagnosis.md，按结论处理后再开下一组",
-                                output.getvalue().splitlines(),
-                            )
-                        else:
-                            self.assertNotIn("提醒：", output.getvalue())
-
-    def test_report_outside_group_round_reminder(self):
-        """round4、没有 group 的 round2、放错地方的判因报告都提醒，仍退出 0；放对的不提醒。"""
-        cases = [
-            (("group7", "round4"), "review-main.md", main_report(问题="check.py:100 漏检", 结论="不通过"), "报告路径不是 group<G>/round<R>/"),
-            (("round2",), "review-razor.md", razor_report(), "报告路径不是 group<G>/round<R>/"),
-            (("group7", "round1"), "diagnosis.md", diagnosis_report("三轮都在审新部分，见 round1～3。", "拆分"), "判因报告按 xy-review 写在 group<G>/diagnosis.md"),
-            (("group7",), "diagnosis.md", diagnosis_report("三轮都在审新部分，见 round1～3。", "拆分"), None),
-            (("group7", "round1"), "review-razor.md", razor_report(), None),
-        ]
-        for parts, name, text, expected_reminder in cases:
-            with self.subTest(path="/".join(parts + (name,))), tempfile.TemporaryDirectory() as root:
-                directory = os.path.join(root, *parts)
-                os.makedirs(directory)
-                path = os.path.join(directory, name)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(text)
-                output = io.StringIO()
-                with contextlib.redirect_stdout(output):
-                    code = main(["check.py", path])
-                self.assertEqual(code, 0, output.getvalue())
-                if expected_reminder:
-                    self.assertTrue(any(line.startswith("提醒：") and expected_reminder in line for line in output.getvalue().splitlines()), output.getvalue())
+                    self.assertTrue(any("先派判因" in line for line in output), output)
                 else:
-                    self.assertNotIn("提醒：", output.getvalue())
-
-    def test_review_report_filename_must_match_report_kind(self):
-        cases = [
-            (("group7", "round1"), "review.md", main_report(), "review-main.md"),
-            (("group7", "round1"), "review-razor.md", main_report(), "review-main.md"),
-            (("group7", "round1"), "review.md", razor_report(), "review-razor.md"),
-            (("group7", "round1"), "review-main.md", razor_report(), "review-razor.md"),
-        ]
-        for parts, name, report, expected_name in cases:
-            with self.subTest(path="/".join(parts + (name,))), tempfile.TemporaryDirectory() as root:
-                directory = os.path.join(root, *parts)
-                os.makedirs(directory)
-                path = os.path.join(directory, name)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(report)
-                output = io.StringIO()
-                with contextlib.redirect_stdout(output):
-                    code = main(["check.py", path])
-                self.assertEqual(code, 0, output.getvalue())
-                self.assertTrue(
-                    any(line.startswith("提醒：") and expected_name in line for line in output.getvalue().splitlines()),
-                    output.getvalue(),
-                )
+                    self.assertFalse(any(line.startswith("提醒：") for line in output), output)
 
     def test_exit_codes(self):
-        cases = [(main_report(), 0), (razor_report(删除清单="参数 x；丢什么：无", 结论="改了就过"), 0), (main_report(偏离=""), 1)]
-        for text, expected in cases:
-            with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
-                f.write(text)
-            try:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(main(["check.py", f.name]), expected)
-            finally:
-                os.unlink(f.name)
+        with tempfile.TemporaryDirectory() as root:
+            cases = [
+                ("group1/round1/review-main.md", main_report(), 0),
+                ("group1/round1/review-razor.md", razor_report(删除清单="参数 x；丢什么：无", 结论="改了就过"), 0),
+                ("group1/round1/review-main.md", main_report(偏离=""), 1),
+            ]
+            for relative_path, text, expected in cases:
+                with self.subTest(path=relative_path, expected=expected):
+                    path = os.path.join(root, relative_path)
+                    write_report(path, text)
+                    code, _ = self.run_main(path)
+                    self.assertEqual(code, expected)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["check.py"]), 2)
 

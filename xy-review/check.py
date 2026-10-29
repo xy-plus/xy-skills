@@ -1,15 +1,11 @@
-"""检查一份 xy-review 报告的格式，确保没有遗漏。报告有三种：主审的审查报告（铁律 1、铁律 2、仓库规范、结论）、
-剃刀的剃刀报告（铁律 3、结论）和判因报告（判因、结论），节集合必须正好是其中一种，节外没有内容。
-审查报告和剃刀报告：字段外、编号外没有内容；必填字段齐全、不重复、写法标准（顶格、全角冒号、不加粗）、
-没有照抄模板占位符；「无」必须单独成项、独占一行，后面写对照了什么，「本质」和「留下清单」不能写「无」；
-留下清单每行有实体和理由，删除清单每行有实体和删了丢什么，「要用户定」每行有实体、现在多大、改成什么、能省多少；仓库规范 1 到 7 条齐全且不重复；
-结论只有一行，是「通过」「改了就过」或「不通过」，并与各节一致：
-通过时查问题的地方（偏离、问题、删除清单、仓库规范七条）全是「无」，另两种至少一处不是。
-判因报告：「判因」非空、没有照抄模板占位符；结论只有一行，走法只能是「拆分」「重想」「问用户」「顶回」
-中的一种或几种，用「、」隔开、不重复。
+"""检查一份 xy-review 报告的格式和正式报告结构。
 
-退出码：0 格式合格；1 格式不合格，逐条打印问题；2 用法错误。结论从报告里读。
-格式合格且在 group<G>/round3/ 下结论为「不通过」时，会提醒先派判因子代理写 group<G>/diagnosis.md、按结论处理后再开下一组，仍退出 0。
+check(text) 只查内容格式：报告种类与节、字段、清单、仓库规范和结论。
+main 另把正式报告的位置与文件名、组内轮次目录名与连续性、开新组门槛作为硬错误；
+这些错误退出 1。它只读当前报告，不读其他报告，也不判断上一组哪一轮未通过。
+格式和结构都合格、当前 round3 报告结论为「不通过」时，只提醒先派判因，不拦截。
+
+退出码：0 格式和结构合格；1 有格式或结构错误，逐条打印问题；2 用法错误。
 """
 import pathlib
 import re
@@ -147,7 +143,7 @@ def check_lines(where, value, separators, shape):
 
 
 def check(text):
-    """返回问题列表，为空即格式合格。"""
+    """只查报告内容格式，返回问题列表；为空即格式合格，不检查报告路径或轮次结构。"""
     sections, problems = split_sections(text)
     kind = report_kind(sections)
     if kind is None:
@@ -176,7 +172,7 @@ def check(text):
                 problems.append(f"{name}：「{key}」不能写「无」，它本来就该有内容")
             values[key] = fields[key]
     if "留下清单" in values:
-        problems += check_lines("留下清单", values["留下清单"], ("：",), "实体：离开它，用户原话哪条做不到")
+        problems += check_lines("留下清单", values["留下清单"], ("：",), "实体：留下理由")
     if "删除清单" in values:
         problems += check_lines("删除清单", values["删除清单"], ("；;",), "实体；删了丢什么")
     if "要用户定" in values:
@@ -227,28 +223,67 @@ def main(argv):
     if len(argv) != 2:
         print("用法：check.py <报告路径>")
         return 2
-    with open(argv[1], encoding="utf-8") as f:
+    path = pathlib.Path(argv[1]).resolve()
+    with open(path, encoding="utf-8") as f:
         text = f.read()
     problems = check(text)
     if problems:
         print("\n".join(problems))
         return 1
-    path = pathlib.Path(argv[1]).resolve()
-    round_name, group = path.parent.name, path.parent.parent.name
     sections, _ = split_sections(text)
     kind = report_kind(sections)
-    # 报告放哪、第几轮后派判因，SKILL.md 都写明了；派子代理所用的工具不属于 xy-skills，所以这里只提醒、不拦截。
+
+    # 正式结构错误都在本入口拦截；这里只看目录名和当前报告的位置，不打开其他报告。
     if kind == "判因报告":
-        if not (path.name == "diagnosis.md" and re.fullmatch(r"group[1-9]\d*", round_name)):
-            print("提醒：判因报告按 xy-review 写在 group<G>/diagnosis.md")
+        group_path = path.parent
+        group_match = re.fullmatch(r"group([1-9]\d*)", group_path.name)
+        if path.name != "diagnosis.md" or group_match is None:
+            problems.append("判因报告必须写在 group<G>/diagnosis.md，G 从 1 起且不能有前导零")
     else:
         expected_name = "review-main.md" if kind == "审查报告" else "review-razor.md"
         if path.name != expected_name:
-            print(f"提醒：{kind}按 xy-review 写到 {expected_name}")
-        if not (re.fullmatch(r"round[123]", round_name) and re.fullmatch(r"group[1-9]\d*", group)):
-            print("提醒：报告路径不是 group<G>/round<R>/（R 只能是 1、2、3），按 xy-review 同一对象的每轮都写到那里，第 3 轮仍不通过就先派判因子代理")
-        elif round_name == "round3" and "\n".join(sections["结论"]).strip() == "不通过":
-            print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.md，按结论处理后再开下一组")
+            problems.append(f"{kind}必须命名为 {expected_name}")
+        round_path = path.parent
+        group_path = round_path.parent
+        group_match = re.fullmatch(r"group([1-9]\d*)", group_path.name)
+        if group_match is None or re.fullmatch(r"round[123]", round_path.name) is None:
+            problems.append("审查报告和剃刀报告必须写在 group<G>/round<R>/，G 从 1 起且不能有前导零，R 只能是 1、2、3")
+
+    if group_match is not None:
+        group_number = int(group_match.group(1))
+        # 每个现有 round 目录都用 round1、round2 或 round3；编号连续，最多三轮。
+        round_numbers = set()
+        for child in group_path.iterdir():
+            if not child.is_dir() or not child.name.startswith("round"):
+                continue
+            if re.fullmatch(r"round[123]", child.name) is None:
+                problems.append(f"{group_path}：轮次目录名错误，{child.name} 只能是 round1、round2、round3")
+            else:
+                round_numbers.add(int(child.name[5:]))
+        if not round_numbers:
+            problems.append(f"{group_path}：轮次编号不连续，缺少 round1")
+        else:
+            for number in range(1, max(round_numbers) + 1):
+                if number not in round_numbers:
+                    problems.append(f"{group_path}：轮次编号不连续，缺少 round{number}")
+
+        # 下一组只能在上一组完成三轮仍不通过并留下判因后开启；不读取报告来判断是否满足。
+        if group_number >= 2:
+            previous_diagnosis = group_path.parent / f"group{group_number - 1}" / "diagnosis.md"
+            if not previous_diagnosis.is_file():
+                problems.append(
+                    f"{previous_diagnosis} 不存在；一组要复审到第 3 轮仍不通过、派判因写下原因后才能开新组"
+                )
+
+    if problems:
+        print("\n".join(problems))
+        return 1
+
+    # 第 3 轮仍不通过时只提醒先派判因；是否真的复审到第 3 轮不从其他报告推断。
+    if (kind in ("审查报告", "剃刀报告") and path.parent.name == "round3"
+            and "\n".join(sections["结论"]).strip() == "不通过"):
+        group = path.parent.parent.name
+        print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.md，按结论处理后再开下一组")
     return 0
 
 
