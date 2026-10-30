@@ -1,0 +1,119 @@
+"""Render mode, output-directory, tree-check, and draft marker tests."""
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from repo_map_lib.render_command import model_file_destination, render_repository
+
+
+def element(element_id, kind, links):
+    value = {"id": element_id, "kind": kind, "title": element_id,
+             "description": {"txt": "一句功能描述。"}, "style": {}}
+    if links is not None:
+        value["links"] = links
+    return value
+
+
+class RenderCommandTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "parent"
+        self.child = self.root / "vendor"
+        for repository in (self.root, self.child):
+            repository.mkdir(parents=True)
+            subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+            map_root = repository / "repo-map"
+            map_root.mkdir()
+            (map_root / "model.c4").write_text("model {}\n", encoding="utf-8")
+        self.parent_model = {"elements": {
+            "workspace": element("workspace", "node", []),
+            "workspace.engine": element("workspace.engine", "repo", [
+                {"url": "../vendor/", "title": "repo"}]),
+        }, "relations": {}}
+        self.child_model = {"elements": {
+            "engine": element("engine", "node", []),
+            "engine.cache": element("engine.cache", "node", []),
+        }, "relations": {}}
+        self.output = Path(self.temporary.name) / "site"
+
+    def fake_check(self, repository, check_approval):
+        if Path(repository).resolve() == self.root.resolve():
+            return [], self.parent_model
+        if check_approval:
+            return ["图未经同意：repo-map sha256 " + "a" * 64], self.child_model
+        return [], self.child_model
+
+    def fake_build(self, project, output):
+        Path(output).mkdir(parents=True, exist_ok=True)
+        (Path(output) / "index.html").write_text("built", encoding="utf-8")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    def test_assembled_source_names_keep_the_root_id_without_flattening_collisions(self):
+        project = Path(self.temporary.name) / "assembled"
+        direct = model_file_destination(project, "engine", Path("model.c4"))
+        nested = model_file_destination(project, "engine", Path("parts/model.c4"))
+        self.assertEqual(direct.name, "engine-model.c4")
+        self.assertEqual(nested.name, "engine-model.c4")
+        self.assertNotEqual(direct, nested)
+        self.assertTrue(nested.is_relative_to(project / "engine"))
+
+    def test_draft_checks_the_tree_without_approval_and_writes_marker(self):
+        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check), \
+                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build):
+            problems = render_repository(self.root, "草稿", self.output)
+        self.assertEqual(problems, [])
+        self.assertTrue((self.output / "DRAFT").is_file())
+        self.assertTrue((self.output / "index.html").is_file())
+
+    def test_formal_render_rejects_an_unapproved_child_before_build(self):
+        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check), \
+                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build):
+            problems = render_repository(self.root, "正式", self.output)
+        self.assertTrue(any("vendor" in problem and "未经同意" in problem for problem in problems), problems)
+        self.assertFalse(self.output.exists())
+
+    def test_formal_render_of_an_approved_tree_has_no_draft_marker(self):
+        def approved_check(repository, check_approval):
+            model = self.parent_model if Path(repository).resolve() == self.root.resolve() else self.child_model
+            return [], model
+
+        with patch("repo_map_lib.render_command.check_repository", side_effect=approved_check), \
+                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build):
+            problems = render_repository(self.root, "正式", self.output)
+        self.assertEqual(problems, [])
+        self.assertTrue((self.output / "index.html").is_file())
+        self.assertFalse((self.output / "DRAFT").exists())
+
+    def test_render_rejects_duplicate_root_ids_across_the_repository_tree(self):
+        duplicate_child = {"elements": {
+            "workspace": element("workspace", "node", []),
+            "workspace.cache": element("workspace.cache", "node", []),
+        }, "relations": {}}
+
+        def duplicate_check(repository, check_approval):
+            model = self.parent_model if Path(repository).resolve() == self.root.resolve() else duplicate_child
+            return [], model
+
+        with patch("repo_map_lib.render_command.check_repository", side_effect=duplicate_check), \
+                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build):
+            problems = render_repository(self.root, "草稿", self.output)
+        self.assertTrue(any("根 id 重复" in problem and "workspace" in problem
+                            for problem in problems), problems)
+        self.assertFalse(self.output.exists())
+
+    def test_render_refuses_nonempty_output_directory(self):
+        self.output.mkdir()
+        (self.output / "keep.txt").write_text("keep", encoding="utf-8")
+        problems = render_repository(self.root, "草稿", self.output)
+        self.assertTrue(any("不存在或为空" in problem for problem in problems), problems)
+        self.assertEqual((self.output / "keep.txt").read_text(encoding="utf-8"), "keep")
+
+
+if __name__ == "__main__":
+    unittest.main()

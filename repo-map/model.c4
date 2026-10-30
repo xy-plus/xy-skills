@@ -1,0 +1,78 @@
+model {
+  xy_skills = node 'xy-skills' {
+    description '一组用于维护代码仓库的 Claude Code skill。'
+    repository_guidance = node '仓库入门与安装' {
+      description '说明仓库内容、安装方法和全局配置。'
+      link ../README.md 'docs'
+      link ../LICENSE 'docs'
+      link ../.gitignore 'data'
+    }
+    quality = node '质量约束' {
+      description '规定实现时必须遵守的设计原则与仓库规范。'
+      iron_law = node '铁律' {
+        description '约束代码设计、易误用性和实体数量。'
+        link ../xy-iron-law/SKILL.md 'docs'
+      }
+      repo_rules = node '仓库规范' {
+        description '维护仓库结构、代码质量和文件长度。'
+        link ../xy-repo-rules/SKILL.md 'docs'
+        link ../xy-repo-rules/check_file_length.py 'code'
+        link ../xy-repo-rules/test_check_file_length.py 'tests'
+        link ../file-length-exceptions/ 'data'
+      }
+    }
+    session_work = node '会话工作流' {
+      description '支持需求澄清、契约记录、工作交接、审查和实施。'
+      thinking = node '需求澄清' {
+        description '把需要用户决定的事项整理成带建议的选择题。'
+        link ../sync-think/SKILL.md 'docs'
+      }
+      goal = node '长目标契约' {
+        description '记录用户原话、事项、验收状态和定时自查。'
+        link ../xy-goal/SKILL.md 'docs'
+        link ../xy-goal/README.md 'docs'
+        link ../xy-goal/goal.py 'code'
+        link ../xy-goal/tests/ 'tests'
+      }
+      handoff = node '会话任务交接' {
+        description '明确大任务的归属、拆分边界和后台会话收尾。'
+        link ../xy-handoff/SKILL.md 'docs'
+        link ../xy-handoff/check_handoff.py 'code'
+        link ../xy-handoff/test_check_handoff.py 'tests'
+      }
+      runs = node '运行目录管理' {
+        description '规定运行文件位置并定期清理过期运行目录。'
+        link ../xy-runs/SKILL.md 'docs'
+        link ../xy-runs/README.md 'docs'
+        link ../xy-runs/clean.py 'code'
+        link ../xy-runs/systemd/ 'data'
+        link ../xy-runs/tests/ 'tests'
+      }
+      review = node '对抗审查' {
+        description '使用主审和剃刀核查 spec、代码及审查报告。'
+        link ../xy-review/SKILL.md 'docs'
+        link ../xy-review/audit.py 'code'
+        link ../xy-review/check.py 'code'
+        link ../xy-review/test_audit.py 'tests'
+        link ../xy-review/test_check.py 'tests'
+      }
+      workflow = node '标准工作流程' {
+        description '组织需求讨论、spec、工作树实现、终审和收尾。'
+        link ../xy-workflow/SKILL.md 'docs'
+      }
+      repo_map = node '仓库功能图' {
+        description '记录仓库功能结构、文件归属，并批准、校验和出图。'
+        link ../xy-repo-map/SKILL.md 'docs'
+        link ../xy-repo-map/repo_map.py 'code'
+        link ../xy-repo-map/repo_map_lib/ 'code'
+        link ../xy-repo-map/tests/ 'tests'
+      }
+    }
+  }
+  xy_skills.session_work.workflow -> xy_skills.session_work.goal '记录用户原话和事项'
+  xy_skills.session_work.workflow -> xy_skills.session_work.thinking '澄清需要用户决定的事项'
+  xy_skills.session_work.workflow -> xy_skills.session_work.review '审查 spec 和实现'
+  xy_skills.session_work.workflow -> xy_skills.session_work.repo_map '读取和同步仓库功能图'
+  xy_skills.session_work.review -> xy_skills.session_work.handoff '复用 JSON 结构校验'
+  xy_skills.session_work.handoff -> xy_skills.session_work.runs '保存交接文件'
+}

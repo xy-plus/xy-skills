@@ -11,6 +11,7 @@
 | `xy-goal` | 长目标契约与定时自查 |
 | `xy-runs` | 文件去处、runs 布局与定期清理规则 |
 | `xy-handoff` | 会话大任务归属、拆分交接与后台会话收尾 |
+| `xy-repo-map` | LikeC4 仓库功能图、文件归属、批准、校验和静态出图 |
 | `sync-think` | 只有用户能定的事，做成带建议的选择题问用户 |
 
 ## 安装
@@ -57,6 +58,8 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 `xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。
 
+`xy-repo-map` 需要 Node.js 和 `npx`，固定运行 LikeC4 `1.60.0`。在全局 Claude Code 权限配置中加入 `Bash(npx -y likec4@1.60.0 *)`；更换 LikeC4 版本前先征得用户同意。
+
 按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并按其中说明配置 runs 的清理范围。
 
 新加 skill：建目录、写 `SKILL.md`，再按上面的方式软链。只在有 SKILL.md 装不下的东西时，比如代码、前提，才给 skill 目录加 README。
@@ -70,4 +73,8 @@ python3 -B -m unittest discover -s xy-goal/tests
 python3 -B -m unittest discover -s xy-handoff
 python3 -B -m unittest discover -s xy-review
 python3 -B -m unittest discover -s xy-runs/tests
+python3 -B -m unittest discover -s xy-repo-map/tests -p 'test_*.py'
+python3 -B -m unittest discover -s xy-repo-map/tests -p 'likec4_integration_test.py'
 ```
+
+最后一条是真跑 LikeC4 的集成测试；若 `npx` 或固定版本不可用，测试会失败，不会跳过。
