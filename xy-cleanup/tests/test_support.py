@@ -42,6 +42,10 @@ def node_entry(node, files, findings, checked):
     entry = {"node": node, "findings": findings, "checked": checked}
     if files is not None:
         entry["files"] = list(files)
+        entry["entities"] = [
+            {"entity": path, "verdict": "无问题", "reason": "核对了入口和实现"}
+            for path in files
+        ]
     return entry
 
 

@@ -13,6 +13,7 @@ from repo_map_lib.git_repository import (ArgumentError, discover_subrepositories
                                          gitlink_paths, require_repository_root,
                                          tracked_paths)
 from repo_map_lib.ownership import check_ownership
+from audit_entities import collect_entities
 
 
 ROLES = {"主审", "剃刀", "全图"}
@@ -24,6 +25,8 @@ FINDING_FIELDS = {
     "basis", "evidence", "benefit", "cost",
 }
 TEXT_FIELDS = {"target", "problem", "proposal", "decision", "evidence", "benefit", "cost"}
+ENTITY_FIELDS = {"entity", "verdict", "reason"}
+ENTITY_VERDICTS = {"无问题", "见发现"}
 
 
 def numbered_text(skill_path, number):
@@ -149,21 +152,68 @@ def expected_role_nodes(scope, role, direct_deletions):
     return set(scope) - omitted
 
 
-def validate_report_node(entry, role, report_name, scope, owners, direct_deletion_targets, problems):
+def validate_entity_list(value, label, expected, findings, problems):
+    """Validate one report node's complete entity verdict list."""
+    if not isinstance(value, list):
+        problems.append(f"{label} 必须是数组")
+        for entity_id in sorted(set(expected)):
+            problems.append(f"{label} 缺少实体 {entity_id}")
+        return
+    actual = []
+    seen = set()
+    has_finding_verdict = False
+    for index, item in enumerate(value):
+        item_label = f"{label}[{index}]"
+        if not isinstance(item, dict):
+            problems.append(f"{item_label} 必须是对象")
+            continue
+        missing = ENTITY_FIELDS - set(item)
+        extra = set(item) - ENTITY_FIELDS
+        for field in sorted(missing):
+            problems.append(f"{item_label} 缺少字段：{field}")
+        for field in sorted(extra):
+            problems.append(f"{item_label} 多余字段：{field}")
+        entity_id = item.get("entity")
+        if not isinstance(entity_id, str) or not entity_id.strip():
+            problems.append(f"{item_label}.entity 必须是非空字符串")
+        else:
+            actual.append(entity_id)
+            if entity_id in seen:
+                problems.append(f"{label} 实体 {entity_id} 重复")
+            seen.add(entity_id)
+        verdict = item.get("verdict")
+        if not isinstance(verdict, str) or verdict not in ENTITY_VERDICTS:
+            problems.append(f"{item_label}.verdict 不在允许值中")
+        elif verdict == "见发现":
+            has_finding_verdict = True
+        reason = item.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            problems.append(f"{item_label}.reason 必须是非空字符串")
+
+    for entity_id in sorted(set(expected) - set(actual)):
+        problems.append(f"{label} 缺少实体 {entity_id}")
+    for entity_id in sorted(set(actual) - set(expected)):
+        problems.append(f"{label} 多余实体 {entity_id}")
+    if has_finding_verdict and not findings:
+        problems.append(f"{label} 标为见发现时节点 findings 不能为空")
+
+
+def validate_report_node(entry, role, report_name, scope, owners, expected_entities,
+                         direct_deletion_targets, problems):
     """Validate a node entry and its exact file list for a report role."""
     if not isinstance(entry, dict):
         problems.append(f"{report_name} 的 nodes 项必须是对象")
         return None
     required = {"node", "findings", "checked"}
     if role in {"主审", "剃刀"}:
-        required.add("files")
+        required.update({"files", "entities"})
     missing = required - set(entry)
     extra = set(entry) - required
     for field in sorted(missing):
         problems.append(f"{report_name} 的节点缺少字段：{field}")
     for field in sorted(extra):
-        if role == "全图" and field == "files":
-            problems.append(f"{report_name} 的全图节点不能列 files")
+        if role == "全图" and field in {"files", "entities"}:
+            problems.append(f"{report_name} 的全图节点不能列 {field}")
         else:
             problems.append(f"{report_name} 的节点多余字段：{field}")
     node = entry.get("node")
@@ -182,6 +232,16 @@ def validate_report_node(entry, role, report_name, scope, owners, direct_deletio
         findings = []
     if not findings and isinstance(checked, str) and not checked.strip():
         problems.append(f"{report_name} 没有发现的节点必须写明 checked")
+    if role in {"主审", "剃刀"}:
+        entity_label = f"{report_name} 的 {node}.entities"
+        if "entities" in entry:
+            validate_entity_list(
+                entry["entities"], entity_label,
+                expected_entities.get(node, []), findings, problems
+            )
+        else:
+            for entity_id in sorted(set(expected_entities.get(node, []))):
+                problems.append(f"{entity_label} 缺少实体 {entity_id}")
     for index, finding in enumerate(findings):
         valid = finding_is_valid(finding, f"{report_name} 的 {node}.findings[{index}]", problems)
         if not valid or not isinstance(finding, dict):
@@ -205,7 +265,7 @@ def validate_report_node(entry, role, report_name, scope, owners, direct_deletio
     return node
 
 
-def validate_reports(repository, scope_values, reports, model, owners):
+def validate_reports(repository, scope_values, reports, model, owners, expected_entities):
     """Return all schema, coverage, evidence, and file-ownership problems."""
     problems = []
     scope, scope_problems = expand_scope(scope_values, model)
@@ -249,7 +309,8 @@ def validate_reports(repository, scope_values, reports, model, owners):
         seen_here = set()
         for entry in entries:
             node = validate_report_node(
-                entry, role, label, scope, owners, direct_deletions[role], problems
+                entry, role, label, scope, owners, expected_entities,
+                direct_deletions[role], problems
             )
             if node is None:
                 continue
@@ -289,11 +350,17 @@ def load_reports(paths):
 
 
 def parser():
-    """Build the checker CLI; every input is required explicitly."""
-    command = argparse.ArgumentParser(description="核对清扫报告与仓图文件归属")
-    command.add_argument("--repo", required=True, help="仓根绝对路径")
-    command.add_argument("--scope", required=True, nargs="+", help="节点 FQN 列表或「全部」")
-    command.add_argument("--reports", required=True, nargs="+", help="JSON 报告路径列表")
+    """Build explicit entity-list and report-check subcommands."""
+    command = argparse.ArgumentParser(description="生成或核对清扫审查实体清单")
+    actions = command.add_subparsers(dest="action", required=True)
+    entities = actions.add_parser("entities", help="打印范围内各节点的实体 ID")
+    check = actions.add_parser("check", help="核对审查报告")
+    for action in (entities, check):
+        action.add_argument("--repo", required=True, help="仓根绝对路径")
+        action.add_argument(
+            "--scope", required=True, nargs="+", help="节点 FQN 列表或「全部」"
+        )
+    check.add_argument("--reports", required=True, nargs="+", help="JSON 报告路径列表")
     return command
 
 
@@ -313,7 +380,7 @@ def repository_context(repository):
 
 
 def main(argv):
-    """Run the report checker and return the documented command status."""
+    """Print expected entities or validate reports and return a command status."""
     try:
         arguments = parser().parse_args(argv)
     except SystemExit as error:
@@ -333,11 +400,22 @@ def main(argv):
     if scope_problems:
         print("\n".join(scope_problems))
         return 2
+    try:
+        expected_entities = collect_entities(root, owners, scope)
+    except (OSError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    if arguments.action == "entities":
+        print(json.dumps({"repo": str(root), "nodes": expected_entities},
+                         ensure_ascii=False, indent=2))
+        return 0
     reports, read_problems = load_reports(arguments.reports)
     if read_problems:
         print("\n".join(read_problems))
         return 1
-    problems = validate_reports(root, scope, reports, model, owners)
+    problems = validate_reports(
+        root, scope, reports, model, owners, expected_entities
+    )
     if problems:
         print("\n".join(problems))
         return 1

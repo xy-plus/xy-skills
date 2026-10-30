@@ -74,15 +74,30 @@ python3 /home/xy/web-portal/portal.py publish \
 
 `references.json` 包含逐行命中的 `mentions`、有文字引用但图上没有关系的 `references_without_relationship`，以及图上有关系但没有文字命中的 `relationships_without_reference`。脚本为每个节点收集链接相对仓根的路径、独占目录的路径，以及其名下 `.py`、`.rs` 文件的模块名写法：Python 去掉扩展名和末尾 `__init__`，用点号拼路径并取至少两段的各个后缀；Rust 去掉扩展名、路径中的 `src` 段和末尾 `mod`、`lib`、`main`，用 `::` 拼路径并取至少两段的各个后缀，同时加入 `crate::` 开头的完整写法。只有一段的模块名和目录末段名，只有在全仓唯一时才加入。脚本逐行搜索其他节点名下的文本文件并记录文件和行号。结果只作旁证：审查者判断同名误中和动态引用。
 
+## 生成实体清单
+
+开审前按本次范围生成实体清单并保存到运行目录，交给主审式和剃刀式审查者：
+
+```sh
+python3 <xy-cleanup目录>/check_audit.py entities \
+  --repo <仓根绝对路径> \
+  --scope <节点FQN> <另一个节点FQN> \
+  > <运行目录绝对路径>/entities.json
+```
+
+全仓范围显式写 `--scope 全部`。命令按节点输出 JSON：`nodes` 中每个 FQN 对应实体 ID 数组。每个名下文件至少有一个实体 ID；`code` 或 `tests` 类 Python 文件还列出模块级函数、类和类方法，Rust 文件还列出每个 `fn`。同一文件中重名定义的 ID 附 `@行号`；其他文件只列文件路径。命令会检查仓图和文件归属，但跳过同意记录检查；出错先修图或代码，再重跑。
+
 ## 派审查
 
-审查者只读，不修改工作树，也不互相传递意见。派审时提供仓路径、范围、仓图和草稿链接、`map-data.json`、基线、机械旁证、引用对账、报告格式，以及对应规范文件：
+审查者只读，不修改工作树，也不互相传递意见。派审时提供仓路径、范围、仓图和草稿链接、`map-data.json`、基线、机械旁证、引用对账、实体清单、报告格式，以及对应规范文件：
 
 - `<xy-iron-law目录>/SKILL.md`
 - `<xy-repo-rules目录>/SKILL.md`
 
 - 主审式审查者按第一性原理、难误用设计和仓库规范全部七条审查；
 - 剃刀式审查者只按奥卡姆剃刀逐项检查。
+
+剃刀式审查者逐个检查清单实体里的实现、注释和文档字符串；复述代码的注释、过时说明也可以删除。主审式审查者逐个检查特殊分支，并问：「这是在修自己的问题，还是在替别处的错误收拾后果？」若是在替别处收拾后果，按第一性原理提出修根因的发现。
 
 ### 全图审查
 
@@ -96,7 +111,7 @@ python3 /home/xy/web-portal/portal.py publish \
 
 ## 报告格式
 
-每份报告写成一个 JSON 对象。主审和剃刀报告的 `files` 必须列出该节点归属下的全部仓内相对路径，不能重复；全图报告省略 `files`。每个范围内节点都要列出；没有发现时 `findings` 为空数组，并在 `checked` 写清核对过什么。
+每份报告写成一个 JSON 对象。主审和剃刀报告的 `files` 必须列出该节点归属下的全部仓内相对路径，`entities` 必须逐个列出实体清单里的 ID；两者都不能漏项或重复。全图报告省略 `files` 和 `entities`。每个范围内节点都要列出；没有发现时 `findings` 为空数组，并在 `checked` 写清核对过什么。
 
 ```json
 {
@@ -106,6 +121,9 @@ python3 /home/xy/web-portal/portal.py publish \
     {
       "node": "<节点 FQN>",
       "files": ["<主审和剃刀填写：该节点的全部仓内相对路径>"],
+      "entities": [
+        {"entity": "<实体 ID>", "verdict": "无问题 | 见发现", "reason": "<理由>"}
+      ],
       "findings": [
         {
           "kind": "删除 | 合并 | 改名 | 挪位置 | 拆分 | 重构 | 修根因 | 加约束 | 改图 | 其他",
@@ -129,14 +147,14 @@ python3 /home/xy/web-portal/portal.py publish \
 }
 ```
 
-全图报告的节点对象省略 `files`。`changes_behavior` 必须是 JSON 布尔值 `true` 或 `false`。依据来源按 `xy-iron-law 第 <数字> 条` 或 `xy-repo-rules 第 <数字> 条`填写；`basis.text` 从所标条款复制一段连续原文，标点照抄。「直接做」当且仅当类型是删除或合并、且改后对外行为不变；否则标「问你」。`改图` 必须标「问你」。
+全图报告的节点对象省略 `files` 和 `entities`。每个实体的 `verdict` 只能是「无问题」或「见发现」，`reason` 必须非空。判为「无问题」时，剃刀写明离开它哪个入口或功能就做不到，并给调用方 `文件:行号` 或文档出处；主审写核对了什么、为何没问题。判为「见发现」时，`reason` 写对应发现的 `target`，且该节点的 `findings` 不能为空。`changes_behavior` 必须是 JSON 布尔值 `true` 或 `false`。依据来源按 `xy-iron-law 第 <数字> 条` 或 `xy-repo-rules 第 <数字> 条`填写；`basis.text` 从所标条款复制一段连续原文，标点照抄。「直接做」当且仅当类型是删除或合并、且改后对外行为不变；否则标「问你」。`改图` 必须标「问你」。
 
 ## 校验报告
 
 把所有批次的主审、剃刀报告和唯一一份全图报告一起校验。逐节点范围显式列 FQN；全仓范围显式写「全部」。以下示例包含两批，实际执行时逐个列出本次所有批次的主审、剃刀报告，并只列一份全图报告：
 
 ```sh
-python3 <xy-cleanup目录>/check_audit.py \
+python3 <xy-cleanup目录>/check_audit.py check \
   --repo <仓根绝对路径> \
   --scope <节点FQN> <另一个节点FQN> \
   --reports <第一批主审JSON> <第一批剃刀JSON> <第二批主审JSON> <第二批剃刀JSON> <唯一全图JSON>

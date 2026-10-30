@@ -14,6 +14,7 @@ sys.path.insert(0, str(TESTS.parent / "test_data"))
 sys.path.insert(0, str(TESTS))
 
 from check_audit import main, validate_reports
+from audit_entities import collect_entities
 from test_support import (finding, model, node_entry, report, report_input,
                           valid_reports)
 from create_fixture import create_fixture_repo
@@ -35,7 +36,13 @@ def validate(reports, scope, owners, graph):
     scope_data = SCOPE if scope is None else scope
     owner_data = OWNERS if owners is None else owners
     graph_data = model() if graph is None else graph
-    return validate_reports(REPO, scope_data, report_data, graph_data, owner_data)
+    expected_entities = {
+        node: sorted(path for path, owner in owner_data.items() if owner.element == node)
+        for node in graph_data["elements"]
+    }
+    return validate_reports(
+        REPO, scope_data, report_data, graph_data, owner_data, expected_entities
+    )
 
 
 class CheckAuditTest(unittest.TestCase):
@@ -113,6 +120,63 @@ class CheckAuditTest(unittest.TestCase):
         reports[0]["data"]["nodes"][0]["files"] = []
         errors = validate(reports, None, None, None)
         self.assertTrue(any("files" in error for error in errors), errors)
+
+    def test_entity_manifest_reports_missing_extra_and_duplicate_ids(self):
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["entities"] = []
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("缺少实体 src/alpha.py" in error for error in errors), errors)
+
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["entities"].append({
+            "entity": "src/not-owned.py", "verdict": "无问题", "reason": "核对了代码"
+        })
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("多余实体 src/not-owned.py" in error for error in errors), errors)
+
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["entities"].append(
+            dict(reports[0]["data"]["nodes"][0]["entities"][0])
+        )
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("实体 src/alpha.py 重复" in error for error in errors), errors)
+
+    def test_primary_reports_must_include_an_entities_array(self):
+        reports = valid_reports(OWNERS)
+        del reports[0]["data"]["nodes"][0]["entities"]
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("节点缺少字段：entities" in error for error in errors), errors)
+
+    def test_entity_verdict_reason_and_finding_consistency_are_checked(self):
+        reports = valid_reports(OWNERS)
+        entity = reports[0]["data"]["nodes"][0]["entities"][0]
+        entity["verdict"] = "未检查"
+        entity["reason"] = "  "
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("verdict" in error for error in errors), errors)
+        self.assertTrue(any("reason" in error for error in errors), errors)
+
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["entities"][0]["verdict"] = "见发现"
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("见发现" in error and "findings" in error for error in errors), errors)
+
+    def test_entity_objects_require_exact_fields_and_nonempty_ids(self):
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["entities"][0].pop("reason")
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("entities[0] 缺少字段：reason" in error for error in errors), errors)
+
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["entities"][0]["entity"] = " "
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("entity 必须是非空字符串" in error for error in errors), errors)
+
+    def test_whole_graph_nodes_must_not_list_entities(self):
+        reports = valid_reports(OWNERS)
+        reports[2]["data"]["nodes"][0]["entities"] = []
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("全图" in error and "entities" in error for error in errors), errors)
 
     def test_whole_graph_nodes_must_not_list_files(self):
         reports = valid_reports(OWNERS)
@@ -274,23 +338,47 @@ class CheckAuditTest(unittest.TestCase):
             self.assertEqual(ownership_problems, [])
             node_names = sorted(graph["elements"])
             report_paths = []
+            expected_entities = collect_entities(repository, owners, node_names)
             for role in ("主审", "剃刀", "全图"):
                 nodes = []
                 for node in node_names:
                     files = sorted(path for path, owner in owners.items()
                                    if owner.element == node)
-                    nodes.append(node_entry(
+                    entry = node_entry(
                         node, files if role != "全图" else None, [], "核对过节点文件"
-                    ))
+                    )
+                    if role != "全图":
+                        entry["entities"] = [
+                            {"entity": entity, "verdict": "无问题",
+                             "reason": "核对了入口和实现"}
+                            for entity in expected_entities[node]
+                        ]
+                    nodes.append(entry)
                 document = report(role, nodes, str(repository))
                 path = repository / f"{role}.json"
                 path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
                 report_paths.append(str(path))
-            arguments = ["--repo", str(repository), "--scope", "全部",
+            arguments = ["check", "--repo", str(repository), "--scope", "全部",
                          "--reports", *report_paths]
             with patch("check_audit.check_repository", return_value=([], graph)) as graph_check:
                 self.assertEqual(main(arguments), 0)
             graph_check.assert_called_once_with(repository, check_approval=False)
+
+    def test_entities_command_prints_the_selected_node_manifest_as_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = create_fixture_repo(Path(temporary) / "review-target")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = main([
+                    "entities", "--repo", str(repository), "--scope",
+                    "cleanup_fixture.core"
+                ])
+            self.assertEqual(status, 0)
+            document = json.loads(output.getvalue())
+            core_entities = document["nodes"]["cleanup_fixture.core"]
+            self.assertIn("src/cleanup_fixture/core.py", core_entities)
+            self.assertIn("src/cleanup_fixture/core.py::parse_external_result", core_entities)
+            self.assertEqual(set(document["nodes"]), {"cleanup_fixture.core"})
 
 
 if __name__ == "__main__":
