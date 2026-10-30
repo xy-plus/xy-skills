@@ -76,7 +76,8 @@ python3 -B -m unittest discover -s xy-handoff
 python3 -B -m unittest discover -s xy-review
 python3 -B -m unittest discover -s xy-runs/tests
 python3 -B -m unittest discover -s xy-repo-map/tests -p 'test_*.py'
+XY_REPO_MAP_CHROMIUM=/path/to/chrome python3 -B -m unittest discover -s xy-repo-map/tests -p 'browser_*_test.py'
 python3 -B -m unittest discover -s xy-repo-map/tests -p 'likec4_integration_test.py'
 ```
 
-最后一条是真跑 LikeC4 的集成测试；若 `npx` 或固定版本不可用，测试会失败，不会跳过。
+浏览器测试使用本机 Python Playwright 和 Chromium；把 `XY_REPO_MAP_CHROMIUM` 设为 Chromium 可执行文件的绝对路径。路径缺失或浏览器不可用时测试会失败，不会跳过。最后一条是真跑 LikeC4 的集成测试；若 `npx` 或固定版本不可用，测试会失败，不会跳过。
