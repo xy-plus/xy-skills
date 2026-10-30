@@ -90,6 +90,32 @@ class RenderCommandTest(unittest.TestCase):
         self.assertTrue((self.output / "index.html").is_file())
         self.assertFalse((self.output / "DRAFT").exists())
 
+    def test_render_fails_with_the_path_when_an_owned_file_cannot_be_read(self):
+        source = self.root / "src" / "unreadable.py"
+        source.parent.mkdir()
+        source.write_text("def run():\n    return 1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "src/unreadable.py"],
+                       check=True, capture_output=True)
+        self.parent_model["elements"]["workspace"]["links"] = [
+            {"url": "../src/unreadable.py", "title": "code"},
+        ]
+        original_read_bytes = Path.read_bytes
+
+        def fail_for_owned_file(path):
+            if path == source:
+                raise PermissionError("fixture denies reading")
+            return original_read_bytes(path)
+
+        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check), \
+                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build) as build, \
+                patch.object(Path, "read_bytes", fail_for_owned_file):
+            problems = render_repository(self.root, "草稿", self.output)
+
+        self.assertTrue(any("无法读取" in problem and str(source) in problem
+                            for problem in problems), problems)
+        self.assertFalse(self.output.exists())
+        build.assert_not_called()
+
     def test_render_rejects_duplicate_root_ids_across_the_repository_tree(self):
         duplicate_child = {"elements": {
             "workspace": element("workspace", "node", []),

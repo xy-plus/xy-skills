@@ -1,5 +1,6 @@
-"""Git root checks, tracked paths, and direct nested repository discovery."""
+"""Git root checks, tracked paths, and nested repository discovery."""
 from pathlib import Path, PurePosixPath
+import os
 import subprocess
 
 
@@ -62,6 +63,36 @@ def _is_repository(path):
     return result.returncode == 0
 
 
+def _is_ignored(repository, relative_path):
+    directory_path = relative_path.rstrip("/") + "/"
+    result = run_git(repository, "check-ignore", "--quiet", "--", directory_path,
+                     check=False)
+    return result.returncode == 0
+
+
+def _untracked_repositories(root, start, own_common):
+    found = set()
+    pending = [start]
+    while pending:
+        candidate = pending.pop()
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        relative = candidate.relative_to(root).as_posix()
+        if _is_ignored(root, relative):
+            continue
+        if _is_repository(candidate):
+            if _common_directory(candidate) != own_common:
+                found.add(relative)
+            continue
+        try:
+            with os.scandir(candidate) as entries:
+                pending.extend(Path(entry.path) for entry in entries
+                               if entry.name != ".git" and entry.is_dir(follow_symlinks=False))
+        except OSError:
+            continue
+    return found
+
+
 def discover_subrepositories(repository):
     """Return child gitlinks and direct nested repositories, excluding this repo's worktrees."""
     root = Path(repository).resolve()
@@ -71,22 +102,23 @@ def discover_subrepositories(repository):
                         check=True)
     ignored = run_git(root, "ls-files", "--others", "--ignored", "--exclude-standard",
                       "--directory", "-z", check=True)
-    for result in (untracked, ignored):
-        for entry in result.stdout.split("\0"):
-            if not entry:
-                continue
-            normalized = entry.rstrip("/")
-            # --directory reports ignored roots such as node_modules once; inspect only that root.
-            if len(PurePosixPath(normalized).parts) != 1:
-                continue
-            candidate = root / normalized
-            if _is_repository(candidate):
-                common = _common_directory(candidate)
-                if common != own_common:
-                    candidates.add(normalized)
+    for entry in untracked.stdout.split("\0"):
+        if entry:
+            candidates.update(_untracked_repositories(root, root / entry.rstrip("/"), own_common))
+    for entry in ignored.stdout.split("\0"):
+        if not entry:
+            continue
+        normalized = entry.rstrip("/")
+        # Ignored roots are inspected only at the repository root; never walk large ignored trees.
+        if len(PurePosixPath(normalized).parts) != 1:
+            continue
+        candidate = root / normalized
+        if _is_repository(candidate) and _common_directory(candidate) != own_common:
+            candidates.add(normalized)
     return sorted(candidates)
 
 
 def model_paths(repo_map):
-    return sorted(path for path in Path(repo_map).rglob("*.c4")
-                  if path.name != "kinds.c4")
+    root = Path(repo_map)
+    kinds_path = root / "kinds.c4"
+    return sorted(path for path in root.rglob("*.c4") if path != kinds_path)

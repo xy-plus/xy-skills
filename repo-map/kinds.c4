@@ -1,4 +1,0 @@
-specification {
-  element node
-  element repo
-}

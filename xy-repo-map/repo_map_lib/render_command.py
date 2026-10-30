@@ -93,8 +93,8 @@ def _collect_statistics(repositories, combined):
                 continue
             try:
                 content = (root / file_path).read_bytes()
-            except OSError:
-                continue
+            except OSError as error:
+                raise ValueError(f"无法读取归属文件以统计行数：{root / file_path}：{error}") from error
             own_counts[owner] = add_counts(own_counts[owner], count_file(file_path, category, content))
             if category == "code":
                 covered, total, language = coverage_counts(file_path, content.decode("utf-8", errors="ignore"))

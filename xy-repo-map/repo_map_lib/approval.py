@@ -5,73 +5,52 @@ import json
 from pathlib import Path
 import re
 
-
-def _element_fields(element_id, element):
-    description = element.get("description", "")
-    if isinstance(description, dict):
-        description = description.get("txt", "")
-    return {
-        "kind": element.get("kind", ""),
-        "title": element.get("title", ""),
-        "description": description,
-        "parent": element_id.rpartition(".")[0] or None,
-    }
-
-
-def _relationship_tuple(relation):
-    source = relation.get("source", {})
-    target = relation.get("target", {})
-    if isinstance(source, dict):
-        source = source.get("model", "")
-    if isinstance(target, dict):
-        target = target.get("model", "")
-    return (source, target, relation.get("title", ""))
+from .structure import structure_from_export
 
 
 def approval_changes(previous, current):
     """Describe structural changes; ``None`` means the repository had no map."""
-    current_elements = current.get("elements", {})
-    current_details = {element_id: _element_fields(element_id, element)
-                       for element_id, element in current_elements.items()}
+    current_structure = structure_from_export(current)
+    current_details = {item["id"]: item for item in current_structure["elements"]}
+    current_relations = Counter((item["source"], item["target"], item["title"])
+                                for item in current_structure["relationships"])
     if previous is None:
         return {
             "first_build": True,
-            "added_elements": [{"id": element_id, **current_details[element_id]}
-                               for element_id in sorted(current_elements)],
+            "added_elements": [current_details[element_id]
+                               for element_id in sorted(current_details)],
             "deleted_elements": [],
             "changed_elements": [],
-            "added_relationships": sorted(_relationship_tuple(value)
-                                           for value in current.get("relations", {}).values()),
+            "added_relationships": sorted(current_relations.elements()),
             "deleted_relationships": [],
         }
 
-    previous_elements = previous.get("elements", {})
-    previous_details = {element_id: _element_fields(element_id, element)
-                        for element_id, element in previous_elements.items()}
-    old_ids = set(previous_elements)
-    new_ids = set(current_elements)
+    previous_structure = structure_from_export(previous)
+    previous_details = {item["id"]: item for item in previous_structure["elements"]}
+    old_ids = set(previous_details)
+    new_ids = set(current_details)
     changed = []
     for element_id in sorted(old_ids & new_ids):
-        old_fields = _element_fields(element_id, previous_elements[element_id])
-        new_fields = _element_fields(element_id, current_elements[element_id])
+        old_item = previous_details[element_id]
+        new_item = current_details[element_id]
         fields = [field for field in ("kind", "title", "description", "parent")
-                  if old_fields[field] != new_fields[field]]
+                  if old_item[field] != new_item[field]]
         if fields:
             changed.append({"id": element_id, "fields": fields,
-                            "old": old_fields, "new": new_fields})
+                            "old": {field: old_item[field] for field in
+                                    ("kind", "title", "description", "parent")},
+                            "new": {field: new_item[field] for field in
+                                    ("kind", "title", "description", "parent")}})
 
-    old_relations = Counter(_relationship_tuple(value)
-                            for value in previous.get("relations", {}).values())
-    new_relations = Counter(_relationship_tuple(value)
-                            for value in current.get("relations", {}).values())
+    old_relations = Counter((item["source"], item["target"], item["title"])
+                            for item in previous_structure["relationships"])
+    new_relations = current_relations
     added = sorted((new_relations - old_relations).elements())
     deleted = sorted((old_relations - new_relations).elements())
     return {
         "first_build": False,
-        "added_elements": [{"id": element_id, **current_details[element_id]}
-                           for element_id in sorted(new_ids - old_ids)],
-        "deleted_elements": [{"id": element_id, **previous_details[element_id]}
-                             for element_id in sorted(old_ids - new_ids)],
+        "added_elements": [current_details[element_id] for element_id in sorted(new_ids - old_ids)],
+        "deleted_elements": [previous_details[element_id] for element_id in sorted(old_ids - new_ids)],
         "changed_elements": changed,
         "added_relationships": added,
         "deleted_relationships": deleted,

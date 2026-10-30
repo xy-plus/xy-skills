@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -89,6 +90,30 @@ class ApprovalTest(unittest.TestCase):
         self.assertEqual(changes["changed_elements"][0]["fields"], ["kind", "title", "description"])
         self.assertEqual(changes["added_relationships"], [("root", "root.new", "新关系")])
         self.assertEqual(changes["deleted_relationships"], [("root", "root.old", "旧关系")])
+
+    def test_approval_diff_reuses_the_canonical_export_structure(self):
+        previous = {"elements": {}, "relations": {}}
+        current = {"elements": {}, "relations": {}}
+        old_structure = {
+            "elements": [{"id": "root.old", "kind": "node", "title": "Old",
+                          "description": "Old description", "parent": "root"}],
+            "relationships": [{"source": "root", "target": "root.old", "title": "old edge"}],
+        }
+        new_structure = {
+            "elements": [{"id": "root.new", "kind": "node", "title": "New",
+                          "description": "New description", "parent": "root"}],
+            "relationships": [{"source": "root", "target": "root.new", "title": "new edge"}],
+        }
+
+        with patch("repo_map_lib.approval.structure_from_export",
+                   side_effect=[new_structure, old_structure], create=True) as normalize:
+            changes = approval_changes(previous, current)
+
+        self.assertEqual(normalize.call_args_list, [call(current), call(previous)])
+        self.assertEqual([item["id"] for item in changes["deleted_elements"]], ["root.old"])
+        self.assertEqual([item["id"] for item in changes["added_elements"]], ["root.new"])
+        self.assertEqual(changes["deleted_relationships"], [("root", "root.old", "old edge")])
+        self.assertEqual(changes["added_relationships"], [("root", "root.new", "new edge")])
 
     def test_record_writes_only_after_the_hook_records_this_digest_and_exact_answer(self):
         self.valid_hook()

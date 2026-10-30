@@ -57,12 +57,14 @@ def generate_views(model, top_root_ids, mode, totals, repo_targets, coverage):
         parent = _parent_id(element_id)
         if parent is not None:
             children.setdefault(parent, []).append(element_id)
-    for parent_id in sorted(children):
+    repository_roots = set(top_root_ids) | set(repo_targets.values())
+    view_parents = set(children) | repository_roots
+    for parent_id in sorted(view_parents):
         parent = elements[parent_id]
         title = parent.get("title", parent_id)
         lines.extend([f"  view {view_id(parent_id)} of {parent_id} {{",
                       f"    title {_quote(prefix + title)}"])
-        for child_id in sorted(children[parent_id]):
+        for child_id in sorted(children.get(parent_id, [])):
             destination = view_id(repo_targets[child_id]) if child_id in repo_targets else None
             lines.extend(_include(child_id, totals[child_id], destination))
         lines.append("  }")

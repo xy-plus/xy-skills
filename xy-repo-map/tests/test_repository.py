@@ -8,7 +8,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from repo_map_lib.git_repository import discover_subrepositories, require_repository_root
+from repo_map_lib.git_repository import (discover_subrepositories, model_paths,
+                                         require_repository_root)
 from repo_map_lib.initializer import init_map
 
 
@@ -61,6 +62,18 @@ class RepositoryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "已经存在"):
             init_map(self.root, "root", "Root", "一句功能描述。")
 
+    def test_model_paths_only_excludes_the_standard_kinds_file(self):
+        map_root = self.root / "repo-map"
+        nested = map_root / "parts"
+        nested.mkdir(parents=True)
+        (map_root / "kinds.c4").write_text("standard\n", encoding="utf-8")
+        (map_root / "model.c4").write_text("model {}\n", encoding="utf-8")
+        (nested / "kinds.c4").write_text("model {}\n", encoding="utf-8")
+
+        found = [path.relative_to(map_root).as_posix() for path in model_paths(map_root)]
+
+        self.assertEqual(found, ["model.c4", "parts/kinds.c4"])
+
     def test_ignored_nested_git_repository_is_discovered_but_worktree_is_not(self):
         child = self.root / "embedded"
         initialize_git(child)
@@ -78,6 +91,16 @@ class RepositoryTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.root), "worktree", "add", "--detach",
                         str(worktree), "HEAD"], check=True, capture_output=True)
         self.assertEqual(discover_subrepositories(self.root), ["embedded"])
+
+    def test_untracked_directory_is_searched_but_ignored_directory_is_not_recursed(self):
+        container = self.root / "container"
+        nested = container / "nested"
+        ignored_nested = container / "ignored" / "hidden"
+        initialize_git(nested)
+        initialize_git(ignored_nested)
+        (self.root / ".gitignore").write_text("container/ignored/\n", encoding="utf-8")
+
+        self.assertEqual(discover_subrepositories(self.root), ["container/nested"])
 
     def test_indexed_gitlink_is_discovered_as_a_subrepository(self):
         child = self.root.parent / "separate-child"

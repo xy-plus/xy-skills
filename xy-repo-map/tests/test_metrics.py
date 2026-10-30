@@ -56,6 +56,30 @@ let answer = 42; // inline
         self.assertEqual((counts.code, counts.docs, counts.comments), (3, 2, 3))
         self.assertEqual(coverage_counts("lib.rs", source), (1, 1, "Rust"))
 
+    def test_rust_raw_string_bodies_do_not_turn_slashes_into_comments(self):
+        samples = (
+            'let value = r"first line\n// still raw text\n";\n',
+            'let value = r#"an " quote\n// still raw text\n"#;\n',
+        )
+
+        for source in samples:
+            with self.subTest(source=source):
+                counts = code_counts("raw.rs", source)
+                self.assertEqual((counts.code, counts.docs, counts.comments), (3, 0, 0))
+
+    def test_template_interpolation_comments_follow_code_rules_through_nesting(self):
+        samples = (
+            ("const text = `value ${value\n  // interpolation comment\n  + 1\n}`;\n",
+             (3, 0, 1)),
+            ("const text = `outer ${`inner ${1\n  // nested comment\n  + 2}`\n"
+             "  // outer interpolation comment\n}`;\n", (3, 0, 2)),
+        )
+
+        for source, expected in samples:
+            with self.subTest(source=source):
+                counts = code_counts("template.ts", source)
+                self.assertEqual((counts.code, counts.docs, counts.comments), expected)
+
     def test_c_and_javascript_doc_blocks_count_as_documentation(self):
         c_source = "/** API docs\n * continued\n */\nint value;\n/* note */\n"
         c_counts = code_counts("file.c", c_source)

@@ -1,5 +1,8 @@
 """Real LikeC4 CLI integration; failure to run npx is a test failure."""
 from pathlib import Path
+import contextlib
+import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -7,9 +10,17 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from repo_map import main
 from repo_map_lib.checker import check_repository
 from repo_map_lib.constants import STANDARD_KINDS
+from repo_map_lib.likec4 import export_model
 from repo_map_lib.render_command import render_repository
+from repo_map_lib.structure import structure_digest
+
+
+def run_cli(*arguments):
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        return main(["repo_map.py", *arguments])
 
 
 class LikeC4IntegrationTest(unittest.TestCase):
@@ -48,7 +59,7 @@ class LikeC4IntegrationTest(unittest.TestCase):
             self.assertTrue((output / "DRAFT").is_file())
             self.assertTrue((output / "index.html").is_file())
 
-    def test_real_cli_combines_parent_and_nested_repository_models(self):
+    def test_real_cli_records_checks_and_renders_parent_with_single_node_child(self):
         with tempfile.TemporaryDirectory(prefix="xy-repo-map-likec4-tree-") as temporary:
             parent = Path(temporary) / "workspace"
             parent.mkdir()
@@ -73,6 +84,12 @@ class LikeC4IntegrationTest(unittest.TestCase):
                     f'{{"name":"{root_id}"}}\n', encoding="utf-8")
                 (repo_map / "kinds.c4").write_text(STANDARD_KINDS, encoding="utf-8")
                 (repo_map / "approvals.txt").write_text("", encoding="utf-8")
+            extra_models = parent_map / "parts"
+            extra_models.mkdir()
+            (extra_models / "kinds.c4").write_text(
+                "model {\n  extend workspace {\n"
+                "    research = node 'Research' {\n      description 'Explores data.'\n"
+                "    }\n  }\n}\n", encoding="utf-8")
             (parent_map / "model.c4").write_text(
                 "model {\n  workspace = node 'Workspace' {\n"
                 "    description 'Combines research and execution.'\n"
@@ -81,17 +98,38 @@ class LikeC4IntegrationTest(unittest.TestCase):
                 "      link ../vendor/ 'repo'\n    }\n  }\n}\n", encoding="utf-8")
             (child_map / "model.c4").write_text(
                 "model {\n  engine = node 'Engine' {\n    description 'Runs orders.'\n"
-                "    cache = node 'Cache' {\n      description 'Keeps market data.'\n"
-                "      link ../src/engine.py 'code'\n    }\n  }\n}\n", encoding="utf-8")
+                "    link ../src/engine.py 'code'\n  }\n}\n", encoding="utf-8")
 
-            problems, parent_model = check_repository(parent, False)
-            self.assertEqual(problems, [], problems)
-            self.assertIn("workspace.engine", parent_model["elements"])
-            output = Path(temporary) / "site"
-            problems = render_repository(parent, "草稿", output)
-            self.assertEqual(problems, [], problems)
-            self.assertTrue((output / "DRAFT").is_file())
-            self.assertTrue((output / "index.html").is_file())
+            exported_models = [export_model(repo_map) for repo_map in (parent_map, child_map)]
+            self.assertIn("workspace.research", exported_models[0]["elements"])
+            digests = [structure_digest(model) for model in exported_models]
+            questions = [
+                {"question": f"请确认 repo-map sha256 {digest}",
+                 "options": [{"label": "同意改图"}, {"label": "不同意"}]}
+                for digest in digests
+            ]
+            answers = {question["question"]: "同意改图" for question in questions}
+            quote = Path(temporary) / "xy-goal" / "quotes" / "57.md"
+            quote.parent.mkdir(parents=True)
+            quote.write_text(json.dumps({
+                "tool_input": {"questions": questions, "answers": answers},
+                "tool_response": {"questions": questions, "answers": dict(answers)},
+            }, ensure_ascii=False), encoding="utf-8")
+
+            self.assertEqual(run_cli("record", "--repo", str(parent), "--approval", str(quote)), 0)
+            self.assertEqual(run_cli("record", "--repo", str(child), "--approval", str(quote)), 0)
+            self.assertEqual(run_cli("check", "--repo", str(parent)), 0)
+
+            draft = Path(temporary) / "draft-site"
+            formal = Path(temporary) / "formal-site"
+            self.assertEqual(run_cli("render", "--repo", str(parent), "--mode", "草稿",
+                                     "--out", str(draft)), 0)
+            self.assertTrue((draft / "DRAFT").is_file())
+            self.assertTrue((draft / "index.html").is_file())
+            self.assertEqual(run_cli("render", "--repo", str(parent), "--mode", "正式",
+                                     "--out", str(formal)), 0)
+            self.assertTrue((formal / "index.html").is_file())
+            self.assertFalse((formal / "DRAFT").exists())
 
 
 if __name__ == "__main__":

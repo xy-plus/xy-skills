@@ -5,7 +5,7 @@ from pathlib import Path
 from .approval import recorded_digests
 from .constants import CODE_SUFFIXES
 from .git_repository import (discover_subrepositories, gitlink_paths,
-                             require_repository_root, tracked_paths)
+                             model_paths, require_repository_root, tracked_paths)
 from .likec4 import export_model, validate_likec4
 from .model import model_problems, source_file_problems
 from .ownership import category_for_path, check_ownership
@@ -25,7 +25,7 @@ def check_repository(repository, check_approval):
     for path in (config_path, kinds_path, approvals_path):
         if not path.is_file():
             problems.append(f"缺少仓图文件：{path.name}")
-    model_files = [path for path in repo_map.rglob("*.c4") if path != kinds_path]
+    model_files = model_paths(repo_map)
     if not model_files:
         problems.append("repo-map 至少需要一个模型 .c4 文件")
     try:

@@ -51,6 +51,21 @@ class RenderTest(unittest.TestCase):
         self.assertIn("technology '代码 8 · 文档 2 · 注释 0 · 测试 4'", source)
         self.assertIn("view " + view_id("workspace") + " of workspace", source)
 
+    def test_single_node_child_repository_still_has_a_navigation_target_view(self):
+        model = {"elements": {
+            "workspace": element("workspace", "工作区", "node"),
+            "workspace.engine": element("workspace.engine", "引擎仓", "repo"),
+            "engine": element("engine", "引擎", "node"),
+        }, "relations": {}}
+        counts = {element_id: LineCounts(0, 0, 0, 0)
+                  for element_id in model["elements"]}
+
+        source = generate_views(model, ["workspace"], "正式", counts,
+                                {"workspace.engine": "engine"}, {})
+
+        self.assertIn(f"view {view_id('engine')} of engine", source)
+        self.assertIn(f"navigateTo {view_id('engine')}", source)
+
     def test_coverage_is_appended_to_element_descriptions(self):
         source = generate_views(self.model, ["workspace"], "正式", self.counts,
                                 {"workspace.engine": "engine"}, {"workspace": "Python 2/3"})
