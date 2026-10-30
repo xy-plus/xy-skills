@@ -50,24 +50,32 @@ def numbered_text(skill_path, number):
     return "\n".join(lines[start:end])
 
 
-def basis_is_supported(basis):
-    """Check that the quoted text occurs in the numbered local rule it names."""
-    if not isinstance(basis, dict) or set(basis) != {"source", "text"}:
-        return False
+def basis_rule(basis):
+    """Return the complete local rule named by a report's basis source."""
+    if not isinstance(basis, dict):
+        return ""
     source = basis.get("source")
-    text = basis.get("text")
-    if not isinstance(source, str) or not isinstance(text, str) or not text.strip():
-        return False
+    if not isinstance(source, str):
+        return ""
     match = re.fullmatch(r"(xy-iron-law|xy-repo-rules) 第 ([1-9][0-9]*) 条", source)
     if match is None:
-        return False
+        return ""
     name = match.group(1)
     number = int(match.group(2))
     maximum = 3 if name == "xy-iron-law" else 7
     if number > maximum:
-        return False
+        return ""
     skill_path = Path(__file__).resolve().parents[1] / name / "SKILL.md"
-    rule = numbered_text(skill_path, number)
+    return numbered_text(skill_path, number)
+
+
+def basis_is_supported(basis, rule):
+    """Check that the quoted text occurs in the numbered local rule it names."""
+    if not isinstance(basis, dict) or set(basis) != {"source", "text"}:
+        return False
+    text = basis.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return False
     return bool(rule) and text in rule
 
 
@@ -111,8 +119,13 @@ def finding_is_valid(finding, label, problems):
         if kind == "改图" and decision != "问你":
             problems.append(f"{label}.kind 为改图时 decision 必须是问你")
             valid = False
-    if not basis_is_supported(finding.get("basis")):
-        problems.append(f"{label}.basis.text 必须逐字来自 basis.source 指定的规范条款")
+    basis = finding.get("basis")
+    rule = basis_rule(basis)
+    if not basis_is_supported(basis, rule):
+        message = f"{label}.basis.text 必须逐字来自 basis.source 指定的规范条款"
+        if rule:
+            message += f"；所标条款原文：\n{rule}"
+        problems.append(message)
         valid = False
     return valid
 

@@ -13,7 +13,7 @@ sys.path.insert(0, str(TESTS.parent))
 sys.path.insert(0, str(TESTS.parent / "test_data"))
 sys.path.insert(0, str(TESTS))
 
-from check_audit import main, validate_reports
+from check_audit import main, numbered_text, validate_reports
 from audit_entities import collect_entities
 from test_support import (finding, model, node_entry, report, report_input,
                           valid_reports)
@@ -233,9 +233,12 @@ class CheckAuditTest(unittest.TestCase):
     def test_basis_text_must_come_from_the_named_rule(self):
         reports = valid_reports(OWNERS)
         item = finding("重构", "问你", True)
-        item["basis"]["text"] = "这段文字不存在于规范。"
+        rule = numbered_text(TESTS.parents[1] / "xy-iron-law" / "SKILL.md", 1)
+        item["basis"]["text"] = rule.replace("不改、在别处", "不改，在别处")
         reports[0]["data"]["nodes"][0]["findings"] = [item]
-        self.assertTrue(any("basis.text" in error for error in validate(reports, None, None, None)))
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("basis.text" in error for error in errors), errors)
+        self.assertTrue(any(rule in error for error in errors), errors)
         item["basis"]["text"] = "第一性原理"
         item["basis"]["source"] = "xy-repo-rules 第 1 条"
         self.assertTrue(any("basis.text" in error for error in validate(reports, None, None, None)))
