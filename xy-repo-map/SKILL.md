@@ -41,9 +41,8 @@ python3 <skill目录>/repo_map.py render --repo <仓根绝对路径> --mode <草
 - `approval` 把当前图与 `git worktree list --porcelain` 的第一项所指主检出当前分支上的图比较，打印节点/关系变化和 `repo-map sha256 <摘要>`。主检出处于分离头指针时无法比较。这个比较供用户审阅，不作为放行依据。
 - 批准流程：把变化清单和摘要交给用户，同时提供原正式图（若存在）和新草稿图；提问中必须包含摘要，且有一个选项的文字正好是「同意改图」。只有用户明确选择该项后，才把对应 hook 原话交给 `record`。`record` 会核对原话路径、hook 两侧 answers、题干摘要、选项和回答，再追加摘要、日期与原话路径。重复摘要只提示，不重复写。
 - `check` 检查模型、批准记录、LikeC4 语法、支持的代码后缀、文件归属和子仓。功能结构摘要不在 `approvals.txt` 时会报告「图未经同意」及当前摘要并以状态码 1 退出。
-- `render --mode 草稿` 不查批准记录，生成离线可打开的 `index.html`、机器可读的 `map-data.json` 和 `DRAFT` 标记。页面内嵌节点数据，使用同目录的 elkjs 文件，不访问外部网络；可直接用浏览器打开，也可部署在平台子路径下。草稿页顶常驻「草稿·未经同意」，只用于给用户审图，不发布为正式图。
-- 草稿图查看：平台就绪前，仓库内容可以公开的，把各视图截成 PNG，用 image-drop 发成相册给用户审图；内容不能公开的仓库不发 image-drop，等平台就绪后再看。
-- `render --mode 正式` 要求整棵子仓树都通过完整 `check`，生成不带 `DRAFT` 的静态网站。用 `python3 /home/xy/web-portal/portal.py publish <名字> <render 的输出目录>` 发布，并把命令打印的链接给用户；正式模式的产物才发布。
+- `render --mode 草稿` 不查批准记录，生成离线可打开的 `index.html`、机器可读的 `map-data.json` 和 `DRAFT` 标记。页面内嵌节点数据，使用同目录的 elkjs 文件，不访问外部网络；可直接用浏览器打开，也可部署在平台子路径下。草稿页顶常驻「草稿·未经同意」。草稿只在批图时给用户看，用 `python3 /home/xy/web-portal/portal.py publish <名字> <render 的输出目录>` 发布，名字必须带 `draft`，不当正式图；把命令打印的链接给用户。
+- `render --mode 正式` 要求整棵子仓树都通过完整 `check`，生成不带 `DRAFT` 的静态网站。正式图用 `python3 /home/xy/web-portal/portal.py publish <名字> <render 的输出目录>` 发布，并把命令打印的链接给用户。
 
 ## map-data.json 格式
 

@@ -131,7 +131,21 @@ class MapDataTest(unittest.TestCase):
     def test_drill_breadcrumb_uses_tree_parents_not_click_history(self):
         _, page_data = self.build("草稿")
         self.assertEqual(page_data["drill_views"]["engine.cache"]["breadcrumbs"],
-                         ["workspace", "workspace.engine", "engine", "engine.cache"])
+                         ["workspace", "workspace.engine", "engine.cache"])
+
+    def test_populated_repository_placeholder_drills_to_repository_contents(self):
+        _, page_data = self.build("草稿")
+        self.assertEqual(page_data["drill_views"]["workspace.engine"]["nodes"],
+                         ["engine.cache"])
+
+    def test_root_only_repository_placeholder_has_no_next_drill_level(self):
+        root = {**self.child_model["elements"]["engine"]}
+        root["links"] = [*root["links"], {"url": "../README.md", "title": "docs"}]
+        self.child_model["elements"] = {"engine": root}
+        self.child_model["relations"] = {}
+        _, page_data = self.build("草稿")
+        self.assertEqual(page_data["drill_views"]["workspace.engine"]["nodes"],
+                         ["workspace.engine"])
 
     def test_map_data_contract_rejects_invalid_values_and_totals(self):
         valid, _ = self.build("草稿")

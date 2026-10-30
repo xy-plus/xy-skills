@@ -143,7 +143,7 @@ button:hover{background:#f1f5fb}
     if(seen.has(elementId))throw new Error(`图层重复包含节点：${elementId}`);
     seen.add(elementId);
     const children=visualChildren(elementId),size=nodeSize(elementId,children.length>0);
-    const graphNode={id:elementId,_depth:depth,_hasChildren:children.length>0};
+    const graphNode={id:elementId,_depth:depth};
     graphNodes.set(elementId,graphNode);
     if(children.length){
       graphNode.width=Math.max(size.width,...children.map(child=>nodeSize(child,visualChildren(child).length>0).width+32));
@@ -248,15 +248,13 @@ button:hover{background:#f1f5fb}
       targetGraph.edges=[...(targetGraph.edges||[]),edge];
     }
     configureLayout(graph);
-    return {graph,visible};
+    return graph;
   }
   function drillGraph(current){
     const projection=DATA.drill_views[current];
-    const visible=new Set(projection.nodes);
     const children=projection.nodes.map(id=>{
       const size=nodeSize(id,false);
-      return {id,width:size.width,height:size.height,_depth:nodeDepth(id),_hasChildren:
-        DATA.drill_views[id].nodes.length!==1||DATA.drill_views[id].nodes[0]!==id};
+      return {id,width:size.width,height:size.height,_depth:nodeDepth(id)};
     });
     const edges=projection.relations.map((edge,index)=>({
       id:`drill-edge-${index}-${edge.source}-${edge.target}`,
@@ -265,7 +263,7 @@ button:hover{background:#f1f5fb}
     }));
     const graph={id:"root",layoutOptions:LAYOUT,children,edges};
     configureLayout(graph,true);
-    return {graph,visible};
+    return graph;
   }
   function svgElement(tag,attributes){
     const element=document.createElementNS(SVG_NS,tag);
@@ -320,7 +318,7 @@ button:hover{background:#f1f5fb}
     const group=svgElement("g",{class:"container-background",transform:`translate(${position.x} ${position.y})`});
     group.appendChild(svgElement("rect",{class:"card-shape",x:0,y:0,width:position.width,height:position.height,
       rx:13,fill:palette.fill,stroke:palette.stroke,
-      "stroke-dasharray":DATA.nodes[elementId].kind==="repo"||canEnter?"7 4":"none"}));
+      "stroke-dasharray":canEnter?"7 4":"none"}));
     parent.appendChild(group);
   }
   function drawNode(parent,elementId,position,layoutNode){
@@ -335,7 +333,7 @@ button:hover{background:#f1f5fb}
       transform:`translate(${position.x} ${position.y})`,"data-node-id":elementId});
     const shape=svgElement("rect",{class:"card-shape",x:0,y:0,width:position.width,height:position.height,
       rx:hasVisualChildren?13:10,fill:hasVisualChildren?"transparent":"#fff",stroke:palette.stroke,
-      "stroke-dasharray":node.kind==="repo"||canEnter?"7 4":"none"});
+      "stroke-dasharray":canEnter?"7 4":"none"});
     group.appendChild(shape);
     const tooltip=svgElement("title",{});
     tooltip.textContent=node.description||node.title;
@@ -363,9 +361,9 @@ button:hover{background:#f1f5fb}
       coverage.textContent=`文档覆盖率：${node.coverage}`;
       group.appendChild(coverage);
     }
-    group.addEventListener("click",event=>{
+    if(canEnter)group.addEventListener("click",event=>{
       event.stopPropagation();
-      if(canEnter)setRoute("drill",elementId);
+      setRoute("drill",elementId);
     });
     parent.appendChild(group);
   }
@@ -419,7 +417,7 @@ button:hover{background:#f1f5fb}
     const drawId=++drawNumber;
     document.getElementById("mode").textContent=view.mode==="expand"?"切换到钻入":"全部展开";
     drawBreadcrumbs(view.current);
-    const {graph}=view.mode==="expand"?expandedGraph():drillGraph(view.current);
+    const graph=view.mode==="expand"?expandedGraph():drillGraph(view.current);
     const result=await new ELK().layout(graph);
     if(drawId!==drawNumber)return;
     svg.replaceChildren();
@@ -467,13 +465,12 @@ button:hover{background:#f1f5fb}
   },{passive:false});
   svg.addEventListener("pointerdown",event=>{
     if(event.target.closest(".card"))return;
-    drag={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};svg.setPointerCapture(event.pointerId);
+    drag={id:event.pointerId,x:event.clientX,y:event.clientY};svg.setPointerCapture(event.pointerId);
     svg.classList.add("dragging");
   });
   svg.addEventListener("pointermove",event=>{
     if(!drag||drag.id!==event.pointerId)return;
     const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
-    if(Math.abs(dx)+Math.abs(dy)>0)drag.moved=true;
     transform.x+=dx;transform.y+=dy;drag.x=event.clientX;drag.y=event.clientY;applyTransform();
   });
   function endDrag(event){

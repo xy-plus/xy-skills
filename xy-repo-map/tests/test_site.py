@@ -59,6 +59,19 @@ class SiteTest(unittest.TestCase):
         self.assertIn("<\\/script>", match.group(1))
         self.assertEqual(json.loads(match.group(1)), self.page_data)
 
+    def test_mode_marker_text_in_node_data_is_not_replaced(self):
+        self.page_data["mode"] = "正式"
+        self.page_data["nodes"]["workspace"]["title"] = "__MODE_STATUS__"
+        self.page_data["nodes"]["workspace"]["description"] = "说明 __MODE_STATUS__ 原样保留"
+        html = render_html(self.page_data)
+        match = re.search(r'<script id="page-data" type="application/json">(.*?)</script>',
+                          html, re.DOTALL)
+        self.assertIsNotNone(match)
+        embedded = json.loads(match.group(1))
+        self.assertEqual(embedded["nodes"]["workspace"]["title"], "__MODE_STATUS__")
+        self.assertEqual(embedded["nodes"]["workspace"]["description"],
+                         "说明 __MODE_STATUS__ 原样保留")
+
     def test_page_has_no_external_network_references(self):
         html = render_html(self.page_data)
         self.assertIsNone(re.search(

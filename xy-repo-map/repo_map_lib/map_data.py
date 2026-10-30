@@ -1,7 +1,6 @@
 """Compose checked repository models into page data and its public JSON contract."""
 from pathlib import Path
 
-from .constants import CODE_SUFFIXES
 from .git_repository import discover_subrepositories, gitlink_paths, tracked_paths
 from .metrics import ZERO_COUNTS, count_file, coverage_counts
 from .ownership import check_ownership, link_records
@@ -63,10 +62,12 @@ def _relation_container(source, target, parents, aliases):
     return common
 
 
-def _drill_views(nodes, children, parents, relations):
+def _drill_views(nodes, children, parents, relations, repo_roots):
     result = {}
+    repository_root_ids = set(repo_roots.values())
     for element_id in sorted(nodes):
-        visible = children.get(element_id, []) or [element_id]
+        child_root = repo_roots.get(element_id, element_id)
+        visible = children.get(child_root, []) or [element_id]
         visible_set = set(visible)
         labels_by_pair = {}
         for relation in relations:
@@ -81,7 +82,8 @@ def _drill_views(nodes, children, parents, relations):
         path = []
         current = element_id
         while current is not None:
-            path.append(current)
+            if current not in repository_root_ids:
+                path.append(current)
             current = parents.get(current)
         result[element_id] = {
             "nodes": visible,
@@ -172,7 +174,6 @@ def build_page_data(repositories, mode):
                 covered, total, language = coverage_counts(
                     file_path, content.decode("utf-8", errors="ignore"))
                 if language == "不适用":
-                    language = CODE_SUFFIXES[Path(file_path).suffix.lower()]
                     own_coverage[owner.element] = add_coverage(
                         own_coverage[owner.element], {"不适用": (0, 0)})
                 else:
@@ -235,7 +236,7 @@ def build_page_data(repositories, mode):
             for relation in relations
         ], key=lambda item: (item["source"], item["target"], item["title"])),
         "repo_roots": repo_roots,
-        "drill_views": _drill_views(page_nodes, children, parents, relations),
+        "drill_views": _drill_views(page_nodes, children, parents, relations, repo_roots),
     }
     return map_document, page_document
 
