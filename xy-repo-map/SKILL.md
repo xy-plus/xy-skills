@@ -45,6 +45,30 @@ python3 <skill目录>/repo_map.py render --repo <仓根绝对路径> --mode <草
 - 草稿图查看：平台就绪前，仓库内容可以公开的，把各视图截成 PNG，用 image-drop 发成相册给用户审图；内容不能公开的仓库不发 image-drop，等平台就绪后再看。
 - `render --mode 正式` 要求整棵子仓树都通过完整 `check`，生成不带 `DRAFT` 的静态网站。用 `python3 /home/xy/web-portal/portal.py publish <名字> <render 的输出目录>` 发布，并把命令打印的链接给用户；正式模式的产物才发布。
 
+## map-data.json 格式
+
+`render` 输出的 `map-data.json` 是清扫 skill 读取仓图统计的唯一数据契约：
+
+```json
+{
+  "mode": "草稿",
+  "nodes": {
+    "quant_engine": {
+      "title": "Quant Engine",
+      "kind": "node",
+      "parent": null,
+      "own": {"code": 0, "docs": 0, "comments": 0, "tests": 0},
+      "total": {"code": 0, "docs": 0, "comments": 0, "tests": 0}
+    }
+  }
+}
+```
+
+- `mode` 只能是 `草稿` 或 `正式`。`nodes` 的每个键是节点在所属仓图中的完整 FQN，合成后全局唯一。
+- 每个节点恰有 `title`、`kind`、`parent`、`own`、`total`：标题是字符串；`kind` 是 `node` 或 `repo`；`parent` 是已存在节点的 FQN，唯一顶层节点为 `null`。
+- `own` 和 `total` 都恰有 `code`、`docs`、`comments`、`tests` 四个非负整数。每项 `total` 等于该节点的 `own` 加所有直接子节点对应的 `total`。
+- 子仓根节点仍作为独立节点保留；它的 `parent` 指向父仓图中对应的 `repo` 占位节点 FQN。
+
 完整 `check` 必须先运行 LikeC4 `validate`；`export json` 不能代替它，因为 LikeC4 1.60.0 在语法错误时仍可能成功导出 JSON。`render` 直接合成已校验的模型数据，在 Python 中统计并写页面，不运行 LikeC4 site build。
 
 摘要只证明某个功能结构曾获同意。`record` 挡住拿错原话、摘要不符、缺选项或未同意等误用；agent 能写本机文件，因此故意伪造原话文件或同意记录不在本地脚本的防范范围，审核仍要核对记录引用的原话。

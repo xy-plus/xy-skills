@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>仓库功能图</title>
+<link rel="icon" href="data:,">
 <style>
 :root{color-scheme:light;--paper:#f5f7fb;--card:#fff;--ink:#263247;--muted:#65728a;--line:#cbd5e1;--accent:#376cc8;--draft:#9b5b13}
 *{box-sizing:border-box}
@@ -24,14 +25,16 @@ button:hover{background:#f1f5fb}
 #map.dragging{cursor:grabbing}
 .edge{fill:none;stroke:#7b8da8;stroke-width:1.65;vector-effect:non-scaling-stroke}
 .edge-label-bg{fill:#fff;stroke:#d6deea;stroke-width:1;vector-effect:non-scaling-stroke}
-.edge-label{fill:#4d5b72;font-size:12px;text-anchor:middle;dominant-baseline:middle}
+.edge-label{fill:#4d5b72;font-size:14px;text-anchor:middle;dominant-baseline:middle}
 .card{filter:drop-shadow(0 2px 4px #24314a18)}
 .card-shape{stroke-width:1.4;vector-effect:non-scaling-stroke}
-.card-title{font-size:15px;font-weight:700;fill:#263247}
+.card-title{fill:#263247}
+.title-depth-0{font-size:17px;font-weight:700}.title-depth-1{font-size:16px;font-weight:700}
+.title-depth-2{font-size:15px;font-weight:600}
 .metric-box{fill:#f3f6fb;stroke:#e0e6ef;stroke-width:1;vector-effect:non-scaling-stroke}
-.metric-text{font-size:16px;font-weight:600;fill:#45546d}
-.description{font-size:13px;fill:#59677e}
-.coverage{font-size:12px;fill:#77849a}
+.metric-text{font-size:15px;font-weight:600;fill:#45546d}.description{font-size:13px;fill:#59677e}
+.coverage{font-size:12px;fill:#77849a}.repo-badge{fill:#fff4db;stroke:#ead8aa;stroke-width:1;vector-effect:non-scaling-stroke}
+.repo-badge-text{font-size:10px;font-weight:700;fill:#85621d}
 .clickable{cursor:pointer}
 .clickable:hover .card-shape{stroke-width:2.5}
 .zoom{position:absolute;right:14px;bottom:14px;display:flex;flex-direction:column;gap:7px}
@@ -58,29 +61,25 @@ button:hover{background:#f1f5fb}
 </main>
 <script id="page-data" type="application/json">__PAGE_DATA_JSON__</script>
 <script>
-(() => {
+(async()=>{
   "use strict";
   const DATA=JSON.parse(document.getElementById("page-data").textContent);
   const SVG_NS="http://www.w3.org/2000/svg";
   const COUNT_LABELS=[["code","代码"],["docs","文档"],["comments","注释"],["tests","测试"]];
-  const PALETTE=[
-    {fill:"#edf4ff",stroke:"#7395ce"},{fill:"#eff8f5",stroke:"#71a993"},
+  const FONT_FAMILY='system-ui,"Noto Sans CJK SC","Microsoft YaHei",sans-serif';
+  const METRIC_FONT=`600 15px ${FONT_FAMILY}`;
+  const DESCRIPTION_FONT=`13px ${FONT_FAMILY}`;
+  const EDGE_FONT=`14px ${FONT_FAMILY}`;
+  const LEADING_PUNCTUATION=new Set(Array.from("，。！？、；：）』」》〉】〕］｝”’)]}'\""));
+  const REPO_ALIAS=Object.fromEntries(Object.entries(DATA.repo_roots).map(([placeholder,root])=>[root,placeholder]));
+  const PALETTE=[{fill:"#edf4ff",stroke:"#7395ce"},{fill:"#eff8f5",stroke:"#71a993"},
     {fill:"#f5f0fc",stroke:"#9d83c6"},{fill:"#fff6eb",stroke:"#c59553"},
-    {fill:"#edf7fa",stroke:"#66a0b2"},{fill:"#f8f1f2",stroke:"#b9828d"}
-  ];
-  const LAYOUT={
-    "elk.algorithm":"layered",
-    "elk.direction":"DOWN",
-    "elk.edgeRouting":"ORTHOGONAL",
-    "elk.hierarchyHandling":"INCLUDE_CHILDREN",
-    "elk.spacing.nodeNode":"38",
-    "elk.layered.spacing.nodeNodeBetweenLayers":"58",
-    "elk.spacing.edgeNode":"22",
-    "elk.spacing.edgeEdge":"18",
-    "elk.layered.spacing.edgeEdgeBetweenLayers":"18",
-    "elk.edgeLabels.placement":"CENTER",
-    "elk.spacing.edgeLabel":"6"
-  };
+    {fill:"#edf7fa",stroke:"#66a0b2"},{fill:"#f8f1f2",stroke:"#b9828d"}];
+  const LAYOUT={"elk.algorithm":"layered","elk.direction":"RIGHT","elk.edgeRouting":"ORTHOGONAL",
+    "elk.hierarchyHandling":"INCLUDE_CHILDREN","elk.aspectRatio":"1.6","elk.spacing.nodeNode":"18",
+    "elk.layered.spacing.nodeNodeBetweenLayers":"20","elk.spacing.edgeNode":"12","elk.spacing.edgeEdge":"8",
+    "elk.layered.spacing.edgeEdgeBetweenLayers":"8","elk.edgeLabels.placement":"CENTER","elk.spacing.edgeLabel":"5",
+    "elk.layered.wrapping.strategy":"MULTI_EDGE"};
   const svg=document.getElementById("map");
   const measureCanvas=document.createElement("canvas");
   const measure=measureCanvas.getContext("2d");
@@ -89,14 +88,9 @@ button:hover{background:#f1f5fb}
   let currentBounds={x:0,y:0,width:1,height:1};
   let drawNumber=0;
   let drag=null;
-
-  function childrenOf(elementId){
-    return Object.keys(DATA.nodes).filter(id=>DATA.nodes[id].parent===elementId).sort();
-  }
-  function visualChildren(elementId){
-    const nestedRoot=DATA.repo_roots[elementId];
-    return childrenOf(nestedRoot||elementId);
-  }
+  let fontsReady=false;
+  function childrenOf(elementId){return Object.keys(DATA.nodes).filter(id=>DATA.nodes[id].parent===elementId).sort();}
+  function visualChildren(elementId){return childrenOf(DATA.repo_roots[elementId]||elementId);}
   function nodeDepth(elementId){
     let depth=0,current=DATA.nodes[elementId].parent;
     while(current!==null&&current!==undefined){depth++;current=DATA.nodes[current].parent;}
@@ -110,7 +104,14 @@ button:hover{background:#f1f5fb}
       let line="";
       for(const character of paragraph){
         const next=line+character;
-        if(line&&widthOf(next,font)>width){lines.push(line);line=character;}else{line=next;}
+        if(line&&widthOf(next,font)>width){
+          const chars=Array.from(line),carry=[character];
+          while(chars.length){
+            const previous=chars.pop();carry.unshift(previous);
+            if(!LEADING_PUNCTUATION.has(previous))break;
+          }
+          if(chars.length){lines.push(chars.join(""));line=carry.join("");}else{line+=character;}
+        }else{line=next;}
       }
       lines.push(line);
     }
@@ -118,54 +119,45 @@ button:hover{background:#f1f5fb}
   }
   function nodeSize(elementId,hasVisualChildren){
     const node=DATA.nodes[elementId];
-    const titleFont="700 15px system-ui, sans-serif";
-    const descriptionFont="13px system-ui, sans-serif";
-    const metrics=COUNT_LABELS.map(([key,label])=>`${label} ${Number(node.total[key]).toLocaleString("zh-CN")}`);
-    const metricWidth=metrics.reduce((sum,value)=>sum+widthOf(value,"600 16px system-ui, sans-serif")+18,0)+9*3;
-    const titleWidth=widthOf(node.title,titleFont)+28;
-    const descriptionWidth=hasVisualChildren?0:Math.min(360,widthOf(node.description,descriptionFont));
-    const width=Math.max(320,Math.min(440,Math.max(metricWidth,titleWidth,descriptionWidth,320)));
-    const innerWidth=width-28;
-    const titleLines=wrapText(node.title,innerWidth,titleFont);
-    const descriptionLines=hasVisualChildren?[]:wrapText(node.description,innerWidth,descriptionFont);
-    const top=12+titleLines.length*19+8+24;
-    const bottom=hasVisualChildren?12:8+descriptionLines.length*15+16+10;
-    return {width,height:top+bottom,titleLines,descriptionLines,containerTop:top+8};
-  }
-  function packingEdges(children){
-    const columns=Math.ceil(Math.sqrt(children.length));
-    const edges=[];
-    for(let index=0;index+columns<children.length;index++){
-      edges.push({id:`pack-${children[index].id}-${children[index+columns].id}`,
-        sources:[children[index].id],targets:[children[index+columns].id]});
-    }
-    return edges;
+    const depth=nodeDepth(elementId),titleFontSize=depth===0?17:depth===1?16:15;
+    const titleWeight=depth<2?700:600,titleFont=`${titleWeight} ${titleFontSize}px ${FONT_FAMILY}`;
+    const badgeWidth=node.kind==="repo"?widthOf("子仓",`700 10px ${FONT_FAMILY}`)+12:0;
+    const metricTexts=COUNT_LABELS.map(([key,label])=>`${label} ${Number(node.total[key]).toLocaleString("zh-CN")}`);
+    const metricWidths=metricTexts.map(value=>widthOf(value,METRIC_FONT)+16);
+    const metricRowWidth=metricWidths.reduce((sum,width)=>sum+width,0)+6*(metricWidths.length-1);
+    const titleNatural=widthOf(node.title,titleFont)+badgeWidth+(badgeWidth?6:0);
+    const descriptionNatural=hasVisualChildren?0:Math.min(520,widthOf(node.description,DESCRIPTION_FONT));
+    const contentWidth=Math.max(220,metricRowWidth,Math.min(520,titleNatural),descriptionNatural);
+    const titleLines=wrapText(node.title,Math.max(40,contentWidth-badgeWidth-(badgeWidth?6:0)),titleFont);
+    const descriptionLines=hasVisualChildren?[]:wrapText(node.description,contentWidth,DESCRIPTION_FONT);
+    const titleLineHeight=titleFontSize+2,titleTop=10,titleY=titleTop+titleFontSize;
+    const metricY=titleTop+titleLines.length*titleLineHeight+5,metricHeight=23;
+    const descriptionTop=metricY+metricHeight+5,descriptionLineHeight=17;
+    const coverageY=descriptionTop+descriptionLines.length*descriptionLineHeight+3+11;
+    const height=hasVisualChildren?metricY+metricHeight+10:coverageY+8;
+    return {width:contentWidth+28,height,titleLines,titleY,titleLineHeight,titleFontSize,
+      descriptionLines,descriptionTop,descriptionLineHeight,coverageY,metricY,metricHeight,
+      metricTexts,metricWidths,metricGap:6,badgeWidth,containerTop:height-2};
   }
   function addVisualNode(elementId,depth,seen,graphNodes){
     if(seen.has(elementId))throw new Error(`图层重复包含节点：${elementId}`);
     seen.add(elementId);
-    const children=visualChildren(elementId);
-    const size=nodeSize(elementId,children.length>0);
+    const children=visualChildren(elementId),size=nodeSize(elementId,children.length>0);
     const graphNode={id:elementId,_depth:depth,_hasChildren:children.length>0};
     graphNodes.set(elementId,graphNode);
     if(children.length){
-      graphNode.width=Math.max(size.width,...children.map(child=>nodeSize(child,visualChildren(child).length>0).width+56));
-      graphNode.layoutOptions={"elk.padding":`[top=${size.containerTop},left=28,bottom=28,right=28]`};
+      graphNode.width=Math.max(size.width,...children.map(child=>nodeSize(child,visualChildren(child).length>0).width+32));
+      graphNode.layoutOptions={"elk.padding":`[top=${size.containerTop},left=16,bottom=16,right=16]`};
+      graphNode._containerTop=size.containerTop;
       graphNode.children=children.map(child=>addVisualNode(child,depth+1,seen,graphNodes));
-      graphNode.edges=packingEdges(graphNode.children);
-    }else{
-      graphNode.width=size.width;
-      graphNode.height=size.height;
-    }
+    }else{graphNode.width=size.width;graphNode.height=size.height;}
     return graphNode;
   }
   function groupedEdges(relations,visible){
-    const aliases={};
-    for(const [placeholder,root] of Object.entries(DATA.repo_roots))aliases[root]=placeholder;
     const groups=new Map();
     for(const relation of relations){
-      const source=aliases[relation.source]||relation.source;
-      const target=aliases[relation.target]||relation.target;
+      const source=REPO_ALIAS[relation.source]||relation.source;
+      const target=REPO_ALIAS[relation.target]||relation.target;
       if(source===target||!visible.has(source)||!visible.has(target))continue;
       const key=`${source}\u0000${target}`;
       const labels=groups.get(key)||{source,target,container:relation.container,labels:[]};
@@ -175,8 +167,75 @@ button:hover{background:#f1f5fb}
     return [...groups.values()].map((edge,index)=>({
       id:`edge-${index}-${edge.source}-${edge.target}`,container:edge.container,
       sources:[edge.source],targets:[edge.target],
-      labels:edge.labels.length?[{text:edge.labels.join(" · "),width:Math.max(30,widthOf(edge.labels.join(" · "),"12px system-ui, sans-serif")+14),height:20}]:[]
+      labels:edge.labels.length?[{text:edge.labels.join(" · "),width:Math.max(30,widthOf(edge.labels.join(" · "),EDGE_FONT)+16),height:22}]:[]
     }));
+  }
+  function graphChildForEndpoint(graph,endpoint){
+    const childIds=new Set((graph.children||[]).map(child=>child.id));
+    let current=REPO_ALIAS[endpoint]||endpoint;
+    while(current){
+      if(childIds.has(current))return current;
+      const parent=DATA.nodes[current]&&DATA.nodes[current].parent;
+      current=parent===null||parent===undefined?null:(REPO_ALIAS[parent]||parent);
+    }
+    return null;
+  }
+  function estimatedSize(node){
+    const children=node.children||[];
+    if(!children.length)return {width:node.width||0,height:node.height||0};
+    const sizes=children.map(estimatedSize),edges=(node.edges||[]).filter(edge=>!edge.id.startsWith("pack-"));
+    if(edges.length){
+      const layers=new Map(children.map(child=>[child.id,0]));
+      let cyclic=false;
+      for(let pass=0;pass<children.length;pass++){
+        let changed=false;
+        for(const edge of edges){
+          const source=graphChildForEndpoint(node,edge.sources[0]);
+          const target=graphChildForEndpoint(node,edge.targets[0]);
+          if(!source||!target||source===target)continue;
+          const next=layers.get(source)+1;
+          if(layers.get(target)<next){layers.set(target,next);changed=true;}
+        }
+        if(!changed)break;
+        if(pass===children.length-1)cyclic=true;
+      }
+      if(cyclic)children.forEach((child,index)=>layers.set(child.id,index));
+      const widths=[],heights=[];
+      for(let index=0;index<=Math.max(...layers.values());index++){
+        const row=children.map((child,childIndex)=>({child,size:sizes[childIndex]}))
+          .filter(item=>layers.get(item.child.id)===index).map(item=>item.size);
+        if(row.length){widths.push(Math.max(...row.map(size=>size.width)));heights.push(row.reduce((sum,size)=>sum+size.height,0)+18*(row.length-1));}
+      }
+      return {width:Math.max(node.width||0,widths.reduce((sum,width)=>sum+width,0)+20*(widths.length-1)+32),
+        height:(node._containerTop||72)+Math.max(...heights)+16};
+    }
+    const columns=Math.min(children.length,Math.max(1,Math.ceil(Math.sqrt(children.length*1.6))));
+    const rows=[];
+    for(let index=0;index<children.length;index+=columns){
+      const row=sizes.slice(index,index+columns);
+      rows.push({width:row.reduce((sum,size)=>sum+size.width,0)+18*(row.length-1),height:Math.max(...row.map(size=>size.height))});
+    }
+    return {width:Math.max(node.width||0,...rows.map(row=>row.width+32)),
+      height:(node._containerTop||72)+rows.reduce((sum,row)=>sum+row.height,0)+18*(rows.length-1)+16};
+  }
+  function configureLayout(graph,preferOneRow=false){
+    const children=graph.children||[];
+    if(children.length){
+      const edges=(graph.edges||[]).filter(edge=>!edge.id.startsWith("pack-"));
+      if(edges.length){graph.layoutOptions={...LAYOUT,...graph.layoutOptions,"elk.algorithm":"layered","elk.direction":"RIGHT"};}
+      else{
+        const sizes=children.map(estimatedSize),spacing=18;
+        const fullWidth=sizes.reduce((sum,size)=>sum+size.width,0)+spacing*(sizes.length-1);
+        const totalArea=sizes.reduce((sum,size)=>sum+size.width*size.height,0);
+        const oneRow=preferOneRow||(children.length<=3&&children.every(child=>!child.children?.length));
+        const targetWidth=oneRow?fullWidth:Math.max(Math.max(...sizes.map(size=>size.width)),Math.min(fullWidth,Math.sqrt(totalArea*1.6)));
+        graph.layoutOptions={...LAYOUT,...graph.layoutOptions,"elk.algorithm":"rectpacking",
+          "elk.aspectRatio":"1.6","elk.rectpacking.widthApproximation.strategy":"TARGET_WIDTH",
+          "elk.rectpacking.widthApproximation.targetWidth":String(Math.ceil(targetWidth)),
+          "elk.rectpacking.widthApproximation.optimizationGoal":"ASPECT_RATIO_DRIVEN"};
+      }
+    }
+    for(const child of children)configureLayout(child,false);
   }
   function expandedGraph(){
     const visible=new Set();
@@ -188,6 +247,7 @@ button:hover{background:#f1f5fb}
       const targetGraph=container||graph;
       targetGraph.edges=[...(targetGraph.edges||[]),edge];
     }
+    configureLayout(graph);
     return {graph,visible};
   }
   function drillGraph(current){
@@ -201,9 +261,11 @@ button:hover{background:#f1f5fb}
     const edges=projection.relations.map((edge,index)=>({
       id:`drill-edge-${index}-${edge.source}-${edge.target}`,
       sources:[edge.source],targets:[edge.target],
-      labels:edge.title?[{text:edge.title,width:Math.max(30,widthOf(edge.title,"12px system-ui, sans-serif")+14),height:20}]:[]
+      labels:edge.title?[{text:edge.title,width:Math.max(30,widthOf(edge.title,EDGE_FONT)+16),height:22}]:[]
     }));
-    return {graph:{id:"root",layoutOptions:LAYOUT,children,edges:[...edges,...packingEdges(children)]},visible};
+    const graph={id:"root",layoutOptions:LAYOUT,children,edges};
+    configureLayout(graph,true);
+    return {graph,visible};
   }
   function svgElement(tag,attributes){
     const element=document.createElementNS(SVG_NS,tag);
@@ -268,6 +330,7 @@ button:hover{background:#f1f5fb}
     const depth=layoutNode._depth===undefined?nodeDepth(elementId):layoutNode._depth;
     const palette=PALETTE[depth%PALETTE.length];
     const canEnter=DATA.drill_views[elementId].nodes.length!==1||DATA.drill_views[elementId].nodes[0]!==elementId;
+    const titleDepth=Math.min(2,depth);
     const group=svgElement("g",{class:`card${canEnter?" clickable":""}`,
       transform:`translate(${position.x} ${position.y})`,"data-node-id":elementId});
     const shape=svgElement("rect",{class:"card-shape",x:0,y:0,width:position.width,height:position.height,
@@ -277,22 +340,26 @@ button:hover{background:#f1f5fb}
     const tooltip=svgElement("title",{});
     tooltip.textContent=node.description||node.title;
     group.appendChild(tooltip);
-    textLines(group,14,20,size.titleLines,"card-title",19);
-    const metricY=12+size.titleLines.length*19+9;
-    const metricArea=position.width-28;
-    const cellWidth=metricArea/4;
-    COUNT_LABELS.forEach(([key,label],index)=>{
-      const left=14+index*cellWidth;
-      group.appendChild(svgElement("rect",{class:"metric-box",x:left,y:metricY,width:cellWidth-5,height:23,rx:6}));
-      const metric=svgElement("text",{class:"metric-text",x:left+6,y:metricY+16});
-      metric.textContent=`${label} ${Number(node.total[key]).toLocaleString("zh-CN")}`;
+    textLines(group,14,size.titleY,size.titleLines,`card-title title-depth-${titleDepth}`,size.titleLineHeight);
+    if(node.kind==="repo"){
+      const titleFont=`${depth<2?700:600} ${size.titleFontSize}px ${FONT_FAMILY}`;
+      const badgeX=14+widthOf(size.titleLines[0]||"",titleFont)+6,badgeY=size.titleY-size.titleFontSize+1;
+      group.appendChild(svgElement("rect",{class:"repo-badge",x:badgeX,y:badgeY,width:size.badgeWidth,height:16,rx:6}));
+      const badge=svgElement("text",{class:"repo-badge-text",x:badgeX+6,y:badgeY+12});
+      badge.textContent="子仓";group.appendChild(badge);
+    }
+    let metricX=14;
+    size.metricTexts.forEach((value,index)=>{
+      const width=size.metricWidths[index];
+      group.appendChild(svgElement("rect",{class:"metric-box",x:metricX,y:size.metricY,width,height:size.metricHeight,rx:6}));
+      const metric=svgElement("text",{class:"metric-text",x:metricX+8,y:size.metricY+17});
+      metric.textContent=value;
       group.appendChild(metric);
+      metricX+=width+size.metricGap;
     });
     if(!hasVisualChildren){
-      const descY=metricY+35;
-      textLines(group,14,descY,size.descriptionLines,"description",15);
-      const coverageY=descY+size.descriptionLines.length*15+8;
-      const coverage=svgElement("text",{class:"coverage",x:14,y:coverageY});
+      textLines(group,14,size.descriptionTop+13,size.descriptionLines,"description",size.descriptionLineHeight);
+      const coverage=svgElement("text",{class:"coverage",x:14,y:size.coverageY});
       coverage.textContent=`文档覆盖率：${node.coverage}`;
       group.appendChild(coverage);
     }
@@ -322,7 +389,7 @@ button:hover{background:#f1f5fb}
     if(!width||!height||!currentBounds.width||!currentBounds.height)return;
     const padding=44;
     const scale=Math.min((width-padding*2)/currentBounds.width,
-      (height-padding*2)/currentBounds.height,1.15);
+      (height-padding*2)/currentBounds.height,1);
     transform.scale=Math.max(.08,scale);
     transform.x=(width-currentBounds.width*transform.scale)/2-currentBounds.x*transform.scale;
     transform.y=(height-currentBounds.height*transform.scale)/2-currentBounds.y*transform.scale;
@@ -383,17 +450,13 @@ button:hover{background:#f1f5fb}
     transform={x:0,y:0,scale:1};
     requestAnimationFrame(fit);
   }
-  document.getElementById("mode").addEventListener("click",()=>{
-    if(view.mode==="expand")setRoute("drill",DATA.top_roots[0]);
-    else setRoute("expand",null);
-  });
+  document.getElementById("mode").addEventListener("click",()=>view.mode==="expand"?setRoute("drill",DATA.top_roots[0]):setRoute("expand",null));
   document.getElementById("fit").addEventListener("click",fit);
   document.getElementById("zoom-in").addEventListener("click",()=>zoomAt(svg.clientWidth/2,svg.clientHeight/2,1.2));
   document.getElementById("zoom-out").addEventListener("click",()=>zoomAt(svg.clientWidth/2,svg.clientHeight/2,1/1.2));
   function zoomAt(x,y,factor){
     const next=Math.max(.08,Math.min(3,transform.scale*factor));
-    transform.x=x-(x-transform.x)*next/transform.scale;
-    transform.y=y-(y-transform.y)*next/transform.scale;
+    transform.x=x-(x-transform.x)*next/transform.scale;transform.y=y-(y-transform.y)*next/transform.scale;
     transform.scale=next;
     applyTransform();
   }
@@ -404,38 +467,32 @@ button:hover{background:#f1f5fb}
   },{passive:false});
   svg.addEventListener("pointerdown",event=>{
     if(event.target.closest(".card"))return;
-    drag={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};
-    svg.setPointerCapture(event.pointerId);
+    drag={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};svg.setPointerCapture(event.pointerId);
     svg.classList.add("dragging");
   });
   svg.addEventListener("pointermove",event=>{
     if(!drag||drag.id!==event.pointerId)return;
     const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
     if(Math.abs(dx)+Math.abs(dy)>0)drag.moved=true;
-    transform.x+=dx;transform.y+=dy;
-    drag.x=event.clientX;drag.y=event.clientY;
-    applyTransform();
+    transform.x+=dx;transform.y+=dy;drag.x=event.clientX;drag.y=event.clientY;applyTransform();
   });
   function endDrag(event){
     if(drag&&drag.id===event.pointerId){drag=null;svg.classList.remove("dragging");}
   }
-  svg.addEventListener("pointerup",endDrag);
-  svg.addEventListener("pointercancel",endDrag);
-  window.addEventListener("resize",fit);
+  svg.addEventListener("pointerup",endDrag);svg.addEventListener("pointercancel",endDrag);window.addEventListener("resize",fit);
   window.addEventListener("hashchange",()=>{
     const next=routeFromHash();
     if(!next.valid){
-      if(view.mode!=="expand"||view.current!==null){view={mode:"expand",current:null};draw();}
+      if(view.mode!=="expand"||view.current!==null){view={mode:"expand",current:null};if(fontsReady)draw();}
       location.hash="#展开";
       return;
     }
     if(view.mode===next.mode&&view.current===next.current)return;
     view=next;
-    draw();
+    if(fontsReady)draw();
   });
-  view=routeFromHash();
-  if(!view.valid){view={mode:"expand",current:null};location.hash="#展开";}
-  else view={mode:view.mode,current:view.current};
+  await document.fonts.ready;fontsReady=true;view=routeFromHash();
+  if(!view.valid){view={mode:"expand",current:null};location.hash="#展开";}else view={mode:view.mode,current:view.current};
   draw();
 })();
 </script>
