@@ -12,6 +12,7 @@
 | `xy-runs` | 文件去处、runs 布局与定期清理规则 |
 | `xy-handoff` | 会话大任务归属、拆分交接与后台会话收尾 |
 | `xy-repo-map` | LikeC4 仓库功能图、文件归属、批准、校验和静态出图 |
+| `xy-cleanup` | 按范围清扫功能，结合全图和逐节点审查、引用对账与报告校验 |
 | `sync-think` | 只有用户能定的事，做成带建议的选择题问用户 |
 
 ## 安装
@@ -74,6 +75,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 python3 -B -m unittest discover -s xy-goal/tests
 python3 -B -m unittest discover -s xy-handoff
 python3 -B -m unittest discover -s xy-review
+python3 -B -m unittest discover -s xy-cleanup/tests
 python3 -B -m unittest discover -s xy-runs/tests
 python3 -B -m unittest discover -s xy-repo-map/tests -p 'test_*.py'
 XY_REPO_MAP_CHROMIUM=/path/to/chrome python3 -B -m unittest discover -s xy-repo-map/tests -p 'browser_*_test.py'
@@ -91,4 +93,4 @@ export XY_REPO_MAP_CHROMIUM="$(python -c 'from playwright.sync_api import sync_p
 python3 -B -m unittest discover -s xy-repo-map/tests -p 'browser_*_test.py'
 ```
 
-`XY_REPO_MAP_CHROMIUM` 指向 Playwright 安装的 Chromium 可执行文件；路径缺失或浏览器不可用时测试会失败，不会跳过。最后一条是真跑 LikeC4 的集成测试；若 `npx` 或固定版本不可用，测试会失败，不会跳过。
+`XY_REPO_MAP_CHROMIUM` 指向 Playwright 安装的 Chromium 可执行文件；路径缺失或浏览器不可用时测试会失败，不会跳过。测试命令清单的最后一条是真跑 LikeC4 的集成测试；`xy-cleanup` 测试也会用固定版本检查临时夹具仓图。若 `npx` 或固定版本不可用，相关测试会失败，不会跳过。

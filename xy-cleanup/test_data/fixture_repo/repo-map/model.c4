@@ -1,0 +1,24 @@
+model {
+  cleanup_fixture = node 'Cleanup fixture' {
+    description 'A small Python package with a command line.'
+    link ../README.md 'docs'
+
+    core = node 'Core behavior' {
+      description 'Normalize labels, handle external results, and calculate retry limits.'
+      link ../src/cleanup_fixture/ 'code'
+    }
+
+    cli = node 'Command line' {
+      description 'Parse command-line options and print results.'
+      link ../src/cleanup_fixture/cli.py 'code'
+    }
+
+    tests = node 'Tests' {
+      description 'Check label and command-line behavior.'
+      link ../tests/ 'tests'
+    }
+
+    cli -> core 'uses'
+    tests -> core 'checks'
+  }
+}

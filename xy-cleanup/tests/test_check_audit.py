@@ -1,0 +1,293 @@
+"""Behavior tests for cleanup report validation."""
+import contextlib
+import io
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+TESTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(TESTS.parent))
+sys.path.insert(0, str(TESTS.parent / "test_data"))
+sys.path.insert(0, str(TESTS))
+
+from check_audit import main, validate_reports
+from test_support import (finding, model, node_entry, report, report_input,
+                          valid_reports)
+from create_fixture import create_fixture_repo
+from repo_map_lib.git_repository import (discover_subrepositories, gitlink_paths,
+                                         tracked_paths)
+from repo_map_lib.ownership import check_ownership
+
+
+REPO = "/repo"
+SCOPE = ["sample.alpha", "sample.beta"]
+OWNERS = {"src/alpha.py": "sample.alpha", "src/beta.py": "sample.beta"}
+
+
+def validate(reports, scope, owners, graph):
+    report_data = valid_reports(OWNERS) if reports is None else reports
+    scope_data = SCOPE if scope is None else scope
+    owner_data = OWNERS if owners is None else owners
+    graph_data = model() if graph is None else graph
+    return validate_reports(REPO, scope_data, report_data, graph_data, owner_data)
+
+
+class CheckAuditTest(unittest.TestCase):
+    def test_complete_reports_cover_each_scoped_node_once(self):
+        self.assertEqual(validate(None, None, None, None), [])
+
+    def test_a_node_can_be_omitted_below_an_immediate_delete(self):
+        reports = valid_reports(OWNERS)
+        main_report = reports[0]["data"]
+        main_report["nodes"] = [
+            node_entry("sample.alpha", ["src/alpha.py"], [
+                {**finding("删除", "直接做", False), "target": "sample.alpha"}
+            ], "核对了删除目标"),
+            node_entry("sample.beta", ["src/beta.py"], [], "核对了 beta"),
+        ]
+        graph = model()
+        graph["elements"]["sample.alpha.child"] = {
+            "id": "sample.alpha.child", "kind": "node", "title": "Child"
+        }
+        scope = [*SCOPE, "sample.alpha.child"]
+        for item in reports[1:]:
+            item["data"]["nodes"].append(node_entry(
+                "sample.alpha.child",
+                ["src/child.py"] if item["data"]["role"] == "剃刀" else None,
+                [], "核对了 child"
+            ))
+        owners = {**OWNERS, "src/child.py": "sample.alpha.child"}
+        errors = validate(reports, scope, owners, graph)
+        self.assertEqual(errors, [])
+
+    def test_direct_deletion_does_not_hide_descendant_from_other_role(self):
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"] = [
+            node_entry("sample.alpha", ["src/alpha.py"], [
+                {**finding("删除", "直接做", False), "target": "sample.alpha"}
+            ], "核对了删除目标"),
+            node_entry("sample.beta", ["src/beta.py"], [], "核对了 beta"),
+        ]
+        graph = model()
+        graph["elements"]["sample.alpha.child"] = {
+            "id": "sample.alpha.child", "kind": "node", "title": "Child"
+        }
+        owners = {**OWNERS, "src/child.py": "sample.alpha.child"}
+        scope = [*SCOPE, "sample.alpha.child"]
+        reports[2]["data"]["nodes"].append(node_entry(
+            "sample.alpha.child", None, [], "核对了 child"
+        ))
+        errors = validate(reports, scope, owners, graph)
+        self.assertTrue(any("sample.alpha.child" in error and "剃刀" in error for error in errors), errors)
+
+    def test_requires_one_whole_graph_report(self):
+        reports = valid_reports(OWNERS)
+        errors = validate(reports[:2], None, None, None)
+        self.assertTrue(any("全图" in error for error in errors), errors)
+        reports.append(reports[2])
+        self.assertTrue(any("恰好一份" in error for error in validate(reports, None, None, None)))
+
+    def test_reports_must_match_requested_repository_and_scope(self):
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["repo"] = "/other"
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("仓路径" in error for error in errors), errors)
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["node"] = "sample.missing"
+        self.assertTrue(any("范围外" in error or "不存在" in error
+                            for error in validate(reports, None, None, None)))
+
+    def test_scope_requires_known_unique_nodes(self):
+        self.assertTrue(validate(None, ["sample.alpha", "sample.alpha"], None, None))
+        self.assertTrue(validate(None, ["sample.unknown"], None, None))
+        self.assertTrue(validate(None, ["全部", "sample.alpha"], None, None))
+
+    def test_files_must_equal_the_ownership_result(self):
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["files"] = []
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("files" in error for error in errors), errors)
+
+    def test_whole_graph_nodes_must_not_list_files(self):
+        reports = valid_reports(OWNERS)
+        reports[2]["data"]["nodes"][0]["files"] = []
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("全图" in error and "files" in error for error in errors), errors)
+
+    def test_report_and_node_fields_are_strict(self):
+        reports = valid_reports(OWNERS)
+        del reports[0]["data"]["nodes"][0]["checked"]
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("checked" in error for error in errors), errors)
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["extra"] = "unexpected"
+        self.assertTrue(any("多余字段" in error
+                            for error in validate(reports, None, None, None)))
+
+    def test_empty_findings_need_a_nonblank_checked_description(self):
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"][0]["checked"] = " \n"
+        self.assertTrue(any("checked" in error for error in validate(reports, None, None, None)))
+
+    def test_finding_enum_and_required_fields_are_checked(self):
+        reports = valid_reports(OWNERS)
+        entry = reports[0]["data"]["nodes"][0]
+        entry["findings"] = [finding("重构", "问你", True)]
+        entry["findings"][0]["kind"] = "未知"
+        self.assertTrue(any("kind" in error for error in validate(reports, None, None, None)))
+        reports = valid_reports(OWNERS)
+        entry = reports[0]["data"]["nodes"][0]
+        entry["findings"] = [finding("重构", "问你", True)]
+        del entry["findings"][0]["benefit"]
+        self.assertTrue(any("benefit" in error for error in validate(reports, None, None, None)))
+
+    def test_direct_action_is_limited_to_behavior_preserving_delete_or_merge(self):
+        cases = [
+            finding("删除", "问你", False),
+            finding("合并", "直接做", True),
+            finding("重构", "直接做", False),
+        ]
+        for item in cases:
+            with self.subTest(item=item):
+                reports = valid_reports(OWNERS)
+                reports[0]["data"]["nodes"][0]["findings"] = [item]
+                self.assertTrue(validate(reports, None, None, None))
+
+    def test_graph_changes_must_be_asked(self):
+        reports = valid_reports(OWNERS)
+        item = finding("改图", "直接做", False)
+        reports[0]["data"]["nodes"][0]["findings"] = [item]
+        self.assertTrue(any("改图" in error and "问你" in error
+                            for error in validate(reports, None, None, None)))
+
+    def test_basis_text_must_come_from_the_named_rule(self):
+        reports = valid_reports(OWNERS)
+        item = finding("重构", "问你", True)
+        item["basis"]["text"] = "这段文字不存在于规范。"
+        reports[0]["data"]["nodes"][0]["findings"] = [item]
+        self.assertTrue(any("basis.text" in error for error in validate(reports, None, None, None)))
+        item["basis"]["text"] = "第一性原理"
+        item["basis"]["source"] = "xy-repo-rules 第 1 条"
+        self.assertTrue(any("basis.text" in error for error in validate(reports, None, None, None)))
+
+    def test_all_scope_expands_to_model_elements(self):
+        reports = valid_reports(OWNERS)
+        reports[0]["data"]["nodes"].append(node_entry("sample", [], [], "核对了根节点"))
+        reports[1]["data"]["nodes"].append(node_entry("sample", [], [], "核对了根节点"))
+        reports[2]["data"]["nodes"].append(node_entry("sample", None, [], "核对了根节点"))
+        self.assertEqual(validate(reports, ["全部"], OWNERS, None), [])
+
+    def test_invalid_delete_finding_cannot_hide_descendants(self):
+        reports = valid_reports(OWNERS)
+        graph = model()
+        graph["elements"]["sample.alpha.child"] = {
+            "id": "sample.alpha.child", "kind": "node", "title": "Child"
+        }
+        owners = {**OWNERS, "src/child.py": "sample.alpha.child"}
+        for item in reports[1:]:
+            item["data"]["nodes"].append(node_entry(
+                "sample.alpha.child",
+                ["src/child.py"] if item["data"]["role"] == "剃刀" else None,
+                [], "核对了 child"
+            ))
+        main_nodes = reports[0]["data"]["nodes"]
+        main_nodes[0]["findings"] = [{
+            **finding("删除", "直接做", False),
+            "target": "sample.alpha",
+            "basis": {"source": "xy-iron-law 第 1 条", "text": "不存在的依据"},
+        }]
+        errors = validate(reports, [*SCOPE, "sample.alpha.child"], owners, graph)
+        self.assertTrue(any("sample.alpha.child" in error and "主审" in error for error in errors))
+
+    def test_delete_finding_on_another_node_cannot_hide_an_ancestor_child(self):
+        reports = valid_reports(OWNERS)
+        graph = model()
+        graph["elements"]["sample.alpha.child"] = {
+            "id": "sample.alpha.child", "kind": "node", "title": "Child"
+        }
+        owners = {**OWNERS, "src/child.py": "sample.alpha.child"}
+        reports[0]["data"]["nodes"][1]["findings"] = [{
+            **finding("删除", "直接做", False),
+            "target": "sample.alpha",
+        }]
+        for item in reports[1:]:
+            item["data"]["nodes"].append(node_entry(
+                "sample.alpha.child",
+                ["src/child.py"] if item["data"]["role"] == "剃刀" else None,
+                [], "核对了 child"
+            ))
+        errors = validate(reports, [*SCOPE, "sample.alpha.child"], owners, graph)
+        self.assertTrue(any("sample.alpha.child" in error and "主审" in error for error in errors))
+
+    def test_unhashable_enum_values_are_reported_without_crashing(self):
+        reports = valid_reports(OWNERS)
+        item = finding("重构", "问你", True)
+        item["kind"] = ["重构"]
+        reports[0]["data"]["nodes"][0]["findings"] = [item]
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("kind" in error for error in errors), errors)
+
+    def test_duplicate_node_across_reports_is_rejected(self):
+        reports = valid_reports(OWNERS)
+        reports.append(report_input("second-main.json", report(
+            "主审", [node_entry("sample.alpha", ["src/alpha.py"], [], "已核对")], REPO
+        )))
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("sample.alpha" in error and "恰好出现一次" in error for error in errors))
+
+    def test_cli_rejects_missing_explicit_parameters(self):
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output):
+            self.assertEqual(main(["check_audit.py"]), 2)
+
+    def test_cli_checks_reports_and_file_ownership_in_a_real_fixture_repository(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = create_fixture_repo(Path(temporary) / "review-target")
+            graph = {
+                "elements": {
+                    "cleanup_fixture": {"links": [
+                        {"url": "../README.md", "title": "docs"}
+                    ]},
+                    "cleanup_fixture.core": {"links": [
+                        {"url": "../src/cleanup_fixture/", "title": "code"}
+                    ]},
+                    "cleanup_fixture.cli": {"links": [
+                        {"url": "../src/cleanup_fixture/cli.py", "title": "code"}
+                    ]},
+                    "cleanup_fixture.tests": {"links": [
+                        {"url": "../tests/", "title": "tests"}
+                    ]},
+                },
+                "relations": {},
+            }
+            tracked = tracked_paths(repository)
+            ownership_problems, owners = check_ownership(
+                repository, graph, tracked, gitlink_paths(repository),
+                discover_subrepositories(repository)
+            )
+            self.assertEqual(ownership_problems, [])
+            node_names = sorted(graph["elements"])
+            report_paths = []
+            for role in ("主审", "剃刀", "全图"):
+                nodes = []
+                for node in node_names:
+                    files = sorted(path for path, owner in owners.items() if owner == node)
+                    nodes.append(node_entry(
+                        node, files if role != "全图" else None, [], "核对过节点文件"
+                    ))
+                document = report(role, nodes, str(repository))
+                path = repository / f"{role}.json"
+                path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+                report_paths.append(str(path))
+            arguments = ["--repo", str(repository), "--scope", "全部",
+                         "--reports", *report_paths]
+            with patch("check_audit.check_repository", return_value=([], graph)) as graph_check:
+                self.assertEqual(main(arguments), 0)
+            graph_check.assert_called_once_with(repository, check_approval=False)
+
+
+if __name__ == "__main__":
+    unittest.main()
