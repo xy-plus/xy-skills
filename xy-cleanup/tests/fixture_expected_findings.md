@@ -1,11 +1,11 @@
-# Fixture review notes
+# 夹具审查答案
 
-The expected findings are outside the repository copied for reviewers.
+预期发现放在夹具仓之外，不会复制给审查者。
 
-- `unused_checksum` is not called and can be removed with its abandoned-format code.
-- `normalize_label` and `clean_label` implement the same normalization.
-- `get_timeout` only forwards its argument to `timeout_for_mode`.
-- `parse_external_result` carries a special branch that compensates for an upstream result bug.
-- The retry-count comment repeats the increment on the next line.
-- The two label tests assert the same behavior.
-- The `--legacy-export` option is used by the deployment host's cron job documented in the fixture README; ask before removing it.
+- `unused_checksum` 没有调用方，可连同已放弃的格式代码一起删除。
+- `normalize_label` 和 `clean_label` 做的是同一种规范化。
+- `get_timeout` 只是把参数转交给 `timeout_for_mode`。
+- `parse_external_result` 中的特殊分支是在替上游结果缺陷兜底。
+- 重试计数的注释重复描述了下一行的递增。
+- 两个标签测试断言的是同一行为。
+- `--legacy-export` 选项由夹具 README 记载的部署主机 cron 调用；删除前要问用户。

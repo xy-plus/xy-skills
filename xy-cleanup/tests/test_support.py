@@ -1,6 +1,10 @@
 """Small report builders shared by cleanup tests."""
 import json
+from pathlib import Path
+import sys
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "xy-repo-map"))
 
 def model():
     return {
@@ -51,9 +55,11 @@ def report_input(path, document):
 
 def valid_reports(owners):
     node_names = ["sample.alpha", "sample.beta"]
-    main_nodes = [node_entry(node, [path for path, owner in owners.items() if owner == node], [], "核对了节点与名下文件")
+    main_nodes = [node_entry(node, [path for path, owner in owners.items()
+                                    if owner.element == node], [], "核对了节点与名下文件")
                   for node in node_names]
-    razor_nodes = [node_entry(node, [path for path, owner in owners.items() if owner == node], [], "核对了节点与名下文件")
+    razor_nodes = [node_entry(node, [path for path, owner in owners.items()
+                                     if owner.element == node], [], "核对了节点与名下文件")
                    for node in node_names]
     whole_nodes = [node_entry(node, None, [], "核对了整图和节点") for node in node_names]
     return [

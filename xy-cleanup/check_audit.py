@@ -198,7 +198,8 @@ def validate_report_node(entry, role, report_name, scope, owners, direct_deletio
         elif len(files) != len(set(files)):
             problems.append(f"{report_name} 的 {node}.files 不能重复")
         else:
-            expected = sorted(path for path, owner in owners.items() if owner == node)
+            expected = sorted(path for path, owner in owners.items()
+                              if owner.element == node)
             if sorted(files) != expected:
                 problems.append(f"{report_name} 的 {node}.files 与文件归属不一致")
     return node
@@ -308,7 +309,7 @@ def repository_context(repository):
     )
     if ownership_problems:
         raise ValueError("\n".join(ownership_problems))
-    return root, model, owners
+    return root, model, tracked, owners
 
 
 def main(argv):
@@ -321,7 +322,7 @@ def main(argv):
         print("--repo 必须是绝对路径", file=sys.stderr)
         return 2
     try:
-        root, model, owners = repository_context(arguments.repo)
+        root, model, _, owners = repository_context(arguments.repo)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
         return 2

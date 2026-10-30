@@ -19,12 +19,15 @@ from test_support import (finding, model, node_entry, report, report_input,
 from create_fixture import create_fixture_repo
 from repo_map_lib.git_repository import (discover_subrepositories, gitlink_paths,
                                          tracked_paths)
-from repo_map_lib.ownership import check_ownership
+from repo_map_lib.ownership import Owner, check_ownership
 
 
 REPO = "/repo"
 SCOPE = ["sample.alpha", "sample.beta"]
-OWNERS = {"src/alpha.py": "sample.alpha", "src/beta.py": "sample.beta"}
+OWNERS = {
+    "src/alpha.py": Owner("sample.alpha", "code"),
+    "src/beta.py": Owner("sample.beta", "code"),
+}
 
 
 def validate(reports, scope, owners, graph):
@@ -59,7 +62,7 @@ class CheckAuditTest(unittest.TestCase):
                 ["src/child.py"] if item["data"]["role"] == "剃刀" else None,
                 [], "核对了 child"
             ))
-        owners = {**OWNERS, "src/child.py": "sample.alpha.child"}
+        owners = {**OWNERS, "src/child.py": Owner("sample.alpha.child", "code")}
         errors = validate(reports, scope, owners, graph)
         self.assertEqual(errors, [])
 
@@ -75,7 +78,7 @@ class CheckAuditTest(unittest.TestCase):
         graph["elements"]["sample.alpha.child"] = {
             "id": "sample.alpha.child", "kind": "node", "title": "Child"
         }
-        owners = {**OWNERS, "src/child.py": "sample.alpha.child"}
+        owners = {**OWNERS, "src/child.py": Owner("sample.alpha.child", "code")}
         scope = [*SCOPE, "sample.alpha.child"]
         reports[2]["data"]["nodes"].append(node_entry(
             "sample.alpha.child", None, [], "核对了 child"
@@ -186,7 +189,7 @@ class CheckAuditTest(unittest.TestCase):
         graph["elements"]["sample.alpha.child"] = {
             "id": "sample.alpha.child", "kind": "node", "title": "Child"
         }
-        owners = {**OWNERS, "src/child.py": "sample.alpha.child"}
+        owners = {**OWNERS, "src/child.py": Owner("sample.alpha.child", "code")}
         for item in reports[1:]:
             item["data"]["nodes"].append(node_entry(
                 "sample.alpha.child",
@@ -208,7 +211,7 @@ class CheckAuditTest(unittest.TestCase):
         graph["elements"]["sample.alpha.child"] = {
             "id": "sample.alpha.child", "kind": "node", "title": "Child"
         }
-        owners = {**OWNERS, "src/child.py": "sample.alpha.child"}
+        owners = {**OWNERS, "src/child.py": Owner("sample.alpha.child", "code")}
         reports[0]["data"]["nodes"][1]["findings"] = [{
             **finding("删除", "直接做", False),
             "target": "sample.alpha",
@@ -274,7 +277,8 @@ class CheckAuditTest(unittest.TestCase):
             for role in ("主审", "剃刀", "全图"):
                 nodes = []
                 for node in node_names:
-                    files = sorted(path for path, owner in owners.items() if owner == node)
+                    files = sorted(path for path, owner in owners.items()
+                                   if owner.element == node)
                     nodes.append(node_entry(
                         node, files if role != "全图" else None, [], "核对过节点文件"
                     ))

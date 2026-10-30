@@ -4,13 +4,8 @@ import json
 from pathlib import Path, PurePosixPath
 import sys
 
-REPO_MAP_PATH = Path(__file__).resolve().parents[1] / "xy-repo-map"
-sys.path.insert(0, str(REPO_MAP_PATH))
-
-from repo_map_lib.checker import check_repository
-from repo_map_lib.git_repository import (discover_subrepositories, gitlink_paths,
-                                         require_repository_root, tracked_paths)
-from repo_map_lib.ownership import check_ownership, link_records
+from check_audit import repository_context
+from repo_map_lib.ownership import link_records
 
 
 def node_names(model, tracked, owners):
@@ -20,6 +15,19 @@ def node_names(model, tracked, owners):
         if target is not None:
             names.setdefault(element_id, set()).add(target)
 
+    directories_by_file = {}
+    all_directories = set()
+    for file_path in tracked:
+        directories = [directory.as_posix() for directory in PurePosixPath(file_path).parents
+                       if directory.as_posix() != "."]
+        directories_by_file[file_path] = directories
+        all_directories.update(directories)
+
+    directory_name_counts = {}
+    for directory in all_directories:
+        name = PurePosixPath(directory).name
+        directory_name_counts[name] = directory_name_counts.get(name, 0) + 1
+
     files_by_directory = {}
     for file_path in tracked:
         if file_path == "repo-map" or file_path.startswith("repo-map/"):
@@ -27,17 +35,18 @@ def node_names(model, tracked, owners):
         owner = owners.get(file_path)
         if owner is None:
             continue
-        for directory in PurePosixPath(file_path).parents:
-            directory_name = directory.as_posix()
-            if directory_name != ".":
-                files_by_directory.setdefault(directory_name, set()).add(owner)
+        owner_element = owner.element
+        for directory in directories_by_file[file_path]:
+            files_by_directory.setdefault(directory, set()).add(owner_element)
 
     for directory, directory_owners in files_by_directory.items():
         if len(directory_owners) != 1:
             continue
         owner = next(iter(directory_owners))
         names.setdefault(owner, set()).add(directory + "/")
-        names[owner].add(PurePosixPath(directory).name)
+        short_name = PurePosixPath(directory).name
+        if directory_name_counts[short_name] == 1:
+            names[owner].add(short_name)
     return {element_id: sorted(values) for element_id, values in names.items()}
 
 
@@ -75,9 +84,10 @@ def build_reference_report(repository, model, tracked, owners):
     for file_path in sorted(tracked):
         if file_path == "repo-map" or file_path.startswith("repo-map/"):
             continue
-        source = owners.get(file_path)
-        if source is None:
+        owner = owners.get(file_path)
+        if owner is None:
             continue
+        source = owner.element
         lines = text_lines(root / file_path)
         if not lines:
             continue
@@ -114,21 +124,6 @@ def build_reference_report(repository, model, tracked, owners):
     }
 
 
-def repository_data(repository):
-    """Load a checked graph and exact ownership data, ignoring approval records."""
-    root = require_repository_root(repository)
-    problems, model = check_repository(root, check_approval=False)
-    if problems:
-        raise ValueError("\n".join(problems))
-    tracked = tracked_paths(root)
-    ownership_problems, owners = check_ownership(
-        root, model, tracked, gitlink_paths(root), discover_subrepositories(root)
-    )
-    if ownership_problems:
-        raise ValueError("\n".join(ownership_problems))
-    return root, model, tracked, owners
-
-
 def parser():
     """Build the command-line parser with explicit repository input."""
     command = argparse.ArgumentParser(description="对账仓图节点之间的文本引用")
@@ -140,7 +135,7 @@ def main(argv):
     """Print the JSON reconciliation or return a command-line status."""
     arguments = parser().parse_args(argv)
     try:
-        root, model, tracked, owners = repository_data(arguments.repo)
+        root, model, tracked, owners = repository_context(arguments.repo)
         result = build_reference_report(root, model, tracked, owners)
     except (OSError, ValueError) as error:
         print(str(error), file=sys.stderr)
