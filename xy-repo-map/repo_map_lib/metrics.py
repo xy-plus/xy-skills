@@ -1,4 +1,4 @@
-"""Line counts and documentation coverage using the R6 language table."""
+"""Count lines and documentation coverage using the suffix-to-language table CODE_SUFFIXES in sibling constants.py."""
 from dataclasses import dataclass
 import ast
 import io
