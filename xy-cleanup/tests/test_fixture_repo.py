@@ -1,5 +1,6 @@
 """The cleanup fixture can be materialized as a tracked temporary Git repository."""
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,19 @@ class FixtureRepositoryTest(unittest.TestCase):
             problems, graph = check_repository(repository, False)
             self.assertEqual(problems, [], problems)
             self.assertIn("cleanup_fixture.core", graph["elements"])
+
+    def test_cli_normal_path_applies_external_result_compatibility(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = create_fixture_repo(Path(temporary) / "review-target")
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(repository / "src")
+            result = subprocess.run(
+                [sys.executable, "-m", "cleanup_fixture.cli", "legacy-null"],
+                cwd=repository, env=environment, check=False, capture_output=True,
+                text=True, encoding="utf-8", shell=False
+            )
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":

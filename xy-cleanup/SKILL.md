@@ -72,7 +72,7 @@ python3 /home/xy/web-portal/portal.py publish \
 
 保存命令、退出状态和相关输出。工具不存在、启动失败或检查失败都如实报告；失败不等于没有发现。警告只是线索，审查者仍须核对调用、构建和测试。
 
-`references.json` 包含逐行命中的 `mentions`、有文字引用但图上没有关系的 `references_without_relationship`，以及图上有关系但没有文字命中的 `relationships_without_reference`。脚本对每个节点收集链接相对仓根的路径，以及独占目录的路径；目录最后一段名字只有在全仓所有跟踪文件所在目录中唯一时才加入名字。它逐行搜索其他节点名下的文本文件并记录文件和行号。结果只作旁证：审查者判断同名误中和动态引用。
+`references.json` 包含逐行命中的 `mentions`、有文字引用但图上没有关系的 `references_without_relationship`，以及图上有关系但没有文字命中的 `relationships_without_reference`。脚本为每个节点收集链接相对仓根的路径、独占目录的路径，以及其名下 `.py`、`.rs` 文件的模块名写法：Python 去掉扩展名和末尾 `__init__`，用点号拼路径并取至少两段的各个后缀；Rust 去掉扩展名、路径中的 `src` 段和末尾 `mod`、`lib`、`main`，用 `::` 拼路径并取至少两段的各个后缀，同时加入 `crate::` 开头的完整写法。只有一段的模块名和目录末段名，只有在全仓唯一时才加入。脚本逐行搜索其他节点名下的文本文件并记录文件和行号。结果只作旁证：审查者判断同名误中和动态引用。
 
 ## 派审查
 
@@ -116,7 +116,7 @@ python3 /home/xy/web-portal/portal.py publish \
           "decision": "直接做 | 问你",
           "basis": {
             "source": "<xy-iron-law 或 xy-repo-rules 的名称与条款号>",
-            "text": "<该条规范中的逐字依据>"
+            "text": "<从所标条款复制的一段连续原文，标点照抄>"
           },
           "evidence": "<文件行号，或命令和输出>",
           "benefit": "<收益>",
@@ -129,7 +129,7 @@ python3 /home/xy/web-portal/portal.py publish \
 }
 ```
 
-全图报告的节点对象省略 `files`。`changes_behavior` 必须是 JSON 布尔值 `true` 或 `false`。依据来源按 `xy-iron-law 第 <数字> 条` 或 `xy-repo-rules 第 <数字> 条`填写；`basis.text` 必须逐字出现在该条款里。「直接做」当且仅当类型是删除或合并、且改后对外行为不变；否则标「问你」。`改图` 必须标「问你」。
+全图报告的节点对象省略 `files`。`changes_behavior` 必须是 JSON 布尔值 `true` 或 `false`。依据来源按 `xy-iron-law 第 <数字> 条` 或 `xy-repo-rules 第 <数字> 条`填写；`basis.text` 从所标条款复制一段连续原文，标点照抄。「直接做」当且仅当类型是删除或合并、且改后对外行为不变；否则标「问你」。`改图` 必须标「问你」。
 
 ## 校验报告
 

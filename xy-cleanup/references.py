@@ -8,12 +8,58 @@ from check_audit import repository_context
 from repo_map_lib.ownership import link_records
 
 
+def module_names(file_path):
+    """Return import-style suffixes derived from a tracked Python or Rust file."""
+    path = PurePosixPath(file_path)
+    if path.suffix == ".py":
+        segments = list(path.with_suffix("").parts)
+        if segments and segments[-1] == "__init__":
+            segments.pop()
+        separator = "."
+        rust_module = False
+    elif path.suffix == ".rs":
+        segments = [segment for segment in path.with_suffix("").parts if segment != "src"]
+        if segments and segments[-1] in {"mod", "lib", "main"}:
+            segments.pop()
+        separator = "::"
+        rust_module = True
+    else:
+        return set()
+
+    names = {separator.join(segments[index:]) for index in range(len(segments))}
+    if rust_module and segments:
+        names.add("crate::" + separator.join(segments))
+    return names
+
+
 def node_names(model, tracked, owners):
-    """Return each element's link paths and exclusively owned directory names."""
+    """Return link paths, exclusive directories, and owned module names by node."""
     names = {element_id: set() for element_id in model.get("elements", {})}
     for element_id, target, _, _ in link_records(model):
         if target is not None:
             names.setdefault(element_id, set()).add(target)
+
+    module_names_by_file = {}
+    files_by_single_module_name = {}
+    for file_path in tracked:
+        if file_path == "repo-map" or file_path.startswith("repo-map/"):
+            continue
+        candidates = module_names(file_path)
+        if not candidates:
+            continue
+        module_names_by_file[file_path] = candidates
+        for candidate in candidates:
+            if "." not in candidate and "::" not in candidate:
+                files_by_single_module_name.setdefault(candidate, set()).add(file_path)
+
+    for file_path, candidates in module_names_by_file.items():
+        owner = owners.get(file_path)
+        if owner is None:
+            continue
+        for candidate in candidates:
+            is_qualified = "." in candidate or "::" in candidate
+            if is_qualified or len(files_by_single_module_name[candidate]) == 1:
+                names.setdefault(owner.element, set()).add(candidate)
 
     directories_by_file = {}
     all_directories = set()

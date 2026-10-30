@@ -9,11 +9,105 @@ sys.path.insert(0, str(TESTS.parent))
 sys.path.insert(0, str(TESTS.parents[1] / "xy-repo-map"))
 
 from references import build_reference_report
+from references import module_names
 from references import node_names
+from check_audit import repository_context
 from repo_map_lib.ownership import Owner
+from test_data.create_fixture import create_fixture_repo
 
 
 class ReferencesTest(unittest.TestCase):
+    def test_fixture_module_imports_match_both_graph_relationships(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = create_fixture_repo(Path(temporary) / "review-target")
+            root, model, tracked, owners = repository_context(repository)
+            result = build_reference_report(root, model, tracked, owners)
+            evidence = {
+                (mention["from"], mention["to"]): mention["evidence"]
+                for mention in result["mentions"]
+            }
+            for relation, file_path, line_number in [
+                (("cleanup_fixture.cli", "cleanup_fixture.core"),
+                 "src/cleanup_fixture/cli.py", 5),
+                (("cleanup_fixture.tests", "cleanup_fixture.core"),
+                 "tests/test_core.py", 4),
+            ]:
+                self.assertIn(relation, evidence)
+                matching_evidence = [
+                    mention for mention in evidence[relation]
+                    if (mention["file"], mention["line"]) == (file_path, line_number)
+                ]
+                self.assertEqual(len(matching_evidence), 1)
+                mention = matching_evidence[0]
+                self.assertIn("cleanup_fixture.core", mention["matches"])
+            self.assertEqual(result["relationships_without_reference"], [])
+
+    def test_rust_module_names_include_suffix_and_crate_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "src" / "cache").mkdir(parents=True)
+            (root / "src" / "cache" / "store.rs").write_text(
+                "pub struct Store;\n", encoding="utf-8"
+            )
+            (root / "src" / "main.rs").write_text(
+                "use crate::cache::store::Store;\n", encoding="utf-8"
+            )
+            model = {
+                "elements": {"app": {}, "app.cache": {}},
+                "relations": {"app-cache": {
+                    "source": {"model": "app"},
+                    "target": {"model": "app.cache"}, "title": "uses"
+                }},
+            }
+            tracked = ["src/cache/store.rs", "src/main.rs"]
+            owners = {
+                "src/cache/store.rs": Owner("app.cache", "code"),
+                "src/main.rs": Owner("app", "code"),
+            }
+            names = node_names(model, tracked, owners)
+            self.assertIn("cache::store", names["app.cache"])
+            self.assertIn("crate::cache::store", names["app.cache"])
+            result = build_reference_report(root, model, tracked, owners)
+            mention = next(item for item in result["mentions"]
+                           if item["from"] == "app" and item["to"] == "app.cache")
+            self.assertEqual(mention["evidence"][0]["file"], "src/main.rs")
+            self.assertEqual(mention["evidence"][0]["line"], 1)
+            self.assertIn("crate::cache::store", mention["evidence"][0]["matches"])
+
+        cache_names = node_names(
+            {"elements": {"cache": {}}}, ["src/cache.rs"],
+            {"src/cache.rs": Owner("cache", "code")}
+        )
+        self.assertIn("crate::cache", cache_names["cache"])
+
+    def test_rust_crate_entry_files_do_not_become_module_names(self):
+        self.assertEqual(module_names("src/cache/mod.rs"), {"cache", "crate::cache"})
+        self.assertEqual(module_names("src/lib.rs"), set())
+        self.assertEqual(module_names("src/main.rs"), set())
+
+    def test_python_module_names_use_dotted_suffixes_and_strip_init(self):
+        model = {"elements": {"package": {}}, "relations": {}}
+        tracked = ["src/cleanup_fixture/core.py", "src/cleanup_fixture/__init__.py"]
+        owners = {path: Owner("package", "code") for path in tracked}
+        names = node_names(model, tracked, owners)
+        self.assertIn("src.cleanup_fixture.core", names["package"])
+        self.assertIn("cleanup_fixture.core", names["package"])
+        self.assertIn("src.cleanup_fixture", names["package"])
+        self.assertNotIn("__init__", names["package"])
+
+    def test_single_segment_module_name_is_only_added_when_unique(self):
+        model = {"elements": {"alpha": {}, "beta": {}, "unique": {}}, "relations": {}}
+        tracked = ["src/alpha/engine.py", "src/beta/engine.py", "src/unique.py"]
+        owners = {
+            "src/alpha/engine.py": Owner("alpha", "code"),
+            "src/beta/engine.py": Owner("beta", "code"),
+            "src/unique.py": Owner("unique", "code"),
+        }
+        names = node_names(model, tracked, owners)
+        self.assertNotIn("engine", names["alpha"])
+        self.assertNotIn("engine", names["beta"])
+        self.assertIn("unique", names["unique"])
+
     def test_reports_file_mentions_against_missing_graph_edges(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -51,7 +145,8 @@ class ReferencesTest(unittest.TestCase):
                     {"file": "workflow.py", "line": 1, "matches": ["xy-runs"]}
                 ]},
                 {"from": "skills.other", "to": "skills", "evidence": [
-                    {"file": "other.py", "line": 1, "matches": ["workflow.py"]}
+                    {"file": "other.py", "line": 1,
+                     "matches": ["workflow", "workflow.py"]}
                 ]},
             ])
             self.assertEqual(result["references_without_relationship"], result["mentions"])
@@ -81,38 +176,39 @@ class ReferencesTest(unittest.TestCase):
     def test_reports_graph_edges_without_any_text_reference(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "a.py").write_text("def a(): pass\n", encoding="utf-8")
-            (root / "b.py").write_text("def b(): pass\n", encoding="utf-8")
+            (root / "alpha.py").write_text("def alpha(): pass\n", encoding="utf-8")
+            (root / "beta.py").write_text("def beta(): pass\n", encoding="utf-8")
             model = {
-                "elements": {"a": {}, "b": {}},
-                "relations": {"a-b": {
-                    "source": {"model": "a"}, "target": {"model": "b"}, "title": "uses"
+                "elements": {"alpha": {}, "beta": {}},
+                "relations": {"alpha-beta": {
+                    "source": {"model": "alpha"},
+                    "target": {"model": "beta"}, "title": "uses"
                 }},
             }
             result = build_reference_report(
-                root, model, ["a.py", "b.py"],
-                {"a.py": Owner("a", "code"), "b.py": Owner("b", "code")}
+                root, model, ["alpha.py", "beta.py"],
+                {"alpha.py": Owner("alpha", "code"), "beta.py": Owner("beta", "code")}
             )
             self.assertEqual(result["mentions"], [])
             self.assertEqual(result["relationships_without_reference"], [
-                {"from": "a", "to": "b", "title": "uses"}
+                {"from": "alpha", "to": "beta", "title": "uses"}
             ])
 
     def test_skips_binary_files_and_does_not_count_self_mentions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "a.py").write_text("# a.py self name\n", encoding="utf-8")
-            (root / "b.bin").write_bytes(b"a.py\x00b.py")
+            (root / "alpha.py").write_text("# alpha.py self name\n", encoding="utf-8")
+            (root / "beta.bin").write_bytes(b"alpha.py\x00beta.py")
             model = {
                 "elements": {
-                    "a": {"links": [{"url": "../a.py", "title": "code"}]},
-                    "b": {"links": [{"url": "../b.bin", "title": "data"}]},
+                    "alpha": {"links": [{"url": "../alpha.py", "title": "code"}]},
+                    "beta": {"links": [{"url": "../beta.bin", "title": "data"}]},
                 },
                 "relations": {},
             }
             result = build_reference_report(
-                root, model, ["a.py", "b.bin"],
-                {"a.py": Owner("a", "code"), "b.bin": Owner("b", "data")}
+                root, model, ["alpha.py", "beta.bin"],
+                {"alpha.py": Owner("alpha", "code"), "beta.bin": Owner("beta", "data")}
             )
             self.assertEqual(result["mentions"], [])
 
@@ -127,7 +223,7 @@ class ReferencesTest(unittest.TestCase):
             for file_path in tracked:
                 path = root / file_path
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("# tests are part of the workflow\n", encoding="utf-8")
+                path.write_text("# tests are part of pipeline\n", encoding="utf-8")
             model = {
                 "elements": {
                     "app": {"links": [{"url": "../workflow.py", "title": "code"}]},

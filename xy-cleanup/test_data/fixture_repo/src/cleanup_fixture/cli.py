@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from cleanup_fixture.core import get_timeout, normalize_label
+from cleanup_fixture.core import get_timeout, normalize_label, parse_external_result
 
 
 def create_parser():
@@ -21,7 +21,11 @@ def main(arguments):
         return 0
     if options.label is None:
         return 2
-    print(f"{normalize_label(options.label)}:{get_timeout('normal')}")
+    external_result = options.label
+    parsed_result = parse_external_result(external_result)
+    if parsed_result is None:
+        return 2
+    print(f"{normalize_label(parsed_result)}:{get_timeout('normal')}")
     return 0
 
 
