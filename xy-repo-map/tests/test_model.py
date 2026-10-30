@@ -104,7 +104,22 @@ class OwnershipTest(unittest.TestCase):
         problems, owners = check_ownership(
             self.root, candidate, ["src/main.py", "tests/test_main.py"], [], [])
         self.assertEqual(problems, [])
-        self.assertEqual(owners, {"src/main.py": "root.main", "tests/test_main.py": "root.tests"})
+        self.assertEqual({path: (owner.element, owner.category)
+                          for path, owner in owners.items()},
+                         {"src/main.py": ("root.main", "code"),
+                          "tests/test_main.py": ("root.tests", "tests")})
+
+    def test_owner_keeps_the_element_and_link_category_together(self):
+        candidate = model({
+            "root": element("root", "node", []),
+            "root.source": element("root.source", "node", [link("../src/", "code")]),
+        }, {})
+
+        problems, owners = check_ownership(self.root, candidate, ["src/main.py"], [], [])
+
+        self.assertEqual(problems, [])
+        self.assertEqual(owners["src/main.py"].element, "root.source")
+        self.assertEqual(owners["src/main.py"].category, "code")
 
     def test_duplicate_links_missing_files_and_unowned_files_are_reported(self):
         candidate = model({
@@ -131,7 +146,8 @@ class OwnershipTest(unittest.TestCase):
             "root.vendor", "repo", [link("../vendor/", "repo")])}, {})
         problems, owners = check_ownership(self.root, candidate, ["vendor"], ["vendor"], ["vendor"])
         self.assertEqual(problems, [])
-        self.assertEqual(owners, {"vendor": "root.vendor"})
+        self.assertEqual((owners["vendor"].element, owners["vendor"].category),
+                         ("root.vendor", "repo"))
 
         wrong_type = model({"root": element("root", "node", []), "root.vendor": element(
             "root.vendor", "node", [link("../vendor/", "code")])}, {})

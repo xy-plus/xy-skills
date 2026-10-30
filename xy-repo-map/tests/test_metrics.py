@@ -5,10 +5,17 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from repo_map_lib import constants
 from repo_map_lib.metrics import LineCounts, code_counts, count_file, coverage_counts
 
 
 class MetricsTest(unittest.TestCase):
+    def test_code_suffixes_have_one_registry(self):
+        self.assertFalse(hasattr(constants, "SUPPORTED_CODE_SUFFIXES"))
+
+    def test_line_counts_leave_aggregation_to_the_rendering_layer(self):
+        self.assertNotIn("__add__", LineCounts.__dict__)
+
     def test_line_count_record_requires_all_categories_explicitly(self):
         with self.assertRaises(TypeError):
             LineCounts()

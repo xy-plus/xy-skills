@@ -42,7 +42,7 @@ def _include(element_id, counts, destination):
 
 
 def generate_views(model, top_root_ids, mode, totals, repo_targets, coverage):
-    """Generate an index and one scoped view for every element with children."""
+    """Generate an index, views for elements with children, and a view for each repository root."""
     if mode not in ("草稿", "正式"):
         raise ValueError("mode 只能是 草稿 或 正式")
     elements = model.get("elements", {})
@@ -64,9 +64,12 @@ def generate_views(model, top_root_ids, mode, totals, repo_targets, coverage):
         title = parent.get("title", parent_id)
         lines.extend([f"  view {view_id(parent_id)} of {parent_id} {{",
                       f"    title {_quote(prefix + title)}"])
-        for child_id in sorted(children.get(parent_id, [])):
+        child_ids = sorted(children.get(parent_id, []))
+        for child_id in child_ids:
             destination = view_id(repo_targets[child_id]) if child_id in repo_targets else None
             lines.extend(_include(child_id, totals[child_id], destination))
+        if not child_ids:
+            lines.extend(_include(parent_id, totals[parent_id], None))
         lines.append("  }")
     lines.append("}")
     return "\n".join(lines) + "\n\n" + coverage_descriptions(model, coverage)

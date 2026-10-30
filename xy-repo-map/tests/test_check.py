@@ -45,8 +45,7 @@ class CheckTest(unittest.TestCase):
 
     def checked(self, approval_text):
         (self.repo_map / "approvals.txt").write_text(approval_text, encoding="utf-8")
-        with patch("repo_map_lib.checker.validate_likec4", return_value=self.validation), \
-                patch("repo_map_lib.checker.export_model", return_value=self.model):
+        with patch("repo_map_lib.checker.export_model", return_value=self.model):
             return check_repository(self.root, True)
 
     def test_check_accepts_a_matching_record_and_rejects_an_unapproved_committed_map(self):
@@ -77,18 +76,27 @@ class CheckTest(unittest.TestCase):
                        "description": {"txt": "A repository."}, "style": {},
                        "links": [{"url": "../README.md", "title": "code"}]},
         }, "relations": {}}
-        with patch("repo_map_lib.checker.validate_likec4", return_value=self.validation), \
-                patch("repo_map_lib.checker.export_model", return_value=bad_model):
+        with patch("repo_map_lib.checker.export_model", return_value=bad_model):
             problems, _ = check_repository(self.root, False)
         self.assertTrue(any("后缀不支持" in problem and "README.md" in problem
                             for problem in problems), problems)
 
     def test_check_uses_validate_failure_even_if_export_would_succeed(self):
-        invalid = subprocess.CompletedProcess([], 1, "syntax error", "")
-        with patch("repo_map_lib.checker.validate_likec4", return_value=invalid), \
-                patch("repo_map_lib.checker.export_model", return_value=self.model):
+        validation_error = "LikeC4 validate 失败：syntax error"
+        with patch("repo_map_lib.checker.export_model",
+                   side_effect=ValueError(validation_error)) as export:
             problems, model = check_repository(self.root, False)
-        self.assertTrue(any("LikeC4 validate" in problem for problem in problems), problems)
+        self.assertEqual(problems, [validation_error])
+        self.assertIsNone(model)
+        export.assert_called_once()
+
+    def test_checker_reports_export_model_validation_error_without_rewrapping_it(self):
+        validation_error = "LikeC4 validate 失败：syntax location"
+        with patch("repo_map_lib.checker.export_model",
+                   side_effect=ValueError(validation_error)):
+            problems, model = check_repository(self.root, False)
+
+        self.assertEqual(problems, [validation_error])
         self.assertIsNone(model)
 
 

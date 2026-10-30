@@ -1,7 +1,13 @@
 """Map each tracked repository path to exactly one model element."""
 import posixpath
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlparse
+
+
+class Owner(NamedTuple):
+    element: str
+    category: str
 
 
 def link_records(model):
@@ -25,24 +31,6 @@ def link_records(model):
                 relative = normalized
             records.append((element_id, relative, link.get("title"), url))
     return records
-
-
-def category_for_path(repo_root, model, tracked):
-    """Return the category of the longest link covering a tracked path."""
-    root = Path(repo_root)
-    candidates = []
-    for element_id, target, category, _ in link_records(model):
-        if target is None:
-            continue
-        is_directory = target == "." or (root / target).is_dir()
-        below_target = target == "." or tracked.startswith(target.rstrip("/") + "/")
-        if tracked == target or (is_directory and below_target):
-            candidates.append((len(target), category))
-    if not candidates:
-        return None
-    longest = max(size for size, _ in candidates)
-    winners = {category for size, category in candidates if size == longest}
-    return next(iter(winners)) if len(winners) == 1 else None
 
 
 def check_ownership(repo_root, model, tracked_paths, gitlink_paths, subrepo_paths):
@@ -103,7 +91,7 @@ def check_ownership(repo_root, model, tracked_paths, gitlink_paths, subrepo_path
         if len(winners) != 1:
             problems.append(f"跟踪文件有多个最长路径归属：{tracked}")
             continue
-        owners[tracked] = winners[0][0]
+        owners[tracked] = Owner(*winners[0])
         if tracked in gitlink_paths and winners[0][1] != "repo":
             problems.append(f"submodule gitlink {tracked} 只能由 repo 链接覆盖")
     return problems, owners

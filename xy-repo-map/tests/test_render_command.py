@@ -140,6 +140,19 @@ class RenderCommandTest(unittest.TestCase):
         self.assertTrue(any("不存在或为空" in problem for problem in problems), problems)
         self.assertEqual((self.output / "keep.txt").read_text(encoding="utf-8"), "keep")
 
+    def test_render_refuses_output_inside_any_repository_without_writing(self):
+        destinations = (self.root, self.root / "generated-site", self.child / "generated-site")
+        for destination in destinations:
+            with self.subTest(destination=destination):
+                with patch("repo_map_lib.render_command.check_repository",
+                           side_effect=self.fake_check), \
+                        patch("repo_map_lib.render_command.build_likec4",
+                              side_effect=self.fake_build) as build:
+                    problems = render_repository(self.root, "草稿", destination)
+                self.assertTrue(any("仓内" in problem for problem in problems), problems)
+                self.assertFalse((destination / "index.html").exists())
+                build.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

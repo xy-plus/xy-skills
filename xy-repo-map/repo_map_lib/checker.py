@@ -6,9 +6,9 @@ from .approval import recorded_digests
 from .constants import CODE_SUFFIXES
 from .git_repository import (discover_subrepositories, gitlink_paths,
                              model_paths, require_repository_root, tracked_paths)
-from .likec4 import export_model, validate_likec4
+from .likec4 import export_model
 from .model import model_problems, source_file_problems
-from .ownership import category_for_path, check_ownership
+from .ownership import check_ownership
 from .structure import structure_digest
 
 
@@ -35,15 +35,10 @@ def check_repository(repository, check_approval):
     if problems:
         return problems, None
 
-    validation = validate_likec4(repo_map)
-    if validation.returncode != 0:
-        details = (validation.stdout + validation.stderr).strip()
-        problems.append(f"LikeC4 validate 失败：{details}")
-        return problems, None
     try:
         model = export_model(repo_map)
     except ValueError as error:
-        return [f"LikeC4 export json 失败：{error}"], None
+        return [str(error)], None
 
     problems.extend(model_problems(model))
     try:
@@ -64,7 +59,7 @@ def check_repository(repository, check_approval):
     ownership_problems, owners = check_ownership(root, model, tracked, gitlinks, subrepositories)
     problems.extend(ownership_problems)
     for file_path, owner in owners.items():
-        if category_for_path(root, model, file_path) == "code":
+        if owner.category == "code":
             suffix = Path(file_path).suffix.lower()
             if suffix not in CODE_SUFFIXES:
                 problems.append(f"code 文件后缀不支持：{file_path}")

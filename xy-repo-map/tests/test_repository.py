@@ -135,9 +135,7 @@ class RepositoryTest(unittest.TestCase):
                      "description": {"txt": "A repository root."}, "links": []},
         }, "relations": {}}
         stderr = io.StringIO()
-        with patch("repo_map_lib.checker.validate_likec4",
-                   return_value=subprocess.CompletedProcess([], 0, "", "")), \
-                patch("repo_map_lib.checker.export_model", return_value=exported_model), \
+        with patch("repo_map_lib.checker.export_model", return_value=exported_model), \
                 patch("repo_map_lib.git_repository.os.scandir", side_effect=fail_for_container), \
                 contextlib.redirect_stderr(stderr):
             result = main(["repo_map.py", "check", "--repo", str(self.root)])

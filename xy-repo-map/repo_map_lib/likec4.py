@@ -1,4 +1,4 @@
-"""The only external boundary: the pinned LikeC4 command-line interface."""
+"""Pinned-version LikeC4 command-line wrapper."""
 import json
 from pathlib import Path
 import subprocess
@@ -13,16 +13,17 @@ def run_likec4(arguments):
     return subprocess.run(command, capture_output=True, text=True)
 
 
-def validate_likec4(repo_map):
-    return run_likec4(["validate", str(Path(repo_map).resolve())])
-
-
 def export_model(repo_map):
-    # LikeC4 1.60.0 can export JSON successfully for invalid syntax; callers validate first.
+    # LikeC4 1.60.0 can export JSON for invalid syntax, so validate before exporting.
+    source = str(Path(repo_map).resolve())
+    validation = run_likec4(["validate", source])
+    if validation.returncode != 0:
+        details = (validation.stdout + validation.stderr).strip()
+        raise ValueError(f"LikeC4 validate 失败：{details or '未提供错误输出'}")
     with tempfile.TemporaryDirectory(prefix="xy-repo-map-export-") as temporary:
         output = Path(temporary) / "model.json"
         result = run_likec4(["export", "json", "--pretty", "-o", str(output),
-                             str(Path(repo_map).resolve())])
+                             source])
         if result.returncode != 0:
             raise ValueError(result.stderr.strip() or result.stdout.strip() or "LikeC4 export json 失败")
         try:

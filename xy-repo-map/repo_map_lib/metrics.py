@@ -16,10 +16,6 @@ class LineCounts:
     comments: int
     tests: int
 
-    def __add__(self, other):
-        return LineCounts(self.code + other.code, self.docs + other.docs,
-                          self.comments + other.comments, self.tests + other.tests)
-
 
 ZERO_COUNTS = LineCounts(0, 0, 0, 0)
 

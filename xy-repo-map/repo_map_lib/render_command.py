@@ -9,7 +9,7 @@ from .constants import CODE_SUFFIXES, STANDARD_KINDS
 from .git_repository import model_paths, require_repository_root, tracked_paths, gitlink_paths, discover_subrepositories
 from .likec4 import build_likec4
 from .metrics import ZERO_COUNTS, LineCounts, count_file, coverage_counts
-from .ownership import category_for_path, check_ownership, link_records
+from .ownership import check_ownership, link_records
 from .rendering import (add_counts, add_coverage, coverage_text,
                         generate_views)
 
@@ -27,6 +27,12 @@ def _root_id(model):
     if len(roots) != 1:
         raise ValueError("模型没有唯一根节点")
     return roots[0]
+
+
+def _contains_path(directory, path):
+    directory = Path(directory).resolve()
+    path = Path(path).resolve()
+    return path == directory or directory in path.parents
 
 
 def _checked_tree(repository, mode):
@@ -88,22 +94,24 @@ def _collect_statistics(repositories, combined):
         subrepos = discover_subrepositories(root)
         _, owners = check_ownership(root, item["model"], tracked, gitlinks, subrepos)
         for file_path, owner in owners.items():
-            category = category_for_path(root, item["model"], file_path)
+            category = owner.category
             if category not in ("code", "docs", "tests"):
                 continue
             try:
                 content = (root / file_path).read_bytes()
             except OSError as error:
                 raise ValueError(f"无法读取归属文件以统计行数：{root / file_path}：{error}") from error
-            own_counts[owner] = add_counts(own_counts[owner], count_file(file_path, category, content))
+            own_counts[owner.element] = add_counts(
+                own_counts[owner.element], count_file(file_path, category, content))
             if category == "code":
                 covered, total, language = coverage_counts(file_path, content.decode("utf-8", errors="ignore"))
                 if language == "不适用":
                     language = CODE_SUFFIXES[Path(file_path).suffix.lower()]
-                    own_coverage[owner] = add_coverage(own_coverage[owner], {"不适用": (0, 0)})
+                    own_coverage[owner.element] = add_coverage(
+                        own_coverage[owner.element], {"不适用": (0, 0)})
                 else:
-                    own_coverage[owner] = add_coverage(
-                        own_coverage[owner], {language: (covered, total)})
+                    own_coverage[owner.element] = add_coverage(
+                        own_coverage[owner.element], {language: (covered, total)})
 
     repo_targets = {}
     repositories_by_path = {item["path"]: item for item in repositories}
@@ -184,15 +192,24 @@ def render_repository(repository, mode, output):
     """Render a checked repository tree into a new or empty output directory."""
     if mode not in ("草稿", "正式"):
         return ["mode 只能是 草稿 或 正式"]
-    destination = Path(output).expanduser()
+    try:
+        root = require_repository_root(repository)
+    except ValueError as error:
+        return [str(error)]
+    destination = Path(output).expanduser().resolve()
+    if _contains_path(root, destination):
+        return [f"--out 不能位于仓内：{destination}（仓根 {root}）"]
     if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
         return [f"--out 必须是不存在或为空的目录：{destination}"]
     try:
-        tree_problems, repositories = _checked_tree(repository, mode)
+        tree_problems, repositories = _checked_tree(root, mode)
     except ValueError as error:
         return [str(error)]
     if tree_problems:
         return tree_problems
+    for item in repositories:
+        if _contains_path(item["path"], destination):
+            return [f"--out 不能位于仓内：{destination}（仓根 {item['path']}）"]
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:

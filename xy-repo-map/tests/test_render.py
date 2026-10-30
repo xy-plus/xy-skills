@@ -65,6 +65,9 @@ class RenderTest(unittest.TestCase):
 
         self.assertIn(f"view {view_id('engine')} of engine", source)
         self.assertIn(f"navigateTo {view_id('engine')}", source)
+        child_view = source.split(f"view {view_id('engine')} of engine {{", 1)[1].split("\n  }", 1)[0]
+        self.assertIn("include engine with {", child_view)
+        self.assertIn("technology '代码 0 · 文档 0 · 注释 0 · 测试 0'", child_view)
 
     def test_coverage_is_appended_to_element_descriptions(self):
         source = generate_views(self.model, ["workspace"], "正式", self.counts,

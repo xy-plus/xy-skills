@@ -170,7 +170,6 @@ def validate_approval_quote(path, digest):
 
 
 def recorded_digests(approvals_path):
-    """Read digest prefixes from valid approval rows."""
     path = Path(approvals_path)
     if not path.exists():
         raise ValueError(f"缺少同意记录：{path}")
