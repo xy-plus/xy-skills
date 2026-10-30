@@ -1,13 +1,18 @@
 """Git-root discovery and repository-map initialization tests."""
+import contextlib
+import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from repo_map import main
 from repo_map_lib.git_repository import (discover_subrepositories, model_paths,
                                          require_repository_root)
 from repo_map_lib.initializer import init_map
@@ -101,6 +106,45 @@ class RepositoryTest(unittest.TestCase):
         (self.root / ".gitignore").write_text("container/ignored/\n", encoding="utf-8")
 
         self.assertEqual(discover_subrepositories(self.root), ["container/nested"])
+
+    def test_ignored_nested_repository_is_checked_at_its_own_root(self):
+        vendor = self.root / "vendor"
+        vendor.mkdir()
+        (vendor / "tracked.txt").write_text("tracked parent file\n", encoding="utf-8")
+        (self.root / ".gitignore").write_text("vendor/child/\n", encoding="utf-8")
+        run_git(self.root, "add", ".gitignore", "vendor/tracked.txt")
+        initialize_git(vendor / "child")
+
+        self.assertEqual(discover_subrepositories(self.root), ["vendor/child"])
+
+    def test_untracked_directory_scan_error_names_the_directory(self):
+        init_map(self.root, "root", "Root", "A repository root.")
+        container = self.root / "container"
+        nested = container / "nested"
+        nested.mkdir(parents=True)
+        (nested / "file.txt").write_text("untracked\n", encoding="utf-8")
+        original_scandir = os.scandir
+
+        def fail_for_container(path):
+            if Path(path) == container:
+                raise PermissionError("fixture denies listing")
+            return original_scandir(path)
+
+        exported_model = {"elements": {
+            "root": {"id": "root", "kind": "node", "title": "Root",
+                     "description": {"txt": "A repository root."}, "links": []},
+        }, "relations": {}}
+        stderr = io.StringIO()
+        with patch("repo_map_lib.checker.validate_likec4",
+                   return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                patch("repo_map_lib.checker.export_model", return_value=exported_model), \
+                patch("repo_map_lib.git_repository.os.scandir", side_effect=fail_for_container), \
+                contextlib.redirect_stderr(stderr):
+            result = main(["repo_map.py", "check", "--repo", str(self.root)])
+
+        self.assertEqual(result, 1)
+        self.assertIn("无法读取未跟踪目录", stderr.getvalue())
+        self.assertIn(str(container), stderr.getvalue())
 
     def test_indexed_gitlink_is_discovered_as_a_subrepository(self):
         child = self.root.parent / "separate-child"

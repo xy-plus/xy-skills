@@ -1,5 +1,5 @@
 """Git root checks, tracked paths, and nested repository discovery."""
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import os
 import subprocess
 
@@ -88,8 +88,8 @@ def _untracked_repositories(root, start, own_common):
             with os.scandir(candidate) as entries:
                 pending.extend(Path(entry.path) for entry in entries
                                if entry.name != ".git" and entry.is_dir(follow_symlinks=False))
-        except OSError:
-            continue
+        except OSError as error:
+            raise ValueError(f"无法读取未跟踪目录以发现子仓：{candidate}：{error}") from error
     return found
 
 
@@ -109,9 +109,7 @@ def discover_subrepositories(repository):
         if not entry:
             continue
         normalized = entry.rstrip("/")
-        # Ignored roots are inspected only at the repository root; never walk large ignored trees.
-        if len(PurePosixPath(normalized).parts) != 1:
-            continue
+        # Inspect each ignored candidate itself, at any depth, without walking inside it.
         candidate = root / normalized
         if _is_repository(candidate) and _common_directory(candidate) != own_common:
             candidates.add(normalized)
