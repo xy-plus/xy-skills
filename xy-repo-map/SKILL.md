@@ -41,11 +41,11 @@ python3 <skill目录>/repo_map.py render --repo <仓根绝对路径> --mode <草
 - `approval` 把当前图与 `git worktree list --porcelain` 的第一项所指主检出当前分支上的图比较，打印节点/关系变化和 `repo-map sha256 <摘要>`。主检出处于分离头指针时无法比较。这个比较供用户审阅，不作为放行依据。
 - 批准流程：把变化清单和摘要交给用户，同时提供原正式图（若存在）和新草稿图；提问中必须包含摘要，且有一个选项的文字正好是「同意改图」。只有用户明确选择该项后，才把对应 hook 原话交给 `record`。`record` 会核对原话路径、hook 两侧 answers、题干摘要、选项和回答，再追加摘要、日期与原话路径。重复摘要只提示，不重复写。
 - `check` 检查模型、批准记录、LikeC4 语法、支持的代码后缀、文件归属和子仓。功能结构摘要不在 `approvals.txt` 时会报告「图未经同意」及当前摘要并以状态码 1 退出。
-- `render --mode 草稿` 不查批准记录，每张视图标题标「草稿·未经同意」，并在网站根目录写 `DRAFT`。草稿只用于给用户审图，不发布为正式图。
+- `render --mode 草稿` 不查批准记录，生成离线可打开的 `index.html`、机器可读的 `map-data.json` 和 `DRAFT` 标记。页面内嵌节点数据，使用同目录的 elkjs 文件，不访问外部网络；可直接用浏览器打开，也可部署在平台子路径下。草稿页顶常驻「草稿·未经同意」，只用于给用户审图，不发布为正式图。
 - 草稿图查看：平台就绪前，仓库内容可以公开的，把各视图截成 PNG，用 image-drop 发成相册给用户审图；内容不能公开的仓库不发 image-drop，等平台就绪后再看。
-- `render --mode 正式` 要求整棵子仓树都通过完整 `check`，再生成没有 `DRAFT` 的静态网站。网站交给已批准的平台发布。
+- `render --mode 正式` 要求整棵子仓树都通过完整 `check`，生成不带 `DRAFT` 的静态网站。用 `python3 /home/xy/web-portal/portal.py publish <名字> <render 的输出目录>` 发布，并把命令打印的链接给用户；正式模式的产物才发布。
 
-完整 `check` 必须先运行 LikeC4 `validate`；`export json` 不能代替它，因为 LikeC4 1.60.0 在语法错误时仍可能成功导出 JSON。整棵仓图会临时组合成一个 LikeC4 项目，只放一份 `kinds.c4`；多项目各带类型定义会触发重复元素类型错误。静态网站使用 hash 路由，因为无 hash 路由时深层视图地址在直接打开或刷新时会 404。
+完整 `check` 必须先运行 LikeC4 `validate`；`export json` 不能代替它，因为 LikeC4 1.60.0 在语法错误时仍可能成功导出 JSON。`render` 直接合成已校验的模型数据，在 Python 中统计并写页面，不运行 LikeC4 site build。
 
 摘要只证明某个功能结构曾获同意。`record` 挡住拿错原话、摘要不符、缺选项或未同意等误用；agent 能写本机文件，因此故意伪造原话文件或同意记录不在本地脚本的防范范围，审核仍要核对记录引用的原话。
 
@@ -57,4 +57,4 @@ python3 <skill目录>/repo_map.py render --repo <仓根绝对路径> --mode <草
 4. 运行 `check`，修好除「图未经同意」外的所有问题。用 `approval` 阅读变化清单与摘要，用草稿模式出图供用户查看。
 5. 用户明确同意后运行 `record`，再运行 `check` 确认通过。
 
-新增 LikeC4 模型时只使用 `npx -y likec4@1.60.0`。版本升级需用户同意；Node、npx、固定版本和全局权限规则见仓库根 README。
+新增或校验 LikeC4 模型时只使用 `npx -y likec4@1.60.0`。页面布局使用仓库内原样保存的 elkjs 0.9.3（EPL-2.0）。升级 LikeC4 或 elkjs 都需用户同意；Node、npx、固定版本、elkjs 许可证和全局权限规则见仓库根 README。

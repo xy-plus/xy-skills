@@ -38,9 +38,3 @@ def export_model(repo_map):
     if not isinstance(exported, dict) or "elements" not in exported:
         raise ValueError("LikeC4 export json 格式不正确")
     return exported
-
-
-def build_likec4(project, output):
-    # Hash history keeps deep views openable when this static site is served below a path prefix.
-    return run_likec4(["build", str(Path(project).resolve()), "-o", str(Path(output).resolve()),
-                       "--base", "./", "--use-hash-history"])

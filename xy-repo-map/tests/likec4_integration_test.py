@@ -3,9 +3,11 @@ from pathlib import Path
 import contextlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
+from time import perf_counter
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -23,8 +25,29 @@ def run_cli(*arguments):
         return main(["repo_map.py", *arguments])
 
 
+def read_page_data(site):
+    html = (site / "index.html").read_text(encoding="utf-8")
+    match = re.search(r'<script id="page-data" type="application/json">(.*?)</script>',
+                      html, re.DOTALL)
+    if match is None:
+        raise AssertionError("index.html 缺少内嵌页面数据")
+    return json.loads(match.group(1))
+
+
+def assert_page_matches_map(test, site, expected_mode):
+    map_data = json.loads((site / "map-data.json").read_text(encoding="utf-8"))
+    page_data = read_page_data(site)
+    test.assertEqual(map_data["mode"], expected_mode)
+    test.assertEqual(page_data["mode"], expected_mode)
+    test.assertEqual(set(page_data["nodes"]), set(map_data["nodes"]))
+    for element_id, map_node in map_data["nodes"].items():
+        for field in ("title", "kind", "parent", "own", "total"):
+            test.assertEqual(page_data["nodes"][element_id][field], map_node[field])
+    return map_data, page_data
+
+
 class LikeC4IntegrationTest(unittest.TestCase):
-    def test_real_cli_validates_exports_and_builds_a_hash_routed_draft(self):
+    def test_real_cli_validates_exports_and_renders_an_offline_draft(self):
         with tempfile.TemporaryDirectory(prefix="xy-repo-map-likec4-") as temporary:
             root = Path(temporary) / "demo"
             root.mkdir()
@@ -54,10 +77,17 @@ class LikeC4IntegrationTest(unittest.TestCase):
             self.assertEqual(problems, [], problems)
             self.assertEqual(model["elements"]["demo.tool"]["title"], "Tool")
             output = Path(temporary) / "site"
+            started = perf_counter()
             problems = render_repository(root, "草稿", output)
+            elapsed = perf_counter() - started
+            print(f"\nrender 单仓草稿用时：{elapsed:.3f} 秒")
             self.assertEqual(problems, [], problems)
             self.assertTrue((output / "DRAFT").is_file())
             self.assertTrue((output / "index.html").is_file())
+            map_data, page_data = assert_page_matches_map(self, output, "草稿")
+            self.assertEqual(set(map_data["nodes"]), set(model["elements"]))
+            self.assertIn("elk.bundled.js", (output / "index.html").read_text(encoding="utf-8"))
+            self.assertEqual(set(page_data["nodes"]), set(map_data["nodes"]))
 
     def test_real_cli_records_checks_and_renders_parent_with_single_node_child(self):
         with tempfile.TemporaryDirectory(prefix="xy-repo-map-likec4-tree-") as temporary:
@@ -122,14 +152,27 @@ class LikeC4IntegrationTest(unittest.TestCase):
 
             draft = Path(temporary) / "draft-site"
             formal = Path(temporary) / "formal-site"
+            started = perf_counter()
             self.assertEqual(run_cli("render", "--repo", str(parent), "--mode", "草稿",
                                      "--out", str(draft)), 0)
+            print(f"render 父子仓草稿用时：{perf_counter() - started:.3f} 秒")
             self.assertTrue((draft / "DRAFT").is_file())
             self.assertTrue((draft / "index.html").is_file())
+            draft_data, draft_page = assert_page_matches_map(self, draft, "草稿")
+            self.assertEqual(set(draft_data["nodes"]), {
+                "workspace", "workspace.research", "workspace.engine", "engine"})
+            self.assertEqual(draft_data["nodes"]["engine"]["parent"], "workspace.engine")
+            self.assertEqual(draft_page["nodes"]["workspace.engine"]["total"],
+                             draft_data["nodes"]["workspace.engine"]["total"])
+            self.assertEqual(draft_page["nodes"]["workspace.engine"]["total"],
+                             draft_data["nodes"]["engine"]["total"])
+            started = perf_counter()
             self.assertEqual(run_cli("render", "--repo", str(parent), "--mode", "正式",
                                      "--out", str(formal)), 0)
+            print(f"render 父子仓正式用时：{perf_counter() - started:.3f} 秒")
             self.assertTrue((formal / "index.html").is_file())
             self.assertFalse((formal / "DRAFT").exists())
+            assert_page_matches_map(self, formal, "正式")
 
 
 if __name__ == "__main__":

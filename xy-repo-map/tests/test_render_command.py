@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from repo_map_lib.render_command import model_file_destination, render_repository
+from repo_map_lib.render_command import render_repository
 
 
 def element(element_id, kind, links):
@@ -49,31 +49,16 @@ class RenderCommandTest(unittest.TestCase):
             return ["图未经同意：repo-map sha256 " + "a" * 64], self.child_model
         return [], self.child_model
 
-    def fake_build(self, project, output):
-        Path(output).mkdir(parents=True, exist_ok=True)
-        (Path(output) / "index.html").write_text("built", encoding="utf-8")
-        return subprocess.CompletedProcess([], 0, "", "")
-
-    def test_assembled_source_names_keep_the_root_id_without_flattening_collisions(self):
-        project = Path(self.temporary.name) / "assembled"
-        direct = model_file_destination(project, "engine", Path("model.c4"))
-        nested = model_file_destination(project, "engine", Path("parts/model.c4"))
-        self.assertEqual(direct.name, "engine-model.c4")
-        self.assertEqual(nested.name, "engine-model.c4")
-        self.assertNotEqual(direct, nested)
-        self.assertTrue(nested.is_relative_to(project / "engine"))
-
     def test_draft_checks_the_tree_without_approval_and_writes_marker(self):
-        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check), \
-                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build):
+        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check):
             problems = render_repository(self.root, "草稿", self.output)
         self.assertEqual(problems, [])
         self.assertTrue((self.output / "DRAFT").is_file())
         self.assertTrue((self.output / "index.html").is_file())
+        self.assertTrue((self.output / "map-data.json").is_file())
 
     def test_formal_render_rejects_an_unapproved_child_before_build(self):
-        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check), \
-                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build):
+        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check):
             problems = render_repository(self.root, "正式", self.output)
         self.assertTrue(any("vendor" in problem and "未经同意" in problem for problem in problems), problems)
         self.assertFalse(self.output.exists())
@@ -83,8 +68,7 @@ class RenderCommandTest(unittest.TestCase):
             model = self.parent_model if Path(repository).resolve() == self.root.resolve() else self.child_model
             return [], model
 
-        with patch("repo_map_lib.render_command.check_repository", side_effect=approved_check), \
-                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build):
+        with patch("repo_map_lib.render_command.check_repository", side_effect=approved_check):
             problems = render_repository(self.root, "正式", self.output)
         self.assertEqual(problems, [])
         self.assertTrue((self.output / "index.html").is_file())
@@ -107,14 +91,12 @@ class RenderCommandTest(unittest.TestCase):
             return original_read_bytes(path)
 
         with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check), \
-                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build) as build, \
                 patch.object(Path, "read_bytes", fail_for_owned_file):
             problems = render_repository(self.root, "草稿", self.output)
 
         self.assertTrue(any("无法读取" in problem and str(source) in problem
                             for problem in problems), problems)
         self.assertFalse(self.output.exists())
-        build.assert_not_called()
 
     def test_render_rejects_duplicate_root_ids_across_the_repository_tree(self):
         duplicate_child = {"elements": {
@@ -126,8 +108,7 @@ class RenderCommandTest(unittest.TestCase):
             model = self.parent_model if Path(repository).resolve() == self.root.resolve() else duplicate_child
             return [], model
 
-        with patch("repo_map_lib.render_command.check_repository", side_effect=duplicate_check), \
-                patch("repo_map_lib.render_command.build_likec4", side_effect=self.fake_build):
+        with patch("repo_map_lib.render_command.check_repository", side_effect=duplicate_check):
             problems = render_repository(self.root, "草稿", self.output)
         self.assertTrue(any("根 id 重复" in problem and "workspace" in problem
                             for problem in problems), problems)
@@ -140,18 +121,24 @@ class RenderCommandTest(unittest.TestCase):
         self.assertTrue(any("不存在或为空" in problem for problem in problems), problems)
         self.assertEqual((self.output / "keep.txt").read_text(encoding="utf-8"), "keep")
 
+    def test_failed_write_preserves_an_existing_empty_output_directory(self):
+        self.output.mkdir()
+        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check), \
+                patch("repo_map_lib.render_command.write_site", side_effect=OSError("fixture failure")):
+            problems = render_repository(self.root, "草稿", self.output)
+        self.assertTrue(any("fixture failure" in problem for problem in problems), problems)
+        self.assertTrue(self.output.is_dir())
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_render_refuses_output_inside_any_repository_without_writing(self):
         destinations = (self.root, self.root / "generated-site", self.child / "generated-site")
         for destination in destinations:
             with self.subTest(destination=destination):
                 with patch("repo_map_lib.render_command.check_repository",
-                           side_effect=self.fake_check), \
-                        patch("repo_map_lib.render_command.build_likec4",
-                              side_effect=self.fake_build) as build:
+                           side_effect=self.fake_check):
                     problems = render_repository(self.root, "草稿", destination)
                 self.assertTrue(any("仓内" in problem for problem in problems), problems)
                 self.assertFalse((destination / "index.html").exists())
-                build.assert_not_called()
 
 
 if __name__ == "__main__":

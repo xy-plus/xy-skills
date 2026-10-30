@@ -58,7 +58,9 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 `xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。
 
-`xy-repo-map` 需要 Node.js 和 `npx`，固定运行 LikeC4 `1.60.0`。在全局 Claude Code 权限配置中加入 `Bash(npx -y likec4@1.60.0 *)`；更换 LikeC4 版本前先征得用户同意。
+`xy-repo-map` 需要 Node.js 和 `npx`，固定运行 LikeC4 `1.60.0` 做模型校验与导出；在全局 Claude Code 权限配置中加入 `Bash(npx -y likec4@1.60.0 *)`。离线页面布局使用仓库内原样保存的 elkjs `0.9.3`，许可证为 EPL-2.0，文件位于 `xy-repo-map/third_party/elkjs-0.9.3/`。升级 LikeC4 或 elkjs 版本前都要征得用户同意。
+
+正式仓图通过完整校验后，用 `python3 /home/xy/web-portal/portal.py publish <名字> <render 的输出目录>` 发布，并把命令打印的链接给用户；草稿只供审图，不发布为正式图。
 
 按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并按其中说明配置 runs 的清理范围。
 
