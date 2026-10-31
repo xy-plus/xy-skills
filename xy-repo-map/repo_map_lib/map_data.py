@@ -4,6 +4,7 @@ from pathlib import Path
 from .metrics import ZERO_COUNTS, count_file, coverage_counts
 from .ownership import link_records
 from .rendering import add_counts, add_coverage, coverage_text
+from .sibling_order import visual_children_order
 
 
 COUNT_NAMES = ("code", "docs", "comments", "tests")
@@ -139,7 +140,7 @@ def build_page_data(repositories, mode):
             })
 
     parents = {}
-    children = {}
+    children = {element_id: [] for element_id in elements}
     for element_id in elements:
         parent = parent_for_root.get(element_id, element_id.rpartition(".")[0] or None)
         if parent is not None and parent not in elements:
@@ -220,11 +221,14 @@ def build_page_data(repositories, mode):
 
     top_roots = sorted(element_id for element_id, parent in parents.items() if parent is None)
     aliases = {root: placeholder for placeholder, root in repo_roots.items()}
+    # Keep layout order in embedded page data; map-data.json remains the analysis contract.
+    visual_children = visual_children_order(page_nodes, children, repo_roots, relations)
     map_document = {"mode": mode, "nodes": map_nodes}
     page_document = {
         "mode": mode,
         "top_roots": top_roots,
         "nodes": page_nodes,
+        "visual_children": visual_children,
         "relations": sorted([
             {**relation, "container": _relation_container(
                 relation["source"], relation["target"], parents, aliases)}

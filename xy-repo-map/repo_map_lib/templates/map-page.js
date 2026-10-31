@@ -10,91 +10,17 @@
   const LEADING_PUNCTUATION=new Set(Array.from("，。！？、；：）』」》〉】〕］｝”’)]}'\""));
   const REPO_ALIAS=Object.fromEntries(Object.entries(DATA.repo_roots).map(([placeholder,root])=>[root,placeholder]));
   const PALETTE=["#4674bb","#438674","#8062a8","#ad7c38","#448a9a","#a66a78"];
-  const TREE_LAYOUT={"elk.algorithm":"layered","elk.direction":"RIGHT","elk.edgeRouting":"ORTHOGONAL",
-    "elk.spacing.nodeNode":"48","elk.layered.spacing.nodeNodeBetweenLayers":"120",
-    "elk.spacing.edgeNode":"12","elk.spacing.edgeEdge":"8",
-    "elk.layered.considerModelOrder.strategy":"NODES_AND_EDGES",
-    "elk.layered.crossingMinimization.forceNodeModelOrder":"true"};
   const DRILL_LAYOUT={"elk.algorithm":"layered","elk.direction":"RIGHT","elk.edgeRouting":"ORTHOGONAL",
     "elk.hierarchyHandling":"INCLUDE_CHILDREN","elk.spacing.nodeNode":"38",
     "elk.layered.spacing.nodeNodeBetweenLayers":"54","elk.spacing.edgeNode":"12",
     "elk.spacing.edgeEdge":"8","elk.edgeLabels.placement":"CENTER","elk.spacing.edgeLabel":"5"};
   const svg=document.getElementById("map"),measure=document.createElement("canvas").getContext("2d");
-  const children=new Map();
-  for(const [id,node] of Object.entries(DATA.nodes)){
-    if(node.parent!==null){const list=children.get(node.parent)||[];list.push(id);children.set(node.parent,list);}
-  }
-  for(const ids of children.values())ids.sort();
-  const siblingOrderCache=new Map(),EXACT_ORDER_LIMIT=8,HEURISTIC_ORDER_PASSES=12;
   let view={mode:"expand",current:null},transform={x:0,y:0,scale:1};
   let currentBounds={x:0,y:0,width:1,height:1},drawNumber=0,fontsReady=false;
+  let elkPromise=null;
   let drag=null,pinch=null,pressTimer=null,suppressedGesture=null,highlightedNode=null;
   const pointers=new Map();
-  function childrenOf(id){return children.get(id)||[];}
-  function visualChildren(id){
-    const parent=DATA.repo_roots[id]||id;
-    if(!siblingOrderCache.has(parent))siblingOrderCache.set(parent,orderedSiblings(childrenOf(parent)));
-    return siblingOrderCache.get(parent);
-  }
-  function orderedSiblings(siblings){
-    if(siblings.length<2)return siblings.slice();
-    const members=new Set(siblings),edges=DATA.relations.map(relation=>({
-      source:REPO_ALIAS[relation.source]||relation.source,
-      target:REPO_ALIAS[relation.target]||relation.target
-    })).filter(edge=>edge.source!==edge.target&&members.has(edge.source)&&members.has(edge.target));
-    if(!edges.length)return siblings.slice();
-    return siblings.length<=EXACT_ORDER_LIMIT?exhaustiveSiblingOrder(siblings,edges):
-      heuristicSiblingOrder(siblings,edges);
-  }
-  function siblingObjective(order,edges){
-    const positions=new Map(order.map((id,index)=>[id,index]));let crossings=0,span=0;
-    for(let index=0;index<edges.length;index++){
-      const edge=edges[index],first=positions.get(edge.source),second=positions.get(edge.target);
-      span+=Math.abs(first-second);
-      const left=Math.min(first,second),right=Math.max(first,second);
-      for(let next=index+1;next<edges.length;next++){
-        const other=edges[next];
-        if(edge.source===other.source||edge.source===other.target||
-           edge.target===other.source||edge.target===other.target)continue;
-        const otherLeft=Math.min(positions.get(other.source),positions.get(other.target));
-        const otherRight=Math.max(positions.get(other.source),positions.get(other.target));
-        if(left<otherLeft&&otherLeft<right&&right<otherRight||
-           otherLeft<left&&left<otherRight&&otherRight<right)crossings++;
-      }
-    }
-    return {crossings,span};
-  }
-  function compareSiblingObjectives(first,second){
-    return first.crossings-second.crossings||first.span-second.span;
-  }
-  function exhaustiveSiblingOrder(siblings,edges){
-    const prefix=[],remaining=siblings.slice();let best=siblings.slice();
-    let bestObjective=siblingObjective(best,edges);
-    function visit(){
-      if(!remaining.length){
-        const objective=siblingObjective(prefix,edges);
-        if(compareSiblingObjectives(objective,bestObjective)<0){best=prefix.slice();bestObjective=objective;}
-        return;
-      }
-      for(let index=0;index<remaining.length;index++){
-        const [id]=remaining.splice(index,1);prefix.push(id);visit();prefix.pop();remaining.splice(index,0,id);
-      }
-    }
-    visit();return best;
-  }
-  function heuristicSiblingOrder(siblings,edges){
-    let order=siblings.slice(),objective=siblingObjective(order,edges);
-    for(let pass=0;pass<HEURISTIC_ORDER_PASSES;pass++){
-      let improved=false;
-      for(let index=0;index<order.length-1;index++){
-        const candidate=order.slice();[candidate[index],candidate[index+1]]=[candidate[index+1],candidate[index]];
-        const next=siblingObjective(candidate,edges);
-        if(compareSiblingObjectives(next,objective)<0){order=candidate;objective=next;improved=true;}
-      }
-      if(!improved)break;
-    }
-    return order;
-  }
+  function visualChildren(id){return DATA.visual_children[id];}
   function visualParent(id){const parent=DATA.nodes[id].parent;return REPO_ALIAS[parent]||parent;}
   function nodeDepth(id){let depth=0,parent=DATA.nodes[id].parent;while(parent!==null&&parent!==undefined){depth++;parent=DATA.nodes[parent].parent;}return depth;}
   function visualDepth(id){let depth=0,parent=visualParent(id);while(parent!==null&&parent!==undefined){depth++;parent=visualParent(parent);}return depth;}
@@ -146,27 +72,57 @@
     DATA.top_roots.forEach(visit);
     return result;
   }
-  function expandedGraph(ids){
-    const visible=new Set(ids),nodes=ids.map(id=>{
-      const depth=visualDepth(id),kids=visualChildren(id),size=nodeSize(id,kids.length>0,depth);
-      return {id,width:size.width,height:size.height,_depth:depth};
-    });
-    const edges=[];
-    for(const id of ids){const parent=visualParent(id);if(parent!==null&&visible.has(parent))
-      edges.push({id:`tree-${parent}-${id}`,sources:[parent],targets:[id]});}
-    return {id:"root",layoutOptions:TREE_LAYOUT,children:nodes,edges};
+  function expandedLayout(ids){
+    const visible=new Set(ids),sizes=new Map(),columnWidths=new Map();
+    for(const id of ids){
+      const depth=visualDepth(id),size=nodeSize(id,visualChildren(id).length>0,depth);
+      sizes.set(id,size);
+      columnWidths.set(depth,columnWidths.has(depth)?Math.max(columnWidths.get(depth),size.width):size.width);
+    }
+    const depths=[...columnWidths.keys()].sort((first,second)=>first-second),columnX=new Map();
+    // Each visual depth is one left-aligned column, with a 120-unit gap after its widest card.
+    let right=0;
+    for(const depth of depths){columnX.set(depth,right);right+=columnWidths.get(depth)+120;}
+    const positions=new Map();
+    function placeCentered(id,centerY){
+      const size=sizes.get(id),depth=visualDepth(id);
+      positions.set(id,{x:columnX.get(depth),y:centerY-size.height/2,
+        width:size.width,height:size.height});
+      for(const child of visualChildren(id))if(visible.has(child))placeCentered(child,centerY);
+    }
+    for(const id of DATA.top_roots)placeCentered(id,sizes.get(id).height/2);
+    function shiftSubtree(id,amount){
+      const position=positions.get(id);position.y+=amount;
+      for(const child of visualChildren(id))if(visible.has(child))shiftSubtree(child,amount);
+    }
+    // Enforce 48 units between cards; shift an aligned parent with its whole subtree.
+    let moved;
+    do{
+      moved=false;const bottomByDepth=new Map();
+      for(const id of ids){
+        const depth=visualDepth(id),position=positions.get(id),previousBottom=bottomByDepth.get(depth);
+        if(previousBottom!==undefined&&position.y<previousBottom+48){
+          const parent=visualParent(id),isFirstChild=parent!==null&&visualChildren(parent)[0]===id;
+          shiftSubtree(isFirstChild?parent:id,previousBottom+48-position.y);moved=true;
+        }
+        const updated=positions.get(id);bottomByDepth.set(depth,updated.y+updated.height);
+      }
+    }while(moved);
+    return {positions,sizes};
   }
   function drillGraph(current){
     const projection=DATA.drill_views[current];
+    const sizes=new Map();
     const nodes=projection.nodes.map(id=>{
       const size=nodeSize(id,false,nodeDepth(id));
+      sizes.set(id,size);
       return {id,width:size.width,height:size.height,_depth:nodeDepth(id)};
     });
     const edges=projection.relations.map((edge,index)=>({
       id:`drill-${index}-${edge.source}-${edge.target}`,sources:[edge.source],targets:[edge.target],
       labels:[{text:edge.title,width:Math.max(30,widthOf(edge.title,EDGE_FONT)+16),height:22}]
     }));
-    return {id:"root",layoutOptions:DRILL_LAYOUT,children:nodes,edges};
+    return {graph:{id:"root",layoutOptions:DRILL_LAYOUT,children:nodes,edges},sizes};
   }
   function svgElement(tag,attributes){
     const element=document.createElementNS(SVG_NS,tag);
@@ -216,8 +172,8 @@
       }
     }
   }
-  function drawNode(layer,id,position,depth,hasKids){
-    const node=DATA.nodes[id],size=nodeSize(id,hasKids,depth),canEnter=DATA.drill_views[id].nodes.length!==1||DATA.drill_views[id].nodes[0]!==id;
+  function drawNode(layer,id,position,depth,hasKids,size){
+    const node=DATA.nodes[id],canEnter=DATA.drill_views[id].nodes.length!==1||DATA.drill_views[id].nodes[0]!==id;
     const group=svgElement("g",{class:`card${canEnter?" clickable":""}`,
       transform:`translate(${position.x} ${position.y})`,"data-node-id":id});
     group.appendChild(svgElement("rect",{class:"card-shape",x:0,y:0,width:position.width,height:position.height,
@@ -270,41 +226,60 @@
     const route=routeFromHash();if(route.valid&&route.mode===mode&&route.current===current){view={mode,current};draw();return;}
     location.hash=mode==="expand"?"#展开":`#钻入/${encodeURIComponent(current)}`;
   }
+  function loadElk(){
+    if(elkPromise!==null)return elkPromise;
+    elkPromise=new Promise((resolve,reject)=>{
+      const script=document.createElement("script");script.src="elk.bundled.js";
+      script.addEventListener("load",()=>resolve(window.ELK),{once:true});
+      script.addEventListener("error",()=>reject(new Error("无法加载 elk.bundled.js")),{once:true});
+      document.head.appendChild(script);
+    });
+    return elkPromise;
+  }
+  function renderView(ids,positions,sizes,result,drawId){
+    if(drawId!==drawNumber)return;
+    svg.replaceChildren();const defs=svgElement("defs",{});
+    for(const [id,fill] of [["arrow","#7b8da8"],["relation-arrow","#b64e83"]]){
+      const marker=svgElement("marker",{id,viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:7,markerHeight:7,orient:"auto"});
+      marker.appendChild(svgElement("path",{d:"M0 0 L10 5 L0 10 z",fill}));defs.appendChild(marker);
+    }
+    svg.appendChild(defs);const scene=svgElement("g",{id:"scene"});svg.appendChild(scene);
+    const layers={tree:svgElement("g",{id:"tree-layer"}),edges:svgElement("g",{id:"drill-edge-layer"}),
+      relations:svgElement("g",{id:"relation-layer"}),cards:svgElement("g",{id:"card-layer"})};
+    scene.append(layers.tree,layers.edges,layers.relations,layers.cards);
+    if(view.mode==="expand"){
+      drawComposition(layers.tree,ids,positions);
+      currentBounds=window.XYRepoMapRelations.draw({layer:layers.relations,treeLayer:layers.tree,positions,ids,
+        data:DATA,repoAlias:REPO_ALIAS,svgElement,widthOf,visualDepth});
+    }else{
+      drawElkEdges(layers.edges,result.edges);
+      currentBounds={x:0,y:0,width:result.width||1,height:result.height||1};
+    }
+    for(const id of ids){
+      const depth=view.mode==="expand"?visualDepth(id):nodeDepth(id);
+      const hasKids=view.mode==="expand"&&visualChildren(id).length>0;
+      drawNode(layers.cards,id,positions.get(id),depth,hasKids,sizes.get(id));
+    }
+    svg.setAttribute("data-mode",view.mode);svg.setAttribute("data-current",view.current||"");
+    transform={x:0,y:0,scale:1};
+    const relationLayer=document.getElementById("relation-layer");
+    relationLayer.style.display=document.getElementById("relations").getAttribute("aria-pressed")==="true"?"":"none";
+    applyHighlight();fit();
+  }
   function draw(){
     const drawId=++drawNumber,modeButton=document.getElementById("mode"),relationButton=document.getElementById("relations");
     modeButton.textContent=svg.clientWidth<=480?(view.mode==="expand"?"钻入":"全部"):(view.mode==="expand"?"切换到钻入":"全部展开");
     relationButton.hidden=view.mode!=="expand";drawBreadcrumbs(view.current);
     const ids=view.mode==="expand"?expandedIds():DATA.drill_views[view.current].nodes;
-    const graph=view.mode==="expand"?expandedGraph(ids):drillGraph(view.current);
-    new ELK().layout(graph).then(result=>{
-      if(drawId!==drawNumber)return;
-      svg.replaceChildren();const defs=svgElement("defs",{});
-      for(const [id,fill] of [["arrow","#7b8da8"],["relation-arrow","#b64e83"]]){
-        const marker=svgElement("marker",{id,viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:7,markerHeight:7,orient:"auto"});
-        marker.appendChild(svgElement("path",{d:"M0 0 L10 5 L0 10 z",fill}));defs.appendChild(marker);
-      }
-      svg.appendChild(defs);const scene=svgElement("g",{id:"scene"});svg.appendChild(scene);
-      const layers={tree:svgElement("g",{id:"tree-layer"}),edges:svgElement("g",{id:"drill-edge-layer"}),
-        relations:svgElement("g",{id:"relation-layer"}),cards:svgElement("g",{id:"card-layer"})};
-      scene.append(layers.tree,layers.edges,layers.relations,layers.cards);
-      const positions=new Map(),layoutNodes=new Map();
-      for(const node of result.children||[]){positions.set(node.id,{x:node.x||0,y:node.y||0,width:node.width||0,height:node.height||0});layoutNodes.set(node.id,node);}
-      if(view.mode==="expand"){
-        drawComposition(layers.tree,ids,positions);
-        const relationBounds=window.XYRepoMapRelations.draw({layer:layers.relations,treeLayer:layers.tree,positions,ids,
-          data:DATA,repoAlias:REPO_ALIAS,svgElement,widthOf,visualDepth});
-        currentBounds=relationBounds;
-      }else{
-        drawElkEdges(layers.edges,result.edges);
-        currentBounds={x:0,y:0,width:result.width||1,height:result.height||1};
-      }
-      for(const id of ids){const node=layoutNodes.get(id),depth=view.mode==="expand"?visualDepth(id):nodeDepth(id);
-        const hasKids=view.mode==="expand"&&visualChildren(id).length>0;
-        drawNode(layers.cards,id,positions.get(id),depth,hasKids);}
-      svg.setAttribute("data-mode",view.mode);svg.setAttribute("data-current",view.current||"");
-      transform={x:0,y:0,scale:1};
-      const relationLayer=document.getElementById("relation-layer");relationLayer.style.display=document.getElementById("relations").getAttribute("aria-pressed")==="true"?"":"none";
-      applyHighlight();requestAnimationFrame(fit);
+    if(view.mode==="expand"){
+      const {positions,sizes}=expandedLayout(ids);renderView(ids,positions,sizes,null,drawId);return;
+    }
+    const {graph,sizes}=drillGraph(view.current);
+    loadElk().then(ELK=>new ELK().layout(graph)).then(result=>{
+      const positions=new Map();
+      for(const node of result.children||[])positions.set(node.id,
+        {x:node.x||0,y:node.y||0,width:node.width||0,height:node.height||0});
+      renderView(ids,positions,sizes,result,drawId);
     });
   }
   function zoomAt(x,y,factor){

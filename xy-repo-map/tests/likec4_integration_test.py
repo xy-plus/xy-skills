@@ -84,7 +84,10 @@ class LikeC4IntegrationTest(unittest.TestCase):
             self.assertTrue((output / "index.html").is_file())
             map_data, page_data = assert_page_matches_map(self, output, "草稿")
             self.assertEqual(set(map_data["nodes"]), set(model["elements"]))
-            self.assertIn("elk.bundled.js", (output / "index.html").read_text(encoding="utf-8"))
+            html = (output / "index.html").read_text(encoding="utf-8")
+            self.assertNotIn('src="elk.bundled.js"', html)
+            self.assertTrue((output / "elk.bundled.js").is_file())
+            self.assertTrue((output / "LICENSE-elkjs-0.9.3.md").is_file())
             self.assertEqual(set(page_data["nodes"]), set(map_data["nodes"]))
 
 

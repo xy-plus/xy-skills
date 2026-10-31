@@ -59,7 +59,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 `xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。
 
-`xy-repo-map` 需要 Node.js 和 `npx`，固定运行 LikeC4 `1.60.0` 做模型校验与导出；在全局 Claude Code 权限配置中加入 `Bash(npx -y likec4@1.60.0 *)`。离线页面布局使用仓库内原样保存的 elkjs `0.9.3`，许可证为 EPL-2.0，文件位于 `xy-repo-map/third_party/elkjs-0.9.3/`。升级 LikeC4 或 elkjs 版本前都要征得用户同意。
+`xy-repo-map` 需要 Node.js 和 `npx`，固定运行 LikeC4 `1.60.0` 做模型校验与导出；在全局 Claude Code 权限配置中加入 `Bash(npx -y likec4@1.60.0 *)`。钻入视图的布局使用仓库内原样保存的 elkjs `0.9.3`，许可证为 EPL-2.0，文件位于 `xy-repo-map/third_party/elkjs-0.9.3/`。升级 LikeC4 或 elkjs 版本前都要征得用户同意。
 
 草稿图只在批图时给用户看，用仓图命令发布，例如 `python3 xy-repo-map/repo_map.py publish --out <草稿 render 输出目录> --name xy-skills-draft`。正式仓图通过完整校验后，用同一子命令发布，例如 `python3 xy-repo-map/repo_map.py publish --out <正式 render 输出目录> --name xy-skills`，并把命令打印的链接给用户。发布命令会核对 `DRAFT` 标记与 `map-data.json` 的模式，并要求草稿站点名包含 `draft`、正式站点名不包含 `draft`；通过后才调用平台发布脚本。
 

@@ -1,27 +1,11 @@
 """Real browser checks for expanded tree rendering and phone interaction."""
 import re
-from itertools import permutations
 from pathlib import Path
 import unittest
 
 from playwright.sync_api import sync_playwright
 
 from browser_child_repo_test import ParentChildBrowserTestSupport, run_repo_map
-
-
-def relation_order_objective(order, edges):
-    positions = {node: index for index, node in enumerate(order)}
-    crossings = 0
-    span = sum(abs(positions[source] - positions[target]) for source, target in edges)
-    for index, (source, target) in enumerate(edges):
-        first, second = sorted((positions[source], positions[target]))
-        for other_source, other_target in edges[index + 1:]:
-            if len({source, target, other_source, other_target}) < 4:
-                continue
-            third, fourth = sorted((positions[other_source], positions[other_target]))
-            crossings += int(first < third < second < fourth or
-                             third < first < fourth < second)
-    return crossings, span
 
 
 class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.TestCase):
@@ -62,32 +46,6 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                         page.wait_for_function("document.querySelectorAll('.card').length > 0")
                     self.assertEqual(self.layout_snapshot(phone), self.layout_snapshot(desktop),
                                      fragment)
-            finally:
-                browser.close()
-
-    def test_siblings_use_the_brute_force_crossing_and_span_optimum(self):
-        with sync_playwright() as playwright:
-            browser = self.open_browser(playwright)
-            try:
-                page = browser.new_page(viewport={"width": 1440, "height": 900})
-                page.goto(f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80",
-                          wait_until="load")
-                page.wait_for_function("document.querySelectorAll('.card').length > 0")
-                data = self.page_data(page)
-                parent = "xy_skills.session_work"
-                siblings = [node for node, value in data["nodes"].items()
-                            if value["parent"] == parent]
-                edges = [(row["source"], row["target"]) for row in data["relations"]
-                         if row["source"] in siblings and row["target"] in siblings]
-                self.assertEqual(len(siblings), 8)
-                actual_order = page.evaluate("""parent => [...document.querySelectorAll('.card')]
-                  .filter(card => card.dataset.nodeId.startsWith(parent + '.'))
-                  .sort((first,second) => first.transform.baseVal.consolidate().matrix.f -
-                    second.transform.baseVal.consolidate().matrix.f)
-                  .map(card => card.dataset.nodeId)""", parent)
-                expected = min(relation_order_objective(order, edges)
-                               for order in permutations(siblings))
-                self.assertEqual(relation_order_objective(actual_order, edges), expected)
             finally:
                 browser.close()
 

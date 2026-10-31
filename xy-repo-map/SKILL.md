@@ -80,4 +80,4 @@ python3 <skill目录>/repo_map.py render --repo <仓根绝对路径> --mode <草
 4. 运行 `check`，修好除「图未经同意」外的所有问题。用 `approval` 阅读变化清单与摘要，用草稿模式出图供用户查看。
 5. 用户明确同意后运行 `record`，再运行 `check` 确认通过。
 
-新增或校验 LikeC4 模型时只使用 `npx -y likec4@1.60.0`。页面布局使用仓库内原样保存的 elkjs 0.9.3（EPL-2.0）。升级 LikeC4 或 elkjs 都需用户同意；Node、npx、固定版本、elkjs 许可证和全局权限规则见仓库根 README。
+新增或校验 LikeC4 模型时只使用 `npx -y likec4@1.60.0`。钻入视图的布局使用仓库内原样保存的 elkjs 0.9.3（EPL-2.0）。升级 LikeC4 或 elkjs 都需用户同意；Node、npx、固定版本、elkjs 许可证和全局权限规则见仓库根 README。

@@ -1,5 +1,6 @@
 """Repository-tree composition and browser projection tests."""
 from pathlib import Path
+from itertools import permutations
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,21 @@ from repo_map_lib.ownership import Owner
 def element(element_id, title, kind, links):
     return {"id": element_id, "title": title, "kind": kind,
             "description": {"txt": f"{title} 描述。"}, "links": links}
+
+
+def relation_order_objective(order, edges):
+    positions = {node: index for index, node in enumerate(order)}
+    crossings = 0
+    span = sum(abs(positions[source] - positions[target]) for source, target in edges)
+    for index, (source, target) in enumerate(edges):
+        first, second = sorted((positions[source], positions[target]))
+        for other_source, other_target in edges[index + 1:]:
+            if len({source, target, other_source, other_target}) < 4:
+                continue
+            third, fourth = sorted((positions[other_source], positions[other_target]))
+            crossings += int(first < third < second < fourth or
+                             third < first < fourth < second)
+    return crossings, span
 
 
 class MapDataTest(unittest.TestCase):
@@ -104,6 +120,23 @@ class MapDataTest(unittest.TestCase):
         ownership_check.assert_not_called()
         return result
 
+    def build_sibling_order_fixture(self, sibling_count, edge_indexes):
+        sibling_ids = [f"workspace.sibling_{index:02}" for index in range(sibling_count)]
+        elements = {"workspace": element("workspace", "工作区", "node", [])}
+        elements.update({node_id: element(node_id, node_id, "node", [])
+                         for node_id in sibling_ids})
+        relations = {
+            f"relation-{index}": {
+                "source": sibling_ids[source], "target": sibling_ids[target], "title": "",
+            }
+            for index, (source, target) in enumerate(edge_indexes)
+        }
+        repository = {
+            "path": self.parent, "root_id": "workspace",
+            "model": {"elements": elements, "relations": relations}, "owners": {},
+        }
+        return sibling_ids, build_page_data([repository], "草稿")
+
     def test_subrepository_root_is_attached_to_the_parent_placeholder(self):
         map_data, page_data = self.build("草稿")
         nodes = map_data["nodes"]
@@ -112,6 +145,7 @@ class MapDataTest(unittest.TestCase):
         self.assertEqual(nodes["workspace.engine"]["parent"], "workspace")
         self.assertEqual(nodes["engine"]["parent"], "workspace.engine")
         self.assertEqual(nodes["engine.cache"]["parent"], "engine")
+        self.assertEqual(page_data["visual_children"]["workspace.engine"], ["engine.cache"])
         self.assertEqual(set(nodes), {"workspace", "workspace.flow", "workspace.flow.parse",
                                       "workspace.engine", "engine", "engine.cache"})
         self.assertIn("engine", page_data["nodes"])
@@ -146,6 +180,31 @@ class MapDataTest(unittest.TestCase):
         _, page_data = self.build("草稿")
         self.assertEqual({relation["container"] for relation in page_data["relations"]},
                          {"workspace"})
+
+    def test_page_data_precomputes_the_exhaustive_sibling_order(self):
+        sibling_ids, (map_data, page_data) = self.build_sibling_order_fixture(
+            4, [(0, 2), (1, 3)])
+        expected_order = [sibling_ids[index] for index in (0, 2, 1, 3)]
+        edges = [(sibling_ids[source], sibling_ids[target]) for source, target in
+                 [(0, 2), (1, 3)]]
+        actual_order = page_data["visual_children"]["workspace"]
+
+        self.assertEqual(actual_order, expected_order)
+        self.assertEqual(relation_order_objective(actual_order, edges),
+                         min(relation_order_objective(order, edges)
+                             for order in permutations(sibling_ids)))
+        self.assertEqual(set(map_data), {"mode", "nodes"})
+
+    def test_page_data_uses_the_heuristic_for_more_than_eight_siblings(self):
+        sibling_ids, (_, page_data) = self.build_sibling_order_fixture(
+            9, [(0, 2), (1, 3)])
+        actual_order = page_data["visual_children"]["workspace"]
+        edges = [(sibling_ids[source], sibling_ids[target]) for source, target in
+                 [(0, 2), (1, 3)]]
+
+        self.assertEqual(set(actual_order), set(sibling_ids))
+        self.assertLessEqual(relation_order_objective(actual_order, edges),
+                             relation_order_objective(sibling_ids, edges))
 
 if __name__ == "__main__":
     unittest.main()
