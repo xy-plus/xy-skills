@@ -14,11 +14,8 @@ model {
         link ../xy-iron-law/SKILL.md 'docs'
       }
       repo_rules = node '仓库规范' {
-        description '维护仓库结构、代码质量和文件长度。'
+        description '维护仓库结构和代码质量。'
         link ../xy-repo-rules/SKILL.md 'docs'
-        link ../xy-repo-rules/check_file_length.py 'code'
-        link ../xy-repo-rules/test_check_file_length.py 'tests'
-        link ../file-length-exceptions/ 'data'
       }
     }
     session_work = node '会话工作流' {

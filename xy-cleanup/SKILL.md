@@ -66,7 +66,6 @@ python3 <xy-repo-map目录>/repo_map.py publish --out <render 的输出目录> -
 
 - Python 仓运行 `ruff check --select F401,F841,ERA001 .`；
 - Rust 仓运行 `cargo check`，记录 `dead_code` 警告；
-- 每个仓都运行 `python3 <xy-repo-rules目录>/check_file_length.py --root <仓根绝对路径>`。
 
 保存命令、退出状态和相关输出。工具不存在、启动失败或检查失败都如实报告；失败不等于没有发现。警告只是线索，审查者仍须核对调用、构建和测试。
 

@@ -358,7 +358,7 @@ class CheckTest(unittest.TestCase):
         document = main_report(verdict="不通过", hard_to_misuse=[{
             "problem": "缺陷",
             "evidence": "check.py:5",
-            "quote": {"source": "xy-repo-rules 第 7 条", "text": "单个文件到 500 行就报警"},
+            "quote": {"source": "xy-repo-rules 第 7 条", "text": "积极删除或合并不必要的代码或文档"},
         }])
         code, output = self.run_report("review-main.json", document, ("group1", "round3"))
         self.assertEqual(code, 0, output)
