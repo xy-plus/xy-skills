@@ -116,6 +116,12 @@ class MapDataTest(unittest.TestCase):
                                       "workspace.engine", "engine", "engine.cache"})
         self.assertIn("engine", page_data["nodes"])
 
+    def test_subrepository_names_are_display_metadata_without_changing_map_titles(self):
+        map_data, page_data = self.build("草稿")
+        self.assertEqual(page_data["repo_names"], {"workspace.engine": "vendor"})
+        self.assertEqual(map_data["nodes"]["workspace.engine"]["title"], "引擎仓")
+        self.assertEqual(page_data["nodes"]["workspace.engine"]["title"], "引擎仓")
+
     def test_own_total_and_coverage_include_subrepository_contents(self):
         map_data, page_data = self.build("草稿")
         nodes = map_data["nodes"]

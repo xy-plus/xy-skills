@@ -158,7 +158,7 @@ def build_approved_parent_child_fixture(root, site_root):
       description '维护缓存和账本。'
       link ../vendor/engine/ 'repo'
     }
-    solo = repo '单节点子仓' {
+    solo = repo 'solo' {
       description '只包含一个根节点。'
       link ../vendor/solo/ 'repo'
     }
@@ -455,7 +455,7 @@ class RepositoryMapBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest
                 self.assertEqual(set(engine_ids), {"engine.cache", "engine.ledger"})
                 self.assert_relation_visible(page, "engine.cache", "engine.ledger", "刷新后记录")
                 self.assertEqual(page.locator("#crumbs button").all_text_contents(),
-                                 ["工作区", "引擎子仓"])
+                                 ["工作区", "引擎子仓（engine）"])
 
                 page.locator("#crumbs button").nth(0).click()
                 self.wait_for_view(page, "drill", "workspace")

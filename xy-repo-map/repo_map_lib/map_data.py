@@ -113,6 +113,7 @@ def build_page_data(repositories, mode):
             elements[element_id] = element
 
     repo_roots = {}
+    repo_names = {}
     parent_for_root = {}
     relations = []
     for item in repositories:
@@ -128,6 +129,7 @@ def build_page_data(repositories, mode):
             if element_id in repo_roots or child_root in parent_for_root:
                 raise ValueError(f"子仓入口重复：{element_id} → {child_root}")
             repo_roots[element_id] = child_root
+            repo_names[element_id] = Path(target).name
             parent_for_root[child_root] = element_id
         for relation in model.get("relations", {}).values():
             relations.append({
@@ -229,6 +231,7 @@ def build_page_data(repositories, mode):
             for relation in relations
         ], key=lambda item: (item["source"], item["target"], item["title"])),
         "repo_roots": repo_roots,
+        "repo_names": repo_names,
         "drill_views": _drill_views(page_nodes, children, parents, relations, repo_roots),
     }
     return map_document, page_document

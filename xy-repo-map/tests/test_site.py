@@ -30,6 +30,7 @@ class SiteTest(unittest.TestCase):
             },
             "relations": [],
             "repo_roots": {},
+            "repo_names": {},
             "drill_views": {"workspace": {
                 "nodes": ["workspace"],
                 "relations": [],

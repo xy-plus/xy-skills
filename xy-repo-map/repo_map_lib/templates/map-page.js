@@ -98,6 +98,10 @@
   function visualParent(id){const parent=DATA.nodes[id].parent;return REPO_ALIAS[parent]||parent;}
   function nodeDepth(id){let depth=0,parent=DATA.nodes[id].parent;while(parent!==null&&parent!==undefined){depth++;parent=DATA.nodes[parent].parent;}return depth;}
   function visualDepth(id){let depth=0,parent=visualParent(id);while(parent!==null&&parent!==undefined){depth++;parent=visualParent(parent);}return depth;}
+  function displayTitle(id){
+    const title=DATA.nodes[id].title,repositoryName=DATA.repo_names[id];
+    return repositoryName===undefined||repositoryName===title?title:`${title}（${repositoryName}）`;
+  }
   function widthOf(text,font){measure.font=font;return measure.measureText(String(text)).width;}
   function wrapText(text,width,font){
     const lines=[];
@@ -116,16 +120,16 @@
     return lines;
   }
   function nodeSize(id,hasKids,depth){
-    const node=DATA.nodes[id],titleFontSize=depth===0?17:depth===1?16:15;
+    const node=DATA.nodes[id],title=displayTitle(id),titleFontSize=depth===0?17:depth===1?16:15;
     const titleWeight=depth<2?700:600,titleFont=`${titleWeight} ${titleFontSize}px ${FONT_FAMILY}`;
     const badgeWidth=node.kind==="repo"?widthOf("子仓",`700 10px ${FONT_FAMILY}`)+12:0;
     const metricTexts=COUNT_LABELS.map(([key,label])=>`${label} ${Number(node.total[key]).toLocaleString("zh-CN")}`);
     const metricWidths=metricTexts.map(value=>widthOf(value,METRIC_FONT)+14);
     const metricRowWidth=metricWidths.reduce((sum,width)=>sum+width,0)+5*(metricWidths.length-1);
-    const titleWidth=widthOf(node.title,titleFont)+badgeWidth+(badgeWidth?6:0);
+    const titleWidth=widthOf(title,titleFont)+badgeWidth+(badgeWidth?6:0);
     const descriptionNatural=Math.min(330,widthOf(node.description,DESCRIPTION_FONT));
     const contentWidth=Math.max(230,metricRowWidth,Math.min(330,titleWidth),descriptionNatural);
-    const titleLines=wrapText(node.title,contentWidth-badgeWidth-(badgeWidth?6:0),titleFont);
+    const titleLines=wrapText(title,contentWidth-badgeWidth-(badgeWidth?6:0),titleFont);
     const descriptionLines=wrapText(node.description,contentWidth,DESCRIPTION_FONT);
     const titleLineHeight=titleFontSize+2,titleY=10+titleFontSize;
     const metricY=10+titleLines.length*titleLineHeight+5,metricHeight=23;
@@ -218,7 +222,7 @@
       transform:`translate(${position.x} ${position.y})`,"data-node-id":id});
     group.appendChild(svgElement("rect",{class:"card-shape",x:0,y:0,width:position.width,height:position.height,
       rx:10,fill:"#fff",stroke:PALETTE[depth%PALETTE.length],"stroke-dasharray":canEnter?"7 4":"none"}));
-    const tooltip=svgElement("title",{});tooltip.textContent=node.description||node.title;group.appendChild(tooltip);
+    const tooltip=svgElement("title",{});tooltip.textContent=node.description||displayTitle(id);group.appendChild(tooltip);
     textLines(group,14,size.titleY,size.titleLines,`card-title title-depth-${Math.min(2,depth)}`,size.titleLineHeight);
     if(node.kind==="repo"){
       const titleFont=`${depth<2?700:600} ${size.titleFontSize}px ${FONT_FAMILY}`;
@@ -243,7 +247,7 @@
     if(view.mode!=="drill")return;
     DATA.drill_views[current].breadcrumbs.forEach((id,index)=>{
       if(index){const separator=document.createElement("span");separator.className="separator";separator.textContent="›";bar.appendChild(separator);}
-      const button=document.createElement("button");button.type="button";button.textContent=DATA.nodes[id].title;
+      const button=document.createElement("button");button.type="button";button.textContent=displayTitle(id);
       if(index===DATA.drill_views[current].breadcrumbs.length-1)button.setAttribute("aria-current","page");
       button.addEventListener("click",()=>setRoute("drill",id));bar.appendChild(button);
     });
