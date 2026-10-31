@@ -93,5 +93,11 @@ model {
   xy_skills.session_work.repo_map -> xy_skills.session_work.goal '批准依据契约原话'
   xy_skills.session_work.cleanup -> xy_skills.session_work.workflow '按标准工作流实施'
   xy_skills.session_work.workflow -> xy_skills.session_work.runs '产物放运行目录并按规则收尾'
-  xy_skills.session_work -> xy_skills.quality '遵守铁律与仓库规范'
+  xy_skills.session_work.review -> xy_skills.quality.iron_law '按铁律审查'
+  xy_skills.session_work.review -> xy_skills.quality.repo_rules '按仓库规范逐条审查'
+  xy_skills.session_work.workflow -> xy_skills.quality.iron_law '要求子代理照铁律做'
+  xy_skills.session_work.workflow -> xy_skills.quality.repo_rules '要求子代理照仓库规范做'
+  xy_skills.session_work.cleanup -> xy_skills.quality.iron_law '清扫发现以铁律为依据'
+  xy_skills.session_work.cleanup -> xy_skills.quality.repo_rules '清扫发现以仓库规范为依据'
+  xy_skills.session_work.cleanup -> xy_skills.session_work.handoff '复用 JSON 重复键检查'
 }
