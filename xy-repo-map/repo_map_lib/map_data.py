@@ -8,7 +8,6 @@ from .rendering import add_counts, add_coverage, coverage_text
 
 
 COUNT_NAMES = ("code", "docs", "comments", "tests")
-MAP_NODE_FIELDS = {"title", "kind", "parent", "own", "total"}
 
 
 def _description(element):
@@ -225,7 +224,6 @@ def build_page_data(repositories, mode):
     top_roots = sorted(element_id for element_id, parent in parents.items() if parent is None)
     aliases = {root: placeholder for placeholder, root in repo_roots.items()}
     map_document = {"mode": mode, "nodes": map_nodes}
-    validate_map_data(map_document)
     page_document = {
         "mode": mode,
         "top_roots": top_roots,
@@ -239,64 +237,3 @@ def build_page_data(repositories, mode):
         "drill_views": _drill_views(page_nodes, children, parents, relations, repo_roots),
     }
     return map_document, page_document
-
-
-def validate_map_data(document):
-    """Reject map-data.json documents outside the versioned scalar and tree contract."""
-    if not isinstance(document, dict) or set(document) != {"mode", "nodes"}:
-        raise ValueError("map-data 顶层只能包含 mode 和 nodes")
-    if document["mode"] not in ("草稿", "正式"):
-        raise ValueError("map-data mode 必须是 草稿 或 正式")
-    nodes = document["nodes"]
-    if not isinstance(nodes, dict) or not nodes:
-        raise ValueError("map-data nodes 必须是非空对象")
-    children = {}
-    roots = []
-    for element_id, node in nodes.items():
-        if not isinstance(element_id, str) or not element_id:
-            raise ValueError("map-data 节点键必须是非空 FQN")
-        if not isinstance(node, dict) or set(node) != MAP_NODE_FIELDS:
-            raise ValueError(f"map-data 节点字段错误：{element_id}")
-        if not isinstance(node["title"], str):
-            raise ValueError(f"map-data 节点标题必须是字符串：{element_id}")
-        if node["kind"] not in ("node", "repo"):
-            raise ValueError(f"map-data 节点类型错误：{element_id}")
-        parent = node["parent"]
-        if parent is None:
-            roots.append(element_id)
-        elif not isinstance(parent, str) or parent not in nodes:
-            raise ValueError(f"map-data 节点上级不存在：{element_id}")
-        else:
-            children.setdefault(parent, []).append(element_id)
-        for name in ("own", "total"):
-            counts = node[name]
-            if not isinstance(counts, dict) or set(counts) != set(COUNT_NAMES):
-                raise ValueError(f"map-data {name} 必须恰有四个计数字段：{element_id}")
-            if any(type(counts[key]) is not int or counts[key] < 0 for key in COUNT_NAMES):
-                raise ValueError(f"map-data {name} 必须是非负整数：{element_id}")
-    if len(roots) != 1:
-        raise ValueError("map-data 必须只有一个根节点")
-
-    active = set()
-    visited = set()
-
-    def visit(element_id):
-        if element_id in active:
-            raise ValueError(f"map-data 节点层级成环：{element_id}")
-        if element_id in visited:
-            return
-        active.add(element_id)
-        child_ids = children.get(element_id, [])
-        for key in COUNT_NAMES:
-            expected = nodes[element_id]["own"][key] + sum(
-                nodes[child_id]["total"][key] for child_id in child_ids)
-            if nodes[element_id]["total"][key] != expected:
-                raise ValueError(f"map-data total 加和错误：{element_id}.{key}")
-        for child_id in child_ids:
-            visit(child_id)
-        active.remove(element_id)
-        visited.add(element_id)
-
-    visit(roots[0])
-    if visited != set(nodes):
-        raise ValueError("map-data 节点必须都从唯一根节点可达")

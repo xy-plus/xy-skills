@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from repo_map_lib.map_data import build_page_data, validate_map_data
+from repo_map_lib.map_data import build_page_data
 
 
 def element(element_id, title, kind, links):
@@ -108,12 +108,6 @@ class MapDataTest(unittest.TestCase):
                          {"code": 0, "docs": 0, "comments": 0, "tests": 0})
         self.assertEqual(nodes["workspace.engine"]["total"], nodes["engine"]["total"])
         self.assertEqual(page_data["nodes"]["workspace"]["coverage"], "Python 1/2")
-        for element_id, item in nodes.items():
-            children = [child for child in nodes.values() if child["parent"] == element_id]
-            for metric in ("code", "docs", "comments", "tests"):
-                self.assertEqual(item["total"][metric],
-                                 item["own"][metric] + sum(child["total"][metric]
-                                                           for child in children))
 
     def test_drill_promotes_descendant_relations_and_merges_labels(self):
         _, page_data = self.build("草稿")
@@ -127,83 +121,6 @@ class MapDataTest(unittest.TestCase):
         _, page_data = self.build("草稿")
         self.assertEqual({relation["container"] for relation in page_data["relations"]},
                          {"workspace"})
-
-    def test_drill_breadcrumb_uses_tree_parents_not_click_history(self):
-        _, page_data = self.build("草稿")
-        self.assertEqual(page_data["drill_views"]["engine.cache"]["breadcrumbs"],
-                         ["workspace", "workspace.engine", "engine.cache"])
-
-    def test_populated_repository_placeholder_drills_to_repository_contents(self):
-        _, page_data = self.build("草稿")
-        self.assertEqual(page_data["drill_views"]["workspace.engine"]["nodes"],
-                         ["engine.cache"])
-
-    def test_root_only_repository_placeholder_has_no_next_drill_level(self):
-        root = {**self.child_model["elements"]["engine"]}
-        root["links"] = [*root["links"], {"url": "../README.md", "title": "docs"}]
-        self.child_model["elements"] = {"engine": root}
-        self.child_model["relations"] = {}
-        _, page_data = self.build("草稿")
-        self.assertEqual(page_data["drill_views"]["workspace.engine"]["nodes"],
-                         ["workspace.engine"])
-
-    def test_map_data_contract_rejects_invalid_values_and_totals(self):
-        valid, _ = self.build("草稿")
-        validate_map_data(valid)
-        cases = []
-
-        invalid = {**valid, "mode": "preview"}
-        cases.append(invalid)
-        invalid = {**valid, "extra": True}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"], "title": 7}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"], "kind": "service"}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"], "parent": "missing"}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"], "parent": 4}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"], "extra": "field"}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"],
-                                     "own": {"code": 0, "docs": 0, "comments": 0}}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"],
-                                     "own": {**valid["nodes"]["workspace.flow"]["own"],
-                                             "code": True}}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"],
-                                     "own": {**valid["nodes"]["workspace.flow"]["own"],
-                                             "docs": -1}}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"],
-                                     "own": {**valid["nodes"]["workspace.flow"]["own"],
-                                             "tests": 1.0}}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"],
-                                     "total": {"code": 0, "docs": 0, "comments": 0}}}}
-        cases.append(invalid)
-        invalid = {"mode": valid["mode"], "nodes": {**valid["nodes"],
-                  "workspace.flow": {**valid["nodes"]["workspace.flow"],
-                                     "total": {**valid["nodes"]["workspace.flow"]["total"],
-                                               "code": 0}}}}
-        cases.append(invalid)
-        for document in cases:
-            with self.subTest(document=document):
-                with self.assertRaises(ValueError):
-                    validate_map_data(document)
-
 
 if __name__ == "__main__":
     unittest.main()

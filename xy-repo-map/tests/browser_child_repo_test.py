@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from repo_map_lib.constants import STANDARD_KINDS
 from repo_map_lib.likec4 import export_model
 from repo_map_lib.structure import structure_digest
+from map_data_contract_assertions import assert_map_data_contract
 
 
 COUNT_LABELS = (
@@ -284,7 +285,9 @@ class RepositoryMapBrowserAcceptanceTest(unittest.TestCase):
 
     def map_data(self, mode):
         output = self.draft_output if mode == "draft" else self.formal_output
-        return json.loads((output / "map-data.json").read_text(encoding="utf-8"))
+        document = json.loads((output / "map-data.json").read_text(encoding="utf-8"))
+        assert_map_data_contract(self, document)
+        return document
 
     def wait_for_view(self, page, mode, current):
         page.wait_for_function(
@@ -322,7 +325,19 @@ class RepositoryMapBrowserAcceptanceTest(unittest.TestCase):
         self.assertEqual(route_mode, "钻入")
         visible_relations = data["drill_views"][current]["relations"]
         self.assertIn({"source": source, "target": target, "title": title}, visible_relations)
-        self.assertTrue(page.locator(".edge").is_visible())
+        edge = page.locator(".edge")
+        self.assertGreater(edge.count(), 0)
+        edge_style = edge.first.evaluate("""element => {
+          const style = getComputedStyle(element);
+          return {display:style.display, visibility:style.visibility,
+            stroke:style.stroke, strokeWidth:style.strokeWidth,
+            path:element.getAttribute("d")};
+        }""")
+        self.assertNotEqual(edge_style["display"], "none")
+        self.assertEqual(edge_style["visibility"], "visible")
+        self.assertNotEqual(edge_style["stroke"], "none")
+        self.assertNotEqual(edge_style["strokeWidth"], "0px")
+        self.assertTrue(edge_style["path"])
         self.assertIn(title, page.locator(".edge-label").all_text_contents())
         self.assertTrue(page.locator(".edge-label-bg").is_visible())
 

@@ -11,6 +11,7 @@ from repo_map_lib.checker import check_repository
 from repo_map_lib.git_repository import ArgumentError, require_repository_root
 from repo_map_lib.initializer import init_map
 from repo_map_lib.likec4 import export_model
+from repo_map_lib.publish_command import publish_repository
 from repo_map_lib.render_command import render_repository
 from repo_map_lib.structure import structure_digest
 
@@ -39,6 +40,10 @@ def parser():
     render.add_argument("--repo", required=True, help="git 仓根或工作树根的绝对路径")
     render.add_argument("--mode", choices=("草稿", "正式"), required=True)
     render.add_argument("--out", required=True, help="不存在或为空的输出目录")
+
+    publish = commands.add_parser("publish", help="按产物模式校验并发布静态网站")
+    publish.add_argument("--out", required=True, help="render 生成目录")
+    publish.add_argument("--name", required=True, help="平台站点名")
     return result
 
 
@@ -90,6 +95,8 @@ def main(argv):
                 return 1
             print(f"网站已生成：{Path(options.out).expanduser()}")
             return 0
+        if options.command == "publish":
+            return publish_repository(options.out, options.name)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
         return 2

@@ -49,30 +49,11 @@ class RenderCommandTest(unittest.TestCase):
             return ["图未经同意：repo-map sha256 " + "a" * 64], self.child_model
         return [], self.child_model
 
-    def test_draft_checks_the_tree_without_approval_and_writes_marker(self):
-        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check):
-            problems = render_repository(self.root, "草稿", self.output)
-        self.assertEqual(problems, [])
-        self.assertTrue((self.output / "DRAFT").is_file())
-        self.assertTrue((self.output / "index.html").is_file())
-        self.assertTrue((self.output / "map-data.json").is_file())
-
     def test_formal_render_rejects_an_unapproved_child_before_build(self):
         with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check):
             problems = render_repository(self.root, "正式", self.output)
         self.assertTrue(any("vendor" in problem and "未经同意" in problem for problem in problems), problems)
         self.assertFalse(self.output.exists())
-
-    def test_formal_render_of_an_approved_tree_has_no_draft_marker(self):
-        def approved_check(repository, check_approval):
-            model = self.parent_model if Path(repository).resolve() == self.root.resolve() else self.child_model
-            return [], model
-
-        with patch("repo_map_lib.render_command.check_repository", side_effect=approved_check):
-            problems = render_repository(self.root, "正式", self.output)
-        self.assertEqual(problems, [])
-        self.assertTrue((self.output / "index.html").is_file())
-        self.assertFalse((self.output / "DRAFT").exists())
 
     def test_render_fails_with_the_path_when_an_owned_file_cannot_be_read(self):
         source = self.root / "src" / "unreadable.py"

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from repo_map import main
+from repo_map import main, parser
 
 
 class CliTest(unittest.TestCase):
@@ -58,6 +58,12 @@ class CliTest(unittest.TestCase):
     def test_missing_command_and_missing_required_parameters_exit_two(self):
         self.assertEqual(self.run_main(["repo_map.py"]), 2)
         self.assertEqual(self.run_main(["repo_map.py", "init", "--repo", str(self.root)]), 2)
+
+    def test_publish_accepts_explicit_output_and_name(self):
+        options = parser().parse_args([
+            "publish", "--out", "/tmp/rendered-site", "--name", "sample-draft"])
+        self.assertEqual(options.out, "/tmp/rendered-site")
+        self.assertEqual(options.name, "sample-draft")
 
     def test_check_of_a_repository_without_a_map_exits_one(self):
         self.assertEqual(self.run_main(["repo_map.py", "check", "--repo", str(self.root)]), 1)

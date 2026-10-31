@@ -76,10 +76,10 @@ button:hover{background:#f1f5fb}
     {fill:"#f5f0fc",stroke:"#9d83c6"},{fill:"#fff6eb",stroke:"#c59553"},
     {fill:"#edf7fa",stroke:"#66a0b2"},{fill:"#f8f1f2",stroke:"#b9828d"}];
   const LAYOUT={"elk.algorithm":"layered","elk.direction":"RIGHT","elk.edgeRouting":"ORTHOGONAL",
-    "elk.hierarchyHandling":"INCLUDE_CHILDREN","elk.aspectRatio":"1.6","elk.spacing.nodeNode":"18",
+    "elk.hierarchyHandling":"INCLUDE_CHILDREN","elk.spacing.nodeNode":"18",
     "elk.layered.spacing.nodeNodeBetweenLayers":"20","elk.spacing.edgeNode":"12","elk.spacing.edgeEdge":"8",
     "elk.layered.spacing.edgeEdgeBetweenLayers":"8","elk.edgeLabels.placement":"CENTER","elk.spacing.edgeLabel":"5",
-    "elk.layered.wrapping.strategy":"MULTI_EDGE"};
+  };
   const svg=document.getElementById("map");
   const measureCanvas=document.createElement("canvas");
   const measure=measureCanvas.getContext("2d");
@@ -146,9 +146,9 @@ button:hover{background:#f1f5fb}
     const graphNode={id:elementId,_depth:depth};
     graphNodes.set(elementId,graphNode);
     if(children.length){
-      graphNode.width=Math.max(size.width,...children.map(child=>nodeSize(child,visualChildren(child).length>0).width+32));
-      graphNode.layoutOptions={"elk.padding":`[top=${size.containerTop},left=16,bottom=16,right=16]`};
-      graphNode._containerTop=size.containerTop;
+      graphNode.width=size.width;
+      graphNode.layoutOptions={...LAYOUT,
+        "elk.padding":`[top=${size.containerTop},left=16,bottom=16,right=16]`};
       graphNode.children=children.map(child=>addVisualNode(child,depth+1,seen,graphNodes));
     }else{graphNode.width=size.width;graphNode.height=size.height;}
     return graphNode;
@@ -170,73 +170,6 @@ button:hover{background:#f1f5fb}
       labels:edge.labels.length?[{text:edge.labels.join(" · "),width:Math.max(30,widthOf(edge.labels.join(" · "),EDGE_FONT)+16),height:22}]:[]
     }));
   }
-  function graphChildForEndpoint(graph,endpoint){
-    const childIds=new Set((graph.children||[]).map(child=>child.id));
-    let current=REPO_ALIAS[endpoint]||endpoint;
-    while(current){
-      if(childIds.has(current))return current;
-      const parent=DATA.nodes[current]&&DATA.nodes[current].parent;
-      current=parent===null||parent===undefined?null:(REPO_ALIAS[parent]||parent);
-    }
-    return null;
-  }
-  function estimatedSize(node){
-    const children=node.children||[];
-    if(!children.length)return {width:node.width||0,height:node.height||0};
-    const sizes=children.map(estimatedSize),edges=(node.edges||[]).filter(edge=>!edge.id.startsWith("pack-"));
-    if(edges.length){
-      const layers=new Map(children.map(child=>[child.id,0]));
-      let cyclic=false;
-      for(let pass=0;pass<children.length;pass++){
-        let changed=false;
-        for(const edge of edges){
-          const source=graphChildForEndpoint(node,edge.sources[0]);
-          const target=graphChildForEndpoint(node,edge.targets[0]);
-          if(!source||!target||source===target)continue;
-          const next=layers.get(source)+1;
-          if(layers.get(target)<next){layers.set(target,next);changed=true;}
-        }
-        if(!changed)break;
-        if(pass===children.length-1)cyclic=true;
-      }
-      if(cyclic)children.forEach((child,index)=>layers.set(child.id,index));
-      const widths=[],heights=[];
-      for(let index=0;index<=Math.max(...layers.values());index++){
-        const row=children.map((child,childIndex)=>({child,size:sizes[childIndex]}))
-          .filter(item=>layers.get(item.child.id)===index).map(item=>item.size);
-        if(row.length){widths.push(Math.max(...row.map(size=>size.width)));heights.push(row.reduce((sum,size)=>sum+size.height,0)+18*(row.length-1));}
-      }
-      return {width:Math.max(node.width||0,widths.reduce((sum,width)=>sum+width,0)+20*(widths.length-1)+32),
-        height:(node._containerTop||72)+Math.max(...heights)+16};
-    }
-    const columns=Math.min(children.length,Math.max(1,Math.ceil(Math.sqrt(children.length*1.6))));
-    const rows=[];
-    for(let index=0;index<children.length;index+=columns){
-      const row=sizes.slice(index,index+columns);
-      rows.push({width:row.reduce((sum,size)=>sum+size.width,0)+18*(row.length-1),height:Math.max(...row.map(size=>size.height))});
-    }
-    return {width:Math.max(node.width||0,...rows.map(row=>row.width+32)),
-      height:(node._containerTop||72)+rows.reduce((sum,row)=>sum+row.height,0)+18*(rows.length-1)+16};
-  }
-  function configureLayout(graph,preferOneRow=false){
-    const children=graph.children||[];
-    if(children.length){
-      const edges=(graph.edges||[]).filter(edge=>!edge.id.startsWith("pack-"));
-      if(edges.length){graph.layoutOptions={...LAYOUT,...graph.layoutOptions,"elk.algorithm":"layered","elk.direction":"RIGHT"};}
-      else{
-        const sizes=children.map(estimatedSize),spacing=18;
-        const fullWidth=sizes.reduce((sum,size)=>sum+size.width,0)+spacing*(sizes.length-1);
-        const totalArea=sizes.reduce((sum,size)=>sum+size.width*size.height,0);
-        const oneRow=preferOneRow||(children.length<=3&&children.every(child=>!child.children?.length));
-        const targetWidth=oneRow?fullWidth:Math.max(Math.max(...sizes.map(size=>size.width)),Math.min(fullWidth,Math.sqrt(totalArea*1.6)));
-        graph.layoutOptions={...LAYOUT,...graph.layoutOptions,"elk.algorithm":"rectpacking",
-          "elk.aspectRatio":"1.6","elk.rectpacking.widthApproximation.strategy":"TARGET_WIDTH",
-          "elk.rectpacking.widthApproximation.targetWidth":String(Math.ceil(targetWidth)),
-          "elk.rectpacking.widthApproximation.optimizationGoal":"ASPECT_RATIO_DRIVEN"};
-      }
-    }
-    for(const child of children)configureLayout(child,false);
-  }
   function expandedGraph(){
     const visible=new Set();
     const graphNodes=new Map();
@@ -247,7 +180,6 @@ button:hover{background:#f1f5fb}
       const targetGraph=container||graph;
       targetGraph.edges=[...(targetGraph.edges||[]),edge];
     }
-    configureLayout(graph);
     return graph;
   }
   function drillGraph(current){
@@ -262,7 +194,6 @@ button:hover{background:#f1f5fb}
       labels:edge.title?[{text:edge.title,width:Math.max(30,widthOf(edge.title,EDGE_FONT)+16),height:22}]:[]
     }));
     const graph={id:"root",layoutOptions:LAYOUT,children,edges};
-    configureLayout(graph,true);
     return graph;
   }
   function svgElement(tag,attributes){
