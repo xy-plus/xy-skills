@@ -105,7 +105,7 @@
   function widthOf(text,font){measure.font=font;return measure.measureText(String(text)).width;}
   function wrapText(text,width,font){
     const lines=[];
-    for(const paragraph of String(text||"").split("\n")){
+    for(const paragraph of String(text).split("\n")){
       if(paragraph===""){lines.push("");continue;}
       let line="";
       for(const character of paragraph){
@@ -164,7 +164,7 @@
     });
     const edges=projection.relations.map((edge,index)=>({
       id:`drill-${index}-${edge.source}-${edge.target}`,sources:[edge.source],targets:[edge.target],
-      labels:edge.title?[{text:edge.title,width:Math.max(30,widthOf(edge.title,EDGE_FONT)+16),height:22}]:[]
+      labels:[{text:edge.title,width:Math.max(30,widthOf(edge.title,EDGE_FONT)+16),height:22}]
     }));
     return {id:"root",layoutOptions:DRILL_LAYOUT,children:nodes,edges};
   }
@@ -212,7 +212,7 @@
         layer.appendChild(svgElement("rect",{class:"edge-label-bg",x:label.x-4,y:label.y-2,
           width:width+8,height:height+4,rx:5}));
         const text=svgElement("text",{class:"edge-label",x:label.x+width/2,y:label.y+height/2});
-        text.textContent=label.text||"";layer.appendChild(text);
+        text.textContent=label.text;layer.appendChild(text);
       }
     }
   }
@@ -222,11 +222,11 @@
       transform:`translate(${position.x} ${position.y})`,"data-node-id":id});
     group.appendChild(svgElement("rect",{class:"card-shape",x:0,y:0,width:position.width,height:position.height,
       rx:10,fill:"#fff",stroke:PALETTE[depth%PALETTE.length],"stroke-dasharray":canEnter?"7 4":"none"}));
-    const tooltip=svgElement("title",{});tooltip.textContent=node.description||displayTitle(id);group.appendChild(tooltip);
+    const tooltip=svgElement("title",{});tooltip.textContent=node.description;group.appendChild(tooltip);
     textLines(group,14,size.titleY,size.titleLines,`card-title title-depth-${Math.min(2,depth)}`,size.titleLineHeight);
     if(node.kind==="repo"){
       const titleFont=`${depth<2?700:600} ${size.titleFontSize}px ${FONT_FAMILY}`;
-      const badgeX=14+widthOf(size.titleLines[0]||"",titleFont)+6,badgeY=size.titleY-size.titleFontSize+1;
+      const badgeX=14+widthOf(size.titleLines[0],titleFont)+6,badgeY=size.titleY-size.titleFontSize+1;
       group.appendChild(svgElement("rect",{class:"repo-badge",x:badgeX,y:badgeY,width:size.badgeWidth,height:16,rx:6}));
       const badge=svgElement("text",{class:"repo-badge-text",x:badgeX+6,y:badgeY+12});badge.textContent="子仓";group.appendChild(badge);
     }
@@ -292,7 +292,7 @@
       if(view.mode==="expand"){
         drawComposition(layers.tree,ids,positions);
         const relationBounds=window.XYRepoMapRelations.draw({layer:layers.relations,treeLayer:layers.tree,positions,ids,
-          data:DATA,repoAlias:REPO_ALIAS,svgElement,widthOf,wrapText,visualDepth});
+          data:DATA,repoAlias:REPO_ALIAS,svgElement,widthOf,visualDepth});
         currentBounds=relationBounds;
       }else{
         drawElkEdges(layers.edges,result.edges);
@@ -334,7 +334,7 @@
         x:transform.x,y:transform.y,scale:transform.scale};return;
     }
     drag={id:event.pointerId,nodeId,clickable:Boolean(card&&card.classList.contains("clickable")),
-      pointerType:event.pointerType,start:point,last:point,moved:false,longPress:false};
+      start:point,last:point,moved:false,longPress:false};
     if(event.pointerType==="touch"&&nodeId){
       pressTimer=setTimeout(()=>{if(drag&&drag.id===event.pointerId&&!drag.moved){drag.longPress=true;setHighlight(nodeId);}},500);
     }

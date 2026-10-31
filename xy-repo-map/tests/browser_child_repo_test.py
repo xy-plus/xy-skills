@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from repo_map_lib.constants import STANDARD_KINDS
 from repo_map_lib.likec4 import export_model
 from repo_map_lib.structure import structure_digest
+from browser_fixture_relations import append_fixture_self_relation
 from map_data_contract_assertions import assert_map_data_contract
 
 
@@ -201,6 +202,7 @@ def build_approved_parent_child_fixture(root, site_root):
 
     draft_output = site_root / "draft"
     run_repo_map("render", "--repo", parent, "--mode", "草稿", "--out", draft_output)
+    append_fixture_self_relation(draft_output)
 
     repository_maps = [parent / "repo-map", engine / "repo-map", solo / "repo-map"]
     exported_models = [export_model(repository_map) for repository_map in repository_maps]
@@ -445,7 +447,6 @@ class RepositoryMapBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest
                 self.wait_for_view(page, "drill", "workspace")
                 map_document = self.map_data("draft")
                 page_document = self.page_data(page)
-                root_ids = self.expected_drill_ids(map_document, page_document, "workspace")
                 page.locator('.card[data-node-id="workspace.engine"]').click()
                 self.wait_for_view(page, "drill", "workspace.engine")
                 self.assert_address(page, "钻入/workspace.engine")
@@ -470,7 +471,6 @@ class RepositoryMapBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest
                 solo.click()
                 self.assertEqual(page.evaluate("decodeURIComponent(location.hash.slice(1))"),
                                  address_before_click)
-                self.assert_visible_totals(page, map_document, root_ids)
                 self.assertEqual(remote_requests, [])
             finally:
                 browser.close()

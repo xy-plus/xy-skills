@@ -30,7 +30,7 @@
     curve.cx2=high;return high;
   }
 
-  function relationSamples(curve,count=100){
+  function relationSamples(curve,count){
     const points=[];for(let step=0;step<=count;step++)points.push(curvePoint(curve,step/count));return points;
   }
 
@@ -192,24 +192,26 @@
     const columnDepths=[...columns.keys()].sort((first,second)=>first-second);
     const normalized=data.relations.map((relation,index)=>({...relation,index,
       sourceId:repoAlias[relation.source]||relation.source,targetId:repoAlias[relation.target]||relation.target}))
-      .filter(relation=>relation.sourceId!==relation.targetId&&visible.has(relation.sourceId)&&visible.has(relation.targetId));
+      .filter(relation=>visible.has(relation.sourceId)&&visible.has(relation.targetId));
     const obstacles=obstacleIndex(positions),treeSamples=treeLineSamples(treeLayer);
     const pairIndexes=new Map(),portCounts=new Map(),portIndexes=new Map();
     for(const relation of normalized){
       const pair=`${relation.sourceId}\u0000${relation.targetId}`;
-      pairIndexes.set(pair,0);for(const id of [relation.sourceId,relation.targetId])portCounts.set(id,(portCounts.get(id)||0)+1);
+      pairIndexes.set(pair,0);
+      for(const id of new Set([relation.sourceId,relation.targetId]))
+        portCounts.set(id,(portCounts.get(id)||0)+1);
     }
     function portY(id,box){
       const count=portCounts.get(id),index=portIndexes.get(id)||0;portIndexes.set(id,index+1);
       const fraction=count===1?.35:.2+.6*(index+1)/(count+1);
-      return {y:box.y+box.height*fraction,index,count};
+      return box.y+box.height*fraction;
     }
     const prepared=normalized.map(relation=>{
       const source=positions.get(relation.sourceId),target=positions.get(relation.targetId);
       const sourceDepth=visualDepth(relation.sourceId),targetDepth=visualDepth(relation.targetId);
       const sx=source.x+source.width,tx=target.x+target.width;
-      const sourcePort=portY(relation.sourceId,source),targetPort=portY(relation.targetId,target);
-      const sy=sourcePort.y,ty=targetPort.y;
+      const sy=portY(relation.sourceId,source);
+      const ty=relation.sourceId===relation.targetId?sy:portY(relation.targetId,target);
       const depth=Math.max(sourceDepth,targetDepth);
       const span=Math.abs(ty-sy)+Math.abs(sourceDepth-targetDepth)*48;
       return {...relation,source,target,sx,tx,sy,ty,span,sourceDepth,targetDepth,depth};
@@ -223,7 +225,7 @@
       const column=columns.get(depth),nextDepth=columnDepths.find(value=>value>depth);
       const nextColumn=nextDepth===undefined?null:columns.get(nextDepth);
       const gap=nextColumn?nextColumn.left-column.right:Infinity;
-      const title=relation.title||"关系",labelMaxWidth=sourceDepth===targetDepth?
+      const title=relation.title,labelMaxWidth=sourceDepth===targetDepth?
         (nextColumn?gap-36:ROUTE_MARGIN-32):Infinity;
       const lines=labelMaxWidth>=18?wrapRelationTitle(title,labelMaxWidth,widthOf):[title];
       const textWidth=Math.max(...lines.map(line=>widthOf(line,EDGE_FONT)));
@@ -235,7 +237,30 @@
       const skip=new Set([relation.sourceId,relation.targetId]);
       let best=null,bestScore=Infinity,rejectedCards=0;
       const labelBlockers=new Map();
-      if(sourceDepth===targetDepth&&gap<48){
+      if(relation.sourceId===relation.targetId){
+        const desiredOffset=Math.max(36,labelHalfWidth+6),centers=[sy,
+          source.y+source.height*.25,source.y+source.height*.5,source.y+source.height*.75]
+          .sort((first,second)=>Math.abs(first-sy)-Math.abs(second-sy));
+        for(const centerY of centers){
+          for(const offset of [desiredOffset,desiredOffset+12,desiredOffset+24]){
+            const peakX=sx+offset;if(peakX>peakCeiling)continue;
+            const controlX=sx+offset*4/3,curve={sx,sy:centerY,cx1:controlX,cy1:centerY-26,
+              cx2:controlX,cy2:centerY+26,tx:sx,ty:centerY};
+            const peak=curvePeak(curve),labelBox={left:peak.x-labelBoxWidth/2,
+              right:peak.x+labelBoxWidth/2,top:peak.y-labelBoxHeight/2,
+              bottom:peak.y+labelBoxHeight/2};
+            const issue=labelIssue(labelBox,positions,labels,treeSamples,relation);
+            if(issue){labelBlockers.set(issue,(labelBlockers.get(issue)||0)+1);continue;}
+            const samples=relationSamples(curve,120);
+            if(routeCollisions(samples,obstacles,skip)!==0){rejectedCards++;continue;}
+            const score=bundleHits(samples,routes)*24+Math.abs(offset-desiredOffset)*.2+
+              Math.abs(centerY-sy)*.3;
+            if(score<bestScore){bestScore=score;best={path:`M${sx} ${centerY} C${controlX} ${centerY-26} ${controlX} ${centerY+26} ${sx} ${centerY}`,
+              peak,labelBox,samples};}
+          }
+          if(best&&bestScore===0)break;
+        }
+      }else if(sourceDepth===targetDepth&&gap<48){
         const laneX=column.right+gap/2;
         const points=[{x:sx,y:sy},{x:laneX,y:sy},{x:laneX,y:ty},{x:tx,y:ty}];
         const samples=polylineSamples(points,24),peak={x:laneX,y:(sy+ty)/2};
@@ -289,7 +314,7 @@
       }
       if(!best)throw new Error(`关系无法避开卡片或标签：${relation.sourceId} → ${relation.targetId}（${title}）；${JSON.stringify([...labelBlockers])}；路径冲突 ${rejectedCards}`);
       const {path,peak,labelBox,samples}=best;
-      const group=svgElement("g",{class:"relation-item","data-relation-index":relation.index});
+      const group=svgElement("g",{});
       group.appendChild(svgElement("path",{class:"relation-edge",
         d:path,
         "marker-end":"url(#relation-arrow)","data-source":relation.sourceId,
