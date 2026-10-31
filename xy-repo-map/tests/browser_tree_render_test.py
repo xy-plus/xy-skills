@@ -1,6 +1,5 @@
 """Real browser checks for expanded tree rendering and phone interaction."""
 import re
-import os
 from itertools import permutations
 from pathlib import Path
 import unittest
@@ -200,10 +199,6 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 page, _remote_requests = self.open_page(
                     browser, "draft", None, {"width": 1440, "height": 900}, False)
                 self.wait_for_view(page, "expand", None)
-                screenshot_directory = os.environ.get("XY_REPO_MAP_SCREENSHOT_DIR")
-                if screenshot_directory:
-                    page.screenshot(path=str(Path(screenshot_directory) /
-                                             "父子仓全部展开-1440x900.png"))
                 map_document = self.map_data("draft")
                 data = self.page_data(page)
                 visible_ids = set(map_document["nodes"]) - set(data["repo_roots"].values())
