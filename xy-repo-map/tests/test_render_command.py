@@ -44,10 +44,10 @@ class RenderCommandTest(unittest.TestCase):
 
     def fake_check(self, repository, check_approval):
         if Path(repository).resolve() == self.root.resolve():
-            return [], self.parent_model, {}
+            return [], self.parent_model, {}, []
         if check_approval:
-            return ["图未经同意：repo-map sha256 " + "a" * 64], self.child_model, {}
-        return [], self.child_model, {}
+            return ["图未经同意：repo-map sha256 " + "a" * 64], self.child_model, {}, []
+        return [], self.child_model, {}, []
 
     def test_formal_render_rejects_an_unapproved_child_before_build(self):
         with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check):
@@ -87,7 +87,7 @@ class RenderCommandTest(unittest.TestCase):
 
         def duplicate_check(repository, check_approval):
             model = self.parent_model if Path(repository).resolve() == self.root.resolve() else duplicate_child
-            return [], model, {}
+            return [], model, {}, []
 
         with patch("repo_map_lib.render_command.check_repository", side_effect=duplicate_check):
             problems = render_repository(self.root, "草稿", self.output)

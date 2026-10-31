@@ -12,8 +12,7 @@ sys.path.insert(0, str(REPO_MAP_PATH))
 sys.path.insert(0, str(HANDOFF_PATH))
 
 from repo_map_lib.checker import check_repository
-from repo_map_lib.git_repository import (ArgumentError, require_repository_root,
-                                         tracked_paths)
+from repo_map_lib.git_repository import ArgumentError
 from check_handoff import object_without_duplicate_keys
 from audit_entities import collect_entities
 
@@ -394,11 +393,10 @@ def parser():
 
 def repository_context(repository):
     """Require a valid graph without requiring its approval record."""
-    root = require_repository_root(repository)
-    problems, model, owners = check_repository(root, check_approval=False)
+    root = Path(repository)
+    problems, model, owners, tracked = check_repository(root, check_approval=False)
     if problems:
         raise ValueError("\n".join(problems))
-    tracked = tracked_paths(root)
     return root, model, tracked, owners
 
 

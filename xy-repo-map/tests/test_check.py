@@ -51,24 +51,25 @@ class CheckTest(unittest.TestCase):
     def test_check_accepts_a_matching_record_and_rejects_an_unapproved_committed_map(self):
         digest = structure_digest(self.model)
         approved = f"repo-map sha256 {digest} 2026-10-31 /run/xy-goal/quotes/1.md\n"
-        problems, _, owners = self.checked(approved)
+        problems, _, owners, tracked = self.checked(approved)
         self.assertEqual(problems, [])
         self.assertEqual(owners["README.md"].element, "sample")
+        self.assertIn("README.md", tracked)
 
-        problems, _, _ = self.checked("repo-map sha256 " + "b" * 64 +
-                                      " 2026-10-31 /run/xy-goal/quotes/1.md\n")
+        problems, _, _, _ = self.checked("repo-map sha256 " + "b" * 64 +
+                                         " 2026-10-31 /run/xy-goal/quotes/1.md\n")
         self.assertEqual(len(problems), 1)
         self.assertIn("图未经同意", problems[0])
         self.assertIn(digest, problems[0])
 
     def test_check_rejects_config_name_and_standard_kind_mismatches(self):
         (self.repo_map / "likec4.config.json").write_text('{"name":"other"}\n', encoding="utf-8")
-        problems, _, _ = self.checked("")
+        problems, _, _, _ = self.checked("")
         self.assertTrue(any("name" in problem for problem in problems), problems)
 
         (self.repo_map / "likec4.config.json").write_text('{"name":"sample"}\n', encoding="utf-8")
         (self.repo_map / "kinds.c4").write_text("specification {}\n", encoding="utf-8")
-        problems, _, _ = self.checked("")
+        problems, _, _, _ = self.checked("")
         self.assertTrue(any("kinds.c4" in problem for problem in problems), problems)
 
     def test_check_rejects_unsupported_code_file_suffixes(self):
@@ -78,7 +79,7 @@ class CheckTest(unittest.TestCase):
                        "links": [{"url": "../README.md", "title": "code"}]},
         }, "relations": {}}
         with patch("repo_map_lib.checker.export_model", return_value=bad_model):
-            problems, _, _ = check_repository(self.root, False)
+            problems, _, _, _ = check_repository(self.root, False)
         self.assertTrue(any("后缀不支持" in problem and "README.md" in problem
                             for problem in problems), problems)
 
@@ -86,21 +87,12 @@ class CheckTest(unittest.TestCase):
         validation_error = "LikeC4 validate 失败：syntax error"
         with patch("repo_map_lib.checker.export_model",
                    side_effect=ValueError(validation_error)) as export:
-            problems, model, owners = check_repository(self.root, False)
+            problems, model, owners, tracked = check_repository(self.root, False)
         self.assertEqual(problems, [validation_error])
         self.assertIsNone(model)
         self.assertEqual(owners, {})
+        self.assertEqual(tracked, [])
         export.assert_called_once()
-
-    def test_checker_reports_export_model_validation_error_without_rewrapping_it(self):
-        validation_error = "LikeC4 validate 失败：syntax location"
-        with patch("repo_map_lib.checker.export_model",
-                   side_effect=ValueError(validation_error)):
-            problems, model, owners = check_repository(self.root, False)
-
-        self.assertEqual(problems, [validation_error])
-        self.assertIsNone(model)
-        self.assertEqual(owners, {})
 
 
 if __name__ == "__main__":

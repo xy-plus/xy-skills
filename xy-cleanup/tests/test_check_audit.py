@@ -371,7 +371,8 @@ class CheckAuditTest(unittest.TestCase):
                 report_paths.append(str(path))
             arguments = ["check", "--repo", str(repository), "--scope", "全部",
                          "--reports", *report_paths]
-            with patch("check_audit.check_repository", return_value=([], graph, owners)) as graph_check, \
+            with patch("check_audit.check_repository",
+                       return_value=([], graph, owners, tracked_paths(repository))) as graph_check, \
                     patch("check_audit.expand_scope", wraps=expand_scope) as expand:
                 self.assertEqual(main(arguments), 0)
             graph_check.assert_called_once_with(repository, check_approval=False)
@@ -404,14 +405,19 @@ class CheckAuditTest(unittest.TestCase):
             repository = create_fixture_repo(Path(temporary) / "review-target")
             graph = {"elements": {"fixture": {}}, "relations": {}}
             owners = {"src/cleanup_fixture/core.py": object()}
-            with patch("check_audit.check_repository", return_value=([], graph, owners)), \
-                    patch("repo_map_lib.checker.check_ownership") as ownership_check:
-                root, actual_graph, tracked, actual_owners = repository_context(repository)
+            expected_tracked = ["src/cleanup_fixture/core.py"]
+            with patch("check_audit.check_repository",
+                       return_value=([], graph, owners, expected_tracked)) as graph_check, \
+                    patch("check_audit.tracked_paths", create=True) as tracked_check, \
+                    patch("check_audit.require_repository_root", create=True) as root_check:
+                root, actual_graph, actual_tracked, actual_owners = repository_context(repository)
             self.assertEqual(root, repository)
             self.assertIs(actual_graph, graph)
-            self.assertIn("src/cleanup_fixture/core.py", tracked)
+            self.assertIs(actual_tracked, expected_tracked)
             self.assertIs(actual_owners, owners)
-            ownership_check.assert_not_called()
+            graph_check.assert_called_once_with(repository, check_approval=False)
+            tracked_check.assert_not_called()
+            root_check.assert_not_called()
 
     def test_entities_command_prints_the_selected_node_manifest_as_json(self):
         with tempfile.TemporaryDirectory() as temporary:

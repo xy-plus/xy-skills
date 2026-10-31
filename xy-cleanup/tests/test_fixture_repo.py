@@ -45,7 +45,7 @@ class FixtureRepositoryTest(unittest.TestCase):
     def test_fixture_graph_passes_checks_without_an_approval_record(self):
         with tempfile.TemporaryDirectory() as temporary:
             repository = create_fixture_repo(Path(temporary) / "review-target")
-            problems, graph, owners = check_repository(repository, False)
+            problems, graph, owners, _ = check_repository(repository, False)
             self.assertEqual(problems, [], problems)
             self.assertIn("cleanup_fixture.core", graph["elements"])
             self.assertIn("src/cleanup_fixture/core.py", owners)

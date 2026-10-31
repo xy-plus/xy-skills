@@ -34,7 +34,7 @@ def _checked_tree(repository, mode):
         if resolved in known_paths:
             return
         known_paths.add(resolved)
-        current_problems, model, _ = check_repository(resolved, check_approval)
+        current_problems, model, _, _ = check_repository(resolved, check_approval)
         if current_problems:
             problems.extend(f"仓 {resolved}：{problem}" for problem in current_problems)
             return

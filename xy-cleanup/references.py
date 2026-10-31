@@ -134,6 +134,8 @@ def build_reference_report(repository, model, tracked, owners):
         owner = owners.get(file_path)
         if owner is None:
             continue
+        if owner.category == "repo":
+            continue
         source = owner.element
         lines, skip_reason = text_lines(root / file_path)
         if skip_reason is not None:

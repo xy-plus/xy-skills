@@ -71,7 +71,7 @@ class LikeC4IntegrationTest(unittest.TestCase):
                 "      link ../src/tool.py 'code'\n      link ../tests/test_tool.py 'tests'\n"
                 "    }\n  }\n}\n", encoding="utf-8")
 
-            problems, model, _ = check_repository(root, False)
+            problems, model, _, _ = check_repository(root, False)
             self.assertEqual(problems, [], problems)
             self.assertEqual(model["elements"]["demo.tool"]["title"], "Tool")
             output = Path(temporary) / "site"

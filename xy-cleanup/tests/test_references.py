@@ -1,8 +1,10 @@
 """Behavior tests for graph reference reconciliation."""
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 TESTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS.parent))
@@ -12,12 +14,60 @@ from references import build_reference_report
 from references import main as references_main
 from references import module_names
 from references import node_names
+from references import text_lines
 from check_audit import repository_context
+from repo_map_lib.git_repository import tracked_paths
 from repo_map_lib.ownership import Owner
 from test_data.create_fixture import create_fixture_repo
 
 
 class ReferencesTest(unittest.TestCase):
+    def test_initialized_submodule_is_not_read_as_a_text_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            repository = base / "parent"
+            submodule_source = base / "submodule-source"
+            repository.mkdir()
+            submodule_source.mkdir()
+            for root in (repository, submodule_source):
+                subprocess.run(["git", "init", "--quiet", str(root)], check=True,
+                               capture_output=True)
+                subprocess.run(["git", "-C", str(root), "config", "user.name", "Fixture"],
+                               check=True, capture_output=True)
+                subprocess.run(["git", "-C", str(root), "config", "user.email",
+                                "fixture@example.invalid"], check=True, capture_output=True)
+            (submodule_source / "README.md").write_text("submodule\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(submodule_source), "add", "README.md"],
+                           check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(submodule_source), "commit", "--quiet",
+                            "-m", "submodule source"], check=True, capture_output=True)
+            (repository / "app.py").write_text("# parent source\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repository), "add", "app.py"],
+                           check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "--quiet",
+                            "-m", "parent source"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repository), "config", "protocol.file.allow",
+                            "always"], check=True, capture_output=True)
+            subprocess.run(["git", "-c", "protocol.file.allow=always", "-C",
+                            str(repository), "submodule", "add",
+                            str(submodule_source), "vendor"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "--quiet", "-m",
+                            "add submodule"], check=True, capture_output=True)
+
+            tracked = tracked_paths(repository)
+            self.assertIn("vendor", tracked)
+            self.assertTrue((repository / "vendor" / "README.md").is_file())
+            model = {"elements": {"app": {}, "app.vendor": {}}, "relations": {}}
+            owners = {
+                "app.py": Owner("app", "code"),
+                "vendor": Owner("app.vendor", "repo"),
+            }
+            with patch("references.text_lines", wraps=text_lines) as scan:
+                result = build_reference_report(repository, model, tracked, owners)
+            self.assertEqual(result["mentions"], [])
+            self.assertEqual(result["skipped_files"], [])
+            scan.assert_called_once_with(repository / "app.py")
+
     def test_fixture_module_imports_match_both_graph_relationships(self):
         with tempfile.TemporaryDirectory() as temporary:
             repository = create_fixture_repo(Path(temporary) / "review-target")

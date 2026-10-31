@@ -191,7 +191,7 @@ def _with_duplicate_lines(definitions):
     return entities
 
 
-def file_entities(repository, file_path, category):
+def file_entities(repository, file_path):
     """Return one tracked-file ID plus definitions applicable to its source type."""
     root = Path(repository)
     entities = [file_path]
@@ -222,6 +222,6 @@ def collect_entities(repository, owners, nodes):
         if owner.element not in entities:
             continue
         entities[owner.element].extend(
-            file_entities(root, file_path, owner.category)
+            file_entities(root, file_path)
         )
     return entities
