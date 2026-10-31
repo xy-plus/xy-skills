@@ -41,7 +41,6 @@ class CheckTest(unittest.TestCase):
                        "description": {"txt": "A repository."}, "style": {},
                        "links": [{"url": "../README.md", "title": "docs"}]},
         }, "relations": {}}
-        self.validation = subprocess.CompletedProcess([], 0, "", "")
 
     def checked(self, approval_text):
         (self.repo_map / "approvals.txt").write_text(approval_text, encoding="utf-8")

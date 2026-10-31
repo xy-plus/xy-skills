@@ -94,8 +94,6 @@ def model_problems(model):
                 endpoint = endpoint.get("model")
             if not isinstance(endpoint, str) or endpoint not in elements:
                 problems.append(f"{where} 的 {side} 元素不存在")
-            elif isinstance(elements[endpoint], dict) and elements[endpoint].get("kind") == "repo":
-                continue
         if not isinstance(relation.get("title"), str) or not relation["title"].strip():
             problems.append(f"{where} 缺少有效的标题")
     return problems
