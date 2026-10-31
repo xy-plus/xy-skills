@@ -15,7 +15,7 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from browser_layout_collision_fixture import LAYOUT_COLLISION_FIXTURE
+from browser_layout_collision_fixture import LAYOUT_COLLISION_NODES
 from repo_map_lib.constants import STANDARD_KINDS
 from repo_map_lib.likec4 import export_model
 from repo_map_lib.structure import structure_digest
@@ -90,7 +90,6 @@ def build_approved_parent_child_fixture(root, site_root):
         "docs/process.md": "Process documentation.\n",
         "docs/step.md": "Single step documentation.\n",
         "docs/events.md": "Event documentation.\n",
-        **LAYOUT_COLLISION_FIXTURE["files"],
         "src/session.py": '"""Public session module."""\n\ndef open_session():\n'
                          '    """Open one session."""\n    # record the start\n    return True\n',
         "src/process.py": '"""Public process module."""\n\ndef run_step():\n'
@@ -169,7 +168,7 @@ def build_approved_parent_child_fixture(root, site_root):
   workspace.session.process -> workspace.session.events '重试后触发'
   workspace.session.process.step -> workspace.session.events '跨层调用'
 }
-""".replace("    __LAYOUT_COLLISION_NODES__\n", LAYOUT_COLLISION_FIXTURE["nodes"]))
+""".replace("    __LAYOUT_COLLISION_NODES__\n", LAYOUT_COLLISION_NODES))
     write_map(engine, "engine", """model {
   engine = node '引擎' {
     description '运行缓存和账本功能。'
