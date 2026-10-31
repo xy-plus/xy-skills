@@ -1,4 +1,5 @@
 """Real browser checks for expanded tree rendering and phone interaction."""
+import json
 import re
 from pathlib import Path
 import unittest
@@ -46,6 +47,62 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                         page.wait_for_function("document.querySelectorAll('.card').length > 0")
                     self.assertEqual(self.layout_snapshot(phone), self.layout_snapshot(desktop),
                                      fragment)
+            finally:
+                browser.close()
+
+    def test_unit_names_match_on_cards_breadcrumbs_and_drill_views(self):
+        with sync_playwright() as playwright:
+            browser = self.open_browser(playwright)
+            try:
+                for viewport, touch in (((1440, 900), False), ((390, 844), True)):
+                    page = browser.new_page(viewport={"width": viewport[0],
+                                                      "height": viewport[1]},
+                                            device_scale_factor=1, is_mobile=touch,
+                                            has_touch=touch)
+                    page.goto(f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80",
+                              wait_until="load")
+                    self.wait_for_view(page, "expand", None)
+                    page_data = self.page_data(page)
+                    map_data = json.loads((self.self_draft_output / "map-data.json")
+                                          .read_text(encoding="utf-8"))
+                    expected_titles = {
+                        "xy_skills.session_work.goal": "长目标契约（xy-goal）",
+                        "xy_skills.quality.repo_rules":
+                            "仓库规范（xy-repo-rules）",
+                        "xy_skills.quality": "质量约束",
+                    }
+                    expected_names = {
+                        "xy_skills.session_work.goal": ["xy-goal"],
+                        "xy_skills.quality.repo_rules": ["xy-repo-rules"],
+                        "xy_skills.quality": [],
+                    }
+                    for element_id, title in expected_titles.items():
+                        actual = page.locator(
+                            f'.card[data-node-id="{element_id}"] .card-title').evaluate(
+                                "element => element.textContent")
+                        self.assertEqual(actual, title, element_id)
+                        self.assertEqual(page_data["unit_names"][element_id],
+                                         expected_names[element_id])
+                        self.assertEqual(map_data["nodes"][element_id]["title"],
+                                         title.split("（", maxsplit=1)[0])
+
+                    page.goto(
+                        f"{self.base_url}/self-draft/index.html"
+                        "#%E9%92%BB%E5%85%A5/xy_skills.session_work",
+                        wait_until="load")
+                    self.wait_for_view(page, "drill", "xy_skills.session_work")
+                    goal_card = page.locator(
+                        '.card[data-node-id="xy_skills.session_work.goal"] .card-title')
+                    self.assertEqual(goal_card.text_content(), "长目标契约（xy-goal）")
+
+                    page.goto(
+                        f"{self.base_url}/self-draft/index.html"
+                        "#%E9%92%BB%E5%85%A5/xy_skills.session_work.goal",
+                        wait_until="load")
+                    self.wait_for_view(page, "drill", "xy_skills.session_work.goal")
+                    self.assertEqual(page.locator("#crumbs button").last.text_content(),
+                                     "长目标契约（xy-goal）")
+                    page.close()
             finally:
                 browser.close()
 

@@ -137,6 +137,29 @@ class MapDataTest(unittest.TestCase):
         }
         return sibling_ids, build_page_data([repository], "草稿")
 
+    def build_unit_names(self, name, titles, file_owners, unowned_directories):
+        repository_root = Path(self.temporary.name) / name
+        repository_root.mkdir()
+        for directory in unowned_directories:
+            (repository_root / directory).mkdir(parents=True)
+        owners = {}
+        for file_path, owner in file_owners.items():
+            path = repository_root / file_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("归属文件。\n", encoding="utf-8")
+            owners[file_path] = owner
+        elements = {
+            element_id: element(element_id, title, "node", [])
+            for element_id, title in titles.items()
+        }
+        repository = {
+            "path": repository_root,
+            "root_id": "workspace",
+            "model": {"elements": elements, "relations": {}},
+            "owners": owners,
+        }
+        return build_page_data([repository], "草稿")[1]["unit_names"]
+
     def test_subrepository_root_is_attached_to_the_parent_placeholder(self):
         map_data, page_data = self.build("草稿")
         nodes = map_data["nodes"]
@@ -152,9 +175,117 @@ class MapDataTest(unittest.TestCase):
 
     def test_subrepository_names_are_display_metadata_without_changing_map_titles(self):
         map_data, page_data = self.build("草稿")
-        self.assertEqual(page_data["repo_names"], {"workspace.engine": "vendor"})
+        self.assertEqual(page_data["unit_names"]["workspace.engine"], ["vendor"])
+        self.assertEqual(page_data["unit_names"]["engine"], [])
+        self.assertNotIn("repo_names", page_data)
         self.assertEqual(map_data["nodes"]["workspace.engine"]["title"], "引擎仓")
         self.assertEqual(page_data["nodes"]["workspace.engine"]["title"], "引擎仓")
+
+    def test_exclusive_directory_is_the_unit_name(self):
+        unit_names = self.build_unit_names(
+            "exclusive-directory",
+            {"workspace": "工作区", "workspace.feature": "功能"},
+            {"feature/main.py": Owner("workspace.feature", "code"),
+             "feature/guide.md": Owner("workspace.feature", "docs"),
+             "feature/test_feature.py": Owner("workspace.feature", "tests")},
+            unowned_directories=(),
+        )
+
+        self.assertEqual(unit_names, {"workspace": [], "workspace.feature": ["feature"]})
+
+    def test_parent_and_child_nodes_get_their_shallowest_owned_directories(self):
+        unit_names = self.build_unit_names(
+            "parent-child-directories",
+            {"workspace": "工作区", "workspace.feature": "功能",
+             "workspace.feature.child": "子功能"},
+            {"src/main.md": Owner("workspace.feature", "docs"),
+             "src/child/guide.md": Owner("workspace.feature.child", "docs")},
+            unowned_directories=(),
+        )
+
+        self.assertEqual(unit_names["workspace.feature"], ["src"])
+        self.assertEqual(unit_names["workspace.feature.child"], ["child"])
+
+    def test_multiple_top_level_directories_are_sorted_by_path(self):
+        unit_names = self.build_unit_names(
+            "multiple-directories",
+            {"workspace": "工作区", "workspace.feature": "功能"},
+            {"zeta/second.md": Owner("workspace.feature", "docs"),
+             "alpha/first.md": Owner("workspace.feature", "docs")},
+            unowned_directories=(),
+        )
+
+        self.assertEqual(unit_names["workspace.feature"], ["alpha", "zeta"])
+
+    def test_group_only_gets_a_name_when_children_share_a_directory(self):
+        separate_directories = self.build_unit_names(
+            "separate-group-directories",
+            {"workspace": "工作区", "workspace.quality": "质量约束",
+             "workspace.quality.rules": "仓库规范", "workspace.quality.iron": "铁律"},
+            {"xy-repo-rules/rules.md": Owner("workspace.quality.rules", "docs"),
+             "xy-iron-law/iron.md": Owner("workspace.quality.iron", "docs")},
+            unowned_directories=(),
+        )
+        shared_directory = self.build_unit_names(
+            "shared-group-directory",
+            {"workspace": "工作区", "workspace.quality": "质量约束",
+             "workspace.quality.rules": "仓库规范", "workspace.quality.iron": "铁律"},
+            {"quality/rules.md": Owner("workspace.quality.rules", "docs"),
+             "quality/iron.md": Owner("workspace.quality.iron", "docs")},
+            unowned_directories=(),
+        )
+
+        self.assertEqual(separate_directories["workspace.quality"], [])
+        self.assertEqual(separate_directories["workspace.quality.rules"],
+                         ["xy-repo-rules"])
+        self.assertEqual(separate_directories["workspace.quality.iron"], ["xy-iron-law"])
+        self.assertEqual(shared_directory["workspace.quality"], ["quality"])
+        self.assertEqual(shared_directory["workspace.quality.rules"], [])
+        self.assertEqual(shared_directory["workspace.quality.iron"], [])
+
+    def test_repository_root_files_do_not_create_a_unit_name(self):
+        unit_names = self.build_unit_names(
+            "root-file",
+            {"workspace": "工作区"},
+            {"README.md": Owner("workspace", "docs")},
+            unowned_directories=(),
+        )
+
+        self.assertEqual(unit_names["workspace"], [])
+
+    def test_directory_shared_by_distinct_top_level_features_belongs_to_root(self):
+        unit_names = self.build_unit_names(
+            "shared-tests",
+            {"workspace": "工作区", "workspace.alpha": "功能甲",
+             "workspace.beta": "功能乙"},
+            {"tests/shared/test_alpha.md": Owner("workspace.alpha", "tests"),
+             "tests/shared/test_beta.md": Owner("workspace.beta", "tests")},
+            unowned_directories=(),
+        )
+
+        self.assertEqual(unit_names["workspace"], [])
+        self.assertEqual(unit_names["workspace.alpha"], [])
+        self.assertEqual(unit_names["workspace.beta"], [])
+
+    def test_directory_without_owned_files_does_not_create_a_unit_name(self):
+        unit_names = self.build_unit_names(
+            "unowned-directory",
+            {"workspace": "工作区", "workspace.feature": "功能"},
+            {},
+            unowned_directories=("repo-map",),
+        )
+
+        self.assertEqual(unit_names, {"workspace": [], "workspace.feature": []})
+
+    def test_data_only_directory_does_not_create_a_unit_name(self):
+        unit_names = self.build_unit_names(
+            "data-only-directory",
+            {"workspace": "工作区", "workspace.feature": "功能"},
+            {"file-length-exceptions/reason.md": Owner("workspace.feature", "data")},
+            unowned_directories=(),
+        )
+
+        self.assertEqual(unit_names, {"workspace": [], "workspace.feature": []})
 
     def test_own_total_and_coverage_include_subrepository_contents(self):
         map_data, page_data = self.build("草稿")

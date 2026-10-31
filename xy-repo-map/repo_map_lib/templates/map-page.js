@@ -25,8 +25,9 @@
   function nodeDepth(id){let depth=0,parent=DATA.nodes[id].parent;while(parent!==null&&parent!==undefined){depth++;parent=DATA.nodes[parent].parent;}return depth;}
   function visualDepth(id){let depth=0,parent=visualParent(id);while(parent!==null&&parent!==undefined){depth++;parent=visualParent(parent);}return depth;}
   function displayTitle(id){
-    const title=DATA.nodes[id].title,repositoryName=DATA.repo_names[id];
-    return repositoryName===undefined||repositoryName===title?title:`${title}（${repositoryName}）`;
+    const title=DATA.nodes[id].title;
+    const unitNames=DATA.unit_names[id].filter(name=>name!==title);
+    return unitNames.length?`${title}（${unitNames.join("、")}）`:title;
   }
   function widthOf(text,font){measure.font=font;return measure.measureText(String(text)).width;}
   function wrapText(text,width,font){

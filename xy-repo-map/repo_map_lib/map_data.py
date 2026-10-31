@@ -1,5 +1,5 @@
 """Compose checked repository models into page data and its public JSON contract."""
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .metrics import ZERO_COUNTS, count_file, coverage_counts
 from .ownership import link_records
@@ -21,6 +21,59 @@ def _endpoint(value):
     if isinstance(value, dict):
         return value.get("model", value.get("id", ""))
     return value
+
+
+def _lowest_common_ancestor(element_ids, parents):
+    ancestor_paths = []
+    for element_id in sorted(element_ids):
+        path = []
+        seen = set()
+        current = element_id
+        while current is not None:
+            if current in seen:
+                raise ValueError(f"仓图树出现循环层级：{element_id}")
+            seen.add(current)
+            path.append(current)
+            current = parents[current]
+        ancestor_paths.append(path)
+    common = set(ancestor_paths[0]).intersection(*ancestor_paths[1:])
+    return next(element_id for element_id in ancestor_paths[0] if element_id in common)
+
+
+def _unit_names(repositories, elements, parents, root_ids, repository_unit_names):
+    """Use assigned code, docs, and tests to find each node's shallowest exclusive dirs."""
+    names = {element_id: [] for element_id in elements}
+    for item in repositories:
+        owners_by_directory = {}
+        for file_path, owner in item["owners"].items():
+            if owner.category not in ("code", "docs", "tests"):
+                continue
+            parts = PurePosixPath(file_path).parts[:-1]
+            for depth in range(1, len(parts) + 1):
+                directory = PurePosixPath(*parts[:depth]).as_posix()
+                owners_by_directory.setdefault(directory, set()).add(owner.element)
+
+        directory_owners = {
+            directory: _lowest_common_ancestor(element_ids, parents)
+            for directory, element_ids in owners_by_directory.items()
+        }
+        directories_by_element = {}
+        for directory in sorted(directory_owners):
+            element_id = directory_owners[directory]
+            if element_id in root_ids:
+                continue
+            parent_directory = PurePosixPath(directory).parent.as_posix()
+            if directory_owners.get(parent_directory) == element_id:
+                continue
+            directories_by_element.setdefault(element_id, []).append(
+                PurePosixPath(directory).name)
+
+        for element_id, directory_names in directories_by_element.items():
+            names[element_id] = list(dict.fromkeys(directory_names))
+
+    for element_id, name in repository_unit_names.items():
+        names[element_id] = [name]
+    return names
 
 
 def _count_dict(counts):
@@ -114,7 +167,7 @@ def build_page_data(repositories, mode):
             elements[element_id] = element
 
     repo_roots = {}
-    repo_names = {}
+    repository_unit_names = {}
     parent_for_root = {}
     relations = []
     for item in repositories:
@@ -130,7 +183,7 @@ def build_page_data(repositories, mode):
             if element_id in repo_roots or child_root in parent_for_root:
                 raise ValueError(f"子仓入口重复：{element_id} → {child_root}")
             repo_roots[element_id] = child_root
-            repo_names[element_id] = Path(target).name
+            repository_unit_names[element_id] = Path(target).name
             parent_for_root[child_root] = element_id
         for relation in model.get("relations", {}).values():
             relations.append({
@@ -150,6 +203,9 @@ def build_page_data(repositories, mode):
             children[parent].append(element_id)
     for child_ids in children.values():
         child_ids.sort()
+
+    unit_names = _unit_names(
+        repositories, elements, parents, root_ids, repository_unit_names)
 
     own_counts = {element_id: ZERO_COUNTS for element_id in elements}
     own_coverage = {element_id: {} for element_id in elements}
@@ -235,7 +291,7 @@ def build_page_data(repositories, mode):
             for relation in relations
         ], key=lambda item: (item["source"], item["target"], item["title"])),
         "repo_roots": repo_roots,
-        "repo_names": repo_names,
+        "unit_names": unit_names,
         "drill_views": _drill_views(page_nodes, children, parents, relations, repo_roots),
     }
     return map_document, page_document

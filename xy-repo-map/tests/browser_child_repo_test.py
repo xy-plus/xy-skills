@@ -389,7 +389,7 @@ class RepositoryMapBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest
                     self.expected_drill_ids(map_document, page_document,
                                             "workspace.session.process"))
                 self.assertEqual(page.locator("#crumbs button").all_text_contents(),
-                                 ["工作区", "会话工作流", "执行步骤"])
+                                 ["工作区", "会话工作流（docs、src、tests）", "执行步骤"])
                 process_ids = self.expected_drill_ids(
                     map_document, page_document, "workspace.session.process")
                 self.assertEqual(process_ids, {"workspace.session.process.step"})
@@ -432,7 +432,8 @@ class RepositoryMapBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest
                 self.wait_for_view(page, "drill", "workspace.session.process.step")
                 self.assert_address(page, deep_route)
                 self.assertEqual(page.locator("#crumbs button").all_text_contents(),
-                                 ["工作区", "会话工作流", "执行步骤", "单步记录"])
+                                 ["工作区", "会话工作流（docs、src、tests）", "执行步骤",
+                                  "单步记录"])
                 expected_leaf = self.expected_drill_ids(
                     map_document, page_document, "workspace.session.process.step")
                 self.assert_visible_totals(page, map_document, expected_leaf)

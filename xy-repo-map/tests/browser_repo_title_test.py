@@ -12,7 +12,7 @@ class RepositoryTitleBrowserAcceptanceTest(ParentChildBrowserTestSupport, unitte
             f'.card[data-node-id="{element_id}"] .card-title').evaluate(
                 "element => element.textContent")
 
-    def test_repository_names_appear_on_cards_and_breadcrumbs(self):
+    def test_unit_names_appear_on_cards_and_breadcrumbs(self):
         with sync_playwright() as playwright:
             browser = self.open_browser(playwright)
             try:
@@ -21,12 +21,16 @@ class RepositoryTitleBrowserAcceptanceTest(ParentChildBrowserTestSupport, unitte
                           wait_until="load")
                 self.wait_for_view(page, "expand", None)
                 map_document = self.map_data("draft")
+                page_data = self.page_data(page)
                 self.assertEqual(self.card_title(page, "workspace.engine"),
                                  "引擎子仓（engine）")
                 self.assertEqual(self.card_title(page, "workspace.solo"), "solo")
+                self.assertEqual(page_data["unit_names"]["workspace.engine"], ["engine"])
+                self.assertEqual(page_data["unit_names"]["workspace.solo"], ["solo"])
                 self.assertEqual(map_document["nodes"]["workspace.engine"]["title"],
                                  "引擎子仓")
                 self.assertEqual(map_document["nodes"]["workspace.solo"]["title"], "solo")
+                self.assertNotIn("unit_names", map_document)
 
                 page.goto(f"{self.base_url}/draft/index.html#%E9%92%BB%E5%85%A5/workspace",
                           wait_until="load")
@@ -36,6 +40,10 @@ class RepositoryTitleBrowserAcceptanceTest(ParentChildBrowserTestSupport, unitte
                 self.assertEqual(self.card_title(page, "workspace.solo"), "solo")
                 page.locator('.card[data-node-id="workspace.engine"]').click()
                 self.wait_for_view(page, "drill", "workspace.engine")
+                self.assertEqual(page.locator("#crumbs button").last.text_content(),
+                                 "引擎子仓（engine）")
+                self.assertEqual(page_data["unit_names"]["engine"], [])
+                self.assertEqual(map_document["nodes"]["engine"]["title"], "引擎")
             finally:
                 browser.close()
 
