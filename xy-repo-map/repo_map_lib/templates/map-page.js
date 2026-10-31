@@ -12,7 +12,9 @@
   const PALETTE=["#4674bb","#438674","#8062a8","#ad7c38","#448a9a","#a66a78"];
   const TREE_LAYOUT={"elk.algorithm":"layered","elk.direction":"RIGHT","elk.edgeRouting":"ORTHOGONAL",
     "elk.spacing.nodeNode":"48","elk.layered.spacing.nodeNodeBetweenLayers":"120",
-    "elk.spacing.edgeNode":"12","elk.spacing.edgeEdge":"8"};
+    "elk.spacing.edgeNode":"12","elk.spacing.edgeEdge":"8",
+    "elk.layered.considerModelOrder.strategy":"NODES_AND_EDGES",
+    "elk.layered.crossingMinimization.forceNodeModelOrder":"true"};
   const DRILL_LAYOUT={"elk.algorithm":"layered","elk.direction":"RIGHT","elk.edgeRouting":"ORTHOGONAL",
     "elk.hierarchyHandling":"INCLUDE_CHILDREN","elk.spacing.nodeNode":"38",
     "elk.layered.spacing.nodeNodeBetweenLayers":"54","elk.spacing.edgeNode":"12",
@@ -23,12 +25,76 @@
     if(node.parent!==null){const list=children.get(node.parent)||[];list.push(id);children.set(node.parent,list);}
   }
   for(const ids of children.values())ids.sort();
+  const siblingOrderCache=new Map(),EXACT_ORDER_LIMIT=8,HEURISTIC_ORDER_PASSES=12;
   let view={mode:"expand",current:null},transform={x:0,y:0,scale:1};
   let currentBounds={x:0,y:0,width:1,height:1},drawNumber=0,fontsReady=false;
   let drag=null,pinch=null,pressTimer=null,suppressedGesture=null,highlightedNode=null;
   const pointers=new Map();
   function childrenOf(id){return children.get(id)||[];}
-  function visualChildren(id){return childrenOf(DATA.repo_roots[id]||id);}
+  function visualChildren(id){
+    const parent=DATA.repo_roots[id]||id;
+    if(!siblingOrderCache.has(parent))siblingOrderCache.set(parent,orderedSiblings(childrenOf(parent)));
+    return siblingOrderCache.get(parent);
+  }
+  function orderedSiblings(siblings){
+    if(siblings.length<2)return siblings.slice();
+    const members=new Set(siblings),edges=DATA.relations.map(relation=>({
+      source:REPO_ALIAS[relation.source]||relation.source,
+      target:REPO_ALIAS[relation.target]||relation.target
+    })).filter(edge=>edge.source!==edge.target&&members.has(edge.source)&&members.has(edge.target));
+    if(!edges.length)return siblings.slice();
+    return siblings.length<=EXACT_ORDER_LIMIT?exhaustiveSiblingOrder(siblings,edges):
+      heuristicSiblingOrder(siblings,edges);
+  }
+  function siblingObjective(order,edges){
+    const positions=new Map(order.map((id,index)=>[id,index]));let crossings=0,span=0;
+    for(let index=0;index<edges.length;index++){
+      const edge=edges[index],first=positions.get(edge.source),second=positions.get(edge.target);
+      span+=Math.abs(first-second);
+      const left=Math.min(first,second),right=Math.max(first,second);
+      for(let next=index+1;next<edges.length;next++){
+        const other=edges[next];
+        if(edge.source===other.source||edge.source===other.target||
+           edge.target===other.source||edge.target===other.target)continue;
+        const otherLeft=Math.min(positions.get(other.source),positions.get(other.target));
+        const otherRight=Math.max(positions.get(other.source),positions.get(other.target));
+        if(left<otherLeft&&otherLeft<right&&right<otherRight||
+           otherLeft<left&&left<otherRight&&otherRight<right)crossings++;
+      }
+    }
+    return {crossings,span};
+  }
+  function compareSiblingObjectives(first,second){
+    return first.crossings-second.crossings||first.span-second.span;
+  }
+  function exhaustiveSiblingOrder(siblings,edges){
+    const prefix=[],remaining=siblings.slice();let best=siblings.slice();
+    let bestObjective=siblingObjective(best,edges);
+    function visit(){
+      if(!remaining.length){
+        const objective=siblingObjective(prefix,edges);
+        if(compareSiblingObjectives(objective,bestObjective)<0){best=prefix.slice();bestObjective=objective;}
+        return;
+      }
+      for(let index=0;index<remaining.length;index++){
+        const [id]=remaining.splice(index,1);prefix.push(id);visit();prefix.pop();remaining.splice(index,0,id);
+      }
+    }
+    visit();return best;
+  }
+  function heuristicSiblingOrder(siblings,edges){
+    let order=siblings.slice(),objective=siblingObjective(order,edges);
+    for(let pass=0;pass<HEURISTIC_ORDER_PASSES;pass++){
+      let improved=false;
+      for(let index=0;index<order.length-1;index++){
+        const candidate=order.slice();[candidate[index],candidate[index+1]]=[candidate[index+1],candidate[index]];
+        const next=siblingObjective(candidate,edges);
+        if(compareSiblingObjectives(next,objective)<0){order=candidate;objective=next;improved=true;}
+      }
+      if(!improved)break;
+    }
+    return order;
+  }
   function visualParent(id){const parent=DATA.nodes[id].parent;return REPO_ALIAS[parent]||parent;}
   function nodeDepth(id){let depth=0,parent=DATA.nodes[id].parent;while(parent!==null&&parent!==undefined){depth++;parent=DATA.nodes[parent].parent;}return depth;}
   function visualDepth(id){let depth=0,parent=visualParent(id);while(parent!==null&&parent!==undefined){depth++;parent=visualParent(parent);}return depth;}
@@ -49,7 +115,7 @@
     }
     return lines;
   }
-  function nodeSize(id,hasKids,depth,maxWidth=null){
+  function nodeSize(id,hasKids,depth){
     const node=DATA.nodes[id],titleFontSize=depth===0?17:depth===1?16:15;
     const titleWeight=depth<2?700:600,titleFont=`${titleWeight} ${titleFontSize}px ${FONT_FAMILY}`;
     const badgeWidth=node.kind==="repo"?widthOf("子仓",`700 10px ${FONT_FAMILY}`)+12:0;
@@ -58,25 +124,17 @@
     const metricRowWidth=metricWidths.reduce((sum,width)=>sum+width,0)+5*(metricWidths.length-1);
     const titleWidth=widthOf(node.title,titleFont)+badgeWidth+(badgeWidth?6:0);
     const descriptionNatural=Math.min(330,widthOf(node.description,DESCRIPTION_FONT));
-    const desiredWidth=Math.max(230,metricRowWidth,Math.min(330,titleWidth),descriptionNatural);
-    const contentWidth=maxWidth===null?desiredWidth:Math.max(110,Math.min(desiredWidth,maxWidth-28));
-    const titleLines=wrapText(node.title,Math.max(40,contentWidth-badgeWidth-(badgeWidth?6:0)),titleFont);
+    const contentWidth=Math.max(230,metricRowWidth,Math.min(330,titleWidth),descriptionNatural);
+    const titleLines=wrapText(node.title,contentWidth-badgeWidth-(badgeWidth?6:0),titleFont);
     const descriptionLines=wrapText(node.description,contentWidth,DESCRIPTION_FONT);
     const titleLineHeight=titleFontSize+2,titleY=10+titleFontSize;
-    const metricHeight=23,metricGap=5;
-    const metricRows=[];let row=0,x=14;
-    metricWidths.forEach((width,index)=>{
-      if(x>14&&x+width>14+contentWidth){row++;x=14;}
-      metricRows.push({index,row,x,width});x+=width+metricGap;
-    });
-    const rowCount=row+1,metricY=10+titleLines.length*titleLineHeight+5;
-    const descriptionTop=metricY+rowCount*metricHeight+(rowCount-1)*4+6,descriptionLineHeight=17;
+    const metricY=10+titleLines.length*titleLineHeight+5,metricHeight=23;
+    const descriptionTop=metricY+metricHeight+6,descriptionLineHeight=17;
     const coverageY=descriptionTop+descriptionLines.length*descriptionLineHeight+14;
     const height=hasKids?coverageY:coverageY+15;
-    const metricPositions=metricRows.map(item=>({...item,y:metricY+item.row*(metricHeight+4)}));
     return {width:contentWidth+28,height,titleLines,titleY,titleLineHeight,titleFontSize,
       descriptionLines,descriptionTop,descriptionLineHeight,coverageY,metricY,metricHeight,
-      metricTexts,metricWidths,metricGap,badgeWidth,metricPositions};
+      metricTexts,metricWidths,metricGap:5,badgeWidth};
   }
   function expandedIds(){
     const result=[],seen=new Set();
@@ -94,19 +152,8 @@
       edges.push({id:`tree-${parent}-${id}`,sources:[parent],targets:[id]});}
     return {id:"root",layoutOptions:TREE_LAYOUT,children:nodes,edges};
   }
-  function mobileExpandedLayout(ids){
-    const nodes=[],right=svg.clientWidth-160;let y=12;
-    for(const id of ids){
-      const depth=visualDepth(id),x=16+depth*12;
-      const size=nodeSize(id,visualChildren(id).length>0,depth,right-x);
-      nodes.push({id,x,y,width:size.width,height:size.height,_depth:depth});y+=size.height+14;
-    }
-    return {id:"mobile-tree",children:nodes,width:svg.clientWidth,height:y};
-  }
   function drillGraph(current){
-    const projection=DATA.drill_views[current],mobile=svg.clientWidth<600;
-    const layoutOptions=mobile?{...DRILL_LAYOUT,"elk.direction":"DOWN",
-      "elk.spacing.nodeNode":"30","elk.layered.spacing.nodeNodeBetweenLayers":"30"}:DRILL_LAYOUT;
+    const projection=DATA.drill_views[current];
     const nodes=projection.nodes.map(id=>{
       const size=nodeSize(id,false,nodeDepth(id));
       return {id,width:size.width,height:size.height,_depth:nodeDepth(id)};
@@ -115,9 +162,7 @@
       id:`drill-${index}-${edge.source}-${edge.target}`,sources:[edge.source],targets:[edge.target],
       labels:edge.title?[{text:edge.title,width:Math.max(30,widthOf(edge.title,EDGE_FONT)+16),height:22}]:[]
     }));
-    if(mobile)for(let index=1;index<nodes.length;index++)edges.push({
-      id:`pack-${index}`,sources:[nodes[index-1].id],targets:[nodes[index].id]});
-    return {id:"root",layoutOptions,children:nodes,edges};
+    return {id:"root",layoutOptions:DRILL_LAYOUT,children:nodes,edges};
   }
   function svgElement(tag,attributes){
     const element=document.createElementNS(SVG_NS,tag);
@@ -148,36 +193,14 @@
       }
     }
   }
-  function drawMobileComposition(layer,ids,positions){
-    const groups=new Map();
-    for(const id of ids){const parent=visualParent(id);if(parent!==null){const list=groups.get(parent)||[];list.push(id);groups.set(parent,list);}}
-    let left=Infinity,right=-Infinity,top=Infinity,bottom=-Infinity;
-    for(const [parent,childIds] of groups){
-      const source=positions.get(parent),targets=childIds.map(id=>({id,box:positions.get(id)})).sort((a,b)=>a.box.y-b.box.y);
-      const trunkX=source.x-8,sourceY=source.y+source.height/2;
-      const firstY=targets[0].box.y+targets[0].box.height/2,last=targets[targets.length-1].box;
-      const lastY=last.y+last.height/2;
-      layer.appendChild(svgElement("path",{class:"composition-spine",
-        d:`M${source.x} ${sourceY} H${trunkX} M${trunkX} ${firstY} V${lastY}`,"data-source":parent}));
-      left=Math.min(left,trunkX);right=Math.max(right,source.x);top=Math.min(top,sourceY,firstY);bottom=Math.max(bottom,sourceY,lastY);
-      for(const {id,box} of targets){
-        const y=box.y+box.height/2;
-        layer.appendChild(svgElement("path",{class:"composition-edge",d:`M${trunkX} ${y} H${box.x}`,
-          "data-source":parent,"data-target":id}));
-        right=Math.max(right,box.x);top=Math.min(top,y);bottom=Math.max(bottom,y);
-      }
-    }
-    return {x:Number.isFinite(left)?left:0,y:Number.isFinite(top)?top:0,
-      width:Number.isFinite(left)?right-left:1,height:Number.isFinite(top)?bottom-top:1};
-  }
   function drawElkEdges(layer,edges){
     for(const edge of edges||[]){
-      if(edge.id&&edge.id.startsWith("pack-"))continue;
       for(const section of edge.sections||[]){
         const points=[section.startPoint,...(section.bendPoints||[]),section.endPoint];
         if(points.length<2)continue;
         layer.appendChild(svgElement("path",{class:"edge",
-          d:`M${points.map(point=>`${point.x} ${point.y}`).join(" L")}`,"marker-end":"url(#arrow)"}));
+          d:`M${points.map(point=>`${point.x} ${point.y}`).join(" L")}`,"marker-end":"url(#arrow)",
+          "data-source":edge.sources&&edge.sources[0],"data-target":edge.targets&&edge.targets[0]}));
       }
       const label=edge.labels&&edge.labels[0];
       if(label&&label.x!==undefined&&label.y!==undefined){
@@ -189,43 +212,8 @@
       }
     }
   }
-  function labelClear(x,y,width,height,positions,skip,labels){
-    const left=x-width/2,right=x+width/2,top=y-height/2,bottom=y+height/2;
-    for(const [id,box] of positions){
-      if(skip.has(id))continue;
-      if(left<box.x+box.width&&right>box.x&&top<box.y+box.height&&bottom>box.y)return false;
-    }
-    return !labels.some(label=>left<label.right&&right>label.left&&top<label.bottom&&bottom>label.top);
-  }
-  function drawMobileDrillEdges(layer,edges,positions){
-    const bounds={left:Infinity,right:-Infinity,top:Infinity,bottom:-Infinity};
-    for(const box of positions.values()){bounds.left=Math.min(bounds.left,box.x);bounds.right=Math.max(bounds.right,box.x+box.width);bounds.top=Math.min(bounds.top,box.y);bounds.bottom=Math.max(bounds.bottom,box.y+box.height);}
-    const ordered=[...positions.values()].sort((a,b)=>a.y-b.y),placed=[];let index=0;
-    for(const edge of edges||[]){if(edge.id&&edge.id.startsWith("pack-"))continue;
-      const source=positions.get(edge.sources[0]),target=positions.get(edge.targets[0]);if(!source||!target)continue;
-      const sourceY=source.y+source.height/2,targetY=target.y+target.height/2;
-      const lane=Math.max(...[...positions.values()].map(box=>box.x+box.width))+24+index*12;
-      const points=[{x:source.x+source.width,y:sourceY},{x:lane,y:sourceY},{x:lane,y:targetY},{x:target.x+target.width,y:targetY}];
-      layer.appendChild(svgElement("path",{class:"edge",d:`M${points.map(point=>`${point.x} ${point.y}`).join(" L")}`,"marker-end":"url(#arrow)","data-source":edge.sources[0],"data-target":edge.targets[0]}));
-      const label=edge.labels&&edge.labels[0];
-      if(label){const width=label.width||30,height=label.height||22,midpoint=(sourceY+targetY)/2;
-        const candidates=ordered.slice(1).map((box,position)=>{
-          const previous=ordered[position],gap=box.y-(previous.y+previous.height);
-          return gap>=height+4?previous.y+previous.height+gap/2:null;
-        }).filter(value=>value!==null).sort((a,b)=>Math.abs(a-midpoint)-Math.abs(b-midpoint));
-        let labelX=lane,labelY=candidates.find(y=>labelClear(lane,y,width+8,height+4,positions,new Set(),placed));
-        if(labelY===undefined){labelX=lane+width/2+10;labelY=midpoint;}
-        layer.appendChild(svgElement("rect",{class:"edge-label-bg",x:labelX-width/2-4,y:labelY-height/2-2,width:width+8,height:height+4,rx:5}));
-        const text=svgElement("text",{class:"edge-label",x:labelX,y:labelY});text.textContent=label.text||"";layer.appendChild(text);
-        const rect={left:labelX-width/2-4,right:labelX+width/2+4,top:labelY-height/2-2,bottom:labelY+height/2+2};placed.push(rect);
-        bounds.left=Math.min(bounds.left,rect.left);bounds.right=Math.max(bounds.right,rect.right);bounds.top=Math.min(bounds.top,rect.top);bounds.bottom=Math.max(bounds.bottom,rect.bottom);
-      }
-      for(const point of points){bounds.left=Math.min(bounds.left,point.x);bounds.right=Math.max(bounds.right,point.x);bounds.top=Math.min(bounds.top,point.y);bounds.bottom=Math.max(bounds.bottom,point.y);}index++;
-    }
-    return {x:bounds.left,y:bounds.top,width:bounds.right-bounds.left,height:bounds.bottom-bounds.top};
-  }
   function drawNode(layer,id,position,depth,hasKids){
-    const node=DATA.nodes[id],size=nodeSize(id,hasKids,depth,position.width),canEnter=DATA.drill_views[id].nodes.length!==1||DATA.drill_views[id].nodes[0]!==id;
+    const node=DATA.nodes[id],size=nodeSize(id,hasKids,depth),canEnter=DATA.drill_views[id].nodes.length!==1||DATA.drill_views[id].nodes[0]!==id;
     const group=svgElement("g",{class:`card${canEnter?" clickable":""}`,
       transform:`translate(${position.x} ${position.y})`,"data-node-id":id});
     group.appendChild(svgElement("rect",{class:"card-shape",x:0,y:0,width:position.width,height:position.height,
@@ -238,10 +226,12 @@
       group.appendChild(svgElement("rect",{class:"repo-badge",x:badgeX,y:badgeY,width:size.badgeWidth,height:16,rx:6}));
       const badge=svgElement("text",{class:"repo-badge-text",x:badgeX+6,y:badgeY+12});badge.textContent="子仓";group.appendChild(badge);
     }
+    let metricX=14;
     size.metricTexts.forEach((value,index)=>{
-      const slot=size.metricPositions[index];
-      group.appendChild(svgElement("rect",{class:"metric-box",x:slot.x,y:slot.y,width:slot.width,height:size.metricHeight,rx:6}));
-      const metric=svgElement("text",{class:"metric-text",x:slot.x+7,y:slot.y+16});metric.textContent=value;group.appendChild(metric);
+      const width=size.metricWidths[index];
+      group.appendChild(svgElement("rect",{class:"metric-box",x:metricX,y:size.metricY,width,height:size.metricHeight,rx:6}));
+      const metric=svgElement("text",{class:"metric-text",x:metricX+7,y:size.metricY+16});metric.textContent=value;group.appendChild(metric);
+      metricX+=width+size.metricGap;
     });
     textLines(group,14,size.descriptionTop+12,size.descriptionLines,"description",size.descriptionLineHeight);
     if(!hasKids){const coverage=svgElement("text",{class:"coverage",x:14,y:size.coverageY});
@@ -265,12 +255,6 @@
     transform.scale=scale;transform.x=(width-currentBounds.width*scale)/2-currentBounds.x*scale;
     transform.y=(height-currentBounds.height*scale)/2-currentBounds.y*scale;applyTransform();
   }
-  function fitWidth(){
-    const width=svg.clientWidth;if(!width||!currentBounds.width)return;
-    const scale=Math.max(.08,Math.min(3,(width-24)/currentBounds.width));
-    transform.scale=scale;transform.x=(width-currentBounds.width*scale)/2-currentBounds.x*scale;
-    transform.y=18-currentBounds.y*scale;applyTransform();
-  }
   function routeFromHash(){
     let fragment;try{fragment=decodeURIComponent(location.hash.slice(1));}catch(_error){return {mode:"expand",current:null,valid:false};}
     if(fragment==="展开")return {mode:"expand",current:null,valid:true};
@@ -282,22 +266,13 @@
     const route=routeFromHash();if(route.valid&&route.mode===mode&&route.current===current){view={mode,current};draw();return;}
     location.hash=mode==="expand"?"#展开":`#钻入/${encodeURIComponent(current)}`;
   }
-  function unionBounds(first,second){
-    const left=Math.min(first.x,second.x),top=Math.min(first.y,second.y);
-    const right=Math.max(first.x+first.width,second.x+second.width);
-    const bottom=Math.max(first.y+first.height,second.y+second.height);
-    return {x:left,y:top,width:right-left,height:bottom-top};
-  }
   function draw(){
     const drawId=++drawNumber,modeButton=document.getElementById("mode"),relationButton=document.getElementById("relations");
     modeButton.textContent=svg.clientWidth<=480?(view.mode==="expand"?"钻入":"全部"):(view.mode==="expand"?"切换到钻入":"全部展开");
     relationButton.hidden=view.mode!=="expand";drawBreadcrumbs(view.current);
     const ids=view.mode==="expand"?expandedIds():DATA.drill_views[view.current].nodes;
-    const mobileExpanded=view.mode==="expand"&&svg.clientWidth<600;
-    const mobileDrill=view.mode==="drill"&&svg.clientWidth<600;
-    const graph=mobileExpanded?null:view.mode==="expand"?expandedGraph(ids):drillGraph(view.current);
-    const layout=mobileExpanded?Promise.resolve(mobileExpandedLayout(ids)):new ELK().layout(graph);
-    layout.then(result=>{
+    const graph=view.mode==="expand"?expandedGraph(ids):drillGraph(view.current);
+    new ELK().layout(graph).then(result=>{
       if(drawId!==drawNumber)return;
       svg.replaceChildren();const defs=svgElement("defs",{});
       for(const [id,fill] of [["arrow","#7b8da8"],["relation-arrow","#b64e83"]]){
@@ -308,19 +283,16 @@
       const layers={tree:svgElement("g",{id:"tree-layer"}),edges:svgElement("g",{id:"drill-edge-layer"}),
         relations:svgElement("g",{id:"relation-layer"}),cards:svgElement("g",{id:"card-layer"})};
       scene.append(layers.tree,layers.edges,layers.relations,layers.cards);
-      if(mobileDrill)for(const node of result.children)node.x=12;
       const positions=new Map(),layoutNodes=new Map();
       for(const node of result.children||[]){positions.set(node.id,{x:node.x||0,y:node.y||0,width:node.width||0,height:node.height||0});layoutNodes.set(node.id,node);}
       if(view.mode==="expand"){
-        const treeBounds=mobileExpanded?drawMobileComposition(layers.tree,ids,positions):
-          (drawComposition(layers.tree,ids,positions),{x:0,y:0,width:result.width||1,height:result.height||1});
+        drawComposition(layers.tree,ids,positions);
         const relationBounds=window.XYRepoMapRelations.draw({layer:layers.relations,positions,ids,
-          data:DATA,repoAlias:REPO_ALIAS,svgElement,widthOf,wrapText,visualDepth,
-          mobile:mobileExpanded,viewportWidth:svg.clientWidth});
-        currentBounds=mobileExpanded?unionBounds(treeBounds,relationBounds):relationBounds;
+          data:DATA,repoAlias:REPO_ALIAS,svgElement,widthOf,wrapText,visualDepth});
+        currentBounds=relationBounds;
       }else{
-        currentBounds=mobileDrill?drawMobileDrillEdges(layers.edges,result.edges,positions):
-          (drawElkEdges(layers.edges,result.edges),{x:0,y:0,width:result.width||1,height:result.height||1});
+        drawElkEdges(layers.edges,result.edges);
+        currentBounds={x:0,y:0,width:result.width||1,height:result.height||1};
       }
       for(const id of ids){const node=layoutNodes.get(id),depth=view.mode==="expand"?visualDepth(id):nodeDepth(id);
         const hasKids=view.mode==="expand"&&visualChildren(id).length>0;
@@ -328,7 +300,7 @@
       svg.setAttribute("data-mode",view.mode);svg.setAttribute("data-current",view.current||"");
       transform={x:0,y:0,scale:1};
       const relationLayer=document.getElementById("relation-layer");relationLayer.style.display=document.getElementById("relations").getAttribute("aria-pressed")==="true"?"":"none";
-      applyHighlight();if(mobileExpanded)applyTransform();else requestAnimationFrame(()=>mobileDrill?fitWidth():fit());
+      applyHighlight();requestAnimationFrame(fit);
     });
   }
   function zoomAt(x,y,factor){
@@ -382,6 +354,7 @@
       const completed=drag;cancelPress();
       if(completed.moved||completed.longPress){suppressedGesture={point:completed.last,time:performance.now()};}
       else if(completed.clickable){suppressedGesture={point:completed.last,time:performance.now()};setRoute("drill",completed.nodeId);}
+      else if(!completed.nodeId)setHighlight(null);
       drag=null;svg.classList.remove("dragging");
     }
   }
@@ -412,10 +385,7 @@
   });
   document.getElementById("zoom-in").addEventListener("click",()=>zoomAt(svg.clientWidth/2,svg.clientHeight/2,1.2));
   document.getElementById("zoom-out").addEventListener("click",()=>zoomAt(svg.clientWidth/2,svg.clientHeight/2,1/1.2));
-  window.addEventListener("resize",()=>{
-    if(view.mode==="expand"&&svg.clientWidth<600)draw();
-    else svg.clientWidth<600?fitWidth():fit();
-  });
+  window.addEventListener("resize",fit);
   window.addEventListener("hashchange",()=>{
     const next=routeFromHash();if(!next.valid){view={mode:"expand",current:null};if(fontsReady)draw();location.hash="#展开";return;}
     if(view.mode===next.mode&&view.current===next.current)return;view=next;if(fontsReady)draw();

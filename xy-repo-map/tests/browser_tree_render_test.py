@@ -1,12 +1,28 @@
 """Real browser checks for expanded tree rendering and phone interaction."""
 import re
 import os
+from itertools import permutations
 from pathlib import Path
 import unittest
 
 from playwright.sync_api import sync_playwright
 
 from browser_child_repo_test import ParentChildBrowserTestSupport, run_repo_map
+
+
+def relation_order_objective(order, edges):
+    positions = {node: index for index, node in enumerate(order)}
+    crossings = 0
+    span = sum(abs(positions[source] - positions[target]) for source, target in edges)
+    for index, (source, target) in enumerate(edges):
+        first, second = sorted((positions[source], positions[target]))
+        for other_source, other_target in edges[index + 1:]:
+            if len({source, target, other_source, other_target}) < 4:
+                continue
+            third, fourth = sorted((positions[other_source], positions[other_target]))
+            crossings += int(first < third < second < fourth or
+                             third < first < fourth < second)
+    return crossings, span
 
 
 class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.TestCase):
@@ -18,21 +34,94 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
         run_repo_map("render", "--repo", self_repo, "--mode", "草稿",
                      "--out", cls.self_draft_output)
 
-    def test_phone_viewport_renders_self_repository_relations(self):
+    def test_phone_and_desktop_share_self_repository_layout_and_fit_on_open(self):
         with sync_playwright() as playwright:
             browser = self.open_browser(playwright)
             try:
-                page = browser.new_page(viewport={"width": 390, "height": 844},
-                                        device_scale_factor=1, is_mobile=True, has_touch=True)
+                url = f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80"
+                desktop = browser.new_page(viewport={"width": 1440, "height": 900})
+                phone = browser.new_page(viewport={"width": 390, "height": 844},
+                                         device_scale_factor=1, is_mobile=True, has_touch=True)
                 errors = []
-                page.on("pageerror", lambda error: errors.append(str(error)))
+                for page in (desktop, phone):
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    page.goto(url, wait_until="load")
+                    page.wait_for_function("document.querySelectorAll('.card').length > 0",
+                                           timeout=30000)
+                self.assertEqual(errors, [])
+                self.assertEqual(self.layout_snapshot(phone), self.layout_snapshot(desktop))
+                self.assertLessEqual(self.scene_scale(phone.locator("#scene")), 1)
+                self.assertGreater(self.scene_scale(phone.locator("#scene")), .08)
+                self.assert_scene_fits(desktop)
+                self.assert_scene_fits(phone)
+                self.assert_relation_geometry(phone)
+                for fragment in ("#%E9%92%BB%E5%85%A5/workspace",
+                                 "#%E9%92%BB%E5%85%A5/workspace.session"):
+                    for page in (desktop, phone):
+                        page.goto(f"{self.base_url}/self-draft/index.html{fragment}",
+                                  wait_until="load")
+                        page.wait_for_function("document.querySelectorAll('.card').length > 0")
+                    self.assertEqual(self.layout_snapshot(phone), self.layout_snapshot(desktop),
+                                     fragment)
+            finally:
+                browser.close()
+
+    def test_siblings_use_the_brute_force_crossing_and_span_optimum(self):
+        with sync_playwright() as playwright:
+            browser = self.open_browser(playwright)
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 900})
                 page.goto(f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80",
                           wait_until="load")
-                page.wait_for_function("document.querySelectorAll('.card').length > 0",
-                                       timeout=30000)
-                self.assertEqual(errors, [])
-                self.assertEqual(self.scene_scale(page.locator("#scene")), 1)
-                self.assert_relation_geometry(page)
+                page.wait_for_function("document.querySelectorAll('.card').length > 0")
+                data = self.page_data(page)
+                parent = "xy_skills.session_work"
+                siblings = [node for node, value in data["nodes"].items()
+                            if value["parent"] == parent]
+                edges = [(row["source"], row["target"]) for row in data["relations"]
+                         if row["source"] in siblings and row["target"] in siblings]
+                self.assertEqual(len(siblings), 8)
+                actual_order = page.evaluate("""parent => [...document.querySelectorAll('.card')]
+                  .filter(card => card.dataset.nodeId.startsWith(parent + '.'))
+                  .sort((first,second) => first.transform.baseVal.consolidate().matrix.f -
+                    second.transform.baseVal.consolidate().matrix.f)
+                  .map(card => card.dataset.nodeId)""", parent)
+                expected = min(relation_order_objective(order, edges)
+                               for order in permutations(siblings))
+                self.assertEqual(expected[0], 2)
+                self.assertEqual(relation_order_objective(actual_order, edges), expected)
+            finally:
+                browser.close()
+
+    def test_long_relation_routes_around_intermediate_cards(self):
+        with sync_playwright() as playwright:
+            browser = self.open_browser(playwright)
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 900})
+                page.goto(f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80",
+                          wait_until="load")
+                page.wait_for_function("document.querySelectorAll('.card').length > 0")
+                collisions = page.evaluate("""() => {
+                  const edge=[...document.querySelectorAll('.relation-edge')].find(path =>
+                    path.dataset.source==='xy_skills.session_work' &&
+                    path.dataset.target==='xy_skills.quality');
+                  const endpoints=new Set([edge.dataset.source,edge.dataset.target]);
+                  const cards=[...document.querySelectorAll('.card')].filter(card=>
+                    !endpoints.has(card.dataset.nodeId)).map(card=>{
+                    const box=card.querySelector('.card-shape').getBBox();
+                    const matrix=card.transform.baseVal.consolidate().matrix;
+                    return {id:card.dataset.nodeId,left:matrix.e,right:matrix.e+box.width,
+                      top:matrix.f,bottom:matrix.f+box.height};
+                  });
+                  const collisions=new Set(),length=edge.getTotalLength();
+                  for(let step=1;step<1000;step++){
+                    const point=edge.getPointAtLength(length*step/1000);
+                    for(const card of cards)if(point.x>card.left&&point.x<card.right&&
+                      point.y>card.top&&point.y<card.bottom)collisions.add(card.id);
+                  }
+                  return [...collisions];
+                }""")
+                self.assertEqual(collisions, [])
             finally:
                 browser.close()
 
@@ -143,40 +232,18 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 phone = {"width": 390, "height": 844}
                 page, _remote_requests = self.open_page(browser, "draft", None, phone, True)
                 self.wait_for_view(page, "expand", None)
-                map_document = self.map_data("draft")
-                page_data = self.page_data(page)
-                visible_ids = set(map_document["nodes"]) - set(page_data["repo_roots"].values())
-                depths = self.visual_depths(map_document, page_data, visible_ids)
-                bounds = page.locator(".card").evaluate_all("""cards => cards.map(card => {
-                  const box=card.getBoundingClientRect(); return {id:card.dataset.nodeId,
-                    left:box.left,right:box.right,top:box.top,bottom:box.bottom};
-                })""")
-                self.assertEqual(self.scene_scale(page.locator("#scene")), 1)
-                root = page_data["top_roots"][0]
-                self.assertLess(next(box["top"] for box in bounds if box["id"] == root), 100)
-                root_left = min(box["left"] for box in bounds if depths[box["id"]] == 0)
-                for box in bounds:
-                    self.assertAlmostEqual(box["left"], root_left + depths[box["id"]] * 12, delta=1)
-                    self.assertLessEqual(box["right"], phone["width"])
-                self.assertTrue(all(bounds[index + 1]["top"] >= bounds[index]["bottom"]
-                                    for index in range(len(bounds) - 1)))
+                self.assertLessEqual(self.scene_scale(page.locator("#scene")), 1)
                 self.assert_relation_geometry(page)
                 label_opacities = page.locator(".relation-label-bg,.relation-label").evaluate_all(
                     "labels => labels.map(label => Number(getComputedStyle(label).opacity))")
                 self.assertTrue(all(opacity == 0 for opacity in label_opacities), label_opacities)
                 self.assertLessEqual(page.locator("#bar").evaluate(
                     "bar => bar.scrollWidth - bar.clientWidth"), 1)
-                for selector in ("#mode", "#fit", "#relations"):
+                for selector in ("#mode", "#fit", "#relations", "#zoom-in", "#zoom-out"):
                     bounds = page.locator(selector).bounding_box()
                     self.assertGreaterEqual(bounds["width"], 40, selector)
                     self.assertGreaterEqual(bounds["height"], 40, selector)
                 self.assertGreater(page.locator("#draft").bounding_box()["width"], 0)
-
-                card_bounds = page.locator(".card").evaluate_all("""cards => cards.map(card => {
-                  const box=card.getBoundingClientRect(); return {left:box.left,right:box.right};
-                })""")
-                root_box = next(box for box in card_bounds if box["left"] == root_left)
-                self.assertGreaterEqual(root_box["right"] - root_box["left"], 200)
 
                 cdp = page.context.new_cdp_session(page)
                 scene = page.locator("#scene")
@@ -202,12 +269,11 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 self.assertGreater(abs(after_xy[0] - before_xy[0]) +
                                    abs(after_xy[1] - before_xy[1]), 20)
                 self.assert_address(page, "展开")
+                page.locator("#fit").click()
 
                 relation_card = page.locator(
                     '.card[data-node-id="workspace.session.process"]')
-                relation_box = self.pan_card_into_view(page, cdp, relation_card, phone, 20)
-                self.assertGreaterEqual(relation_box["y"], 56)
-                self.assertLessEqual(relation_box["y"] + relation_box["height"], phone["height"])
+                relation_box = relation_card.bounding_box()
                 held = {"x": relation_box["x"] + relation_box["width"] / 2,
                         "y": relation_box["y"] + relation_box["height"] / 2}
                 self.touch(cdp, "touchStart", [{"id": 4, **held}])
@@ -218,21 +284,18 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 self.assertEqual(page.locator(".relation-label-bg.highlighted").count(), 2)
                 self.touch(cdp, "touchEnd", [])
                 self.assert_address(page, "展开")
+                self.touch(cdp, "touchStart", [{"id": 6, "x": 385, "y": 839}])
+                self.touch(cdp, "touchEnd", [])
+                self.assertEqual(page.locator(".relation-edge.highlighted").count(), 0)
+                self.assertEqual(page.locator(".relation-label.highlighted").count(), 0)
 
                 tap_card = page.locator('.card[data-node-id="workspace.engine"]')
-                tap_box = self.pan_card_into_view(page, cdp, tap_card, phone, 40)
+                tap_box = tap_card.bounding_box()
                 tapped = {"x": tap_box["x"] + tap_box["width"] / 2,
                           "y": tap_box["y"] + tap_box["height"] / 2}
                 self.touch(cdp, "touchStart", [{"id": 5, **tapped}])
                 self.touch(cdp, "touchEnd", [])
                 self.wait_for_view(page, "drill", "workspace.engine")
-                drill_boxes = page.locator(".card").evaluate_all("""cards => cards.map(card => {
-                  const box=card.getBoundingClientRect(); return {left:box.left,width:box.width};
-                })""")
-                self.assertLessEqual(max(box["left"] for box in drill_boxes) -
-                                     min(box["left"] for box in drill_boxes), 1)
-                self.assertTrue(all(box["left"] >= 0 and box["left"] + box["width"] <= 390
-                                    for box in drill_boxes))
 
                 page.goto(f"{self.base_url}/draft/index.html#%E9%92%BB%E5%85%A5/"
                           "workspace.session.process.step", wait_until="load")
@@ -246,38 +309,17 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 page.goto(f"{self.base_url}/draft/index.html#%E9%92%BB%E5%85%A5/workspace",
                           wait_until="load")
                 self.wait_for_view(page, "drill", "workspace")
-                root_card_lefts = page.locator(".card").evaluate_all(
-                    "cards => cards.map(card => card.getBoundingClientRect().left)")
-                self.assertLessEqual(max(root_card_lefts) - min(root_card_lefts), 1)
                 page.goto(f"{self.base_url}/draft/index.html#%E9%92%BB%E5%85%A5/workspace.session",
                           wait_until="load")
                 self.wait_for_view(page, "drill", "workspace.session")
                 session_relations = self.page_data(page)["drill_views"]["workspace.session"]["relations"]
                 self.assertEqual(page.locator("#drill-edge-layer .edge").count(),
                                  len(session_relations))
-                relation_card_lefts = page.locator(".card").evaluate_all(
-                    "cards => cards.map(card => card.getBoundingClientRect().left)")
-                self.assertLessEqual(max(relation_card_lefts) - min(relation_card_lefts), 1)
             finally:
                 browser.close()
 
     def touch(self, cdp, event_type, points):
         cdp.send("Input.dispatchTouchEvent", {"type": event_type, "touchPoints": points})
-
-    def pan_card_into_view(self, page, cdp, card, viewport, first_gesture):
-        for gesture in range(16):
-            bounds = card.bounding_box()
-            center_y = bounds["y"] + bounds["height"] / 2
-            if 80 <= center_y <= viewport["height"] - 80:
-                return bounds
-            delta = max(-180, min(180, 420 - center_y))
-            start = {"x": 370, "y": 440}
-            pointer_id = first_gesture + gesture
-            self.touch(cdp, "touchStart", [{"id": pointer_id, **start}])
-            self.touch(cdp, "touchMove", [{"id": pointer_id, "x": start["x"],
-                                            "y": start["y"] + delta}])
-            self.touch(cdp, "touchEnd", [])
-        return card.bounding_box()
 
     def scene_scale(self, scene):
         transform = scene.get_attribute("transform")
@@ -285,27 +327,38 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
         self.assertIsNotNone(match)
         return float(match.group(1))
 
+    def layout_snapshot(self, page):
+        return page.evaluate("""() => ({
+          cards:[...document.querySelectorAll('.card')].map(card=>[
+            card.dataset.nodeId,card.getAttribute('transform')]).sort((a,b)=>a[0].localeCompare(b[0])),
+          tree:[...document.querySelectorAll('.composition-spine,.composition-edge')]
+            .map(edge=>[edge.dataset.source||'',edge.dataset.target||'',edge.getAttribute('d')])
+            .sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),
+          drill:[...document.querySelectorAll('#drill-edge-layer .edge')].map(edge=>[
+            edge.dataset.source||'',edge.dataset.target||'',edge.getAttribute('d')])
+            .sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),
+          relations:[...document.querySelectorAll('.relation-edge')].map(edge=>[
+            edge.dataset.source,edge.dataset.target,edge.dataset.title,edge.getAttribute('d')])
+            .sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))
+        })""")
+
     def scene_translation(self, scene):
         transform = scene.get_attribute("transform")
         match = re.search(r"translate\(([-\d.]+) ([-\d.]+)\)", transform)
         self.assertIsNotNone(match)
         return float(match.group(1)), float(match.group(2))
 
-    def visual_depths(self, map_document, page_data, visible_ids):
-        aliases = {root: placeholder for placeholder, root in page_data["repo_roots"].items()}
-
-        def parent(element_id):
-            value = map_document["nodes"][element_id]["parent"]
-            return aliases.get(value, value)
-
-        depths = {}
-        for element_id in visible_ids:
-            depth, current = 0, element_id
-            while parent(current) is not None:
-                current = parent(current)
-                depth += 1
-            depths[element_id] = depth
-        return depths
+    def assert_scene_fits(self, page):
+        bounds = page.evaluate("""() => {
+          const view=document.querySelector('#map').getBoundingClientRect();
+          const scene=document.querySelector('#scene').getBoundingClientRect();
+          return {view:{left:view.left,top:view.top,right:view.right,bottom:view.bottom},
+            scene:{left:scene.left,top:scene.top,right:scene.right,bottom:scene.bottom}};
+        }""")
+        self.assertGreaterEqual(bounds["scene"]["left"], bounds["view"]["left"] + 24, bounds)
+        self.assertGreaterEqual(bounds["scene"]["top"], bounds["view"]["top"] + 24, bounds)
+        self.assertLessEqual(bounds["scene"]["right"], bounds["view"]["right"] - 24, bounds)
+        self.assertLessEqual(bounds["scene"]["bottom"], bounds["view"]["bottom"] - 24, bounds)
 
     def assert_relation_geometry(self, page):
         geometry = page.evaluate("""() => {

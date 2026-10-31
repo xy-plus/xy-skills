@@ -33,26 +33,50 @@
     const points=[];for(let step=0;step<=count;step++)points.push(curvePoint(curve,step/count));return points;
   }
 
-  function routeCollisions(samples,positions,skip){
-    let hits=0;
-    for(let index=1;index<samples.length-1;index++){
-      const point=samples[index];
-      for(const [id,box] of positions){
-        if(skip.has(id))continue;
-        if(point.x>=box.x-1&&point.x<=box.x+box.width+1&&
-           point.y>=box.y-1&&point.y<=box.y+box.height+1){hits++;break;}
+  function obstacleIndex(positions){
+    const cellSize=96,cells=new Map();
+    for(const [id,box] of positions){
+      const firstX=Math.floor((box.x-1)/cellSize),lastX=Math.floor((box.x+box.width+1)/cellSize);
+      const firstY=Math.floor((box.y-1)/cellSize),lastY=Math.floor((box.y+box.height+1)/cellSize);
+      for(let x=firstX;x<=lastX;x++)for(let y=firstY;y<=lastY;y++){
+        const key=`${x}:${y}`,items=cells.get(key)||[];items.push({id,box});cells.set(key,items);
       }
     }
-    return hits;
+    return {cellSize,cells};
+  }
+
+  function routeCollisions(samples,grid,skip){
+    const {cellSize,cells}=grid;
+    for(let step=1;step<samples.length-1;step++){
+      const point=samples[step];
+      const items=cells.get(`${Math.floor(point.x/cellSize)}:${Math.floor(point.y/cellSize)}`)||[];
+      for(const {id,box} of items){
+        if(skip.has(id))continue;
+        if(point.x>=box.x-1&&point.x<=box.x+box.width+1&&
+           point.y>=box.y-1&&point.y<=box.y+box.height+1)return 1;
+      }
+    }
+    return 0;
   }
 
   function bundleHits(samples,routes){
     let hits=0;
     for(let index=8;index<samples.length-8;index+=2){
       const point=samples[index];
-      if(routes.some(route=>route.some(other=>Math.hypot(point.x-other.x,point.y-other.y)<5)))hits++;
+      const x=Math.floor(point.x/12),y=Math.floor(point.y/12);
+      for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){
+        const nearby=routes.get(`${x+dx}:${y+dy}`)||[];
+        if(nearby.some(other=>Math.hypot(point.x-other.x,point.y-other.y)<5)){hits++;dx=2;break;}
+      }
     }
     return hits;
+  }
+
+  function addRouteToIndex(samples,routes){
+    for(let index=0;index<samples.length;index++){
+      const point=samples[index],key=`${Math.floor(point.x/12)}:${Math.floor(point.y/12)}`;
+      const points=routes.get(key)||[];points.push(point);routes.set(key,points);
+    }
   }
 
   function labelFree(box,positions,labels){
@@ -62,10 +86,6 @@
     const gap=10;
     return !labels.some(label=>box.left<label.right+gap&&box.right>label.left-gap&&
       box.top<label.bottom+gap&&box.bottom>label.top-gap);
-  }
-
-  function labelLines(title,widthOf,wrapText,mobile){
-    return mobile?wrapText(title,90,EDGE_FONT):[title];
   }
 
   function drawLabel(layer,svgElement,lines,x,y,width,height,relation){
@@ -81,7 +101,7 @@
   }
 
   function draw(options){
-    const {layer,positions,ids,data,repoAlias,svgElement,widthOf,wrapText,visualDepth,mobile,viewportWidth}=options;
+    const {layer,positions,ids,data,repoAlias,svgElement,widthOf,visualDepth}=options;
     const visible=new Set(ids),bounds={left:Infinity,right:-Infinity,top:Infinity,bottom:-Infinity};
     for(const box of positions.values()){
       bounds.left=Math.min(bounds.left,box.x);bounds.right=Math.max(bounds.right,box.x+box.width);
@@ -91,6 +111,7 @@
     const normalized=data.relations.map((relation,index)=>({...relation,index,
       sourceId:repoAlias[relation.source]||relation.source,targetId:repoAlias[relation.target]||relation.target}))
       .filter(relation=>relation.sourceId!==relation.targetId&&visible.has(relation.sourceId)&&visible.has(relation.targetId));
+    const obstacles=obstacleIndex(positions);
     const pairIndexes=new Map(),portCounts=new Map(),portIndexes=new Map();
     for(const relation of normalized){
       const pair=`${relation.sourceId}\u0000${relation.targetId}`;
@@ -107,53 +128,52 @@
       const sourcePort=portY(relation.sourceId,source),targetPort=portY(relation.targetId,target);
       const sy=sourcePort.y,ty=targetPort.y;
       const span=Math.abs(ty-sy)+Math.abs(visualDepth(relation.sourceId)-visualDepth(relation.targetId))*48;
-      const laneOffset=mobile?(targetPort.index-(targetPort.count-1)/2)*72:0;
-      return {...relation,source,target,sx,tx,sy,ty,span,laneOffset};
+      return {...relation,source,target,sx,tx,sy,ty,span};
     }).sort((first,second)=>first.span-second.span||first.index-second.index);
-    const labels=[],routes=[];
+    const maxCardHeight=Math.max(...[...positions.values()].map(box=>box.height));
+    const maxOffset=Math.max(512,Math.ceil((bounds.bottom-bounds.top+maxCardHeight*2+128)/32)*32);
+    const labels=[],routes=new Map();
     for(let rank=0;rank<prepared.length;rank++){
       const relation=prepared[rank];
       const pair=`${relation.sourceId}\u0000${relation.targetId}`;
       const pairIndex=pairIndexes.get(pair)||0;pairIndexes.set(pair,pairIndex+1);
-      const {source,target,sx,tx,sy,ty,span,laneOffset}=relation;
-      const title=relation.title||"关系",lines=labelLines(title,widthOf,wrapText,mobile);
+      const {source,target,sx,tx,sy,ty,span}=relation;
+      const title=relation.title||"关系",lines=[title];
       const textWidth=Math.max(...lines.map(line=>widthOf(line,EDGE_FONT)));
       const labelWidth=Math.max(34,textWidth+18),labelHeight=Math.max(24,lines.length*14+10);
       const labelBoxWidth=labelWidth+8,labelBoxHeight=labelHeight+4;
       const minimumPeak=treeRight+labelBoxWidth/2+10;
-      const maximumPeak=mobile?viewportWidth-labelBoxWidth/2-6:Infinity;
-      const pairGap=mobile?pairIndex*5:pairIndex*(labelBoxWidth+14);
-      const desiredPeak=Math.min(maximumPeak,minimumPeak+
-        Math.min(span*(mobile?.1:.2),mobile?maximumPeak-minimumPeak:500)+pairGap+(mobile?0:rank*8));
-      const limit=mobile?960:400;
-      const maxOffset=Math.min(limit,Math.max(mobile?480:160,
-        Math.ceil((bounds.bottom-bounds.top)*(mobile?.3:.25)/32)*32));
-      const preferredOffset=Math.max(-maxOffset,Math.min(maxOffset,laneOffset));
-      const offsets=mobile?[preferredOffset,0]:[0];
-      for(let offset=32;offset<=maxOffset;offset+=32)
-        offsets.push(preferredOffset+offset,preferredOffset-offset,offset,-offset);
-      if(pairIndex)offsets.unshift(pairIndex*48,-pairIndex*48);
-      const routeOffsets=[...new Set(offsets.filter(offset=>Math.abs(offset)<=maxOffset))];
+      const desiredPeak=minimumPeak+Math.min(span*.2,500)+pairIndex*(labelBoxWidth+14)+rank*8;
+      const routeOffsets=[0],offsetSet=new Set(routeOffsets);
+      const addOffset=value=>{
+        const offset=Math.max(-maxOffset,Math.min(maxOffset,Math.round(value/32)*32));
+        if(!offsetSet.has(offset)){routeOffsets.push(offset);offsetSet.add(offset);}
+      };
+      for(let offset=32;offset<=Math.min(maxOffset,512);offset+=32){addOffset(offset);addOffset(-offset);}
+      for(const fraction of [.65,.8,1]){addOffset(maxOffset*fraction);addOffset(-maxOffset*fraction);}
       const controlVariations=[0,16,32],skip=new Set([relation.sourceId,relation.targetId]);
-      let best=null,bestScore=Infinity;
+      let best=null,bestScore=Infinity,safeCandidates=0;
       for(const offset of routeOffsets){
         const seed={sx,sy,cx1:sx+32,cx2:0,cy1:sy+offset,cy2:ty+offset,tx,ty};
         const baseControl=controlForPeak(seed,desiredPeak);
         for(const variation of controlVariations){
           const curve={...seed,cx2:baseControl+variation},peak=curvePeak(curve);
-          if(peak.x<minimumPeak-1||peak.x>maximumPeak+1)continue;
+          if(peak.x<minimumPeak-1)continue;
           const labelBox={left:peak.x-labelBoxWidth/2,right:peak.x+labelBoxWidth/2,
             top:peak.y-labelBoxHeight/2,bottom:peak.y+labelBoxHeight/2};
           if(!labelFree(labelBox,positions,labels))continue;
-          const samples=relationSamples(curve,100),collisions=routeCollisions(samples,positions,skip);
-          const bundles=bundleHits(samples,routes),score=collisions*10000+bundles*24+
+          const sampleCount=Math.max(300,Math.ceil((desiredPeak-sx+Math.abs(offset)*2+Math.abs(ty-sy))/4));
+          const samples=relationSamples(curve,sampleCount),collisions=routeCollisions(samples,obstacles,skip);
+          const bundles=collisions===0?bundleHits(samples,routes):0;
+          const score=collisions*10000+bundles*24+
             Math.abs(offset)*.3+Math.abs(peak.x-desiredPeak)*.2+variation*.03;
           if(score<bestScore){bestScore=score;best={curve,peak,labelBox,samples,collisions,bundles};}
-          if(best.collisions===0&&best.bundles<=5)break;
+          if(collisions===0){safeCandidates++;if(bundles<=5||safeCandidates>=6)break;}
         }
-        if(best&&best.collisions===0&&best.bundles<=5)break;
+        if(best&&best.collisions===0&&(best.bundles<=5||safeCandidates>=6))break;
       }
-      if(!best)throw new Error(`关系标签无法避让：${relation.sourceId} → ${relation.targetId}（${title}）`);
+      if(!best||best.collisions>0)
+        throw new Error(`关系弧线无法避开卡片：${relation.sourceId} → ${relation.targetId}（${title}）`);
       const {curve,peak,labelBox,samples}=best;
       const group=svgElement("g",{class:"relation-item","data-relation-index":relation.index});
       group.appendChild(svgElement("path",{class:"relation-edge",
@@ -161,7 +181,7 @@
         "marker-end":"url(#relation-arrow)","data-source":relation.sourceId,
         "data-target":relation.targetId,"data-title":relation.title}));
       const label=drawLabel(group,svgElement,lines,peak.x,peak.y,labelBoxWidth,labelBoxHeight,relation);
-      layer.appendChild(group);labels.push(label);routes.push(samples);
+      layer.appendChild(group);labels.push(label);addRouteToIndex(samples,routes);
       bounds.left=Math.min(bounds.left,...samples.map(point=>point.x),labelBox.left);
       bounds.right=Math.max(bounds.right,...samples.map(point=>point.x),labelBox.right);
       bounds.top=Math.min(bounds.top,...samples.map(point=>point.y),labelBox.top);
