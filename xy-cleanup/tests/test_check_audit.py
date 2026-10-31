@@ -13,15 +13,16 @@ sys.path.insert(0, str(TESTS.parent))
 sys.path.insert(0, str(TESTS.parent / "test_data"))
 sys.path.insert(0, str(TESTS))
 
-from check_audit import (expand_scope, load_reports, main, numbered_text,
-                         validate_reports)
-from audit_entities import collect_entities
-from test_support import (finding, model, node_entry, report, report_input,
-                          valid_reports)
-from create_fixture import create_fixture_repo
-from repo_map_lib.git_repository import (discover_subrepositories, gitlink_paths,
-                                         tracked_paths)
-from repo_map_lib.ownership import Owner, check_ownership
+from check_audit import expand_scope, load_reports, main, validate_reports  # noqa: E402
+from audit_entities import collect_entities  # noqa: E402
+from test_support import (  # noqa: E402
+    finding, model, node_entry, report, report_input, valid_reports
+)
+from create_fixture import create_fixture_repo  # noqa: E402
+from repo_map_lib.git_repository import (  # noqa: E402
+    discover_subrepositories, gitlink_paths, tracked_paths
+)
+from repo_map_lib.ownership import Owner, check_ownership  # noqa: E402
 
 
 REPO = "/repo"
@@ -228,35 +229,17 @@ class CheckAuditTest(unittest.TestCase):
         self.assertTrue(any("改图" in error and "问你" in error
                             for error in validate(reports, None, None, None)))
 
-    def test_basis_text_must_come_from_the_named_rule(self):
+    def test_cleanup_basis_requires_a_supported_rule_quote(self):
         reports = valid_reports(OWNERS)
         item = finding("重构", "问你", True)
-        rule = numbered_text(TESTS.parents[1] / "xy-iron-law" / "SKILL.md", 1)
-        item["basis"]["text"] = rule.replace("不改、在别处", "不改，在别处")
+        item["basis"]["text"] = "不是该条原文"
         reports[0]["data"]["nodes"][0]["findings"] = [item]
         errors = validate(reports, None, None, None)
         self.assertTrue(any("basis.text" in error for error in errors), errors)
-        self.assertTrue(any(rule in error for error in errors), errors)
+        self.assertTrue(any("第一性原理" in error for error in errors), errors)
         item["basis"]["text"] = "第一性原理"
         item["basis"]["source"] = "xy-repo-rules 第 1 条"
         self.assertTrue(any("basis.text" in error for error in validate(reports, None, None, None)))
-
-    def test_numbered_rules_read_each_skill_file_once(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            skill_path = Path(temporary) / "rules.md"
-            skill_path.write_text("1. 第一条\n正文。\n2. 第二条\n结束。\n", encoding="utf-8")
-            original_read_text = Path.read_text
-            reads = []
-
-            def count_rule_read(path, *args, **kwargs):
-                if path == skill_path:
-                    reads.append(path)
-                return original_read_text(path, *args, **kwargs)
-
-            with patch.object(Path, "read_text", count_rule_read):
-                numbered_text(skill_path, 1)
-                numbered_text(skill_path, 2)
-            self.assertEqual(reads, [skill_path])
 
     def test_invalid_delete_finding_cannot_hide_descendants(self):
         reports = valid_reports(OWNERS)

@@ -9,8 +9,12 @@ HANDOFF_DIRECTORY = pathlib.Path(__file__).resolve().parents[1] / "xy-handoff"
 sys.path.insert(0, str(HANDOFF_DIRECTORY))
 from check_handoff import check_value, object_without_duplicate_keys  # noqa: E402
 from audit import REPORT_ROUND_RE  # noqa: E402
+from rule_references import (  # noqa: E402
+    RULE_FILES, is_rule_source, numbered_rule_numbers, rule_quote_problem
+)
 
 
+REPO_RULE_NUMBERS = numbered_rule_numbers(RULE_FILES["xy-repo-rules"])
 SECTION = {
     "items": [{
         "problem": str,
@@ -22,7 +26,7 @@ SECTION = {
 REVIEW_MAIN = {
     "first_principles": {"essence": str, "deviations": SECTION},
     "hard_to_misuse": SECTION,
-    "repo_rules": {str(number): SECTION for number in range(1, 8)},
+    "repo_rules": {str(number): SECTION for number in REPO_RULE_NUMBERS},
     "verdict": str,
 }
 REVIEW_RAZOR = {
@@ -93,6 +97,37 @@ def item_list(document, *path):
     return value if isinstance(value, list) else []
 
 
+def check_rule_quotes(document):
+    """Check every main-report citation that names a numbered rule."""
+    sections = [
+        ("first_principles.deviations", item_list(
+            document, "first_principles", "deviations", "items"
+        )),
+        ("hard_to_misuse", item_list(document, "hard_to_misuse", "items")),
+    ]
+    sections.extend(
+        (f"repo_rules.{number}", item_list(document, "repo_rules", str(number), "items"))
+        for number in REPO_RULE_NUMBERS
+    )
+    problems = []
+    for section, items in sections:
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            quote = item.get("quote")
+            if not isinstance(quote, dict):
+                continue
+            source = quote.get("source")
+            if not is_rule_source(source):
+                continue
+            problem = rule_quote_problem(source, quote.get("text"))
+            if problem is not None:
+                problems.append(
+                    f"报告.{section}.items[{index}].quote.text {problem}"
+                )
+    return problems
+
+
 def check(text, filename):
     """按文件名选报告结构并返回所有内容问题。"""
     if filename not in REPORTS:
@@ -110,6 +145,7 @@ def check(text, filename):
         return problems
 
     if report_kind == "主审报告":
+        problems += check_rule_quotes(document)
         verdict = document.get("verdict")
         if isinstance(verdict, str) and verdict not in VERDICTS:
             problems.append("报告.verdict 只能是「通过」「改了就过」或「不通过」")
@@ -120,7 +156,7 @@ def check(text, filename):
         ):
             if item_list(document, *path):
                 findings.append(label)
-        for number in range(1, 8):
+        for number in REPO_RULE_NUMBERS:
             if item_list(document, "repo_rules", str(number), "items"):
                 findings.append(f"repo_rules.{number}")
         if verdict == "通过" and findings:

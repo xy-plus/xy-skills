@@ -8,7 +8,7 @@ import re
 import tempfile
 import unittest
 
-from check import main
+from check import REPO_RULE_NUMBERS, main
 
 
 def section(items=None, checked="核对了实现与 spec"):
@@ -19,7 +19,7 @@ def main_report(verdict="通过", deviations=None, hard_to_misuse=None, repo_rul
     return {
         "first_principles": {"essence": "用户要的是明确且可检查的行为", "deviations": section(deviations)},
         "hard_to_misuse": section(hard_to_misuse),
-        "repo_rules": {str(number): section() for number in range(1, 8)} if repo_rules is None else repo_rules,
+        "repo_rules": {str(number): section() for number in REPO_RULE_NUMBERS} if repo_rules is None else repo_rules,
         "verdict": verdict,
     }
 
@@ -150,13 +150,33 @@ class CheckTest(unittest.TestCase):
         document = main_report(verdict="改了就过", deviations=[finding()])
         self.assertEqual(self.run_report("review-main.json", document), (0, []))
 
-    def test_main_report_requires_repository_rules_one_through_seven(self):
-        rules = {str(number): section() for number in range(1, 8)}
-        del rules["5"]
-        rules["8"] = section()
+    def test_main_report_rejects_rule_quote_not_found_in_the_named_rule(self):
+        finding = {
+            "problem": "发现一项阻断",
+            "evidence": "check.py:25",
+            "quote": {"source": "xy-iron-law 第 1 条", "text": "不是该条原文"},
+        }
+        document = main_report(verdict="改了就过", deviations=[finding])
+        self.assert_rejected("review-main.json", document, "quote.text", "xy-iron-law 第 1 条")
+
+    def test_main_report_accepts_a_continuous_quote_from_the_named_rule(self):
+        finding = {
+            "problem": "发现一项阻断",
+            "evidence": "check.py:25",
+            "quote": {"source": "xy-iron-law 第 1 条", "text": "第一性原理：思考"},
+        }
+        document = main_report(verdict="改了就过", deviations=[finding])
+        self.assertEqual(self.run_report("review-main.json", document), (0, []))
+
+    def test_main_report_requires_each_numbered_repository_rule(self):
+        rules = {str(number): section() for number in REPO_RULE_NUMBERS}
+        missing = str(REPO_RULE_NUMBERS[-1])
+        del rules[missing]
+        rules[str(REPO_RULE_NUMBERS[-1] + 1)] = section()
         document = main_report(repo_rules=rules)
         self.assert_rejected("review-main.json", document,
-                             "缺少字段：报告.repo_rules.5", "repo_rules 多余字段：8")
+                             f"缺少字段：报告.repo_rules.{missing}",
+                             f"repo_rules 多余字段：{REPO_RULE_NUMBERS[-1] + 1}")
 
     def test_main_verdict_matches_findings(self):
         findings = [{

@@ -73,7 +73,7 @@ python3 <xy-repo-map目录>/repo_map.py publish --out <render 的输出目录> -
 
 ## 生成实体清单
 
-开审前按本次范围生成实体清单并保存到运行目录，交给主审式和剃刀式审查者：
+开审前按本次范围生成实体清单并保存到运行目录，交给按 `xy-review` 定义的主审式和剃刀式审查者：
 
 ```sh
 python3 <xy-cleanup目录>/check_audit.py entities \
@@ -86,15 +86,9 @@ python3 <xy-cleanup目录>/check_audit.py entities \
 
 ## 派审查
 
-审查者只读，不修改工作树，也不互相传递意见。派审时提供仓路径、范围、仓图和草稿链接、`map-data.json`、基线、机械旁证、引用对账、实体清单、报告格式，以及对应规范文件：
+主审式和剃刀式审查者按 `xy-review` 定义的主审、剃刀角色与派法审查；各自审哪些规范、如何解读、派审时交给审查者什么，都见 `xy-review`。清扫使用本 skill 下文的实体清单、逐节点与全图审查要求，以及专用报告格式和校验脚本。
 
-- `<xy-iron-law目录>/SKILL.md`
-- `<xy-repo-rules目录>/SKILL.md`
-
-- 主审式审查者按第一性原理、难误用设计和仓库规范全部七条审查；
-- 剃刀式审查者只按奥卡姆剃刀逐项检查。
-
-剃刀式审查者逐个检查清单实体里的实现、注释和文档字符串；复述代码的注释、过时说明也可以删除。主审式审查者逐个检查特殊分支，并问：「这是在修自己的问题，还是在替别处的错误收拾后果？」若是在替别处收拾后果，按第一性原理提出修根因的发现。
+剃刀式审查者逐个检查实体清单中的实现、注释和文档字符串；复述代码的注释、过时说明也可以删除。
 
 ### 全图审查
 
@@ -132,7 +126,7 @@ python3 <xy-cleanup目录>/check_audit.py entities \
           "changes_behavior": true,
           "decision": "直接做 | 问你",
           "basis": {
-            "source": "<xy-iron-law 或 xy-repo-rules 的名称与条款号>",
+            "source": "<按 xy-review 的规范条款引用格式填写>",
             "text": "<从所标条款复制的一段连续原文，标点照抄>"
           },
           "evidence": "<文件行号，或命令和输出>",
@@ -146,7 +140,7 @@ python3 <xy-cleanup目录>/check_audit.py entities \
 }
 ```
 
-全图报告的节点对象省略 `files` 和 `entities`。每个实体的 `verdict` 只能是「无问题」或「见发现」，`reason` 必须非空。判为「无问题」时，剃刀写明离开它哪个入口或功能就做不到，并给调用方 `文件:行号` 或文档出处；主审写核对了什么、为何没问题。判为「见发现」时，`reason` 写对应发现的 `target`，且该节点的 `findings` 不能为空。`changes_behavior` 必须是 JSON 布尔值 `true` 或 `false`。依据来源按 `xy-iron-law 第 <数字> 条` 或 `xy-repo-rules 第 <数字> 条`填写；`basis.text` 从所标条款复制一段连续原文，标点照抄。「直接做」当且仅当类型是删除或合并、且改后对外行为不变；否则标「问你」。`改图` 必须标「问你」。
+全图报告的节点对象省略 `files` 和 `entities`。每个实体的 `verdict` 只能是「无问题」或「见发现」，`reason` 必须非空。判为「无问题」时，剃刀写明离开它哪个入口或功能就做不到，并给调用方 `文件:行号` 或文档出处；主审写核对了什么、为何没问题。判为「见发现」时，`reason` 写对应发现的 `target`，且该节点的 `findings` 不能为空。`changes_behavior` 必须是 JSON 布尔值 `true` 或 `false`。依据来源与 `basis.text` 按 `xy-review` 定义的规范条款引用格式填写。「直接做」当且仅当类型是删除或合并、且改后对外行为不变；否则标「问你」。`改图` 必须标「问你」。
 
 ## 校验报告
 
@@ -187,7 +181,7 @@ python3 <xy-repo-map目录>/repo_map.py record \
   --approval <记录该回答的原话文件绝对路径>
 ```
 
-清扫 `quant-workspace` 下的仓时，固定增加一项：建议在删除后开启 Rust `missing_docs`，并仅对 Python 库的公开接口开启 ruff `D1`；脚本、测试和实验代码不纳入 Python 检查。其他仓不加固定项目，由主审按仓库规范提出。
+清扫 `quant-workspace` 下的仓时，固定增加一项：建议在删除后开启 Rust `missing_docs`，并仅对 Python 库的公开接口开启 ruff `D1`；脚本、测试和实验代码不纳入 Python 检查。其他仓不加固定项目，由主审式审查者提出。
 
 ## 按 xy-workflow 实施
 

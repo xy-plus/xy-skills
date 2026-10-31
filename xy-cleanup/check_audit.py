@@ -1,20 +1,21 @@
 """Validate cleanup reports against the repository map and file ownership."""
 import argparse
 import json
-from functools import lru_cache
 from pathlib import Path
-import re
 import sys
 
 REPO_MAP_PATH = Path(__file__).resolve().parents[1] / "xy-repo-map"
 HANDOFF_PATH = Path(__file__).resolve().parents[1] / "xy-handoff"
+REVIEW_PATH = Path(__file__).resolve().parents[1] / "xy-review"
 sys.path.insert(0, str(REPO_MAP_PATH))
 sys.path.insert(0, str(HANDOFF_PATH))
+sys.path.insert(0, str(REVIEW_PATH))
 
-from repo_map_lib.checker import check_repository
-from repo_map_lib.git_repository import ArgumentError
-from check_handoff import object_without_duplicate_keys
-from audit_entities import collect_entities
+from repo_map_lib.checker import check_repository  # noqa: E402
+from repo_map_lib.git_repository import ArgumentError  # noqa: E402
+from check_handoff import object_without_duplicate_keys  # noqa: E402
+from audit_entities import collect_entities  # noqa: E402
+from rule_references import basis_is_supported, basis_rule  # noqa: E402
 
 
 ROLES = {"主审", "剃刀", "全图"}
@@ -28,62 +29,6 @@ FINDING_FIELDS = {
 TEXT_FIELDS = {"target", "problem", "proposal", "decision", "evidence", "benefit", "cost"}
 ENTITY_FIELDS = {"entity", "verdict", "reason"}
 ENTITY_VERDICTS = {"无问题", "见发现"}
-
-
-@lru_cache(maxsize=None)
-def _numbered_rules(skill_path):
-    """Read and index all numbered rules in one local skill document once."""
-    try:
-        lines = skill_path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError):
-        return ()
-    rules = []
-    index = 0
-    while index < len(lines):
-        match = re.match(r"^\s*([1-9][0-9]*)\.\s", lines[index])
-        if match is None:
-            index += 1
-            continue
-        end = index + 1
-        while end < len(lines) and re.match(r"^\s*[1-9][0-9]*\.\s", lines[end]) is None:
-            end += 1
-        rules.append((int(match.group(1)), "\n".join(lines[index:end])))
-        index = end
-    return tuple(rules)
-
-
-def numbered_text(skill_path, number):
-    """Return one numbered rule from a local skill document."""
-    return dict(_numbered_rules(Path(skill_path))).get(number, "")
-
-
-def basis_rule(basis):
-    """Return the complete local rule named by a report's basis source."""
-    if not isinstance(basis, dict):
-        return ""
-    source = basis.get("source")
-    if not isinstance(source, str):
-        return ""
-    match = re.fullmatch(r"(xy-iron-law|xy-repo-rules) 第 ([1-9][0-9]*) 条", source)
-    if match is None:
-        return ""
-    name = match.group(1)
-    number = int(match.group(2))
-    maximum = 3 if name == "xy-iron-law" else 7
-    if number > maximum:
-        return ""
-    skill_path = Path(__file__).resolve().parents[1] / name / "SKILL.md"
-    return numbered_text(skill_path, number)
-
-
-def basis_is_supported(basis, rule):
-    """Check that the quoted text occurs in the numbered local rule it names."""
-    if not isinstance(basis, dict) or set(basis) != {"source", "text"}:
-        return False
-    text = basis.get("text")
-    if not isinstance(text, str) or not text.strip():
-        return False
-    return bool(rule) and text in rule
 
 
 def finding_is_valid(finding, label, problems):
@@ -128,7 +73,7 @@ def finding_is_valid(finding, label, problems):
             valid = False
     basis = finding.get("basis")
     rule = basis_rule(basis)
-    if not basis_is_supported(basis, rule):
+    if not basis_is_supported(basis):
         message = f"{label}.basis.text 必须逐字来自 basis.source 指定的规范条款"
         if rule:
             message += f"；所标条款原文：\n{rule}"
