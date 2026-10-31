@@ -74,6 +74,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 ```bash
 python3 -B -m unittest discover -s xy-goal/tests
 python3 -B -m unittest discover -s xy-handoff
+python3 -B -m unittest discover -s xy-repo-rules
 python3 -B -m unittest discover -s xy-review
 python3 -B -m unittest discover -s xy-cleanup/tests
 python3 -B -m unittest discover -s xy-runs/tests

@@ -72,6 +72,21 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn(".runs-cleaner-previewed", result.stderr)
 
+    def test_preview_marker_must_be_a_regular_file_not_a_symlink(self):
+        previous_runs = self.home / "previous runs"
+        previous_runs.mkdir()
+        previous_marker = previous_runs / ".runs-cleaner-previewed"
+        previous_marker.touch()
+        runs = self.home / "runs"
+        runs.mkdir()
+        marker = runs / ".runs-cleaner-previewed"
+        marker.symlink_to(previous_marker)
+        self.settings.write_text(json.dumps({"env": {"RUNS_ROOT": str(runs)}}))
+        result = self.launch()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn(".runs-cleaner-previewed", result.stderr)
+
     # An unset setting must not fall back to the shell's RUNS_ROOT or home directory.
     # Missing, empty, and relative roots must fail before the cleaner starts.
     def test_invalid_runs_setting_fails_before_cleaner_starts(self):

@@ -357,6 +357,16 @@ class GoalTests(unittest.TestCase):
                             self.rejects("adopt", str(contract), message="会话记录")
                             self.assertEqual(list(self.root.rglob("*")), before)
 
+    def test_open_treats_session_id_glob_characters_as_literal(self):
+        self.session = "session*id"
+        self.session_record(self.session, "-literal-project")
+        self.session_record("session-generated-id", "-glob-project")
+        self.succeeds("open", "literal-session", "按会话 id 选项目")
+        contract = (self.root / "-literal-project" /
+                    f"{self.now:%Y%m%d-%H%M%S}-literal-session" / "xy-goal")
+        self.assertTrue((contract / "goal.md").is_file())
+        self.assertEqual(list((self.root / "-glob-project").glob("*/xy-goal")), [])
+
     def test_new_session_adopt_claims_inbox_from_its_own_project(self):
         contract = self.open_goal("release")
         old = subprocess.Popen([sys.executable, "-c", "pass"])

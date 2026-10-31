@@ -218,6 +218,24 @@ class CheckTest(unittest.TestCase):
         self.assert_rejected("diagnosis.json", diagnosis_report(diagnosis=" \t\n"), "diagnosis 不能为空",
                              folders=("group1",))
 
+    def test_informal_diagnosis_uses_the_shared_report_validation(self):
+        directory = Path(self.root) / "informal-loop"
+        directory.mkdir()
+        (directory / "report-round4.md").write_text("改测记录", encoding="utf-8")
+        self.assertEqual(self.run_report("diagnosis.json", diagnosis_report(),
+                                         folders=("informal-loop",)), (0, []))
+        self.assert_rejected("diagnosis.json", diagnosis_report(actions=[]), "actions 不能为空",
+                             folders=("informal-loop",))
+
+    def test_informal_diagnosis_requires_a_valid_report_round_in_its_directory(self):
+        directory = Path(self.root) / "informal-loop"
+        directory.mkdir()
+        (directory / "report-round04.md").write_text("不是合法轮次", encoding="utf-8")
+        code, problems = self.run_report("diagnosis.json", diagnosis_report(),
+                                         folders=("informal-loop",))
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(any("判因报告必须写在" in problem for problem in problems), problems)
+
     def test_reports_reject_template_placeholders_and_placeholder_fragments(self):
         document = main_report()
         document["first_principles"]["essence"] = "<用户真正要的是什么；若是修错，根源在哪>"

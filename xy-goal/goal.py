@@ -8,6 +8,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime
 import fcntl
+import glob
 import json
 import os
 from pathlib import Path
@@ -449,7 +450,7 @@ def require_project_directory(root, project):
 
 def session_project(session_id):
     projects = Path.home() / ".claude" / "projects"
-    records = [path for path in projects.glob(f"*/{session_id}.jsonl") if path.is_file()]
+    records = [path for path in projects.glob(f"*/{glob.escape(session_id)}.jsonl") if path.is_file()]
     if len(records) != 1:
         raise GoalError(f"会话记录必须恰好一份：{projects}/*/{session_id}.jsonl，找到 {len(records)} 份")
     return require_project_name(records[0].parent.name)

@@ -5,6 +5,6 @@ Description=Delete expired and unused temporary items
 Type=oneshot
 # --mode delete requires a preview marker in the configured RUNS_ROOT.
 # systemd passes the quoted globs literally; clean.py expands them.
-ExecStart=/usr/bin/python3 -c "import glob, json, os, sys; from pathlib import Path; runs = json.loads((Path.home() / '.claude/settings.json').read_text())['env']['RUNS_ROOT']; (isinstance(runs, str) and os.path.isabs(runs)) or sys.exit('env.RUNS_ROOT must be an absolute path'); preview = Path(runs) / '.runs-cleaner-previewed'; preview.is_file() or sys.exit('RUNS_ROOT preview marker is missing: ' + str(preview)); runs = glob.escape(runs); os.execv(sys.executable, [sys.executable, sys.argv[1], *sys.argv[2:], runs, runs + '/-*', runs + '/-*/xy-goal-inbox'])" "%h/xy-skills/xy-runs/clean.py" --mode delete "%h/.codex-subagent*/sessions/*/*"
+ExecStart=/usr/bin/python3 -c "import glob, json, os, stat, sys; from pathlib import Path; runs = json.loads((Path.home() / '.claude/settings.json').read_text())['env']['RUNS_ROOT']; (isinstance(runs, str) and os.path.isabs(runs)) or sys.exit('env.RUNS_ROOT must be an absolute path'); preview = Path(runs) / '.runs-cleaner-previewed'; stat.S_ISREG(preview.lstat().st_mode) or sys.exit('RUNS_ROOT preview marker is missing: ' + str(preview)); runs = glob.escape(runs); os.execv(sys.executable, [sys.executable, sys.argv[1], *sys.argv[2:], runs, runs + '/-*', runs + '/-*/xy-goal-inbox'])" "%h/xy-skills/xy-runs/clean.py" --mode delete "%h/.codex-subagent*/sessions/*/*"
 StandardOutput=journal
 StandardError=journal

@@ -8,6 +8,7 @@ import sys
 HANDOFF_DIRECTORY = pathlib.Path(__file__).resolve().parents[1] / "xy-handoff"
 sys.path.insert(0, str(HANDOFF_DIRECTORY))
 from check_handoff import check_value, object_without_duplicate_keys  # noqa: E402
+from audit import REPORT_ROUND_RE  # noqa: E402
 
 
 SECTION = {
@@ -169,8 +170,10 @@ def main(argv):
     if kind == "判因报告":
         group_path = path.parent
         group_match = re.fullmatch(r"group([1-9]\d*)", group_path.name)
-        if group_match is None:
-            problems.append("判因报告必须写在 group<G>/diagnosis.json，G 从 1 起且不能有前导零")
+        if group_match is None and not any(
+                child.is_file() and REPORT_ROUND_RE.fullmatch(child.name)
+                for child in group_path.iterdir()):
+            problems.append("判因报告必须写在 group<G>/diagnosis.json 或含合法 report-round<N>.md 的循环目录下")
     elif kind in ("主审报告", "剃刀报告"):
         round_path = path.parent
         group_path = round_path.parent
