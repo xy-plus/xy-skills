@@ -67,17 +67,23 @@ def require_state(value):
         raise GoalError("状态只认「在办」或「等用户：待定的事」")
 
 
-def read_text(path):
+def read_bytes(path):
     try:
-        return path.read_bytes().decode("utf-8")
-    except (OSError, UnicodeError) as error:
+        return path.read_bytes()
+    except OSError as error:
         raise GoalError(f"{path}: 无法读取：{error}") from error
 
 
-def parse_fields(path, names, text):
+def read_text(path):
     try:
-        if isinstance(text, bytes):
-            text = text.decode("utf-8")
+        return read_bytes(path).decode("utf-8")
+    except UnicodeError as error:
+        raise GoalError(f"{path}: 无法读取：{error}") from error
+
+
+def parse_fields(path, names, content):
+    try:
+        text = content.decode("utf-8")
         # 字段只用物理 LF 分行。JSON 字符串中的 U+2028 等仍是值的一部分。
         rows = text.removesuffix("\n").split("\n")
         values = {}
@@ -230,11 +236,11 @@ class Contract:
         for path in (self.path / directory).iterdir():
             if not path.is_file() or re.fullmatch(r"T[1-9][0-9]*\.md", path.name) is None:
                 raise GoalError(f"{path}: 事项文件名必须是 T 加正整数.md")
-            text = read_text(path)
+            content = read_bytes(path)
             fields = list(TASK_FIELDS.values())
             if directory == "done":
-                fields.append("verdict" if "\nverdict: " in text else "cancel_quote")
-            values = parse_fields(path, fields, text)
+                fields.append("verdict" if b"\nverdict: " in content else "cancel_quote")
+            values = parse_fields(path, fields, content)
             try:
                 require_state(values["state"])
                 if "cancel_quote" in values and re.fullmatch(r"[1-9][0-9]*", values["cancel_quote"]) is None:
@@ -521,7 +527,7 @@ def publish_contract(root, destination, metadata, quotes, links, input_paths):
             (staging / "quotes" / f"{number}.md").write_bytes(text.encode("utf-8"))
         (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
         (staging / "links.md").write_text(links, encoding="utf-8")
-        Contract(staging, (staging / "goal.md").read_bytes())
+        Contract(staging, read_bytes(staging / "goal.md"))
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
         with consume_inputs(input_paths):
             staging.parent.rename(item)
@@ -699,7 +705,7 @@ def execute(options, *, root, session_id, claude_pid, now):
             if len(parts) != 3 or not parts[0].startswith("-") or parts[2] != "xy-goal":
                 raise GoalError(f"契约目录必须是 <根>/<以 - 开头的项目目录>/<一件事>/xy-goal：{path}")
             require_project_directory(root, path.parents[1])
-            content = goal_content if path == matched_path else (path / "goal.md").read_bytes()
+            content = goal_content if path == matched_path else read_bytes(path / "goal.md")
             contract = Contract(path, content)
             if contract.metadata["session_id"] == session_id:
                 # --resume 沿用会话 id。同会话只刷新 PID，不领取或改动其他内容。
