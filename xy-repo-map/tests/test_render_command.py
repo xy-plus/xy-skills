@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from repo_map_lib.render_command import render_repository
+from repo_map_lib.ownership import Owner
 
 
 def element(element_id, kind, links):
@@ -71,7 +72,15 @@ class RenderCommandTest(unittest.TestCase):
                 raise PermissionError("fixture denies reading")
             return original_read_bytes(path)
 
-        with patch("repo_map_lib.render_command.check_repository", side_effect=self.fake_check), \
+        def checked_with_owned_file(repository, check_approval):
+            if Path(repository).resolve() == self.root.resolve():
+                return [], self.parent_model, {
+                    "src/unreadable.py": Owner("workspace", "code")
+                }, ["src/unreadable.py"]
+            return self.fake_check(repository, check_approval)
+
+        with patch("repo_map_lib.render_command.check_repository",
+                   side_effect=checked_with_owned_file), \
                 patch.object(Path, "read_bytes", fail_for_owned_file):
             problems = render_repository(self.root, "草稿", self.output)
 

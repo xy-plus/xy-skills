@@ -34,12 +34,14 @@ def _checked_tree(repository, mode):
         if resolved in known_paths:
             return
         known_paths.add(resolved)
-        current_problems, model, _, _ = check_repository(resolved, check_approval)
+        current_problems, model, owners, _ = check_repository(resolved, check_approval)
         if current_problems:
             problems.extend(f"仓 {resolved}：{problem}" for problem in current_problems)
             return
         root_id = _root_id(model)
-        repositories.append({"path": resolved, "root_id": root_id, "model": model})
+        repositories.append({
+            "path": resolved, "root_id": root_id, "model": model, "owners": owners,
+        })
         for element_id, target, category, _ in link_records(model):
             if category == "repo" and target is not None:
                 visit(resolved / target)

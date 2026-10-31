@@ -8,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from repo_map_lib.map_data import build_page_data
+from repo_map_lib.ownership import Owner
 
 
 def element(element_id, title, kind, links):
@@ -65,25 +66,43 @@ class MapDataTest(unittest.TestCase):
             },
         }
         self.repositories = [
-            {"path": self.parent, "root_id": "workspace", "model": self.parent_model},
-            {"path": self.child, "root_id": "engine", "model": self.child_model},
+            {
+                "path": self.parent, "root_id": "workspace", "model": self.parent_model,
+                "owners": {
+                    "README.md": Owner("workspace", "docs"),
+                    "src/main.py": Owner("workspace.flow", "code"),
+                    "vendor": Owner("workspace.engine", "repo"),
+                },
+            },
+            {
+                "path": self.child, "root_id": "engine", "model": self.child_model,
+                "owners": {
+                    "README.md": Owner("engine.cache", "docs"),
+                    "src/engine.py": Owner("engine", "code"),
+                },
+            },
         ]
 
     def build(self, mode):
-        tracked_by_path = {
-            self.parent.resolve(): ["README.md", "src/main.py"],
-            self.child.resolve(): ["README.md", "src/engine.py"],
-        }
+        def existing_ownership(repository, *_):
+            resolved = Path(repository).resolve()
+            item = next(item for item in self.repositories
+                        if Path(item["path"]).resolve() == resolved)
+            return [], item["owners"]
 
-        def subrepositories(repository):
-            return ["vendor"] if Path(repository).resolve() == self.parent.resolve() else []
-
-        with patch("repo_map_lib.map_data.tracked_paths",
-                   side_effect=lambda path: tracked_by_path[Path(path).resolve()]), \
-                patch("repo_map_lib.map_data.gitlink_paths", return_value=set()), \
+        with patch("repo_map_lib.map_data.tracked_paths", create=True) as path_scan, \
+                patch("repo_map_lib.map_data.gitlink_paths", return_value=set(),
+                      create=True) as gitlink_scan, \
                 patch("repo_map_lib.map_data.discover_subrepositories",
-                      side_effect=subrepositories):
-            return build_page_data(self.repositories, mode)
+                      create=True) as subrepo_scan, \
+                patch("repo_map_lib.map_data.check_ownership", create=True,
+                      side_effect=existing_ownership) as ownership_check:
+            result = build_page_data(self.repositories, mode)
+        path_scan.assert_not_called()
+        gitlink_scan.assert_not_called()
+        subrepo_scan.assert_not_called()
+        ownership_check.assert_not_called()
+        return result
 
     def test_subrepository_root_is_attached_to_the_parent_placeholder(self):
         map_data, page_data = self.build("草稿")

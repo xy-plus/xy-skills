@@ -1,9 +1,8 @@
 """Compose checked repository models into page data and its public JSON contract."""
 from pathlib import Path
 
-from .git_repository import discover_subrepositories, gitlink_paths, tracked_paths
 from .metrics import ZERO_COUNTS, count_file, coverage_counts
-from .ownership import check_ownership, link_records
+from .ownership import link_records
 from .rendering import add_counts, add_coverage, coverage_text
 
 
@@ -96,7 +95,7 @@ def _drill_views(nodes, children, parents, relations, repo_roots):
 
 
 def build_page_data(repositories, mode):
-    """Build the renderer payload and exact map-data.json document from checked models."""
+    """Build page data from models and owners already checked for each repository."""
     if mode not in ("草稿", "正式"):
         raise ValueError("mode 只能是 草稿 或 正式")
 
@@ -153,11 +152,7 @@ def build_page_data(repositories, mode):
     own_coverage = {element_id: {} for element_id in elements}
     for item in repositories:
         root = Path(item["path"]).resolve()
-        ownership_problems, owners = check_ownership(
-            root, item["model"], tracked_paths(root), gitlink_paths(root),
-            discover_subrepositories(root))
-        if ownership_problems:
-            raise ValueError("；".join(ownership_problems))
+        owners = item["owners"]
         for file_path, owner in owners.items():
             category = owner.category
             if category not in ("code", "docs", "tests"):

@@ -57,9 +57,7 @@ python3 <xy-repo-map目录>/repo_map.py render \
 若要把草稿给用户看，用平台发布，名称带 `draft`，并把发布命令打印的链接交给用户：
 
 ```sh
-python3 /home/xy/web-portal/portal.py publish \
-  <名称，必须带 draft> \
-  <render 的输出目录绝对路径>
+python3 <xy-repo-map目录>/repo_map.py publish --out <render 的输出目录> --name <站点名>
 ```
 
 ## 机械旁证和引用对账
@@ -210,12 +208,10 @@ python3 <xy-repo-map目录>/repo_map.py render \
   --out <运行目录绝对路径>/render-after
 ```
 
-用新 `map-data.json` 对比基线中各顶层节点的四项 `total`，汇报前后变化。正式产物用平台发布命令发布，并把链接交给用户：
+用新 `map-data.json` 对比基线中各顶层节点的四项 `total`，汇报前后变化。正式产物的站点名不得含 `draft`；用平台发布命令发布，并把链接交给用户：
 
 ```sh
-python3 /home/xy/web-portal/portal.py publish \
-  <正式图名称> \
-  <正式 render 的输出目录绝对路径>
+python3 <xy-repo-map目录>/repo_map.py publish --out <render 的输出目录> --name <站点名>
 ```
 
 最后汇报测试结果、机械旁证、报告校验、节点统计变化、正式图链接、失败项和遗留问题。
