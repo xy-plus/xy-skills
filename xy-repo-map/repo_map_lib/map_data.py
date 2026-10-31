@@ -147,7 +147,7 @@ def build_page_data(repositories, mode):
             raise ValueError(f"节点上级不存在：{element_id} → {parent}")
         parents[element_id] = parent
         if parent is not None:
-            children.setdefault(parent, []).append(element_id)
+            children[parent].append(element_id)
     for child_ids in children.values():
         child_ids.sort()
 

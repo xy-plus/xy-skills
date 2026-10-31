@@ -73,37 +73,44 @@
     return result;
   }
   function expandedLayout(ids){
-    const visible=new Set(ids),sizes=new Map(),columnWidths=new Map();
+    const sizes=new Map(),columnWidths=new Map();
     for(const id of ids){
       const depth=visualDepth(id),size=nodeSize(id,visualChildren(id).length>0,depth);
       sizes.set(id,size);
       columnWidths.set(depth,columnWidths.has(depth)?Math.max(columnWidths.get(depth),size.width):size.width);
     }
-    const depths=[...columnWidths.keys()].sort((first,second)=>first-second),columnX=new Map();
+    const columnX=new Map();
+    // ids are preorder, so first-seen depths are 0, 1, 2... and Map key order is column order.
     // Each visual depth is one left-aligned column, with a 120-unit gap after its widest card.
     let right=0;
-    for(const depth of depths){columnX.set(depth,right);right+=columnWidths.get(depth)+120;}
+    for(const depth of columnWidths.keys()){columnX.set(depth,right);right+=columnWidths.get(depth)+120;}
     const positions=new Map();
     function placeCentered(id,centerY){
       const size=sizes.get(id),depth=visualDepth(id);
       positions.set(id,{x:columnX.get(depth),y:centerY-size.height/2,
         width:size.width,height:size.height});
-      for(const child of visualChildren(id))if(visible.has(child))placeCentered(child,centerY);
+      for(const child of visualChildren(id))placeCentered(child,centerY);
     }
     for(const id of DATA.top_roots)placeCentered(id,sizes.get(id).height/2);
     function shiftSubtree(id,amount){
       const position=positions.get(id);position.y+=amount;
-      for(const child of visualChildren(id))if(visible.has(child))shiftSubtree(child,amount);
+      for(const child of visualChildren(id))shiftSubtree(child,amount);
     }
-    // Enforce 48 units between cards; shift an aligned parent with its whole subtree.
+    function highestAlignedAncestor(id){
+      let ancestor=id,parent=visualParent(ancestor);
+      while(parent!==null&&visualChildren(parent)[0]===ancestor){
+        ancestor=parent;parent=visualParent(ancestor);
+      }
+      return ancestor;
+    }
+    // Enforce 48 units; lift the highest first-child ancestor and its subtree on collision.
     let moved;
     do{
       moved=false;const bottomByDepth=new Map();
       for(const id of ids){
         const depth=visualDepth(id),position=positions.get(id),previousBottom=bottomByDepth.get(depth);
         if(previousBottom!==undefined&&position.y<previousBottom+48){
-          const parent=visualParent(id),isFirstChild=parent!==null&&visualChildren(parent)[0]===id;
-          shiftSubtree(isFirstChild?parent:id,previousBottom+48-position.y);moved=true;
+          shiftSubtree(highestAlignedAncestor(id),previousBottom+48-position.y);moved=true;
         }
         const updated=positions.get(id);bottomByDepth.set(depth,updated.y+updated.height);
       }

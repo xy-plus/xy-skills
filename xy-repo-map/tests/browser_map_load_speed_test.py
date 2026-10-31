@@ -127,6 +127,83 @@ class MapLoadSpeedBrowserTest(ParentChildBrowserTestSupport, unittest.TestCase):
             finally:
                 browser.close()
 
+    def test_nested_first_child_collision_moves_highest_aligned_ancestor(self):
+        with sync_playwright() as playwright:
+            browser = self.open_browser(playwright)
+            try:
+                page, _ = self.open_page(
+                    browser, "draft", "展开", {"width": 1440, "height": 900}, False)
+                self.wait_for_view(page, "expand", None)
+                layout = page.evaluate("""() => {
+                  const data=JSON.parse(document.getElementById('page-data').textContent);
+                  const cards=[...document.querySelectorAll('.card')].map(card=>{
+                    const matrix=card.transform.baseVal.consolidate().matrix;
+                    const shape=card.querySelector('.card-shape').getBBox();
+                    return {id:card.dataset.nodeId,x:matrix.e,y:matrix.f,
+                      w:shape.width,h:shape.height};
+                  });
+                  return {cards,children:data.visual_children};
+                }""")
+                by_id = {card["id"]: card for card in layout["cards"]}
+                self.assertIn("workspace.aaa_layout_a.branch.tall", by_id)
+                self.assertIn("workspace.bbb_layout_b.child.leaf", by_id)
+                self.assertEqual(
+                    layout["children"]["workspace"][:2],
+                    ["workspace.aaa_layout_a", "workspace.bbb_layout_b"],
+                )
+                self.assertEqual(
+                    layout["children"]["workspace.aaa_layout_a.branch"],
+                    ["workspace.aaa_layout_a.branch.first",
+                     "workspace.aaa_layout_a.branch.tall"],
+                )
+                self.assertEqual(
+                    layout["children"]["workspace.bbb_layout_b"],
+                    ["workspace.bbb_layout_b.child"],
+                )
+                self.assertEqual(
+                    layout["children"]["workspace.bbb_layout_b.child"],
+                    ["workspace.bbb_layout_b.child.leaf"],
+                )
+                self.assertGreater(by_id["workspace.aaa_layout_a.branch.tall"]["h"],
+                                   by_id["workspace.bbb_layout_b.child.leaf"]["h"])
+                self.assertEqual(by_id["workspace.aaa_layout_a.branch.tall"]["x"],
+                                 by_id["workspace.bbb_layout_b.child.leaf"]["x"])
+
+                for parent, child_ids in layout["children"].items():
+                    if not child_ids or parent not in by_id:
+                        continue
+                    parent_card = by_id[parent]
+                    first_child = by_id[child_ids[0]]
+                    self.assertAlmostEqual(
+                        parent_card["y"] + parent_card["h"] / 2,
+                        first_child["y"] + first_child["h"] / 2,
+                        delta=1,
+                        msg=f"{parent} 与首个下级 {child_ids[0]} 未对齐",
+                    )
+
+                columns = {}
+                for card in layout["cards"]:
+                    columns.setdefault(round(card["x"], 2), []).append(card)
+                for cards in columns.values():
+                    cards.sort(key=lambda card: card["y"])
+                    for first, second in zip(cards, cards[1:]):
+                        self.assertGreaterEqual(
+                            second["y"] - first["y"] - first["h"], 48 - 1,
+                            (first["id"], second["id"]),
+                        )
+
+                for index, first in enumerate(layout["cards"]):
+                    for second in layout["cards"][index + 1:]:
+                        overlap = (
+                            first["x"] < second["x"] + second["w"]
+                            and first["x"] + first["w"] > second["x"]
+                            and first["y"] < second["y"] + second["h"]
+                            and first["y"] + first["h"] > second["y"]
+                        )
+                        self.assertFalse(overlap, (first["id"], second["id"]))
+            finally:
+                browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()
