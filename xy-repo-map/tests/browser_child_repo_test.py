@@ -164,6 +164,8 @@ def build_approved_parent_child_fixture(root, site_root):
     }
   }
   workspace.session.process -> workspace.session.events '随后触发'
+  workspace.session.process -> workspace.session.events '重试后触发'
+  workspace.session.process.step -> workspace.session.events '跨层调用'
 }
 """)
     write_map(engine, "engine", """model {
@@ -225,7 +227,7 @@ def build_approved_parent_child_fixture(root, site_root):
     return parent, engine, solo, draft_output, formal_output
 
 
-class RepositoryMapBrowserAcceptanceTest(unittest.TestCase):
+class ParentChildBrowserTestSupport:
     @classmethod
     def setUpClass(cls):
         raw_browser = os.environ["XY_REPO_MAP_CHROMIUM"]
@@ -268,8 +270,9 @@ class RepositoryMapBrowserAcceptanceTest(unittest.TestCase):
     def open_browser(self, playwright):
         return playwright.chromium.launch(headless=True, executable_path=str(self.browser_path))
 
-    def open_page(self, browser, mode, route=None):
-        page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
+    def open_page(self, browser, mode, route, viewport, touch):
+        page = browser.new_page(viewport=viewport, device_scale_factor=1,
+                                is_mobile=touch, has_touch=touch)
         remote_requests = []
         page.on("request", lambda request: remote_requests.append(request.url)
                 if urlsplit(request.url).netloc != urlsplit(self.base_url).netloc else None)
@@ -341,11 +344,14 @@ class RepositoryMapBrowserAcceptanceTest(unittest.TestCase):
         self.assertIn(title, page.locator(".edge-label").all_text_contents())
         self.assertTrue(page.locator(".edge-label-bg").is_visible())
 
+
+class RepositoryMapBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.TestCase):
     def test_real_render_page_covers_expansion_drill_history_and_relations(self):
         with sync_playwright() as playwright:
             browser = self.open_browser(playwright)
             try:
-                page, remote_requests = self.open_page(browser, "draft")
+                page, remote_requests = self.open_page(
+                    browser, "draft", None, {"width": 1440, "height": 900}, False)
                 map_document = self.map_data("draft")
                 page_document = self.page_data(page)
                 self.wait_for_view(page, "expand", None)
@@ -371,7 +377,8 @@ class RepositoryMapBrowserAcceptanceTest(unittest.TestCase):
                     map_document, page_document, "workspace.session")
                 self.assert_visible_totals(page, map_document, session_ids)
                 self.assert_relation_visible(
-                    page, "workspace.session.process", "workspace.session.events", "随后触发")
+                    page, "workspace.session.process", "workspace.session.events",
+                    "随后触发 · 重试后触发 · 跨层调用")
 
                 page.locator('.card[data-node-id="workspace.session.process"]').click()
                 self.wait_for_view(page, "drill", "workspace.session.process")
@@ -417,7 +424,8 @@ class RepositoryMapBrowserAcceptanceTest(unittest.TestCase):
             browser = self.open_browser(playwright)
             try:
                 deep_route = "钻入/workspace.session.process.step"
-                page, remote_requests = self.open_page(browser, "draft", deep_route)
+                page, remote_requests = self.open_page(
+                    browser, "draft", deep_route, {"width": 1440, "height": 900}, False)
                 map_document = self.map_data("draft")
                 page_document = self.page_data(page)
                 self.wait_for_view(page, "drill", "workspace.session.process.step")
@@ -471,7 +479,8 @@ class RepositoryMapBrowserAcceptanceTest(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = self.open_browser(playwright)
             try:
-                page, remote_requests = self.open_page(browser, "formal")
+                page, remote_requests = self.open_page(
+                    browser, "formal", None, {"width": 1440, "height": 900}, False)
                 map_document = self.map_data("正式")
                 page_document = self.page_data(page)
                 self.wait_for_view(page, "expand", None)

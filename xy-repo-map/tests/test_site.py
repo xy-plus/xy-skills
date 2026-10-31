@@ -83,6 +83,7 @@ class SiteTest(unittest.TestCase):
             self.assertIn("草稿·未经同意", html)
             self.assertTrue((destination / "DRAFT").is_file())
             self.assertTrue((destination / "elk.bundled.js").is_file())
+            self.assertTrue((destination / "map-page.js").is_file())
 
     def test_formal_site_has_no_draft_marker(self):
         formal_map = {**self.map_data, "mode": "正式"}

@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 
 PAGE_TEMPLATE = Path(__file__).with_name("templates") / "index.html"
+PAGE_SCRIPT = Path(__file__).with_name("templates") / "map-page.js"
 ELK_DIRECTORY = Path(__file__).resolve().parents[1] / "third_party" / "elkjs-0.9.3"
 PAGE_DATA_MARKER = "__PAGE_DATA_JSON__"
 MODE_STATUS_MARKER = "__MODE_STATUS__"
@@ -28,6 +29,7 @@ def write_site(map_data, page_data, destination):
     (output / "map-data.json").write_text(
         json.dumps(map_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (output / "index.html").write_text(render_html(page_data), encoding="utf-8")
+    shutil.copyfile(PAGE_SCRIPT, output / "map-page.js")
     shutil.copyfile(ELK_DIRECTORY / "elk.bundled.js", output / "elk.bundled.js")
     shutil.copyfile(ELK_DIRECTORY / "LICENSE.md", output / "LICENSE-elkjs-0.9.3.md")
     if map_data["mode"] == "草稿":
