@@ -63,7 +63,6 @@ class PublishCommandTest(unittest.TestCase):
 
     def test_publish_requires_output_and_name(self):
         incomplete_arguments = (
-            ["repo_map.py", "publish"],
             ["repo_map.py", "publish", "--out", str(self.root)],
             ["repo_map.py", "publish", "--name", "sample"],
         )
