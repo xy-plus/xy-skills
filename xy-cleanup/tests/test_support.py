@@ -1,5 +1,4 @@
 """Small report builders shared by cleanup tests."""
-import json
 from pathlib import Path
 import sys
 
@@ -54,7 +53,7 @@ def report(role, nodes, repo):
 
 
 def report_input(path, document):
-    return {"path": path, "data": json.loads(json.dumps(document))}
+    return {"path": path, "data": document}
 
 
 def valid_reports(owners):

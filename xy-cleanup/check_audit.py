@@ -1,18 +1,20 @@
 """Validate cleanup reports against the repository map and file ownership."""
 import argparse
 import json
+from functools import lru_cache
 from pathlib import Path
 import re
 import sys
 
 REPO_MAP_PATH = Path(__file__).resolve().parents[1] / "xy-repo-map"
+HANDOFF_PATH = Path(__file__).resolve().parents[1] / "xy-handoff"
 sys.path.insert(0, str(REPO_MAP_PATH))
+sys.path.insert(0, str(HANDOFF_PATH))
 
 from repo_map_lib.checker import check_repository
-from repo_map_lib.git_repository import (ArgumentError, discover_subrepositories,
-                                         gitlink_paths, require_repository_root,
+from repo_map_lib.git_repository import (ArgumentError, require_repository_root,
                                          tracked_paths)
-from repo_map_lib.ownership import check_ownership
+from check_handoff import object_without_duplicate_keys
 from audit_entities import collect_entities
 
 
@@ -29,25 +31,31 @@ ENTITY_FIELDS = {"entity", "verdict", "reason"}
 ENTITY_VERDICTS = {"无问题", "见发现"}
 
 
-def numbered_text(skill_path, number):
-    """Return one numbered rule from a local skill document."""
+@lru_cache(maxsize=None)
+def _numbered_rules(skill_path):
+    """Read and index all numbered rules in one local skill document once."""
     try:
         lines = skill_path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
-        return ""
-    start = None
-    for index, line in enumerate(lines):
-        if re.match(rf"^\s*{number}\.\s", line):
-            start = index
-            break
-    if start is None:
-        return ""
-    end = len(lines)
-    for index in range(start + 1, len(lines)):
-        if re.match(r"^\s*[1-9][0-9]*\.\s", lines[index]):
-            end = index
-            break
-    return "\n".join(lines[start:end])
+        return ()
+    rules = []
+    index = 0
+    while index < len(lines):
+        match = re.match(r"^\s*([1-9][0-9]*)\.\s", lines[index])
+        if match is None:
+            index += 1
+            continue
+        end = index + 1
+        while end < len(lines) and re.match(r"^\s*[1-9][0-9]*\.\s", lines[end]) is None:
+            end += 1
+        rules.append((int(match.group(1)), "\n".join(lines[index:end])))
+        index = end
+    return tuple(rules)
+
+
+def numbered_text(skill_path, number):
+    """Return one numbered rule from a local skill document."""
+    return dict(_numbered_rules(Path(skill_path))).get(number, "")
 
 
 def basis_rule(basis):
@@ -175,6 +183,10 @@ def validate_entity_list(value, label, expected, findings, problems):
     actual = []
     seen = set()
     has_finding_verdict = False
+    finding_targets = {
+        finding.get("target") for finding in findings
+        if isinstance(finding, dict) and isinstance(finding.get("target"), str)
+    }
     for index, item in enumerate(value):
         item_label = f"{label}[{index}]"
         if not isinstance(item, dict):
@@ -202,6 +214,8 @@ def validate_entity_list(value, label, expected, findings, problems):
         reason = item.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             problems.append(f"{item_label}.reason 必须是非空字符串")
+        elif verdict == "见发现" and reason not in finding_targets:
+            problems.append(f"{item_label}.reason 必须等于本节点某条 finding 的 target")
 
     for entity_id in sorted(set(expected) - set(actual)):
         problems.append(f"{label} 缺少实体 {entity_id}")
@@ -278,12 +292,10 @@ def validate_report_node(entry, role, report_name, scope, owners, expected_entit
     return node
 
 
-def validate_reports(repository, scope_values, reports, model, owners, expected_entities):
+def validate_reports(repository, scope, reports, model, owners, expected_entities):
     """Return all schema, coverage, evidence, and file-ownership problems."""
     problems = []
-    scope, scope_problems = expand_scope(scope_values, model)
-    problems.extend(scope_problems)
-    expected_repository = str(Path(repository).resolve())
+    expected_repository = str(repository)
     elements = model.get("elements", {}) if isinstance(model, dict) else {}
     role_counts = {role: {} for role in ROLES}
     direct_deletions = {role: set() for role in ROLES}
@@ -354,7 +366,10 @@ def load_reports(paths):
     problems = []
     for path in paths:
         try:
-            document = json.loads(Path(path).read_text(encoding="utf-8"))
+            document = json.loads(
+                Path(path).read_text(encoding="utf-8"),
+                object_pairs_hook=object_without_duplicate_keys,
+            )
         except (OSError, UnicodeError, ValueError) as error:
             problems.append(f"无法读取报告 {path}：{error}")
             continue
@@ -380,15 +395,10 @@ def parser():
 def repository_context(repository):
     """Require a valid graph without requiring its approval record."""
     root = require_repository_root(repository)
-    problems, model = check_repository(root, check_approval=False)
+    problems, model, owners = check_repository(root, check_approval=False)
     if problems:
         raise ValueError("\n".join(problems))
     tracked = tracked_paths(root)
-    ownership_problems, owners = check_ownership(
-        root, model, tracked, gitlink_paths(root), discover_subrepositories(root)
-    )
-    if ownership_problems:
-        raise ValueError("\n".join(ownership_problems))
     return root, model, tracked, owners
 
 
@@ -398,9 +408,6 @@ def main(argv):
         arguments = parser().parse_args(argv)
     except SystemExit as error:
         return int(error.code)
-    if not Path(arguments.repo).is_absolute():
-        print("--repo 必须是绝对路径", file=sys.stderr)
-        return 2
     try:
         root, model, _, owners = repository_context(arguments.repo)
     except ArgumentError as error:

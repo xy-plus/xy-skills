@@ -13,7 +13,8 @@ sys.path.insert(0, str(TESTS.parent))
 sys.path.insert(0, str(TESTS.parent / "test_data"))
 sys.path.insert(0, str(TESTS))
 
-from check_audit import main, numbered_text, validate_reports
+from check_audit import (expand_scope, load_reports, main, numbered_text,
+                         validate_reports)
 from audit_entities import collect_entities
 from test_support import (finding, model, node_entry, report, report_input,
                           valid_reports)
@@ -33,14 +34,15 @@ OWNERS = {
 
 def validate(reports, scope, owners, graph):
     report_data = valid_reports(OWNERS) if reports is None else reports
-    scope_data = SCOPE if scope is None else scope
+    scope_values = SCOPE if scope is None else scope
     owner_data = OWNERS if owners is None else owners
     graph_data = model() if graph is None else graph
     expected_entities = {
         node: sorted(path for path, owner in owner_data.items() if owner.element == node)
         for node in graph_data["elements"]
     }
-    return validate_reports(
+    scope_data, scope_problems = expand_scope(scope_values, graph_data)
+    return scope_problems + validate_reports(
         REPO, scope_data, report_data, graph_data, owner_data, expected_entities
     )
 
@@ -172,16 +174,12 @@ class CheckAuditTest(unittest.TestCase):
         errors = validate(reports, None, None, None)
         self.assertTrue(any("entity 必须是非空字符串" in error for error in errors), errors)
 
-    def test_whole_graph_nodes_must_not_list_entities(self):
+    def test_whole_graph_nodes_must_not_list_files_or_entities(self):
         reports = valid_reports(OWNERS)
         reports[2]["data"]["nodes"][0]["entities"] = []
-        errors = validate(reports, None, None, None)
-        self.assertTrue(any("全图" in error and "entities" in error for error in errors), errors)
-
-    def test_whole_graph_nodes_must_not_list_files(self):
-        reports = valid_reports(OWNERS)
         reports[2]["data"]["nodes"][0]["files"] = []
         errors = validate(reports, None, None, None)
+        self.assertTrue(any("全图" in error and "entities" in error for error in errors), errors)
         self.assertTrue(any("全图" in error and "files" in error for error in errors), errors)
 
     def test_report_and_node_fields_are_strict(self):
@@ -243,12 +241,22 @@ class CheckAuditTest(unittest.TestCase):
         item["basis"]["source"] = "xy-repo-rules 第 1 条"
         self.assertTrue(any("basis.text" in error for error in validate(reports, None, None, None)))
 
-    def test_all_scope_expands_to_model_elements(self):
-        reports = valid_reports(OWNERS)
-        reports[0]["data"]["nodes"].append(node_entry("sample", [], [], "核对了根节点"))
-        reports[1]["data"]["nodes"].append(node_entry("sample", [], [], "核对了根节点"))
-        reports[2]["data"]["nodes"].append(node_entry("sample", None, [], "核对了根节点"))
-        self.assertEqual(validate(reports, ["全部"], OWNERS, None), [])
+    def test_numbered_rules_read_each_skill_file_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            skill_path = Path(temporary) / "rules.md"
+            skill_path.write_text("1. 第一条\n正文。\n2. 第二条\n结束。\n", encoding="utf-8")
+            original_read_text = Path.read_text
+            reads = []
+
+            def count_rule_read(path, *args, **kwargs):
+                if path == skill_path:
+                    reads.append(path)
+                return original_read_text(path, *args, **kwargs)
+
+            with patch.object(Path, "read_text", count_rule_read):
+                numbered_text(skill_path, 1)
+                numbered_text(skill_path, 2)
+            self.assertEqual(reads, [skill_path])
 
     def test_invalid_delete_finding_cannot_hide_descendants(self):
         reports = valid_reports(OWNERS)
@@ -363,9 +371,47 @@ class CheckAuditTest(unittest.TestCase):
                 report_paths.append(str(path))
             arguments = ["check", "--repo", str(repository), "--scope", "全部",
                          "--reports", *report_paths]
-            with patch("check_audit.check_repository", return_value=([], graph)) as graph_check:
+            with patch("check_audit.check_repository", return_value=([], graph, owners)) as graph_check, \
+                    patch("check_audit.expand_scope", wraps=expand_scope) as expand:
                 self.assertEqual(main(arguments), 0)
             graph_check.assert_called_once_with(repository, check_approval=False)
+            self.assertEqual(expand.call_count, 1)
+
+    def test_load_reports_rejects_duplicate_json_keys(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "duplicate.json"
+            path.write_text('{"role":"主审","role":"全图"}', encoding="utf-8")
+            reports, problems = load_reports([path])
+        self.assertEqual(reports, [])
+        self.assertTrue(any("重复键：role" in problem for problem in problems), problems)
+
+    def test_entity_finding_verdict_reason_must_match_a_finding_target(self):
+        reports = valid_reports(OWNERS)
+        node = reports[0]["data"]["nodes"][0]
+        node["findings"] = [finding("重构", "问你", True)]
+        node["entities"][0]["verdict"] = "见发现"
+        node["entities"][0]["reason"] = "src/other.py:7"
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("reason" in error and "target" in error for error in errors), errors)
+        node["entities"][0]["reason"] = node["findings"][0]["target"]
+        errors = validate(reports, None, None, None)
+        self.assertFalse(any("reason" in error and "target" in error for error in errors), errors)
+
+    def test_repository_context_reuses_owners_returned_by_repository_check(self):
+        from check_audit import repository_context
+
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = create_fixture_repo(Path(temporary) / "review-target")
+            graph = {"elements": {"fixture": {}}, "relations": {}}
+            owners = {"src/cleanup_fixture/core.py": object()}
+            with patch("check_audit.check_repository", return_value=([], graph, owners)), \
+                    patch("repo_map_lib.checker.check_ownership") as ownership_check:
+                root, actual_graph, tracked, actual_owners = repository_context(repository)
+            self.assertEqual(root, repository)
+            self.assertIs(actual_graph, graph)
+            self.assertIn("src/cleanup_fixture/core.py", tracked)
+            self.assertIs(actual_owners, owners)
+            ownership_check.assert_not_called()
 
     def test_entities_command_prints_the_selected_node_manifest_as_json(self):
         with tempfile.TemporaryDirectory() as temporary:

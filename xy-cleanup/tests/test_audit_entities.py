@@ -13,7 +13,7 @@ from repo_map_lib.ownership import Owner
 
 
 class AuditEntitiesTest(unittest.TestCase):
-    def test_python_functions_classes_and_methods_have_stable_ids(self):
+    def test_python_nested_definitions_and_methods_have_qualified_ids(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "module.py").write_text(
@@ -25,7 +25,13 @@ class AuditEntitiesTest(unittest.TestCase):
                 "    def create(self):\n"
                 "        return None\n"
                 "    async def create(self):\n"
-                "        return None\n",
+                "        return None\n"
+                "    def factory(self):\n"
+                "        def nested():\n"
+                "            return None\n"
+                "        class Inner:\n"
+                "            async def build(self):\n"
+                "                return None\n",
                 encoding="utf-8",
             )
             entities = collect_entities(
@@ -38,9 +44,13 @@ class AuditEntitiesTest(unittest.TestCase):
                 "module.py::Box",
                 "module.py::Box.create@6",
                 "module.py::Box.create@8",
+                "module.py::Box.factory",
+                "module.py::Box.factory.nested",
+                "module.py::Box.factory.Inner",
+                "module.py::Box.factory.Inner.build",
             })
 
-    def test_python_test_category_is_parsed_but_other_files_only_list_the_file(self):
+    def test_every_python_file_is_parsed_regardless_of_link_category(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "tests").mkdir()
@@ -59,7 +69,9 @@ class AuditEntitiesTest(unittest.TestCase):
             self.assertEqual(entities["tests"], [
                 "tests/test_api.py", "tests/test_api.py::test_api"
             ])
-            self.assertEqual(entities["docs"], ["README.md", "examples.py"])
+            self.assertEqual(entities["docs"], [
+                "README.md", "examples.py", "examples.py::documented_example"
+            ])
 
     def test_rust_functions_are_found_without_comments_or_string_contents(self):
         with tempfile.TemporaryDirectory() as temporary:

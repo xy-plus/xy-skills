@@ -9,6 +9,7 @@ sys.path.insert(0, str(TESTS.parent))
 sys.path.insert(0, str(TESTS.parents[1] / "xy-repo-map"))
 
 from references import build_reference_report
+from references import main as references_main
 from references import module_names
 from references import node_names
 from check_audit import repository_context
@@ -211,6 +212,55 @@ class ReferencesTest(unittest.TestCase):
                 {"alpha.py": Owner("alpha", "code"), "beta.bin": Owner("beta", "data")}
             )
             self.assertEqual(result["mentions"], [])
+            self.assertEqual(result["skipped_files"], [
+                {"file": "beta.bin", "reason": "含 NUL 字节"}
+            ])
+
+    def test_reports_non_utf8_files_as_skipped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "invalid.txt").write_bytes(b"\xff\xfe")
+            model = {"elements": {"app": {}}, "relations": {}}
+            result = build_reference_report(
+                root, model, ["invalid.txt"],
+                {"invalid.txt": Owner("app", "docs")}
+            )
+        self.assertEqual(result["mentions"], [])
+        self.assertEqual(result["skipped_files"], [
+            {"file": "invalid.txt", "reason": "非 UTF-8 文件"}
+        ])
+
+    def test_file_read_oserror_propagates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "source.py"
+            path.write_text("pass\n", encoding="utf-8")
+            model = {"elements": {"app": {}}, "relations": {}}
+            from unittest.mock import patch
+            with patch("references.Path.read_bytes", side_effect=PermissionError("denied")):
+                with self.assertRaisesRegex(PermissionError, "denied"):
+                    build_reference_report(
+                        root, model, ["source.py"],
+                        {"source.py": Owner("app", "code")}
+                    )
+
+    def test_file_read_oserror_makes_command_exit_one(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph = {"elements": {"app": {}}, "relations": {}}
+            owners = {"source.py": Owner("app", "code")}
+            output = io.StringIO()
+            with patch("references.repository_context",
+                       return_value=(root, graph, ["source.py"], owners)), \
+                    patch("references.text_lines", side_effect=PermissionError("denied")), \
+                    contextlib.redirect_stderr(output):
+                status = references_main(["--repo", str(root)])
+        self.assertEqual(status, 1)
+        self.assertIn("denied", output.getvalue())
 
     def test_repeated_directory_basename_is_not_used_as_a_node_name(self):
         with tempfile.TemporaryDirectory() as temporary:

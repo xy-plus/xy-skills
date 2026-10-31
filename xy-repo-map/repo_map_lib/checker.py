@@ -13,12 +13,12 @@ from .structure import structure_digest
 
 
 def check_repository(repository, check_approval):
-    """Return (problem lines, exported model); LikeC4 syntax must validate first."""
+    """Return problem lines, the exported model, and its checked file owners."""
     root = require_repository_root(repository)
     repo_map = root / "repo-map"
     problems = []
     if not repo_map.is_dir():
-        return [f"缺少仓图目录：{repo_map}"], None
+        return [f"缺少仓图目录：{repo_map}"], None, {}
     config_path = repo_map / "likec4.config.json"
     kinds_path = repo_map / "kinds.c4"
     approvals_path = repo_map / "approvals.txt"
@@ -33,12 +33,12 @@ def check_repository(repository, check_approval):
     except (OSError, UnicodeError) as error:
         problems.append(f"无法读取 .c4 文件：{error}")
     if problems:
-        return problems, None
+        return problems, None, {}
 
     try:
         model = export_model(repo_map)
     except ValueError as error:
-        return [str(error)], None
+        return [str(error)], None, {}
 
     problems.extend(model_problems(model))
     try:
@@ -72,4 +72,4 @@ def check_repository(repository, check_approval):
                 problems.append(f"图未经同意：repo-map sha256 {digest}")
         except ValueError as error:
             problems.append(str(error))
-    return problems, model
+    return problems, model, owners

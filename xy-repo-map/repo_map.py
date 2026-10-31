@@ -81,7 +81,7 @@ def main(argv):
             print("已记录改图同意" if added else "该摘要已经记录，不重复写入")
             return 0
         if options.command == "check":
-            problems, _ = check_repository(options.repo, True)
+            problems, _, _ = check_repository(options.repo, True)
             _print_problems(problems)
             if problems:
                 return 1

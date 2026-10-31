@@ -97,14 +97,14 @@ def node_names(model, tracked, owners):
 
 
 def text_lines(path):
-    """Read a tracked UTF-8 text file, or return no lines for binary/unreadable data."""
+    """Return lines and an explicit skip reason for non-text tracked files."""
+    content = path.read_bytes()
+    if b"\0" in content:
+        return [], "含 NUL 字节"
     try:
-        content = path.read_bytes()
-        if b"\0" in content:
-            return []
-        return content.decode("utf-8").splitlines()
-    except (OSError, UnicodeError):
-        return []
+        return content.decode("utf-8").splitlines(), None
+    except UnicodeError:
+        return [], "非 UTF-8 文件"
 
 
 def relationship_pairs(model):
@@ -124,9 +124,10 @@ def relationship_pairs(model):
 
 def build_reference_report(repository, model, tracked, owners):
     """Return text mentions and graph relationships that disagree, as JSON data."""
-    root = Path(repository).resolve()
+    root = Path(repository)
     names = node_names(model, tracked, owners)
     evidence = {}
+    skipped_files = []
     for file_path in sorted(tracked):
         if file_path == "repo-map" or file_path.startswith("repo-map/"):
             continue
@@ -134,7 +135,10 @@ def build_reference_report(repository, model, tracked, owners):
         if owner is None:
             continue
         source = owner.element
-        lines = text_lines(root / file_path)
+        lines, skip_reason = text_lines(root / file_path)
+        if skip_reason is not None:
+            skipped_files.append({"file": file_path, "reason": skip_reason})
+            continue
         if not lines:
             continue
         for target, target_names in names.items():
@@ -161,6 +165,7 @@ def build_reference_report(repository, model, tracked, owners):
     return {
         "repo": str(root),
         "mentions": mentions,
+        "skipped_files": skipped_files,
         "references_without_relationship": [
             item for item in mentions if (item["from"], item["to"]) not in relationship_pair_set
         ],

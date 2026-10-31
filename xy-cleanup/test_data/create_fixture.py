@@ -10,8 +10,6 @@ FIXTURE_ROOT = Path(__file__).resolve().parent / "fixture_repo"
 def create_fixture_repo(destination):
     """Create an indexed fixture repository at a new destination path."""
     root = Path(destination).resolve()
-    if root.exists():
-        raise ValueError(f"目标路径已存在：{root}")
     shutil.copytree(FIXTURE_ROOT, root)
     subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(root), "add", "."], check=True, capture_output=True)

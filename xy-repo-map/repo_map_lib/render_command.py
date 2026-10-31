@@ -3,8 +3,7 @@ from pathlib import Path
 import shutil
 
 from .checker import check_repository
-from .git_repository import (discover_subrepositories, gitlink_paths,
-                             require_repository_root, tracked_paths)
+from .git_repository import require_repository_root
 from .map_data import build_page_data
 from .ownership import link_records
 from .site import write_site
@@ -35,7 +34,7 @@ def _checked_tree(repository, mode):
         if resolved in known_paths:
             return
         known_paths.add(resolved)
-        current_problems, model = check_repository(resolved, check_approval)
+        current_problems, model, _ = check_repository(resolved, check_approval)
         if current_problems:
             problems.extend(f"仓 {resolved}：{problem}" for problem in current_problems)
             return

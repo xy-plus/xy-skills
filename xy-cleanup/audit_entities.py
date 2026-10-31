@@ -4,9 +4,6 @@ from collections import Counter
 from pathlib import Path
 
 
-PYTHON_CATEGORIES = {"code", "tests"}
-
-
 def _python_definitions(source, file_path):
     try:
         tree = ast.parse(source, filename=file_path)
@@ -16,16 +13,28 @@ def _python_definitions(source, file_path):
         ) from error
     definitions = []
     function_types = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+    def visit_nested(node, qualifier):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (*function_types, ast.ClassDef)):
+                visit_definition(child, qualifier)
+            else:
+                visit_nested(child, qualifier)
+
+    def visit_statement(statement, qualifier):
+        if isinstance(statement, (*function_types, ast.ClassDef)):
+            visit_definition(statement, qualifier)
+        else:
+            visit_nested(statement, qualifier)
+
+    def visit_definition(item, qualifier):
+        name = f"{qualifier}.{item.name}" if qualifier else item.name
+        definitions.append((f"{file_path}::{name}", item.lineno))
+        for statement in item.body:
+            visit_statement(statement, name)
+
     for item in tree.body:
-        if isinstance(item, function_types):
-            definitions.append((f"{file_path}::{item.name}", item.lineno))
-        elif isinstance(item, ast.ClassDef):
-            definitions.append((f"{file_path}::{item.name}", item.lineno))
-            for member in item.body:
-                if isinstance(member, function_types):
-                    definitions.append((
-                        f"{file_path}::{item.name}.{member.name}", member.lineno
-                    ))
+        visit_statement(item, "")
     return definitions
 
 
@@ -184,10 +193,10 @@ def _with_duplicate_lines(definitions):
 
 def file_entities(repository, file_path, category):
     """Return one tracked-file ID plus definitions applicable to its source type."""
-    root = Path(repository).resolve()
+    root = Path(repository)
     entities = [file_path]
     suffix = Path(file_path).suffix
-    if suffix == ".py" and category in PYTHON_CATEGORIES:
+    if suffix == ".py":
         try:
             source = (root / file_path).read_text(encoding="utf-8-sig")
         except (OSError, UnicodeError) as error:
@@ -207,7 +216,7 @@ def file_entities(repository, file_path, category):
 
 def collect_entities(repository, owners, nodes):
     """Return expected entity IDs grouped by the selected owning map elements."""
-    root = Path(repository).resolve()
+    root = Path(repository)
     entities = {node: [] for node in sorted(nodes)}
     for file_path, owner in sorted(owners.items()):
         if owner.element not in entities:
