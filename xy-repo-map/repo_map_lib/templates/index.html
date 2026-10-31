@@ -29,13 +29,14 @@ button:hover{background:#f1f5fb}
 .edge-label-bg{fill:#fff;stroke:#d6deea;stroke-width:1;vector-effect:non-scaling-stroke}
 .edge-label{fill:#4d5b72;font-size:14px;text-anchor:middle;dominant-baseline:middle}
 .composition-spine,.composition-edge{fill:none;stroke:#98a2b1;stroke-width:1.7;vector-effect:non-scaling-stroke}
-.relation-edge{fill:none;stroke:#b64e83;stroke-width:1.8;stroke-dasharray:6 5;vector-effect:non-scaling-stroke;marker-end:url(#relation-arrow)}
+.relation-edge{fill:none;stroke:#c795ad;stroke-width:1.3;stroke-dasharray:6 5;opacity:.48;vector-effect:non-scaling-stroke;marker-end:url(#relation-arrow)}
 .relation-edge.highlighted{stroke:#a62968;stroke-width:2.7;opacity:1}
-.relation-edge.dimmed,.relation-label.dimmed{opacity:.13}
+.relation-edge.dimmed,.relation-label.dimmed,.relation-label-bg.dimmed{opacity:.08}
+.relation-label-bg,.relation-label{opacity:0;pointer-events:none}
 .relation-label-bg{fill:#fff;stroke:#e5bfd1;stroke-width:1;vector-effect:non-scaling-stroke}
 .relation-label{fill:#813454;font-size:13px;text-anchor:middle;dominant-baseline:middle}
+.relation-label-bg.highlighted,.relation-label.highlighted{opacity:1}
 .relation-label.highlighted{stroke:#f4d9e6;stroke-width:3px;paint-order:stroke}
-.relation-label.dimmed{opacity:.18}
 .card{filter:drop-shadow(0 2px 4px #24314a18)}
 .card-shape{stroke-width:1.4;vector-effect:non-scaling-stroke}
 .card-title{fill:#263247}
@@ -83,6 +84,7 @@ button:hover{background:#f1f5fb}
   </div>
 </main>
 <script id="page-data" type="application/json">__PAGE_DATA_JSON__</script>
+<script src="map-relations.js"></script>
 <script src="map-page.js" defer></script>
 </body>
 </html>

@@ -4,7 +4,7 @@
   const SVG_NS="http://www.w3.org/2000/svg";
   const COUNT_LABELS=[["code","代码"],["docs","文档"],["comments","注释"],["tests","测试"]];
   const FONT_FAMILY='system-ui,"Noto Sans CJK SC","Microsoft YaHei",sans-serif';
-  const METRIC_FONT=`600 13px ${FONT_FAMILY}`;
+  const METRIC_FONT=`600 15px ${FONT_FAMILY}`;
   const DESCRIPTION_FONT=`13px ${FONT_FAMILY}`;
   const EDGE_FONT=`13px ${FONT_FAMILY}`;
   const LEADING_PUNCTUATION=new Set(Array.from("，。！？、；：）』」》〉】〕］｝”’)]}'\""));
@@ -49,7 +49,7 @@
     }
     return lines;
   }
-  function nodeSize(id,hasKids,depth){
+  function nodeSize(id,hasKids,depth,maxWidth=null){
     const node=DATA.nodes[id],titleFontSize=depth===0?17:depth===1?16:15;
     const titleWeight=depth<2?700:600,titleFont=`${titleWeight} ${titleFontSize}px ${FONT_FAMILY}`;
     const badgeWidth=node.kind==="repo"?widthOf("子仓",`700 10px ${FONT_FAMILY}`)+12:0;
@@ -58,17 +58,25 @@
     const metricRowWidth=metricWidths.reduce((sum,width)=>sum+width,0)+5*(metricWidths.length-1);
     const titleWidth=widthOf(node.title,titleFont)+badgeWidth+(badgeWidth?6:0);
     const descriptionNatural=Math.min(330,widthOf(node.description,DESCRIPTION_FONT));
-    const contentWidth=Math.max(230,metricRowWidth,Math.min(330,titleWidth),descriptionNatural);
-    const titleLines=wrapText(node.title,contentWidth-badgeWidth-(badgeWidth?6:0),titleFont);
+    const desiredWidth=Math.max(230,metricRowWidth,Math.min(330,titleWidth),descriptionNatural);
+    const contentWidth=maxWidth===null?desiredWidth:Math.max(110,Math.min(desiredWidth,maxWidth-28));
+    const titleLines=wrapText(node.title,Math.max(40,contentWidth-badgeWidth-(badgeWidth?6:0)),titleFont);
     const descriptionLines=wrapText(node.description,contentWidth,DESCRIPTION_FONT);
     const titleLineHeight=titleFontSize+2,titleY=10+titleFontSize;
-    const metricY=10+titleLines.length*titleLineHeight+5,metricHeight=23;
-    const descriptionTop=metricY+metricHeight+6,descriptionLineHeight=17;
+    const metricHeight=23,metricGap=5;
+    const metricRows=[];let row=0,x=14;
+    metricWidths.forEach((width,index)=>{
+      if(x>14&&x+width>14+contentWidth){row++;x=14;}
+      metricRows.push({index,row,x,width});x+=width+metricGap;
+    });
+    const rowCount=row+1,metricY=10+titleLines.length*titleLineHeight+5;
+    const descriptionTop=metricY+rowCount*metricHeight+(rowCount-1)*4+6,descriptionLineHeight=17;
     const coverageY=descriptionTop+descriptionLines.length*descriptionLineHeight+14;
     const height=hasKids?coverageY:coverageY+15;
+    const metricPositions=metricRows.map(item=>({...item,y:metricY+item.row*(metricHeight+4)}));
     return {width:contentWidth+28,height,titleLines,titleY,titleLineHeight,titleFontSize,
       descriptionLines,descriptionTop,descriptionLineHeight,coverageY,metricY,metricHeight,
-      metricTexts,metricWidths,metricGap:5,badgeWidth};
+      metricTexts,metricWidths,metricGap,badgeWidth,metricPositions};
   }
   function expandedIds(){
     const result=[],seen=new Set();
@@ -86,8 +94,17 @@
       edges.push({id:`tree-${parent}-${id}`,sources:[parent],targets:[id]});}
     return {id:"root",layoutOptions:TREE_LAYOUT,children:nodes,edges};
   }
+  function mobileExpandedLayout(ids){
+    const nodes=[],right=svg.clientWidth-160;let y=12;
+    for(const id of ids){
+      const depth=visualDepth(id),x=16+depth*12;
+      const size=nodeSize(id,visualChildren(id).length>0,depth,right-x);
+      nodes.push({id,x,y,width:size.width,height:size.height,_depth:depth});y+=size.height+14;
+    }
+    return {id:"mobile-tree",children:nodes,width:svg.clientWidth,height:y};
+  }
   function drillGraph(current){
-    const projection=DATA.drill_views[current],mobile=svg.clientWidth<=480;
+    const projection=DATA.drill_views[current],mobile=svg.clientWidth<600;
     const layoutOptions=mobile?{...DRILL_LAYOUT,"elk.direction":"DOWN",
       "elk.spacing.nodeNode":"30","elk.layered.spacing.nodeNodeBetweenLayers":"30"}:DRILL_LAYOUT;
     const nodes=projection.nodes.map(id=>{
@@ -131,6 +148,28 @@
       }
     }
   }
+  function drawMobileComposition(layer,ids,positions){
+    const groups=new Map();
+    for(const id of ids){const parent=visualParent(id);if(parent!==null){const list=groups.get(parent)||[];list.push(id);groups.set(parent,list);}}
+    let left=Infinity,right=-Infinity,top=Infinity,bottom=-Infinity;
+    for(const [parent,childIds] of groups){
+      const source=positions.get(parent),targets=childIds.map(id=>({id,box:positions.get(id)})).sort((a,b)=>a.box.y-b.box.y);
+      const trunkX=source.x-8,sourceY=source.y+source.height/2;
+      const firstY=targets[0].box.y+targets[0].box.height/2,last=targets[targets.length-1].box;
+      const lastY=last.y+last.height/2;
+      layer.appendChild(svgElement("path",{class:"composition-spine",
+        d:`M${source.x} ${sourceY} H${trunkX} M${trunkX} ${firstY} V${lastY}`,"data-source":parent}));
+      left=Math.min(left,trunkX);right=Math.max(right,source.x);top=Math.min(top,sourceY,firstY);bottom=Math.max(bottom,sourceY,lastY);
+      for(const {id,box} of targets){
+        const y=box.y+box.height/2;
+        layer.appendChild(svgElement("path",{class:"composition-edge",d:`M${trunkX} ${y} H${box.x}`,
+          "data-source":parent,"data-target":id}));
+        right=Math.max(right,box.x);top=Math.min(top,y);bottom=Math.max(bottom,y);
+      }
+    }
+    return {x:Number.isFinite(left)?left:0,y:Number.isFinite(top)?top:0,
+      width:Number.isFinite(left)?right-left:1,height:Number.isFinite(top)?bottom-top:1};
+  }
   function drawElkEdges(layer,edges){
     for(const edge of edges||[]){
       if(edge.id&&edge.id.startsWith("pack-"))continue;
@@ -149,6 +188,14 @@
         text.textContent=label.text||"";layer.appendChild(text);
       }
     }
+  }
+  function labelClear(x,y,width,height,positions,skip,labels){
+    const left=x-width/2,right=x+width/2,top=y-height/2,bottom=y+height/2;
+    for(const [id,box] of positions){
+      if(skip.has(id))continue;
+      if(left<box.x+box.width&&right>box.x&&top<box.y+box.height&&bottom>box.y)return false;
+    }
+    return !labels.some(label=>left<label.right&&right>label.left&&top<label.bottom&&bottom>label.top);
   }
   function drawMobileDrillEdges(layer,edges,positions){
     const bounds={left:Infinity,right:-Infinity,top:Infinity,bottom:-Infinity};
@@ -177,126 +224,8 @@
     }
     return {x:bounds.left,y:bounds.top,width:bounds.right-bounds.left,height:bounds.bottom-bounds.top};
   }
-  function segmentHitsCard(start,end,positions,skip){
-    for(const [id,box] of positions){if(skip.has(id))continue;
-      if(Math.abs(start.y-end.y)<1){const y=start.y;
-        if(y>box.y+2&&y<box.y+box.height-2&&Math.max(Math.min(start.x,end.x),box.x+2)<Math.min(Math.max(start.x,end.x),box.x+box.width-2))return true;
-      }else if(Math.abs(start.x-end.x)<1){const x=start.x;
-        if(x>box.x+2&&x<box.x+box.width-2&&Math.max(Math.min(start.y,end.y),box.y+2)<Math.min(Math.max(start.y,end.y),box.y+box.height-2))return true;
-      }
-    }
-    return false;
-  }
-  function routeClear(points,positions,skip){
-    for(let i=1;i<points.length;i++)if(segmentHitsCard(points[i-1],points[i],positions,skip))return false;
-    return true;
-  }
-  function labelClear(x,y,width,height,positions,skip,labels){
-    const left=x-width/2,right=x+width/2,top=y-height/2,bottom=y+height/2;
-    for(const [id,box] of positions){if(skip.has(id))continue;
-      if(left<box.x+box.width&&right>box.x&&top<box.y+box.height&&bottom>box.y)return false;
-    }
-    return !labels.some(label=>left<label.right&&right>label.left&&top<label.bottom&&bottom>label.top);
-  }
-  function layerGap(position,direction,positions){
-    const right=position.x+position.width;
-    if(direction>0){
-      const next=Math.min(...[...positions.values()].filter(box=>box.x>=right-1).map(box=>box.x),Infinity);
-      return Number.isFinite(next)?(right+next)/2:right+30;
-    }
-    const previous=Math.max(...[...positions.values()].filter(box=>box.x+box.width<=position.x+1)
-      .map(box=>box.x+box.width),-Infinity);
-    return Number.isFinite(previous)?(previous+position.x)/2:position.x-30;
-  }
-  function relationRoute(sourceId,targetId,source,target,index,pairIndex,pairCount,positions,bounds,labels,titleWidth){
-    const skip=new Set([sourceId,targetId]),sourceY=source.y+source.height/2,targetY=target.y+target.height/2;
-    const spread=(pairIndex-(pairCount-1)/2)*12,labelY=(sourceY+targetY)/2+spread*3;
-    let points=null,label=null;
-    if(target.x>source.x+source.width){
-      const x=(source.x+source.width+target.x)/2+spread;
-      const direct=[{x:source.x+source.width,y:sourceY},{x,y:sourceY},{x,y:targetY},{x:target.x,y:targetY}];
-      const candidate={x,y:labelY};
-      if(routeClear(direct,positions,skip)&&labelClear(x,labelY,titleWidth,24,positions,new Set(),labels)) {points=direct;label=candidate;}
-    }else if(source.x>target.x+target.width){
-      const x=(target.x+target.width+source.x)/2+spread;
-      const direct=[{x:source.x,y:sourceY},{x,y:sourceY},{x,y:targetY},{x:target.x+target.width,y:targetY}];
-      const candidate={x,y:labelY};
-      if(routeClear(direct,positions,skip)&&labelClear(x,labelY,titleWidth,24,positions,new Set(),labels)) {points=direct;label=candidate;}
-    }else if(Math.abs(source.x-target.x)<2){
-      const x=layerGap(source,1,positions)+spread;
-      const direct=[{x:source.x+source.width,y:sourceY},{x,y:sourceY},{x,y:targetY},
-        {x:target.x+target.width,y:targetY}];
-      const candidate={x,y:labelY};
-      if(routeClear(direct,positions,skip)&&
-         labelClear(x,labelY,titleWidth,24,positions,new Set(),labels)) {points=direct;label=candidate;}
-    }
-    if(!points){
-      const direction=target.x+target.width/2>=source.x+source.width/2?1:-1;
-      const sourceLane=layerGap(source,direction,positions),targetLane=layerGap(target,-direction,positions);
-      const sourcePort=direction>0?source.x+source.width:source.x;
-      const targetPort=direction>0?target.x:target.x+target.width;
-      const midpoint=(sourceY+targetY)/2,margin=18+Math.abs(spread);
-      const choices=[...positions.values()].flatMap(box=>[box.y-margin,box.y+box.height+margin]);
-      choices.push(bounds.top-margin,bounds.bottom+margin);
-      choices.sort((a,b)=>Math.abs(a+spread-midpoint)-Math.abs(b+spread-midpoint));
-      let lane=choices[0];
-      for(const candidateLane of choices){
-        const candidateY=candidateLane+spread;
-        const route=[{x:sourcePort,y:sourceY},{x:sourceLane,y:sourceY},{x:sourceLane,y:candidateY},
-          {x:targetLane,y:candidateY},{x:targetLane,y:targetY},{x:targetPort,y:targetY}];
-        const candidate={x:(sourceLane+targetLane)/2,y:candidateY};
-        if(routeClear(route,positions,skip)&&labelClear(candidate.x,candidate.y,titleWidth,24,positions,new Set(),labels)){
-          lane=candidateY;points=route;label=candidate;break;
-        }
-      }
-      if(!points){lane=choices[0]+spread;points=[{x:sourcePort,y:sourceY},{x:sourceLane,y:sourceY},
-        {x:sourceLane,y:lane},{x:targetLane,y:lane},{x:targetLane,y:targetY},{x:targetPort,y:targetY}];
-        label={x:(sourceLane+targetLane)/2,y:lane};}
-    }
-    return {points,label};
-  }
-  function drawRelations(layer,positions,ids){
-    const visible=new Set(ids),bounds={left:Infinity,right:-Infinity,top:Infinity,bottom:-Infinity};
-    for(const box of positions.values()){
-      bounds.left=Math.min(bounds.left,box.x);bounds.right=Math.max(bounds.right,box.x+box.width);
-      bounds.top=Math.min(bounds.top,box.y);bounds.bottom=Math.max(bounds.bottom,box.y+box.height);
-    }
-    const placed=[],normalized=DATA.relations.map((relation,index)=>({
-      ...relation,index,sourceId:REPO_ALIAS[relation.source]||relation.source,
-      targetId:REPO_ALIAS[relation.target]||relation.target})).filter(relation=>
-      relation.sourceId!==relation.targetId&&visible.has(relation.sourceId)&&visible.has(relation.targetId));
-    const pairCounts=new Map(),pairIndexes=new Map();
-    for(const relation of normalized){
-      const key=`${relation.sourceId}\u0000${relation.targetId}`;
-      pairCounts.set(key,(pairCounts.get(key)||0)+1);
-    }
-    normalized.forEach(relation=>{
-      const {index,sourceId,targetId}=relation,key=`${sourceId}\u0000${targetId}`;
-      const pairIndex=pairIndexes.get(key)||0;pairIndexes.set(key,pairIndex+1);
-      const source=positions.get(sourceId),target=positions.get(targetId),title=relation.title||"关系";
-      const width=Math.max(34,widthOf(title,EDGE_FONT)+18),route=relationRoute(
-        sourceId,targetId,source,target,index,pairIndex,pairCounts.get(key),positions,bounds,placed,width);
-      const group=svgElement("g",{class:"relation-item","data-relation-index":index});
-      const path=svgElement("path",{class:"relation-edge",
-        d:`M${route.points.map(point=>`${point.x} ${point.y}`).join(" L")}`,
-        "marker-end":"url(#relation-arrow)","data-source":sourceId,"data-target":targetId,
-        "data-title":relation.title});
-      group.appendChild(path);
-      group.appendChild(svgElement("rect",{class:"relation-label-bg",x:route.label.x-width/2-4,
-        y:route.label.y-12,width:width+8,height:24,rx:5}));
-      const label=svgElement("text",{class:"relation-label",x:route.label.x,y:route.label.y,
-        "data-source":sourceId,"data-target":targetId,"data-title":relation.title});
-      label.textContent=title;group.appendChild(label);layer.appendChild(group);
-      placed.push({left:route.label.x-width/2-4,right:route.label.x+width/2+4,
-        top:route.label.y-12,bottom:route.label.y+12});
-      for(const point of route.points){bounds.left=Math.min(bounds.left,point.x);bounds.right=Math.max(bounds.right,point.x);bounds.top=Math.min(bounds.top,point.y);bounds.bottom=Math.max(bounds.bottom,point.y);}
-      bounds.left=Math.min(bounds.left,route.label.x-width/2-4);bounds.right=Math.max(bounds.right,route.label.x+width/2+4);
-      bounds.top=Math.min(bounds.top,route.label.y-12);bounds.bottom=Math.max(bounds.bottom,route.label.y+12);
-    });
-    return {x:bounds.left,y:bounds.top,width:bounds.right-bounds.left,height:bounds.bottom-bounds.top};
-  }
   function drawNode(layer,id,position,depth,hasKids){
-    const node=DATA.nodes[id],size=nodeSize(id,hasKids,depth),canEnter=DATA.drill_views[id].nodes.length!==1||DATA.drill_views[id].nodes[0]!==id;
+    const node=DATA.nodes[id],size=nodeSize(id,hasKids,depth,position.width),canEnter=DATA.drill_views[id].nodes.length!==1||DATA.drill_views[id].nodes[0]!==id;
     const group=svgElement("g",{class:`card${canEnter?" clickable":""}`,
       transform:`translate(${position.x} ${position.y})`,"data-node-id":id});
     group.appendChild(svgElement("rect",{class:"card-shape",x:0,y:0,width:position.width,height:position.height,
@@ -309,12 +238,10 @@
       group.appendChild(svgElement("rect",{class:"repo-badge",x:badgeX,y:badgeY,width:size.badgeWidth,height:16,rx:6}));
       const badge=svgElement("text",{class:"repo-badge-text",x:badgeX+6,y:badgeY+12});badge.textContent="子仓";group.appendChild(badge);
     }
-    let metricX=14;
     size.metricTexts.forEach((value,index)=>{
-      const width=size.metricWidths[index];
-      group.appendChild(svgElement("rect",{class:"metric-box",x:metricX,y:size.metricY,width,height:size.metricHeight,rx:6}));
-      const metric=svgElement("text",{class:"metric-text",x:metricX+7,y:size.metricY+16});metric.textContent=value;group.appendChild(metric);
-      metricX+=width+size.metricGap;
+      const slot=size.metricPositions[index];
+      group.appendChild(svgElement("rect",{class:"metric-box",x:slot.x,y:slot.y,width:slot.width,height:size.metricHeight,rx:6}));
+      const metric=svgElement("text",{class:"metric-text",x:slot.x+7,y:slot.y+16});metric.textContent=value;group.appendChild(metric);
     });
     textLines(group,14,size.descriptionTop+12,size.descriptionLines,"description",size.descriptionLineHeight);
     if(!hasKids){const coverage=svgElement("text",{class:"coverage",x:14,y:size.coverageY});
@@ -355,13 +282,22 @@
     const route=routeFromHash();if(route.valid&&route.mode===mode&&route.current===current){view={mode,current};draw();return;}
     location.hash=mode==="expand"?"#展开":`#钻入/${encodeURIComponent(current)}`;
   }
+  function unionBounds(first,second){
+    const left=Math.min(first.x,second.x),top=Math.min(first.y,second.y);
+    const right=Math.max(first.x+first.width,second.x+second.width);
+    const bottom=Math.max(first.y+first.height,second.y+second.height);
+    return {x:left,y:top,width:right-left,height:bottom-top};
+  }
   function draw(){
     const drawId=++drawNumber,modeButton=document.getElementById("mode"),relationButton=document.getElementById("relations");
     modeButton.textContent=svg.clientWidth<=480?(view.mode==="expand"?"钻入":"全部"):(view.mode==="expand"?"切换到钻入":"全部展开");
     relationButton.hidden=view.mode!=="expand";drawBreadcrumbs(view.current);
     const ids=view.mode==="expand"?expandedIds():DATA.drill_views[view.current].nodes;
-    const graph=view.mode==="expand"?expandedGraph(ids):drillGraph(view.current);
-    new ELK().layout(graph).then(result=>{
+    const mobileExpanded=view.mode==="expand"&&svg.clientWidth<600;
+    const mobileDrill=view.mode==="drill"&&svg.clientWidth<600;
+    const graph=mobileExpanded?null:view.mode==="expand"?expandedGraph(ids):drillGraph(view.current);
+    const layout=mobileExpanded?Promise.resolve(mobileExpandedLayout(ids)):new ELK().layout(graph);
+    layout.then(result=>{
       if(drawId!==drawNumber)return;
       svg.replaceChildren();const defs=svgElement("defs",{});
       for(const [id,fill] of [["arrow","#7b8da8"],["relation-arrow","#b64e83"]]){
@@ -372,13 +308,16 @@
       const layers={tree:svgElement("g",{id:"tree-layer"}),edges:svgElement("g",{id:"drill-edge-layer"}),
         relations:svgElement("g",{id:"relation-layer"}),cards:svgElement("g",{id:"card-layer"})};
       scene.append(layers.tree,layers.edges,layers.relations,layers.cards);
-      const mobileDrill=view.mode==="drill"&&svg.clientWidth<=480;
-      if(mobileDrill){const widest=Math.max(...result.children.map(node=>node.width));for(const node of result.children)node.x=12+(widest-node.width)/2;}
+      if(mobileDrill)for(const node of result.children)node.x=12;
       const positions=new Map(),layoutNodes=new Map();
       for(const node of result.children||[]){positions.set(node.id,{x:node.x||0,y:node.y||0,width:node.width||0,height:node.height||0});layoutNodes.set(node.id,node);}
       if(view.mode==="expand"){
-        drawComposition(layers.tree,ids,positions);
-        currentBounds=drawRelations(layers.relations,positions,ids);
+        const treeBounds=mobileExpanded?drawMobileComposition(layers.tree,ids,positions):
+          (drawComposition(layers.tree,ids,positions),{x:0,y:0,width:result.width||1,height:result.height||1});
+        const relationBounds=window.XYRepoMapRelations.draw({layer:layers.relations,positions,ids,
+          data:DATA,repoAlias:REPO_ALIAS,svgElement,widthOf,wrapText,visualDepth,
+          mobile:mobileExpanded,viewportWidth:svg.clientWidth});
+        currentBounds=mobileExpanded?unionBounds(treeBounds,relationBounds):relationBounds;
       }else{
         currentBounds=mobileDrill?drawMobileDrillEdges(layers.edges,result.edges,positions):
           (drawElkEdges(layers.edges,result.edges),{x:0,y:0,width:result.width||1,height:result.height||1});
@@ -389,7 +328,7 @@
       svg.setAttribute("data-mode",view.mode);svg.setAttribute("data-current",view.current||"");
       transform={x:0,y:0,scale:1};
       const relationLayer=document.getElementById("relation-layer");relationLayer.style.display=document.getElementById("relations").getAttribute("aria-pressed")==="true"?"":"none";
-      applyHighlight();requestAnimationFrame(()=>svg.clientWidth<=480?fitWidth():fit());
+      applyHighlight();if(mobileExpanded)applyTransform();else requestAnimationFrame(()=>mobileDrill?fitWidth():fit());
     });
   }
   function zoomAt(x,y,factor){
@@ -401,7 +340,7 @@
   function distance(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
   function cancelPress(){if(pressTimer!==null){clearTimeout(pressTimer);pressTimer=null;}}
   function applyHighlight(){
-    for(const element of document.querySelectorAll(".relation-edge,.relation-label")){
+    for(const element of document.querySelectorAll(".relation-edge,.relation-label,.relation-label-bg")){
       const related=highlightedNode!==null&&(element.dataset.source===highlightedNode||element.dataset.target===highlightedNode);
       element.classList.toggle("highlighted",related);element.classList.toggle("dimmed",highlightedNode!==null&&!related);
     }
@@ -473,7 +412,10 @@
   });
   document.getElementById("zoom-in").addEventListener("click",()=>zoomAt(svg.clientWidth/2,svg.clientHeight/2,1.2));
   document.getElementById("zoom-out").addEventListener("click",()=>zoomAt(svg.clientWidth/2,svg.clientHeight/2,1/1.2));
-  window.addEventListener("resize",()=>svg.clientWidth<=480?fitWidth():fit());
+  window.addEventListener("resize",()=>{
+    if(view.mode==="expand"&&svg.clientWidth<600)draw();
+    else svg.clientWidth<600?fitWidth():fit();
+  });
   window.addEventListener("hashchange",()=>{
     const next=routeFromHash();if(!next.valid){view={mode:"expand",current:null};if(fontsReady)draw();location.hash="#展开";return;}
     if(view.mode===next.mode&&view.current===next.current)return;view=next;if(fontsReady)draw();
