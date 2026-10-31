@@ -73,10 +73,12 @@ def read_text(path):
         raise GoalError(f"{path}: 无法读取：{error}") from error
 
 
-def read_fields(path, names):
+def parse_fields(path, names, text):
     try:
+        if isinstance(text, bytes):
+            text = text.decode("utf-8")
         # 字段只用物理 LF 分行。JSON 字符串中的 U+2028 等仍是值的一部分。
-        rows = read_text(path).removesuffix("\n").split("\n")
+        rows = text.removesuffix("\n").split("\n")
         values = {}
         for row in rows:
             name, value = row.split(": ", 1)
@@ -88,7 +90,9 @@ def read_fields(path, names):
         if any(not isinstance(value, str) or not value.strip() for value in values.values()):
             raise ValueError("字段必须是非空字符串")
         return values
-    except (OSError, ValueError) as error:
+    except UnicodeError as error:
+        raise GoalError(f"{path}: 无法读取：{error}") from error
+    except ValueError as error:
         raise GoalError(f"{path}: 格式错误：{error}") from error
 
 
@@ -99,13 +103,13 @@ def find_contract(root, session_id):
     matches = []
     for path in sorted(root.glob("-*/*/xy-goal/goal.md")):
         try:
-            with path.open("rb") as source:
-                if any(row.rstrip(b"\r\n") == session_row for row in source):
-                    matches.append(path.parent)
+            contents = path.read_bytes()
+            if any(row.rstrip(b"\r\n") == session_row for row in contents.split(b"\n")):
+                matches.append((path.parent, contents))
         except OSError:
             continue  # 归属不可读，不能把它当成本会话的契约来检查。
     if len(matches) > 1:
-        raise GoalError(f"会话 {session_id} 对应多份契约：" + "、".join(map(str, matches)))
+        raise GoalError(f"会话 {session_id} 对应多份契约：" + "、".join(str(path) for path, _ in matches))
     return matches[0] if matches else None
 
 
@@ -194,9 +198,9 @@ def parse_links(text, quotes, tasks):
 
 
 class Contract:
-    def __init__(self, path):
+    def __init__(self, path, goal_content):
         self.path = path
-        self.metadata = read_fields(path / "goal.md", GOAL_FIELDS)
+        self.metadata = parse_fields(path / "goal.md", GOAL_FIELDS, goal_content)
         if re.fullmatch(r"[1-9][0-9]*", self.metadata["claude_pid"]) is None:
             raise GoalError(f"{path / 'goal.md'}: claude_pid 必须是正整数")
         self.quotes = quote_files(path / "quotes")
@@ -210,8 +214,9 @@ class Contract:
             read_text(links_path), self.quotes, self.tasks.keys() | self.done.keys())
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
+        linked_tasks = {task for _, task in self.links}
         for task in self.tasks:
-            if not self.sources(task):
+            if task not in linked_tasks:
                 raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
         for task, values in self.done.items():
             if "cancel_quote" in values:
@@ -224,11 +229,11 @@ class Contract:
         for path in (self.path / directory).iterdir():
             if not path.is_file() or re.fullmatch(r"T[1-9][0-9]*\.md", path.name) is None:
                 raise GoalError(f"{path}: 事项文件名必须是 T 加正整数.md")
+            text = read_text(path)
             fields = list(TASK_FIELDS.values())
             if directory == "done":
-                text = read_text(path)
                 fields.append("verdict" if "\nverdict: " in text else "cancel_quote")
-            values = read_fields(path, fields)
+            values = parse_fields(path, fields, text)
             try:
                 require_state(values["state"])
                 if "cancel_quote" in values and re.fullmatch(r"[1-9][0-9]*", values["cancel_quote"]) is None:
@@ -257,13 +262,19 @@ class Contract:
     def show(self):
         lines = [f"目标：{self.metadata['target']}"]
         warnings = []
+        sources_by_task = {task: [] for task in self.tasks}
+        for number, task in self.links:
+            if task in sources_by_task:
+                sources_by_task[task].append(number)
+        for sources in sources_by_task.values():
+            sources.sort()
         for task, values in self.tasks.items():
             # 保持清单每项四行；原值中的换行在此显示为转义，不改文件里的值。
             display = {key: value.translate({ord(char): json.dumps(char, ensure_ascii=True)[1:-1]
                                              for char in LINE_BREAKS})
                        for key, value in values.items()}
             item = (f"{task} {display['title']}\n  判据：{display['criteria']}\n"
-                    f"  出处：原话 {'、'.join(map(str, self.sources(task)))}\n"
+                    f"  出处：原话 {'、'.join(map(str, sources_by_task[task]))}\n"
                     f"  状态：{display['state']}；指针：{display['pointer']}")
             lines.append(item)
             if len(item) > ITEM_LIMIT:
@@ -509,7 +520,7 @@ def publish_contract(root, destination, metadata, quotes, links, input_paths):
             (staging / "quotes" / f"{number}.md").write_bytes(text.encode("utf-8"))
         (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
         (staging / "links.md").write_text(links, encoding="utf-8")
-        Contract(staging)
+        Contract(staging, (staging / "goal.md").read_bytes())
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
         with consume_inputs(input_paths):
             staging.parent.rename(item)
@@ -544,21 +555,28 @@ def hook_input(command):
 
 
 def record_hook(root, session_id, text, transcript_path):
-    path = find_contract(root, session_id)
+    found = find_contract(root, session_id)
     validation_error = None
-    if path is not None:
+    if found is not None:
+        path, goal_content = found
         require_project_directory(root, path.parents[1])
+        contract = None
         try:
-            contract = Contract(path)
+            contract = Contract(path, goal_content)
         except (GoalError, OSError) as error:
             validation_error = error
         directory = path / "quotes"
-        quotes = quote_files(directory)
-        # 与 parse_links 一样按 splitlines 分行，跳过所有行首编号，避免悬空映射认领新原话。
-        reserved = {int(match[0]) for line in read_text(path / "links.md").splitlines()
-                    if (match := re.match(r"[0-9]+", line)) is not None}
-        number = max(quotes.keys() | reserved, default=0) + 1
+        if contract is None:
+            quotes = quote_files(directory)
+            # 与 parse_links 一样按 splitlines 分行，跳过所有行首编号，避免悬空映射认领新原话。
+            reserved = {int(match[0]) for line in read_text(path / "links.md").splitlines()
+                        if (match := re.match(r"[0-9]+", line)) is not None}
+            number = max(quotes.keys() | reserved, default=0) + 1
+        else:
+            quotes = contract.quotes
+            number = max(quotes, default=0) + 1
     else:
+        path = None
         contract = None
         require_text(transcript_path, "hook transcript_path")
         transcript = Path(transcript_path)
@@ -616,7 +634,7 @@ def require_pid(claude_pid):
     raise GoalError(f"进程 {claude_pid} 不是当前调用进程的祖先；{PID_USAGE}")
 
 
-def relink(path, task, sources):
+def relink(path, goal_content, task, sources):
     """唯一先写后整体校验的入口：多个无出处事项须逐项修，进度不能因剩余错误回滚。
 
     不并入 update，保持正常命令先校验、拒绝时不写入的含义。
@@ -624,7 +642,7 @@ def relink(path, task, sources):
     if (task is None) != (sources is None):
         raise GoalError("事项与 --source 必须同时给或同时不给")
     try:
-        Contract(path)
+        Contract(path, goal_content)
     except GoalError:
         pass
     else:
@@ -647,13 +665,15 @@ def relink(path, task, sources):
     if task is not None:
         links.update((number, task) for number in sources)
     write_files({links_path: encode_links(links, dismissed)}, [])
-    Contract(path)
+    Contract(path, goal_content)
     print(f"修复完成：{path}")
     return 0
 
 
 def execute(options, *, root, session_id, claude_pid, now):
-    path = find_contract(root, session_id)
+    found = find_contract(root, session_id)
+    path, goal_content = found if found is not None else (None, None)
+    matched_path = path
     if path is not None and options.command not in ("show", "check"):
         require_project_directory(root, path.parents[1])
     if options.command in ("open", "adopt"):
@@ -678,7 +698,8 @@ def execute(options, *, root, session_id, claude_pid, now):
             if len(parts) != 3 or not parts[0].startswith("-") or parts[2] != "xy-goal":
                 raise GoalError(f"契约目录必须是 <根>/<以 - 开头的项目目录>/<一件事>/xy-goal：{path}")
             require_project_directory(root, path.parents[1])
-            contract = Contract(path)
+            content = goal_content if path == matched_path else (path / "goal.md").read_bytes()
+            contract = Contract(path, content)
             if contract.metadata["session_id"] == session_id:
                 # --resume 沿用会话 id。同会话只刷新 PID，不领取或改动其他内容。
                 contract.metadata["claude_pid"] = str(claude_pid)
@@ -710,21 +731,23 @@ def execute(options, *, root, session_id, claude_pid, now):
     if path is None:
         raise GoalError("本会话没有契约")
     if options.command == "relink":
-        return relink(path, options.task, options.source)
-    contract = Contract(path)
+        return relink(path, goal_content, options.task, options.source)
+    contract = Contract(path, goal_content)
     if options.command == "show":
         contract.show()
     elif options.command == "check":
-        if contract.pending():
-            for number in contract.pending():
+        pending = contract.pending()
+        if pending:
+            for number in pending:
                 print(f"{contract.path / 'quotes' / f'{number}.md'}: 原话 {number} 还没处理", file=sys.stderr)
             return 1
         print(f"通过：{contract.path}")
     elif options.command == "close":
         if contract.tasks:
             raise GoalError("仍有开放事项：" + "、".join(contract.tasks))
-        if contract.pending():
-            raise GoalError("仍有还没处理的原话：" + "、".join(map(str, contract.pending())))
+        pending = contract.pending()
+        if pending:
+            raise GoalError("仍有还没处理的原话：" + "、".join(map(str, pending)))
         # 子代理整体复核、CronDelete 和汇报由 agent 按 SKILL.md 完成。
         (contract.path / "goal.md").unlink()
     else:

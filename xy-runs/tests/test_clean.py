@@ -207,26 +207,26 @@ class ListingTests(CleanerTestCase):
         self.assertTrue(link.is_symlink())
 
     # The reserved trash directory must never be emitted as a cleanup unit.
-    def test_list_neither_lists_nor_clears_trash(self):
-        expired = self.root / "expired"
-        expired.touch()
-        trash = self.root / ".runs-cleaner-trash"
-        trash.mkdir()
-        leftover = trash / "leftover"
-        leftover.write_text("from interrupted delete")
-        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
-        self.assertEqual(paths, [str(expired)])
-        self.assertTrue(leftover.exists())
-
-    # The preview gate is metadata, never a cleanup unit.
-    def test_list_skips_preview_marker(self):
-        expired = self.root / "expired"
-        expired.touch()
-        marker = self.root / ".runs-cleaner-previewed"
-        marker.touch()
-        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
-        self.assertEqual(paths, [str(expired)])
-        self.assertTrue(marker.exists())
+    def test_list_preserves_metadata_without_listing_or_clearing_it(self):
+        original_root = self.root
+        for metadata in ("trash", "preview marker"):
+            with self.subTest(metadata=metadata):
+                self.root = original_root / metadata.replace(" ", "-")
+                self.root.mkdir()
+                expired = self.root / "expired"
+                expired.touch()
+                if metadata == "trash":
+                    trash = self.root / ".runs-cleaner-trash"
+                    trash.mkdir()
+                    leftover = trash / "leftover"
+                    leftover.write_text("from interrupted delete")
+                    preserved = leftover
+                else:
+                    preserved = self.root / ".runs-cleaner-previewed"
+                    preserved.touch()
+                _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
+                self.assertEqual(paths, [str(expired)])
+                self.assertTrue(preserved.exists())
 
     # Quoting globs in the shell must still expand to all matching roots.
     def test_script_expands_root_globs(self):

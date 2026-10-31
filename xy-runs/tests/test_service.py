@@ -73,18 +73,16 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(".runs-cleaner-previewed", result.stderr)
 
     # An unset setting must not fall back to the shell's RUNS_ROOT or home directory.
-    def test_missing_runs_setting_fails_before_cleaner_starts(self):
-        self.settings.write_text('{"env": {}}')
-        result = self.launch()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("RUNS_ROOT", result.stderr)
-
-    # Empty and relative roots must not become an implicit filesystem location.
-    def test_empty_or_relative_runs_setting_fails_before_cleaner_starts(self):
-        for value in ("", "runs"):
-            with self.subTest(value=value):
-                self.settings.write_text(json.dumps({"env": {"RUNS_ROOT": value}}))
+    # Missing, empty, and relative roots must fail before the cleaner starts.
+    def test_invalid_runs_setting_fails_before_cleaner_starts(self):
+        cases = (
+            ("missing", {"env": {}}),
+            ("empty", {"env": {"RUNS_ROOT": ""}}),
+            ("relative", {"env": {"RUNS_ROOT": "runs"}}),
+        )
+        for case, settings in cases:
+            with self.subTest(case=case):
+                self.settings.write_text(json.dumps(settings))
                 result = self.launch()
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")

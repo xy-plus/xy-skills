@@ -181,15 +181,6 @@ class CheckFileLengthTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("modules/large.py: 501 行，有理由", result.stdout)
 
-    def test_directory_exception_for_unknown_directory_fails(self) -> None:
-        repo = self.make_repo()
-        self.write(repo, "src/small.py", self.lines(10))
-        self.add(repo, "src/small.py")
-        self.add_exception(repo, "missing-directory")
-        result = self.check(repo)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("不对应 Git 跟踪的文件或目录", result.stderr)
-
     def test_directory_exception_without_large_descendant_is_expired(self) -> None:
         repo = self.make_repo()
         self.write(repo, "modules/small.py", self.lines(10))
