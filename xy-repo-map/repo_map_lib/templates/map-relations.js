@@ -1,6 +1,7 @@
 (function(){
   "use strict";
   const EDGE_FONT='13px system-ui,"Noto Sans CJK SC","Microsoft YaHei",sans-serif';
+  const ROUTE_MARGIN=128;
 
   function curvePoint(curve,t){
     const u=1-t,a=u*u*u,b=3*u*u*t,c=3*u*t*t,d=t*t*t;
@@ -31,6 +32,19 @@
 
   function relationSamples(curve,count=100){
     const points=[];for(let step=0;step<=count;step++)points.push(curvePoint(curve,step/count));return points;
+  }
+
+  function polylineSamples(points,stepsPerSegment){
+    const samples=[];
+    for(let index=0;index<points.length-1;index++){
+      const first=points[index],second=points[index+1];
+      for(let step=0;step<stepsPerSegment;step++){
+        const fraction=step/stepsPerSegment;
+        samples.push({x:first.x+(second.x-first.x)*fraction,
+          y:first.y+(second.y-first.y)*fraction});
+      }
+    }
+    samples.push(points[points.length-1]);return samples;
   }
 
   function obstacleIndex(positions){
@@ -79,13 +93,45 @@
     }
   }
 
-  function labelFree(box,positions,labels){
-    for(const node of positions.values()){
-      if(box.left<node.x+node.width&&box.right>node.x&&box.top<node.y+node.height&&box.bottom>node.y)return false;
+  function sameFocus(label,relation){
+    return label.sourceId===relation.sourceId||label.sourceId===relation.targetId||
+      label.targetId===relation.sourceId||label.targetId===relation.targetId;
+  }
+
+  function labelIssue(box,positions,labels,treeSamples,relation){
+    for(const [id,node] of positions){
+      if(box.left<node.x+node.width&&box.right>node.x&&box.top<node.y+node.height&&box.bottom>node.y)return `card:${id}`;
     }
+    if(treePointsInRange(treeSamples,box.left-2,box.right+2).some(point=>
+      point.y>=box.top-2&&point.y<=box.bottom+2))return "tree";
     const gap=10;
-    return !labels.some(label=>box.left<label.right+gap&&box.right>label.left-gap&&
+    const index=labels.findIndex(label=>sameFocus(label,relation)&&
+      box.left<label.right+gap&&box.right>label.left-gap&&
       box.top<label.bottom+gap&&box.bottom>label.top-gap);
+    return index<0?null:`label:${index}`;
+  }
+
+  function freeLabelCenters(x,width,height,positions,labels,treeSamples,bounds,preferredY,relation){
+    const left=x-width/2,right=x+width/2,halfHeight=height/2,blocks=[];
+    for(const node of positions.values())if(left<node.x+node.width&&right>node.x)
+      blocks.push([node.y-halfHeight-2,node.y+node.height+halfHeight+2]);
+    const gap=10;
+    for(const label of labels)if(sameFocus(label,relation)&&left<label.right+gap&&right>label.left-gap)
+      blocks.push([label.top-halfHeight-gap-2,label.bottom+halfHeight+gap+2]);
+    for(const point of treePointsInRange(treeSamples,left-2,right+2))
+      blocks.push([point.y-halfHeight-4,point.y+halfHeight+4]);
+    blocks.sort((first,second)=>first[0]-second[0]);
+    const low=bounds.top-ROUTE_MARGIN+halfHeight,high=bounds.bottom+ROUTE_MARGIN-halfHeight;
+    const free=[];let cursor=low;
+    for(const [start,end] of blocks){
+      const blockStart=Math.max(low,start),blockEnd=Math.min(high,end);
+      if(blockStart>cursor+2)free.push([cursor+2,blockStart-2]);
+      cursor=Math.max(cursor,blockEnd);
+      if(cursor>=high)break;
+    }
+    if(cursor<high-2)free.push([cursor+2,high]);
+    return free.map(([start,end])=>Math.max(start,Math.min(end,preferredY)))
+      .sort((first,second)=>Math.abs(first-preferredY)-Math.abs(second-preferredY));
   }
 
   function drawLabel(layer,svgElement,lines,x,y,width,height,relation){
@@ -100,18 +146,54 @@
     layer.appendChild(text);return box;
   }
 
+  function wrapRelationTitle(title,maxWidth,widthOf){
+    if(widthOf(title,EDGE_FONT)<=maxWidth)return [title];
+    const lines=[];let line="";
+    for(const character of Array.from(title)){
+      const next=line+character;
+      if(line&&widthOf(next,EDGE_FONT)>maxWidth){lines.push(line);line=character;}else line=next;
+    }
+    if(line)lines.push(line);return lines;
+  }
+
+  function treeLineSamples(treeLayer){
+    const cellSize=32,buckets=new Map();
+    for(const path of treeLayer.querySelectorAll(".composition-spine,.composition-edge")){
+      const length=path.getTotalLength(),steps=Math.max(1,Math.ceil(length/2));
+      for(let step=0;step<=steps;step++){
+        const point=path.getPointAtLength(length*step/steps),key=Math.floor(point.x/cellSize);
+        const bucket=buckets.get(key)||[];bucket.push(point);buckets.set(key,bucket);
+      }
+    }
+    return {cellSize,buckets};
+  }
+
+  function treePointsInRange(treeSamples,left,right){
+    const {cellSize,buckets}=treeSamples,points=[];
+    for(let cell=Math.floor(left/cellSize);cell<=Math.floor(right/cellSize);cell++)
+      points.push(...(buckets.get(cell)||[]).filter(point=>point.x>=left&&point.x<=right));
+    return points;
+  }
+
   function draw(options){
-    const {layer,positions,ids,data,repoAlias,svgElement,widthOf,visualDepth}=options;
+    const {layer,treeLayer,positions,ids,data,repoAlias,svgElement,widthOf,visualDepth}=options;
     const visible=new Set(ids),bounds={left:Infinity,right:-Infinity,top:Infinity,bottom:-Infinity};
     for(const box of positions.values()){
       bounds.left=Math.min(bounds.left,box.x);bounds.right=Math.max(bounds.right,box.x+box.width);
       bounds.top=Math.min(bounds.top,box.y);bounds.bottom=Math.max(bounds.bottom,box.y+box.height);
     }
-    const treeRight=bounds.right;
+    const cardBounds={...bounds};
+    const columns=new Map();
+    for(const [id,box] of positions){
+      const depth=visualDepth(id),column=columns.get(depth)||{left:Infinity,right:-Infinity};
+      column.left=Math.min(column.left,box.x);column.right=Math.max(column.right,box.x+box.width);
+      columns.set(depth,column);
+    }
+    const columnDepths=[...columns.keys()].sort((first,second)=>first-second);
     const normalized=data.relations.map((relation,index)=>({...relation,index,
       sourceId:repoAlias[relation.source]||relation.source,targetId:repoAlias[relation.target]||relation.target}))
       .filter(relation=>relation.sourceId!==relation.targetId&&visible.has(relation.sourceId)&&visible.has(relation.targetId));
-    const obstacles=obstacleIndex(positions);
+    const obstacles=obstacleIndex(positions),treeSamples=treeLineSamples(treeLayer);
     const pairIndexes=new Map(),portCounts=new Map(),portIndexes=new Map();
     for(const relation of normalized){
       const pair=`${relation.sourceId}\u0000${relation.targetId}`;
@@ -124,64 +206,96 @@
     }
     const prepared=normalized.map(relation=>{
       const source=positions.get(relation.sourceId),target=positions.get(relation.targetId);
+      const sourceDepth=visualDepth(relation.sourceId),targetDepth=visualDepth(relation.targetId);
       const sx=source.x+source.width,tx=target.x+target.width;
       const sourcePort=portY(relation.sourceId,source),targetPort=portY(relation.targetId,target);
       const sy=sourcePort.y,ty=targetPort.y;
-      const span=Math.abs(ty-sy)+Math.abs(visualDepth(relation.sourceId)-visualDepth(relation.targetId))*48;
-      return {...relation,source,target,sx,tx,sy,ty,span};
+      const depth=Math.max(sourceDepth,targetDepth);
+      const span=Math.abs(ty-sy)+Math.abs(sourceDepth-targetDepth)*48;
+      return {...relation,source,target,sx,tx,sy,ty,span,sourceDepth,targetDepth,depth};
     }).sort((first,second)=>first.span-second.span||first.index-second.index);
-    const maxCardHeight=Math.max(...[...positions.values()].map(box=>box.height));
-    const maxOffset=Math.max(512,Math.ceil((bounds.bottom-bounds.top+maxCardHeight*2+128)/32)*32);
     const labels=[],routes=new Map();
     for(let rank=0;rank<prepared.length;rank++){
       const relation=prepared[rank];
       const pair=`${relation.sourceId}\u0000${relation.targetId}`;
       const pairIndex=pairIndexes.get(pair)||0;pairIndexes.set(pair,pairIndex+1);
-      const {source,target,sx,tx,sy,ty,span}=relation;
-      const title=relation.title||"关系",lines=[title];
+      const {source,target,sx,tx,sy,ty,span,sourceDepth,targetDepth,depth}=relation;
+      const column=columns.get(depth),nextDepth=columnDepths.find(value=>value>depth);
+      const nextColumn=nextDepth===undefined?null:columns.get(nextDepth);
+      const gap=nextColumn?nextColumn.left-column.right:Infinity;
+      const title=relation.title||"关系",labelMaxWidth=sourceDepth===targetDepth?
+        (nextColumn?gap-36:ROUTE_MARGIN-32):Infinity;
+      const lines=labelMaxWidth>=18?wrapRelationTitle(title,labelMaxWidth,widthOf):[title];
       const textWidth=Math.max(...lines.map(line=>widthOf(line,EDGE_FONT)));
       const labelWidth=Math.max(34,textWidth+18),labelHeight=Math.max(24,lines.length*14+10);
       const labelBoxWidth=labelWidth+8,labelBoxHeight=labelHeight+4;
-      const minimumPeak=treeRight+labelBoxWidth/2+10;
-      const desiredPeak=minimumPeak+Math.min(span*.2,500)+pairIndex*(labelBoxWidth+14)+rank*8;
-      const routeOffsets=[0],offsetSet=new Set(routeOffsets);
-      const addOffset=value=>{
-        const offset=Math.max(-maxOffset,Math.min(maxOffset,Math.round(value/32)*32));
-        if(!offsetSet.has(offset)){routeOffsets.push(offset);offsetSet.add(offset);}
-      };
-      for(let offset=32;offset<=Math.min(maxOffset,512);offset+=32){addOffset(offset);addOffset(-offset);}
-      for(const fraction of [.65,.8,1]){addOffset(maxOffset*fraction);addOffset(-maxOffset*fraction);}
-      const controlVariations=[0,16,32],skip=new Set([relation.sourceId,relation.targetId]);
-      let best=null,bestScore=Infinity,safeCandidates=0;
-      for(const offset of routeOffsets){
-        const seed={sx,sy,cx1:sx+32,cx2:0,cy1:sy+offset,cy2:ty+offset,tx,ty};
-        const baseControl=controlForPeak(seed,desiredPeak);
-        for(const variation of controlVariations){
-          const curve={...seed,cx2:baseControl+variation},peak=curvePeak(curve);
-          if(peak.x<minimumPeak-1)continue;
-          const labelBox={left:peak.x-labelBoxWidth/2,right:peak.x+labelBoxWidth/2,
-            top:peak.y-labelBoxHeight/2,bottom:peak.y+labelBoxHeight/2};
-          if(!labelFree(labelBox,positions,labels))continue;
-          const sampleCount=Math.max(300,Math.ceil((desiredPeak-sx+Math.abs(offset)*2+Math.abs(ty-sy))/4));
-          const samples=relationSamples(curve,sampleCount),collisions=routeCollisions(samples,obstacles,skip);
-          const bundles=collisions===0?bundleHits(samples,routes):0;
-          const score=collisions*10000+bundles*24+
-            Math.abs(offset)*.3+Math.abs(peak.x-desiredPeak)*.2+variation*.03;
-          if(score<bestScore){bestScore=score;best={curve,peak,labelBox,samples,collisions,bundles};}
-          if(collisions===0){safeCandidates++;if(bundles<=5||safeCandidates>=6)break;}
+      const endpointRight=Math.max(sx,tx),labelHalfWidth=labelBoxWidth/2;
+      const peakCeiling=Math.min(nextColumn?nextColumn.left-labelHalfWidth-8:
+        bounds.right+ROUTE_MARGIN-labelHalfWidth,bounds.right+ROUTE_MARGIN-labelHalfWidth);
+      const skip=new Set([relation.sourceId,relation.targetId]);
+      let best=null,bestScore=Infinity,rejectedCards=0;
+      const labelBlockers=new Map();
+      if(sourceDepth===targetDepth&&gap<48){
+        const laneX=column.right+gap/2;
+        const points=[{x:sx,y:sy},{x:laneX,y:sy},{x:laneX,y:ty},{x:tx,y:ty}];
+        const samples=polylineSamples(points,24),peak={x:laneX,y:(sy+ty)/2};
+        const labelBox={left:peak.x-labelBoxWidth/2,right:peak.x+labelBoxWidth/2,
+          top:peak.y-labelBoxHeight/2,bottom:peak.y+labelBoxHeight/2};
+        if(!labelIssue(labelBox,positions,labels,treeSamples,relation)&&routeCollisions(samples,obstacles,skip)===0)
+          best={path:`M${sx} ${sy} H${laneX} V${ty} H${tx}`,peak,labelBox,samples};
+      }else{
+        const naturalBulge=(nextColumn?8:labelHalfWidth+6)+
+          Math.min(span*.04,20)+Math.min(rank,12)*1.2+pairIndex*2;
+        const labelInsideGap=sourceDepth===targetDepth?column.right+labelHalfWidth+4:column.right;
+        const desiredPeak=Math.min(peakCeiling,Math.max(labelInsideGap,
+          column.right+Math.min(48,naturalBulge)));
+        const peakTargets=[desiredPeak,Math.min(peakCeiling,desiredPeak+8),
+          Math.max(endpointRight+4,desiredPeak-8)].filter((value,index,values)=>
+          value<=peakCeiling&&value>endpointRight+2&&values.indexOf(value)===index);
+        const routeOffsets=[0,24,-24,48,-48,72,-72,96,-96,120,-120,144,-144];
+        let safeCandidates=0;
+        for(const peakTarget of peakTargets){
+          const control1=Math.min(peakTarget,sx+
+            Math.max(4,Math.min(24,(peakTarget-endpointRight)*.45)));
+          const seed={sx,sy,cx1:control1,cx2:0,cy1:sy,cy2:ty,tx,ty};
+          const baseCurve={...seed,cx2:controlForPeak(seed,peakTarget)},basePeak=curvePeak(baseCurve);
+          const verticalFactor=3*basePeak.t*(1-basePeak.t);
+          const labelCenters=freeLabelCenters(basePeak.x,labelBoxWidth,labelBoxHeight,positions,labels,treeSamples,cardBounds,basePeak.y,relation);
+          const labelOffsets=verticalFactor<.05?[]:
+            labelCenters
+              .map(center=>(center-basePeak.y)/verticalFactor).filter(offset=>Math.abs(offset)<=160);
+          const offsets=[...new Set([...labelOffsets,...routeOffsets])];
+          for(const offset of offsets){
+            const curve={...baseCurve,cy1:sy+offset,cy2:ty+offset},peak=curvePeak(curve);
+            if(peak.x<endpointRight+2||peak.x>peakCeiling+1)continue;
+            const labelBox={left:peak.x-labelBoxWidth/2,right:peak.x+labelBoxWidth/2,
+              top:peak.y-labelBoxHeight/2,bottom:peak.y+labelBoxHeight/2};
+            const issue=labelIssue(labelBox,positions,labels,treeSamples,relation);
+            if(issue){labelBlockers.set(issue,(labelBlockers.get(issue)||0)+1);continue;}
+            const sampleCount=Math.max(160,Math.ceil((peak.x-Math.min(sx,tx)+
+              Math.abs(offset)*2+Math.abs(ty-sy))/4));
+            const samples=relationSamples(curve,sampleCount);
+            if(routeCollisions(samples,obstacles,skip)!==0){rejectedCards++;continue;}
+            const bundles=bundleHits(samples,routes),score=bundles*24+
+              Math.abs(offset)*.3+Math.abs(peak.x-desiredPeak)*.2;
+            if(score<bestScore){bestScore=score;best={
+              path:`M${sx} ${sy} C${curve.cx1} ${curve.cy1} ${curve.cx2} ${curve.cy2} ${tx} ${ty}`,
+              peak,labelBox,samples
+            };}
+            safeCandidates++;if(bundles<=5||safeCandidates>=6)break;
+          }
+          if(best&&(bestScore<24*6||safeCandidates>=6))break;
         }
-        if(best&&best.collisions===0&&(best.bundles<=5||safeCandidates>=6))break;
       }
-      if(!best||best.collisions>0)
-        throw new Error(`关系弧线无法避开卡片：${relation.sourceId} → ${relation.targetId}（${title}）`);
-      const {curve,peak,labelBox,samples}=best;
+      if(!best)throw new Error(`关系无法避开卡片或标签：${relation.sourceId} → ${relation.targetId}（${title}）；${JSON.stringify([...labelBlockers])}；路径冲突 ${rejectedCards}`);
+      const {path,peak,labelBox,samples}=best;
       const group=svgElement("g",{class:"relation-item","data-relation-index":relation.index});
       group.appendChild(svgElement("path",{class:"relation-edge",
-        d:`M${sx} ${sy} C${curve.cx1} ${curve.cy1} ${curve.cx2} ${curve.cy2} ${tx} ${ty}`,
+        d:path,
         "marker-end":"url(#relation-arrow)","data-source":relation.sourceId,
         "data-target":relation.targetId,"data-title":relation.title}));
       const label=drawLabel(group,svgElement,lines,peak.x,peak.y,labelBoxWidth,labelBoxHeight,relation);
-      layer.appendChild(group);labels.push(label);addRouteToIndex(samples,routes);
+      layer.appendChild(group);labels.push({...label,sourceId:relation.sourceId,targetId:relation.targetId});addRouteToIndex(samples,routes);
       bounds.left=Math.min(bounds.left,...samples.map(point=>point.x),labelBox.left);
       bounds.right=Math.max(bounds.right,...samples.map(point=>point.x),labelBox.right);
       bounds.top=Math.min(bounds.top,...samples.map(point=>point.y),labelBox.top);

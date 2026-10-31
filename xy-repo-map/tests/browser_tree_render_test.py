@@ -101,27 +101,96 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 page.goto(f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80",
                           wait_until="load")
                 page.wait_for_function("document.querySelectorAll('.card').length > 0")
-                collisions = page.evaluate("""() => {
+                geometry = page.evaluate("""() => {
                   const edge=[...document.querySelectorAll('.relation-edge')].find(path =>
                     path.dataset.source==='xy_skills.session_work' &&
                     path.dataset.target==='xy_skills.quality');
-                  const endpoints=new Set([edge.dataset.source,edge.dataset.target]);
-                  const cards=[...document.querySelectorAll('.card')].filter(card=>
-                    !endpoints.has(card.dataset.nodeId)).map(card=>{
+                  const allCards=[...document.querySelectorAll('.card')].map(card=>{
                     const box=card.querySelector('.card-shape').getBBox();
                     const matrix=card.transform.baseVal.consolidate().matrix;
                     return {id:card.dataset.nodeId,left:matrix.e,right:matrix.e+box.width,
                       top:matrix.f,bottom:matrix.f+box.height};
                   });
+                  const data=JSON.parse(document.getElementById('page-data').textContent);
+                  const repoAlias=Object.fromEntries(Object.entries(data.repo_roots)
+                    .map(([placeholder,root])=>[root,placeholder]));
+                  const visualParent=id=>{const parent=data.nodes[id].parent;
+                    return parent===null||parent===undefined?parent:(repoAlias[parent]||parent);};
+                  const visualDepth=id=>{let depth=0,parent=visualParent(id);
+                    while(parent!==null&&parent!==undefined){depth++;parent=visualParent(parent);}return depth;};
+                  const endpoints=new Set([edge.dataset.source,edge.dataset.target]);
+                  const cards=allCards.filter(card=>!endpoints.has(card.id));
                   const collisions=new Set(),length=edge.getTotalLength();
                   for(let step=1;step<1000;step++){
                     const point=edge.getPointAtLength(length*step/1000);
                     for(const card of cards)if(point.x>card.left&&point.x<card.right&&
                       point.y>card.top&&point.y<card.bottom)collisions.add(card.id);
                   }
-                  return [...collisions];
+                  const box=edge.getBBox(),sourceDepth=visualDepth(edge.dataset.source);
+                  const targetDepth=visualDepth(edge.dataset.target);
+                  const nextDepth=Math.min(...allCards.map(card=>visualDepth(card.id))
+                    .filter(depth=>depth>sourceDepth));
+                  const nextColumnLeft=Math.min(...allCards.filter(card=>
+                    visualDepth(card.id)===nextDepth).map(card=>card.left));
+                  return {collisions:[...collisions],right:box.x+box.width,nextColumnLeft,
+                    sourceDepth,targetDepth};
                 }""")
-                self.assertEqual(collisions, [])
+                self.assertEqual(geometry["collisions"], [])
+                self.assertEqual(geometry["sourceDepth"], geometry["targetDepth"])
+                self.assertLessEqual(geometry["right"], geometry["nextColumnLeft"])
+            finally:
+                browser.close()
+
+    def test_relation_paths_stay_within_card_bounds_plus_fixed_margin(self):
+        with sync_playwright() as playwright:
+            browser = self.open_browser(playwright)
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 900})
+                page.goto(f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80",
+                          wait_until="load")
+                page.wait_for_function("document.querySelectorAll('.card').length > 0")
+                outside = page.evaluate("""() => {
+                  const boxes=[...document.querySelectorAll('.card')].map(card=>{
+                    const shape=card.querySelector('.card-shape').getBBox();
+                    const matrix=card.transform.baseVal.consolidate().matrix;
+                    return {id:card.dataset.nodeId,left:matrix.e,right:matrix.e+shape.width,
+                      top:matrix.f,bottom:matrix.f+shape.height};
+                  });
+                  const cards={left:Math.min(...boxes.map(box=>box.left)),
+                    right:Math.max(...boxes.map(box=>box.right)),
+                    top:Math.min(...boxes.map(box=>box.top)),
+                    bottom:Math.max(...boxes.map(box=>box.bottom))};
+                  const margin=128;
+                  const paths=[...document.querySelectorAll('.relation-edge')].map(path=>{
+                    const box=path.getBBox();
+                    return {source:path.dataset.source,target:path.dataset.target,
+                      left:Math.max(0,cards.left-margin-box.x),
+                      right:Math.max(0,box.x+box.width-cards.right-margin),
+                      top:Math.max(0,cards.top-margin-box.y),
+                      bottom:Math.max(0,box.y+box.height-cards.bottom-margin),
+                      box:{left:box.x,right:box.x+box.width}};
+                  });
+                  const outside=paths.filter(box=>box.left||box.right||box.top||box.bottom);
+                  const data=JSON.parse(document.getElementById('page-data').textContent);
+                  const repoAlias=Object.fromEntries(Object.entries(data.repo_roots)
+                    .map(([placeholder,root])=>[root,placeholder]));
+                  const visualParent=id=>{const parent=data.nodes[id].parent;
+                    return parent===null||parent===undefined?parent:(repoAlias[parent]||parent);};
+                  const visualDepth=id=>{let depth=0,parent=visualParent(id);
+                    while(parent!==null&&parent!==undefined){depth++;parent=visualParent(parent);}return depth;};
+                  const beyondNextColumn=paths.filter(path=>{
+                    const sourceDepth=visualDepth(path.source),targetDepth=visualDepth(path.target);
+                    if(sourceDepth!==targetDepth)return false;
+                    const nextDepth=Math.min(...boxes.map(card=>visualDepth(card.id))
+                      .filter(depth=>depth>sourceDepth));
+                    const nextLeft=Math.min(...boxes.filter(card=>visualDepth(card.id)===nextDepth)
+                      .map(card=>card.left));
+                    return Number.isFinite(nextLeft)&&path.box.right>nextLeft+1;
+                  }).map(path=>[path.source,path.target,path.box.right]);
+                  return {outside:outside.map(({box,...rest})=>rest),beyondNextColumn};
+                }""")
+                self.assertEqual(outside["outside"], [])
+                self.assertEqual(outside["beyondNextColumn"], [])
             finally:
                 browser.close()
 
@@ -369,37 +438,45 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
               top:matrix.f,bottom:matrix.f+shape.height}];
           }));
           const cards=[...boxes.values()],treeRight=Math.max(...cards.map(box=>box.right));
-          const labels=[...document.querySelectorAll('.relation-label-bg')].map(label=>label.getBBox());
+          const labels=[...document.querySelectorAll('.relation-label-bg')].map(label=>({
+            ...label.getBBox(),source:label.dataset.source,target:label.dataset.target}));
           const edges=[...document.querySelectorAll('.relation-edge')].map(path=>{
             const start=path.getPointAtLength(0),end=path.getPointAtLength(path.getTotalLength());
-            let peak=null;
+            let peakX=-Infinity,peakTop=Infinity,peakBottom=-Infinity;
             for(let step=0;step<=500;step++){
               const point=path.getPointAtLength(path.getTotalLength()*step/500);
-              if(!peak||point.x>peak.x)peak=point;
+              if(point.x>peakX+.5){peakX=point.x;peakTop=point.y;peakBottom=point.y;}
+              else if(point.x>=peakX-.5){peakTop=Math.min(peakTop,point.y);peakBottom=Math.max(peakBottom,point.y);}
             }
             const label=path.parentElement.querySelector('.relation-label-bg').getBBox();
             return {source:path.dataset.source,target:path.dataset.target,d:path.getAttribute('d'),
+              curved:path.getAttribute('d').includes('C'),
+              orthogonal:path.getAttribute('d').includes('H')&&path.getAttribute('d').includes('V'),
               startRight:Math.abs(start.x-boxes.get(path.dataset.source).right)<1,
               endRight:Math.abs(end.x-boxes.get(path.dataset.target).right)<1,
-              rightBulges:peak.x>Math.max(start.x,end.x)+2,
-              labelAtPeak:Math.abs(label.x+label.width/2-peak.x)<2&&
-                Math.abs(label.y+label.height/2-peak.y)<2};
+              rightBulges:peakX>Math.max(start.x,end.x)+2,
+              labelAtPeak:Math.abs(label.x+label.width/2-peakX)<2&&
+                label.y+label.height/2>=peakTop-2&&label.y+label.height/2<=peakBottom+2};
           });
           const labelOverlap=labels.some((label,index)=>labels.slice(index+1).some(other=>
+            [label.source,label.target].some(id=>id===other.source||id===other.target)&&
             label.x<other.x+other.width&&label.x+label.width>other.x&&
             label.y<other.y+other.height&&label.y+label.height>other.y));
           const cardOverlap=labels.some(label=>cards.some(card=>label.x<card.right&&
             label.x+label.width>card.left&&label.y<card.bottom&&label.y+label.height>card.top));
           const treeLines=[...document.querySelectorAll('.composition-spine,.composition-edge')];
-          const lineRight=Math.max(0,...treeLines.flatMap(path=>{
-            const length=path.getTotalLength(),points=[];
-            for(let step=0;step<=100;step++)points.push(path.getPointAtLength(length*step/100).x);
-            return points;
+          const treeOverlap=labels.some(label=>treeLines.some(path=>{
+            const length=path.getTotalLength(),steps=Math.max(1,Math.ceil(length/2));
+            for(let step=0;step<=steps;step++){
+              const point=path.getPointAtLength(length*step/steps);
+              if(point.x>=label.x-2&&point.x<=label.x+label.width+2&&
+                point.y>=label.y-2&&point.y<=label.y+label.height+2)return true;
+            }
+            return false;
           }));
-          const treeOverlap=labels.some(label=>label.x<lineRight+2);
           return {edges,labelOverlap,cardOverlap,treeOverlap};
         }""")
-        self.assertTrue(all("C" in edge["d"] for edge in geometry["edges"]), geometry)
+        self.assertTrue(all(edge["curved"] or edge["orthogonal"] for edge in geometry["edges"]), geometry)
         self.assertTrue(all(edge["startRight"] and edge["endRight"] for edge in geometry["edges"]), geometry)
         self.assertTrue(all(edge["rightBulges"] for edge in geometry["edges"]), geometry)
         self.assertTrue(all(edge["labelAtPeak"] for edge in geometry["edges"]), geometry)

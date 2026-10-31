@@ -287,7 +287,7 @@
       for(const node of result.children||[]){positions.set(node.id,{x:node.x||0,y:node.y||0,width:node.width||0,height:node.height||0});layoutNodes.set(node.id,node);}
       if(view.mode==="expand"){
         drawComposition(layers.tree,ids,positions);
-        const relationBounds=window.XYRepoMapRelations.draw({layer:layers.relations,positions,ids,
+        const relationBounds=window.XYRepoMapRelations.draw({layer:layers.relations,treeLayer:layers.tree,positions,ids,
           data:DATA,repoAlias:REPO_ALIAS,svgElement,widthOf,wrapText,visualDepth});
         currentBounds=relationBounds;
       }else{
