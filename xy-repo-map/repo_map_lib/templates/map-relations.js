@@ -190,6 +190,7 @@
       columns.set(depth,column);
     }
     const columnDepths=[...columns.keys()].sort((first,second)=>first-second);
+    // LikeC4 校验会拒绝自指关系，因此这里不会收到自指关系。
     const normalized=data.relations.map((relation,index)=>({...relation,index,
       sourceId:repoAlias[relation.source]||relation.source,targetId:repoAlias[relation.target]||relation.target}))
       .filter(relation=>visible.has(relation.sourceId)&&visible.has(relation.targetId));
@@ -197,9 +198,7 @@
     const pairIndexes=new Map(),portCounts=new Map(),portIndexes=new Map();
     for(const relation of normalized){
       const pair=`${relation.sourceId}\u0000${relation.targetId}`;
-      pairIndexes.set(pair,0);
-      for(const id of new Set([relation.sourceId,relation.targetId]))
-        portCounts.set(id,(portCounts.get(id)||0)+1);
+      pairIndexes.set(pair,0);for(const id of [relation.sourceId,relation.targetId])portCounts.set(id,(portCounts.get(id)||0)+1);
     }
     function portY(id,box){
       const count=portCounts.get(id),index=portIndexes.get(id)||0;portIndexes.set(id,index+1);
@@ -210,8 +209,7 @@
       const source=positions.get(relation.sourceId),target=positions.get(relation.targetId);
       const sourceDepth=visualDepth(relation.sourceId),targetDepth=visualDepth(relation.targetId);
       const sx=source.x+source.width,tx=target.x+target.width;
-      const sy=portY(relation.sourceId,source);
-      const ty=relation.sourceId===relation.targetId?sy:portY(relation.targetId,target);
+      const sy=portY(relation.sourceId,source),ty=portY(relation.targetId,target);
       const depth=Math.max(sourceDepth,targetDepth);
       const span=Math.abs(ty-sy)+Math.abs(sourceDepth-targetDepth)*48;
       return {...relation,source,target,sx,tx,sy,ty,span,sourceDepth,targetDepth,depth};
@@ -237,30 +235,7 @@
       const skip=new Set([relation.sourceId,relation.targetId]);
       let best=null,bestScore=Infinity,rejectedCards=0;
       const labelBlockers=new Map();
-      if(relation.sourceId===relation.targetId){
-        const desiredOffset=Math.max(36,labelHalfWidth+6),centers=[sy,
-          source.y+source.height*.25,source.y+source.height*.5,source.y+source.height*.75]
-          .sort((first,second)=>Math.abs(first-sy)-Math.abs(second-sy));
-        for(const centerY of centers){
-          for(const offset of [desiredOffset,desiredOffset+12,desiredOffset+24]){
-            const peakX=sx+offset;if(peakX>peakCeiling)continue;
-            const controlX=sx+offset*4/3,curve={sx,sy:centerY,cx1:controlX,cy1:centerY-26,
-              cx2:controlX,cy2:centerY+26,tx:sx,ty:centerY};
-            const peak=curvePeak(curve),labelBox={left:peak.x-labelBoxWidth/2,
-              right:peak.x+labelBoxWidth/2,top:peak.y-labelBoxHeight/2,
-              bottom:peak.y+labelBoxHeight/2};
-            const issue=labelIssue(labelBox,positions,labels,treeSamples,relation);
-            if(issue){labelBlockers.set(issue,(labelBlockers.get(issue)||0)+1);continue;}
-            const samples=relationSamples(curve,120);
-            if(routeCollisions(samples,obstacles,skip)!==0){rejectedCards++;continue;}
-            const score=bundleHits(samples,routes)*24+Math.abs(offset-desiredOffset)*.2+
-              Math.abs(centerY-sy)*.3;
-            if(score<bestScore){bestScore=score;best={path:`M${sx} ${centerY} C${controlX} ${centerY-26} ${controlX} ${centerY+26} ${sx} ${centerY}`,
-              peak,labelBox,samples};}
-          }
-          if(best&&bestScore===0)break;
-        }
-      }else if(sourceDepth===targetDepth&&gap<48){
+      if(sourceDepth===targetDepth&&gap<48){
         const laneX=column.right+gap/2;
         const points=[{x:sx,y:sy},{x:laneX,y:sy},{x:laneX,y:ty},{x:tx,y:ty}];
         const samples=polylineSamples(points,24),peak={x:laneX,y:(sy+ty)/2};

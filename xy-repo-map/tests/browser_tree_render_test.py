@@ -231,13 +231,6 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
 
                 relation_rows = data["relations"]
                 relation_edges = page.locator(".relation-edge")
-                loop_node = "workspace.session.events"
-                self.assertIn({"source": loop_node, "target": loop_node, "title": "自循环"},
-                              relation_rows)
-                self_loop = page.locator(
-                    f'.relation-edge[data-source="{loop_node}"][data-target="{loop_node}"]'
-                    '[data-title="自循环"]')
-                self.assertEqual(self_loop.count(), 1)
                 self.assertEqual(relation_edges.count(), len(relation_rows))
                 rendered = relation_edges.evaluate_all("""edges => edges.map(edge => ({
                   source:edge.dataset.source, target:edge.dataset.target, title:edge.dataset.title,
@@ -254,11 +247,6 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 label_opacities = page.locator(".relation-label-bg,.relation-label").evaluate_all(
                     "labels => labels.map(label => Number(getComputedStyle(label).opacity))")
                 self.assertTrue(all(opacity == 0 for opacity in label_opacities), label_opacities)
-                self_loop_label = page.locator('.relation-label[data-title="自循环"]')
-                page.locator('.card[data-node-id="workspace.session.events"]').hover()
-                self.assertIn("highlighted", self_loop_label.get_attribute("class"))
-                self.assertGreater(self_loop_label.evaluate(
-                    "element => Number(getComputedStyle(element).opacity)"), .9)
                 duplicate_pairs = {(edge["source"], edge["target"]) for edge in rendered
                                    if sum(other["source"] == edge["source"] and
                                           other["target"] == edge["target"] for other in rendered) > 1}
