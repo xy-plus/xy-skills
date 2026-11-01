@@ -172,6 +172,36 @@ class CheckTest(unittest.TestCase):
         document = main_report(verdict="改了就过", deviations=[finding])
         self.assert_rejected("review-main.json", document, "格式错误或条号不存在")
 
+    def test_main_report_rejects_rule_name_anywhere_in_source(self):
+        sources = (
+            " xy-iron-law 第 1 条",
+            "见 xy-iron-law 第 1 条",
+            str(rule_references.RULE_FILES["xy-iron-law"]),
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                finding = {
+                    "problem": "发现一项阻断",
+                    "evidence": "check.py:25",
+                    "quote": {"source": source, "text": "错误引文"},
+                }
+                document = main_report(verdict="改了就过", deviations=[finding])
+                self.assert_rejected("review-main.json", document,
+                                     "格式错误或条号不存在")
+
+    def test_main_report_accepts_contract_number_and_quote_file_path_sources(self):
+        sources = ("Q94", "xy-goal/quotes/50.md")
+        findings = [
+            {
+                "problem": "发现一项阻断",
+                "evidence": "check.py:25",
+                "quote": {"source": source, "text": "原话原文"},
+            }
+            for source in sources
+        ]
+        document = main_report(verdict="改了就过", deviations=findings)
+        self.assertEqual(self.run_report("review-main.json", document), (0, []))
+
     def test_check_cannot_build_zero_repository_rule_requirements(self):
         with tempfile.TemporaryDirectory() as temporary:
             missing_path = Path(temporary) / "missing-rules.md"

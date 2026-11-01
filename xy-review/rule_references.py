@@ -13,17 +13,13 @@ RULE_SOURCE = re.compile(r"(xy-iron-law|xy-repo-rules) 第 ([1-9][0-9]*) 条")
 RULE_NAMES = tuple(RULE_FILES)
 
 
-class RuleDocumentError(ValueError):
-    """A local rule document cannot provide numbered citation targets."""
-
-
 @lru_cache(maxsize=None)
 def _numbered_rules(skill_path):
     """Read and index all numbered rules in one local skill document once."""
     try:
         lines = Path(skill_path).read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as error:
-        raise RuleDocumentError(f"无法读取规范文件「{skill_path}」：{error}") from error
+        raise ValueError(f"无法读取规范文件「{skill_path}」：{error}") from error
     rules = []
     index = 0
     while index < len(lines):
@@ -37,7 +33,7 @@ def _numbered_rules(skill_path):
         rules.append((int(match.group(1)), "\n".join(lines[index:end])))
         index = end
     if not rules:
-        raise RuleDocumentError(f"规范文件「{skill_path}」没有编号条款")
+        raise ValueError(f"规范文件「{skill_path}」没有编号条款")
     return tuple(rules)
 
 
@@ -53,7 +49,7 @@ def numbered_rule_numbers(skill_path):
 
 def is_rule_source(source):
     """Return whether a source claims to cite one of the two rule documents."""
-    return isinstance(source, str) and any(source.startswith(name) for name in RULE_NAMES)
+    return isinstance(source, str) and any(name in source for name in RULE_NAMES)
 
 
 def rule_text(source):
