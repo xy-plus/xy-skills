@@ -1,5 +1,6 @@
 """xy-review JSON 报告的结构、内容和正式位置测试。"""
 import contextlib
+import importlib
 import io
 import json
 import os
@@ -7,7 +8,10 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from unittest.mock import patch
 
+import rule_references
+import check
 from check import REPO_RULE_NUMBERS, main
 
 
@@ -158,6 +162,28 @@ class CheckTest(unittest.TestCase):
         }
         document = main_report(verdict="改了就过", deviations=[finding])
         self.assert_rejected("review-main.json", document, "quote.text", "xy-iron-law 第 1 条")
+
+    def test_main_report_rejects_malformed_rule_source_with_wrong_quote(self):
+        finding = {
+            "problem": "发现一项阻断",
+            "evidence": "check.py:25",
+            "quote": {"source": "xy-iron-law第 1 条", "text": "错误引文"},
+        }
+        document = main_report(verdict="改了就过", deviations=[finding])
+        self.assert_rejected("review-main.json", document, "格式错误或条号不存在")
+
+    def test_check_cannot_build_zero_repository_rule_requirements(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            missing_path = Path(temporary) / "missing-rules.md"
+            try:
+                with patch.dict(rule_references.RULE_FILES,
+                                {"xy-repo-rules": missing_path}):
+                    rule_references._numbered_rules.cache_clear()
+                    with self.assertRaises(ValueError):
+                        importlib.reload(check)
+            finally:
+                rule_references._numbered_rules.cache_clear()
+                importlib.reload(check)
 
     def test_main_report_accepts_a_continuous_quote_from_the_named_rule(self):
         finding = {

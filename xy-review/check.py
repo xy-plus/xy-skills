@@ -15,6 +15,8 @@ from rule_references import (  # noqa: E402
 
 
 REPO_RULE_NUMBERS = numbered_rule_numbers(RULE_FILES["xy-repo-rules"])
+if not REPO_RULE_NUMBERS:
+    raise ValueError("xy-repo-rules 没有编号条款，不能构造空的仓库规范检查要求")
 SECTION = {
     "items": [{
         "problem": str,

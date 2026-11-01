@@ -7,7 +7,6 @@ import unittest
 from playwright.sync_api import sync_playwright
 
 from browser_child_repo_test import ParentChildBrowserTestSupport, run_repo_map
-from browser_relation_geometry import collect_relation_geometry
 
 
 class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.TestCase):
@@ -115,7 +114,41 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 page.goto(f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80",
                           wait_until="load")
                 page.wait_for_function("document.querySelectorAll('.card').length > 0")
-                relations = collect_relation_geometry(page)
+                relations = page.evaluate("""() => {
+                  const cards=[...document.querySelectorAll('.card')].map(card=>{
+                    const box=card.querySelector('.card-shape').getBBox(),matrix=card.transform.baseVal.consolidate().matrix;
+                    return {id:card.dataset.nodeId,left:matrix.e+box.x,
+                      right:matrix.e+box.x+box.width,top:matrix.f+box.y,bottom:matrix.f+box.y+box.height};
+                  });
+                  const segmentHitsCard=(start,end,card)=>{
+                    for(let step=1;step<1000;step++){
+                      const amount=step/1000,x=start.x+(end.x-start.x)*amount;
+                      const y=start.y+(end.y-start.y)*amount;
+                      if(x>card.left&&x<card.right&&y>card.top&&y<card.bottom)return true;
+                    }
+                    return false;
+                  };
+                  return [...document.querySelectorAll('.relation-edge')].map(edge=>{
+                    const {source,target}=edge.dataset;
+                    const obstacles=cards.filter(card=>card.id!==source&&card.id!==target);
+                    const length=edge.getTotalLength(),collisions=new Set();
+                    for(let step=1;step<1000;step++){
+                      const point=edge.getPointAtLength(length*step/1000);
+                      for(const card of obstacles)if(point.x>card.left&&point.x<card.right&&
+                        point.y>card.top&&point.y<card.bottom)collisions.add(card.id);
+                    }
+                    let intermediateCards=[];
+                    const sourceCard=cards.find(card=>card.id===source),targetCard=cards.find(card=>card.id===target);
+                    if(sourceCard&&targetCard){
+                      const center=card=>({x:(card.left+card.right)/2,
+                        y:(card.top+card.bottom)/2});
+                      const start=center(sourceCard),end=center(targetCard);
+                      intermediateCards=obstacles.filter(card=>
+                        segmentHitsCard(start,end,card)).map(card=>card.id);
+                    }
+                    return {source,target,collisions:[...collisions],intermediateCards};
+                  });
+                }""")
                 self.assertTrue(relations, "展开视图中应有关系弧")
                 blocked = [relation for relation in relations if relation["collisions"]]
                 self.assertEqual(blocked, [])
