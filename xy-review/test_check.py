@@ -21,7 +21,11 @@ def section(items=None, checked="核对了实现与 spec"):
 
 def main_report(verdict="通过", deviations=None, hard_to_misuse=None, repo_rules=None):
     return {
-        "first_principles": {"essence": "用户要的是明确且可检查的行为", "deviations": section(deviations)},
+        "first_principles": {
+            "essence": "用户要的是明确且可检查的行为",
+            "deviations": section(deviations),
+            "quote_problems": section(),
+        },
         "hard_to_misuse": section(hard_to_misuse),
         "repo_rules": {str(number): section() for number in REPO_RULE_NUMBERS} if repo_rules is None else repo_rules,
         "verdict": verdict,
@@ -116,6 +120,52 @@ class CheckTest(unittest.TestCase):
         for document, message in cases:
             with self.subTest(message=message):
                 self.assert_rejected("review-main.json", document, message)
+
+    def test_main_report_requires_quote_problems(self):
+        document = main_report()
+        del document["first_principles"]["quote_problems"]
+        self.assert_rejected(
+            "review-main.json", document,
+            "缺少字段：报告.first_principles.quote_problems",
+        )
+
+    def test_quote_problems_require_suggestion(self):
+        finding = {
+            "problem": "两条原话互相矛盾",
+            "evidence": "与原话 1「必须启用」相矛盾",
+            "quote": {"source": "Q2", "text": "默认关闭"},
+        }
+        document = main_report(verdict="改了就过")
+        document["first_principles"]["quote_problems"]["items"] = [finding]
+        self.assert_rejected(
+            "review-main.json", document,
+            "缺少字段：报告.first_principles.quote_problems.items[0].suggestion",
+        )
+
+    def test_quote_problems_are_main_verdict_findings(self):
+        finding = {
+            "problem": "两条原话互相矛盾",
+            "evidence": "与原话 1「必须启用」相矛盾",
+            "quote": {"source": "Q2", "text": "默认关闭"},
+            "suggestion": "请用户决定是否启用，并说明理由",
+        }
+        document = main_report()
+        document["first_principles"]["quote_problems"]["items"] = [finding]
+        self.assert_rejected(
+            "review-main.json", document,
+            "通过」但有发现", "first_principles.quote_problems",
+        )
+
+    def test_quote_problems_can_be_the_only_findings_for_changed_verdict(self):
+        finding = {
+            "problem": "两条原话互相矛盾",
+            "evidence": "与原话 1「必须启用」相矛盾",
+            "quote": {"source": "Q2", "text": "默认关闭"},
+            "suggestion": "请用户决定是否启用，并说明理由",
+        }
+        document = main_report(verdict="改了就过")
+        document["first_principles"]["quote_problems"]["items"] = [finding]
+        self.assertEqual(self.run_report("review-main.json", document), (0, []))
 
     def test_main_report_items_require_nonblank_quotes(self):
         def finding():

@@ -23,8 +23,21 @@ SECTION = {
     }],
     "checked": str,
 }
+QUOTE_PROBLEMS = {
+    "items": [{
+        "problem": str,
+        "evidence": str,
+        "quote": {"source": str, "text": str},
+        "suggestion": str,
+    }],
+    "checked": str,
+}
 REVIEW_MAIN = {
-    "first_principles": {"essence": str, "deviations": SECTION},
+    "first_principles": {
+        "essence": str,
+        "deviations": SECTION,
+        "quote_problems": QUOTE_PROBLEMS,
+    },
     "hard_to_misuse": SECTION,
     "repo_rules": {str(number): SECTION for number in REPO_RULE_NUMBERS},
     "verdict": str,
@@ -152,6 +165,7 @@ def check(text, filename):
         findings = []
         for label, path in (
             ("first_principles.deviations", ("first_principles", "deviations", "items")),
+            ("first_principles.quote_problems", ("first_principles", "quote_problems", "items")),
             ("hard_to_misuse", ("hard_to_misuse", "items")),
         ):
             if item_list(document, *path):
