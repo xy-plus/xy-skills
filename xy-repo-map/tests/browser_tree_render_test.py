@@ -7,6 +7,7 @@ import unittest
 from playwright.sync_api import sync_playwright
 
 from browser_child_repo_test import ParentChildBrowserTestSupport, run_repo_map
+from browser_relation_geometry import collect_relation_geometry
 
 
 class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.TestCase):
@@ -114,43 +115,14 @@ class TreeRenderBrowserAcceptanceTest(ParentChildBrowserTestSupport, unittest.Te
                 page.goto(f"{self.base_url}/self-draft/index.html#%E5%B1%95%E5%BC%80",
                           wait_until="load")
                 page.wait_for_function("document.querySelectorAll('.card').length > 0")
-                geometry = page.evaluate("""() => {
-                  const edge=[...document.querySelectorAll('.relation-edge')].find(path =>
-                    path.dataset.source==='xy_skills.session_work' &&
-                    path.dataset.target==='xy_skills.quality');
-                  const allCards=[...document.querySelectorAll('.card')].map(card=>{
-                    const box=card.querySelector('.card-shape').getBBox();
-                    const matrix=card.transform.baseVal.consolidate().matrix;
-                    return {id:card.dataset.nodeId,left:matrix.e,right:matrix.e+box.width,
-                      top:matrix.f,bottom:matrix.f+box.height};
-                  });
-                  const data=JSON.parse(document.getElementById('page-data').textContent);
-                  const repoAlias=Object.fromEntries(Object.entries(data.repo_roots)
-                    .map(([placeholder,root])=>[root,placeholder]));
-                  const visualParent=id=>{const parent=data.nodes[id].parent;
-                    return parent===null||parent===undefined?parent:(repoAlias[parent]||parent);};
-                  const visualDepth=id=>{let depth=0,parent=visualParent(id);
-                    while(parent!==null&&parent!==undefined){depth++;parent=visualParent(parent);}return depth;};
-                  const endpoints=new Set([edge.dataset.source,edge.dataset.target]);
-                  const cards=allCards.filter(card=>!endpoints.has(card.id));
-                  const collisions=new Set(),length=edge.getTotalLength();
-                  for(let step=1;step<1000;step++){
-                    const point=edge.getPointAtLength(length*step/1000);
-                    for(const card of cards)if(point.x>card.left&&point.x<card.right&&
-                      point.y>card.top&&point.y<card.bottom)collisions.add(card.id);
-                  }
-                  const box=edge.getBBox(),sourceDepth=visualDepth(edge.dataset.source);
-                  const targetDepth=visualDepth(edge.dataset.target);
-                  const nextDepth=Math.min(...allCards.map(card=>visualDepth(card.id))
-                    .filter(depth=>depth>sourceDepth));
-                  const nextColumnLeft=Math.min(...allCards.filter(card=>
-                    visualDepth(card.id)===nextDepth).map(card=>card.left));
-                  return {collisions:[...collisions],right:box.x+box.width,nextColumnLeft,
-                    sourceDepth,targetDepth};
-                }""")
-                self.assertEqual(geometry["collisions"], [])
-                self.assertEqual(geometry["sourceDepth"], geometry["targetDepth"])
-                self.assertLessEqual(geometry["right"], geometry["nextColumnLeft"])
+                relations = collect_relation_geometry(page)
+                self.assertTrue(relations, "展开视图中应有关系弧")
+                blocked = [relation for relation in relations if relation["collisions"]]
+                self.assertEqual(blocked, [])
+                self.assertTrue(
+                    any(relation["intermediateCards"] for relation in relations),
+                    "至少一条关系的端点直线应穿过中间卡片",
+                )
             finally:
                 browser.close()
 

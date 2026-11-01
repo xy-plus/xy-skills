@@ -50,8 +50,10 @@ model {
         link ../xy-review/SKILL.md 'docs'
         link ../xy-review/audit.py 'code'
         link ../xy-review/check.py 'code'
+        link ../xy-review/rule_references.py 'code'
         link ../xy-review/test_audit.py 'tests'
         link ../xy-review/test_check.py 'tests'
+        link ../xy-review/test_rule_references.py 'tests'
       }
       workflow = node '标准工作流程' {
         description '组织需求讨论、spec、工作树实现、终审和收尾。'
@@ -94,7 +96,6 @@ model {
   xy_skills.session_work.review -> xy_skills.quality.repo_rules '按仓库规范逐条审查'
   xy_skills.session_work.workflow -> xy_skills.quality.iron_law '要求子代理照铁律做'
   xy_skills.session_work.workflow -> xy_skills.quality.repo_rules '要求子代理照仓库规范做'
-  xy_skills.session_work.cleanup -> xy_skills.quality.iron_law '清扫发现以铁律为依据'
-  xy_skills.session_work.cleanup -> xy_skills.quality.repo_rules '清扫发现以仓库规范为依据'
+  xy_skills.session_work.cleanup -> xy_skills.session_work.review '按对抗审查的角色审，复用条款核对'
   xy_skills.session_work.cleanup -> xy_skills.session_work.handoff '复用 JSON 重复键检查'
 }
