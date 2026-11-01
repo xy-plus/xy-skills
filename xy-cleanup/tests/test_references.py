@@ -10,15 +10,15 @@ TESTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS.parent))
 sys.path.insert(0, str(TESTS.parents[1] / "xy-repo-map"))
 
-from references import build_reference_report  # noqa: E402
-from references import main as references_main  # noqa: E402
-from references import module_names  # noqa: E402
-from references import node_names  # noqa: E402
-from references import text_lines  # noqa: E402
-from check_audit import repository_context  # noqa: E402
-from repo_map_lib.git_repository import tracked_paths  # noqa: E402
-from repo_map_lib.ownership import Owner  # noqa: E402
-from test_data.create_fixture import create_fixture_repo  # noqa: E402
+from references import build_reference_report
+from references import main as references_main
+from references import module_names
+from references import node_names
+from references import text_lines
+from check_audit import repository_context
+from repo_map_lib.git_repository import tracked_paths
+from repo_map_lib.ownership import Owner
+from test_data.create_fixture import create_fixture_repo
 
 
 class ReferencesTest(unittest.TestCase):

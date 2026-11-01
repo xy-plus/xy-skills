@@ -4,9 +4,8 @@ import json
 from pathlib import Path, PurePosixPath
 import sys
 
-from check_audit import repository_context
+from check_audit import repository_context, shared_targets
 from repo_map_lib.ownership import link_records
-from shared_targets import shared_targets
 
 
 def module_names(file_path):

@@ -16,7 +16,6 @@ from repo_map_lib.git_repository import ArgumentError  # noqa: E402
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 from audit_entities import collect_entities  # noqa: E402
 from rule_references import basis_is_supported, basis_rule  # noqa: E402
-from shared_targets import shared_targets  # noqa: E402
 
 
 ROLES = {"主审", "剃刀", "全图"}
@@ -32,6 +31,24 @@ ENTITY_FIELDS = {"entity", "verdict", "reason"}
 ENTITY_VERDICTS = {"无问题", "见发现"}
 SHARED_TARGET_FIELDS = {"target", "verdict", "reason"}
 SHARED_TARGET_VERDICTS = {"各有用途", "同一用途"}
+
+
+def shared_targets(model):
+    """Return shared targets with their source nodes and relationship titles."""
+    users_by_target = {}
+    for relation in model["relations"].values():
+        source = relation["source"]["model"]
+        target = relation["target"]["model"]
+        if target not in users_by_target:
+            users_by_target[target] = []
+        users_by_target[target].append({"node": source, "title": relation["title"]})
+
+    results = []
+    for target in sorted(users_by_target):
+        users = sorted(users_by_target[target], key=lambda item: (item["node"], item["title"]))
+        if len({user["node"] for user in users}) > 1:
+            results.append({"target": target, "users": users})
+    return results
 
 
 def finding_is_valid(finding, label, problems):
