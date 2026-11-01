@@ -49,7 +49,10 @@ def node_entry(node, files, findings, checked):
 
 
 def report(role, nodes, repo):
-    return {"role": role, "repo": repo, "nodes": nodes}
+    document = {"role": role, "repo": repo, "nodes": nodes}
+    if role == "全图":
+        document["shared_targets"] = []
+    return document
 
 
 def report_input(path, document):

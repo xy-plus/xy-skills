@@ -6,6 +6,7 @@ import sys
 
 from check_audit import repository_context
 from repo_map_lib.ownership import link_records
+from shared_targets import shared_targets
 
 
 def module_names(file_path):
@@ -166,6 +167,7 @@ def build_reference_report(repository, model, tracked, owners):
     relationship_pair_set = {(item["from"], item["to"]) for item in relationships}
     return {
         "repo": str(root),
+        "shared_targets": shared_targets(model),
         "mentions": mentions,
         "skipped_files": skipped_files,
         "references_without_relationship": [

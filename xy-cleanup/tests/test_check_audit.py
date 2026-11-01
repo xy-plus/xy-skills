@@ -52,6 +52,60 @@ class CheckAuditTest(unittest.TestCase):
     def test_complete_reports_cover_each_scoped_node_once(self):
         self.assertEqual(validate(None, None, None, None), [])
 
+    def test_whole_graph_report_must_list_every_shared_target_once(self):
+        reports = valid_reports(OWNERS)
+        graph = model()
+        graph["relations"]["root-beta"] = {
+            "source": {"model": "sample"},
+            "target": {"model": "sample.beta"},
+            "title": "contains",
+        }
+        shared_target = {"target": "sample.beta", "verdict": "各有用途",
+                         "reason": "alpha 校验它，sample 组织它"}
+
+        self.assertTrue(any("shared_targets" in error
+                            for error in validate(reports, None, None, graph)))
+
+        reports[2]["data"]["shared_targets"] = [shared_target]
+        self.assertEqual(validate(reports, None, None, graph), [])
+
+        reports[2]["data"]["shared_targets"].append(dict(shared_target))
+        self.assertTrue(any("重复" in error and "sample.beta" in error
+                            for error in validate(reports, None, None, graph)))
+
+    def test_whole_graph_shared_target_verdict_and_matching_finding_are_checked(self):
+        reports = valid_reports(OWNERS)
+        graph = model()
+        graph["relations"]["root-beta"] = {
+            "source": {"model": "sample"},
+            "target": {"model": "sample.beta"},
+            "title": "contains",
+        }
+        reports[2]["data"]["shared_targets"] = [{
+            "target": "sample.beta", "verdict": "same purpose", "reason": "src/alpha.py:3"
+        }]
+        errors = validate(reports, None, None, graph)
+        self.assertTrue(any("verdict" in error for error in errors), errors)
+
+        reports[2]["data"]["shared_targets"][0]["verdict"] = "同一用途"
+        errors = validate(reports, None, None, graph)
+        self.assertTrue(any("finding" in error for error in errors),
+                        errors)
+
+        reports[2]["data"]["nodes"][0]["findings"] = [
+            finding("重构", "问你", True)
+        ]
+        self.assertEqual(validate(reports, None, None, graph), [])
+
+    def test_whole_graph_report_rejects_extra_shared_targets(self):
+        reports = valid_reports(OWNERS)
+        reports[2]["data"]["shared_targets"] = [{
+            "target": "sample.unknown", "verdict": "各有用途", "reason": "单独使用"
+        }]
+        errors = validate(reports, None, None, None)
+        self.assertTrue(any("多余" in error and "sample.unknown" in error for error in errors),
+                        errors)
+
     def test_a_node_can_be_omitted_below_an_immediate_delete(self):
         reports = valid_reports(OWNERS)
         main_report = reports[0]["data"]

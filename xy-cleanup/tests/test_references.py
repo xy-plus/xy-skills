@@ -10,18 +10,43 @@ TESTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS.parent))
 sys.path.insert(0, str(TESTS.parents[1] / "xy-repo-map"))
 
-from references import build_reference_report
-from references import main as references_main
-from references import module_names
-from references import node_names
-from references import text_lines
-from check_audit import repository_context
-from repo_map_lib.git_repository import tracked_paths
-from repo_map_lib.ownership import Owner
-from test_data.create_fixture import create_fixture_repo
+from references import build_reference_report  # noqa: E402
+from references import main as references_main  # noqa: E402
+from references import module_names  # noqa: E402
+from references import node_names  # noqa: E402
+from references import text_lines  # noqa: E402
+from check_audit import repository_context  # noqa: E402
+from repo_map_lib.git_repository import tracked_paths  # noqa: E402
+from repo_map_lib.ownership import Owner  # noqa: E402
+from test_data.create_fixture import create_fixture_repo  # noqa: E402
 
 
 class ReferencesTest(unittest.TestCase):
+    def test_shared_targets_lists_targets_used_by_two_distinct_nodes(self):
+        model = {
+            "elements": {"z.source": {}, "a.source": {}, "only.source": {},
+                         "shared": {}, "single": {}},
+            "relations": {
+                "z-shared": {"source": {"model": "z.source"},
+                             "target": {"model": "shared"}, "title": "checks"},
+                "a-shared": {"source": {"model": "a.source"},
+                             "target": {"model": "shared"}, "title": "uses"},
+                "only-single": {"source": {"model": "only.source"},
+                                "target": {"model": "single"}, "title": "calls"},
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            report = build_reference_report(Path(temporary), model, [], {})
+
+        self.assertEqual(report["shared_targets"], [{
+            "target": "shared",
+            "users": [
+                {"node": "a.source", "title": "uses"},
+                {"node": "z.source", "title": "checks"},
+            ],
+        }])
+
     def test_initialized_submodule_is_not_read_as_a_text_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)

@@ -16,6 +16,7 @@ from repo_map_lib.git_repository import ArgumentError  # noqa: E402
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 from audit_entities import collect_entities  # noqa: E402
 from rule_references import basis_is_supported, basis_rule  # noqa: E402
+from shared_targets import shared_targets  # noqa: E402
 
 
 ROLES = {"主审", "剃刀", "全图"}
@@ -29,6 +30,8 @@ FINDING_FIELDS = {
 TEXT_FIELDS = {"target", "problem", "proposal", "decision", "evidence", "benefit", "cost"}
 ENTITY_FIELDS = {"entity", "verdict", "reason"}
 ENTITY_VERDICTS = {"无问题", "见发现"}
+SHARED_TARGET_FIELDS = {"target", "verdict", "reason"}
+SHARED_TARGET_VERDICTS = {"各有用途", "同一用途"}
 
 
 def finding_is_valid(finding, label, problems):
@@ -236,6 +239,61 @@ def validate_report_node(entry, role, report_name, scope, owners, expected_entit
     return node
 
 
+def validate_shared_targets(value, report_name, expected_targets, entries, problems):
+    """Validate whole-graph conclusions against every shared graph target."""
+    label = f"{report_name}.shared_targets"
+    if not isinstance(value, list):
+        problems.append(f"{label} 必须是数组")
+        value = []
+
+    finding_targets = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        findings = entry.get("findings")
+        if not isinstance(findings, list):
+            continue
+        for finding in findings:
+            if isinstance(finding, dict) and isinstance(finding.get("target"), str):
+                finding_targets.add(finding["target"])
+    actual_targets = []
+    seen_targets = set()
+    for index, item in enumerate(value):
+        item_label = f"{label}[{index}]"
+        if not isinstance(item, dict):
+            problems.append(f"{item_label} 必须是对象")
+            continue
+        missing = SHARED_TARGET_FIELDS - set(item)
+        extra = set(item) - SHARED_TARGET_FIELDS
+        for field in sorted(missing):
+            problems.append(f"{item_label} 缺少字段：{field}")
+        for field in sorted(extra):
+            problems.append(f"{item_label} 多余字段：{field}")
+
+        target = item.get("target")
+        if not isinstance(target, str) or not target.strip():
+            problems.append(f"{item_label}.target 必须是非空字符串")
+        else:
+            actual_targets.append(target)
+            if target in seen_targets:
+                problems.append(f"{label} 目标 {target} 重复")
+            seen_targets.add(target)
+
+        verdict = item.get("verdict")
+        if not isinstance(verdict, str) or verdict not in SHARED_TARGET_VERDICTS:
+            problems.append(f"{item_label}.verdict 不在允许值中")
+        reason = item.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            problems.append(f"{item_label}.reason 必须是非空字符串")
+        elif verdict == "同一用途" and reason not in finding_targets:
+            problems.append(f"{item_label}.reason 必须等于全图报告某条 finding 的 target")
+
+    for target in sorted(set(expected_targets) - set(actual_targets)):
+        problems.append(f"{label} 缺少目标 {target}")
+    for target in sorted(set(actual_targets) - set(expected_targets)):
+        problems.append(f"{label} 多余目标 {target}")
+
+
 def validate_reports(repository, scope, reports, model, owners, expected_entities):
     """Return all schema, coverage, evidence, and file-ownership problems."""
     problems = []
@@ -244,6 +302,7 @@ def validate_reports(repository, scope, reports, model, owners, expected_entitie
     role_counts = {role: {} for role in ROLES}
     direct_deletions = {role: set() for role in ROLES}
     whole_report_count = 0
+    expected_shared_targets = [item["target"] for item in shared_targets(model)]
 
     if not isinstance(reports, list):
         return ["报告输入必须是列表"]
@@ -256,13 +315,14 @@ def validate_reports(repository, scope, reports, model, owners, expected_entitie
         if not isinstance(document, dict):
             problems.append(f"{label} 必须是 JSON 对象")
             continue
-        missing = ROOT_FIELDS - set(document)
-        extra = set(document) - ROOT_FIELDS
+        role = document.get("role")
+        expected_root_fields = ROOT_FIELDS | ({"shared_targets"} if role == "全图" else set())
+        missing = expected_root_fields - set(document)
+        extra = set(document) - expected_root_fields
         for field in sorted(missing):
             problems.append(f"{label} 缺少字段：{field}")
         for field in sorted(extra):
             problems.append(f"{label} 多余字段：{field}")
-        role = document.get("role")
         if not isinstance(role, str) or role not in ROLES:
             problems.append(f"{label}.role 必须是主审、剃刀或全图")
             continue
@@ -275,6 +335,11 @@ def validate_reports(repository, scope, reports, model, owners, expected_entitie
         if not isinstance(entries, list):
             problems.append(f"{label}.nodes 必须是数组")
             continue
+        if role == "全图":
+            validate_shared_targets(
+                document.get("shared_targets"), label, expected_shared_targets,
+                entries, problems
+            )
         seen_here = set()
         for entry in entries:
             node = validate_report_node(
