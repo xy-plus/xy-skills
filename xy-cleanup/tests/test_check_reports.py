@@ -77,6 +77,13 @@ class CheckReportsTest(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
 
+    def record(self, scope=("全部",)):
+        return subprocess.run(
+            ["python3", "-B", str(ROOT / "xy-cleanup" / "approvals.py"),
+             "record", "--repo", str(self.repository), "--scope", *scope],
+            capture_output=True, text=True, check=False,
+        )
+
     def test_accepts_complete_reports_for_each_role(self):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -127,6 +134,21 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check(review="不认识")
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid choice", result.stderr)
+
+    def test_changed_review_uses_the_approval_plan_for_report_coverage(self):
+        recorded = self.record()
+        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+
+        self.write_reports(report("主审", self.repository, ()),
+                           report("剃刀", self.repository, ()))
+        result = self.run_check(review="变过的")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        (self.repository / "alpha" / "main.py").write_text("value = 100\n", encoding="utf-8")
+        self.write_reports(report("主审", self.repository, ("alpha",)),
+                           report("剃刀", self.repository, ("alpha",)))
+        result = self.run_check(review="变过的")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_rejects_empty_answers_and_extra_finding_fields(self):
         main = report("主审", self.repository)

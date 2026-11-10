@@ -10,9 +10,17 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
 sys.path.insert(0, str(REPOSITORY / "xy-review"))
 sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
+sys.path.insert(0, str(REPOSITORY / "xy-cleanup"))
 from repo_map_lib.git_repository import ArgumentError  # noqa: E402
 from repo_map_lib.git_repository import tracked_paths  # noqa: E402
 from repo_map_lib.map_data import build_map  # noqa: E402
+from approvals import (  # noqa: E402
+    APPROVED_RELATIVE_PATH,
+    feature_fingerprints,
+    feature_values,
+    read_approvals,
+    review_features,
+)
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 from rule_references import basis_is_supported  # noqa: E402
 
@@ -51,26 +59,6 @@ def _field_errors(value, expected, label):
 
 def _nonempty(value):
     return isinstance(value, str) and bool(value.strip())
-
-
-def _scope_features(data, scope):
-    features = data["features"]
-    if scope == ["全部"]:
-        selected = list(features)
-    else:
-        selected = scope
-    result = []
-
-    def visit(feature_id):
-        feature = features[feature_id]
-        result.append(feature_id)
-        if feature["children"]:
-            for child in feature["children"]:
-                visit(child)
-
-    for feature_id in selected:
-        visit(feature_id)
-    return list(dict.fromkeys(result))
 
 
 def _validate_finding(finding, label):
@@ -227,12 +215,25 @@ def main(argv):
         print("--scope 中有未知功能 id：" + ", ".join(unknown), file=sys.stderr)
         return 2
 
-    expected = _scope_features(data, scope)
     report_paths = [Path(path) for path in options.reports]
     missing = [path for path in report_paths if not path.is_file()]
     if missing:
         print("--reports 必须全部指向已有文件：" + ", ".join(map(str, missing)), file=sys.stderr)
         return 2
+
+    try:
+        records = read_approvals(repository / APPROVED_RELATIVE_PATH)
+        values, _ = feature_values(repository)
+        fingerprints = feature_fingerprints(repository, data, values)
+        expected = [
+            feature_id
+            for feature_id, _reason in review_features(
+                data, fingerprints, records, scope, options.review
+            )
+        ]
+    except (OSError, UnicodeError, ValueError) as error:
+        print(str(error))
+        return 1
 
     problems = validate_reports(
         data, repository, expected, report_paths, set(tracked_paths(repository))
