@@ -116,6 +116,6 @@ python3 <xy-repo-map目录>/repo_map.py publish \
 
 `check` 校验清单、子仓、支持的后缀、文件归属、行数、依赖和标记。
 
-`render` 先完成同样的校验，再写 `index.html` 和 `map-data.json`。页面是可离线打开的单页，只画手机友好的功能树，不显示实现文件；页面内嵌的功能数据与 `map-data.json` 相同，但不含 `files`。输出目录必须不存在或为空。
+`render` 先完成同样的校验，再读取 `repo_map_lib/templates/feature-tree.html`，嵌入数据后写 `index.html` 和 `map-data.json`；模板路径登记在「出图」功能的 `entries` 中。页面是可离线打开的单页，只画手机友好的功能树，不显示实现文件；根功能只放在页头，树从它的子功能开始。默认显示根下面两层；行数条长度表示占父功能的比例，条内按代码、测试、文档、注释分段。页面内嵌的功能数据与 `map-data.json` 相同，但不含 `files`。输出目录必须不存在或为空。
 
 `publish` 要求目录内同时有 `index.html` 与 `map-data.json`，然后调用平台发布脚本。把命令输出的链接交给用户。
