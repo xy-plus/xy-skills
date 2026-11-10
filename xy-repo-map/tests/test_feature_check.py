@@ -218,12 +218,33 @@ class FeatureCheckTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
 
+    def _assert_repository_error_for_check_and_render(self, repository, message):
+        with tempfile.TemporaryDirectory() as temporary:
+            for command in ("check", "render"):
+                arguments = ["python3", "-B", str(COMMAND), command, "--repo", str(repository)]
+                if command == "render":
+                    arguments.extend(["--out", str(Path(temporary) / "rendered")])
+                result = subprocess.run(
+                    arguments,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                with self.subTest(command=command):
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(message, result.stderr)
+
     def test_relative_repository_path_exits_with_two(self):
-        result = subprocess.run(
-            ["python3", "-B", str(COMMAND), "check", "--repo", "relative/path"],
-            capture_output=True, text=True, check=False,
+        self._assert_repository_error_for_check_and_render(
+            "relative/path",
+            "--repo 必须是绝对路径",
         )
-        self.assertEqual(result.returncode, 2)
+
+    def test_non_root_repository_path_exits_with_two(self):
+        self._assert_repository_error_for_check_and_render(
+            self.repo / "repo-map",
+            "--repo 必须是仓根",
+        )
 
 
 if __name__ == "__main__":
