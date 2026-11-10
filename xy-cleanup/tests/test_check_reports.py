@@ -19,11 +19,12 @@ RULE_TEXT = "如无必要，勿增实体（奥卡姆剃刀）。"
 
 
 def review_feature(feature_id):
-    return {"feature": feature_id, "needed": "需要。", "smaller": "不能更少。",
+    return {"feature": feature_id, "what_true": "实现与说明相符。",
+            "needed": "需要。", "smaller": "不能更少。",
             "why_holds": "理由仍成立。", "findings": []}
 
 
-def report(role, repository, feature_ids=("alpha", "beta")):
+def report(role, repository, feature_ids=("root", "alpha", "beta")):
     return {"role": role, "repo": str(repository),
             "features": [review_feature(feature_id) for feature_id in feature_ids]}
 
@@ -64,11 +65,15 @@ class CheckReportsTest(unittest.TestCase):
         self.main_path.write_text(json.dumps(main, ensure_ascii=False), encoding="utf-8")
         self.razor_path.write_text(json.dumps(razor, ensure_ascii=False), encoding="utf-8")
 
-    def run_check(self, scope=("全部",), reports=None):
+    def run_check(self, scope=("全部",), reports=None, review="全部"):
         paths = reports or (str(self.main_path), str(self.razor_path))
+        arguments = ["python3", "-B", str(COMMAND), "--repo", str(self.repository),
+                     "--scope", *scope]
+        if review is not None:
+            arguments.extend(("--review", review))
+        arguments.extend(("--reports", *paths))
         return subprocess.run(
-            ["python3", "-B", str(COMMAND), "--repo", str(self.repository),
-             "--scope", *scope, "--reports", *paths],
+            arguments,
             capture_output=True, text=True, check=False,
         )
 
@@ -91,6 +96,38 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("needed", result.stdout)
 
+    def test_what_true_is_required_and_nonempty(self):
+        main = report("主审", self.repository)
+        main["features"][0]["what_true"] = "实现与说明相符。"
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        main["features"][0]["what_true"] = "  "
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("what_true", result.stdout)
+
+        del main["features"][0]["what_true"]
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("what_true", result.stdout)
+
+    def test_review_mode_is_required_and_restricted(self):
+        result = self.run_check(review=None)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+        for review in ("变过的", "全部"):
+            with self.subTest(review=review):
+                result = self.run_check(review=review)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        result = self.run_check(review="不认识")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("invalid choice", result.stderr)
+
     def test_rejects_empty_answers_and_extra_finding_fields(self):
         main = report("主审", self.repository)
         main["features"][0]["why_holds"] = "  "
@@ -102,11 +139,11 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("why_holds", result.stdout)
         self.assertIn("extra", result.stdout)
 
-    def test_requires_every_scoped_leaf_exactly_once_for_each_role(self):
+    def test_requires_every_scoped_feature_once_for_each_role(self):
         cases = [
-            (("alpha",), ("beta",), "alpha"),
-            (("alpha", "alpha"), ("alpha",), "重复"),
-            (("alpha", "beta"), ("alpha",), "beta"),
+            (("root", "beta"), ("root", "alpha", "beta"), "alpha"),
+            (("root", "alpha", "alpha", "beta"), ("root", "alpha", "beta"), "重复"),
+            (("root", "alpha", "beta"), ("root", "alpha"), "beta"),
         ]
         for main_ids, razor_ids, expected in cases:
             with self.subTest(main=main_ids, razor=razor_ids):
@@ -124,8 +161,8 @@ class CheckReportsTest(unittest.TestCase):
         ]))
         root_path.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
         subprocess.run(["git", "-C", str(self.repository), "add", "-A"], check=True)
-        main = report("主审", self.repository, ("gamma", "delta"))
-        razor = report("剃刀", self.repository, ("gamma", "delta"))
+        main = report("主审", self.repository, ("group", "gamma", "delta"))
+        razor = report("剃刀", self.repository, ("group", "gamma", "delta"))
         self.write_reports(main, razor)
         result = self.run_check(("group",))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -134,7 +171,7 @@ class CheckReportsTest(unittest.TestCase):
         second_main = self.directory / "main-second.json"
         second_main.write_text(json.dumps(report("主审", self.repository, ("beta",)),
                                           ensure_ascii=False), encoding="utf-8")
-        self.main_path.write_text(json.dumps(report("主审", self.repository, ("alpha",)),
+        self.main_path.write_text(json.dumps(report("主审", self.repository, ("root", "alpha")),
                                              ensure_ascii=False), encoding="utf-8")
         result = self.run_check(reports=(str(self.main_path), str(second_main), str(self.razor_path)))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -151,9 +188,9 @@ class CheckReportsTest(unittest.TestCase):
 
         main["features"].insert(0, review_feature("root"))
         self.write_reports(main, report("剃刀", self.repository))
-        result = self.run_check()
+        result = self.run_check(scope=("alpha",))
         self.assertEqual(result.returncode, 1)
-        self.assertIn("最细功能", result.stdout)
+        self.assertIn("报告功能不在本次审查名单里：root", result.stdout)
 
     def test_rejects_a_finding_with_missing_fields_or_invalid_values(self):
         main = report("主审", self.repository)

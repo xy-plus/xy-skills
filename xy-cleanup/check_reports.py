@@ -18,7 +18,7 @@ from rule_references import basis_is_supported  # noqa: E402
 
 
 REPORT_KEYS = {"role", "repo", "features"}
-FEATURE_KEYS = {"feature", "needed", "smaller", "why_holds", "findings"}
+FEATURE_KEYS = {"feature", "what_true", "needed", "smaller", "why_holds", "findings"}
 FINDING_KEYS = {
     "kind", "target", "problem", "proposal", "changes_behavior", "decision",
     "basis", "evidence", "benefit", "cost",
@@ -33,6 +33,10 @@ def parser():
     result = argparse.ArgumentParser(description="校验功能清扫的主审与剃刀报告")
     result.add_argument("--repo", required=True, help="仓根的绝对路径")
     result.add_argument("--scope", required=True, nargs="+", help="功能 id 列表，或单独写 全部")
+    result.add_argument(
+        "--review", required=True, choices=("变过的", "全部"),
+        help="按认可记录筛选变过的功能，或重审全部功能",
+    )
     result.add_argument("--reports", required=True, nargs="+", help="JSON 审查报告路径")
     return result
 
@@ -49,25 +53,24 @@ def _nonempty(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def _leaf_features(data, scope):
+def _scope_features(data, scope):
     features = data["features"]
     if scope == ["全部"]:
         selected = list(features)
     else:
         selected = scope
-    leaves = []
+    result = []
 
     def visit(feature_id):
         feature = features[feature_id]
+        result.append(feature_id)
         if feature["children"]:
             for child in feature["children"]:
                 visit(child)
-        else:
-            leaves.append(feature_id)
 
     for feature_id in selected:
         visit(feature_id)
-    return list(dict.fromkeys(leaves))
+    return list(dict.fromkeys(result))
 
 
 def _validate_finding(finding, label):
@@ -164,10 +167,10 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             if not isinstance(feature_id, str) or feature_id not in data["features"]:
                 problems.append(f"{feature_label}.feature 不在功能清单中：{feature_id!r}")
             elif feature_id not in expected_features:
-                problems.append(f"报告功能超出清扫范围或不是最细功能：{feature_id}")
+                problems.append(f"报告功能不在本次审查名单里：{feature_id}")
             elif isinstance(role, str) and role in counts:
                 counts[role][feature_id] = counts[role].get(feature_id, 0) + 1
-            for key in ("needed", "smaller", "why_holds"):
+            for key in ("what_true", "needed", "smaller", "why_holds"):
                 if not _nonempty(review.get(key)):
                     problems.append(f"{feature_label}.{key} 必须是非空字符串")
             findings = review.get("findings")
@@ -224,7 +227,7 @@ def main(argv):
         print("--scope 中有未知功能 id：" + ", ".join(unknown), file=sys.stderr)
         return 2
 
-    expected = _leaf_features(data, scope)
+    expected = _scope_features(data, scope)
     report_paths = [Path(path) for path in options.reports]
     missing = [path for path in report_paths if not path.is_file()]
     if missing:
