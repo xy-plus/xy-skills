@@ -20,7 +20,6 @@ GROUP_KEYS = {"title", "notes", "items"}
 ITEM_KEYS = {"id", "title", "lines", "options", "recommended"}
 FOOTNOTE_KEYS = {"title", "lines"}
 MAX_REQUEST_BYTES = 200 * 1024
-MAX_SOCKET_PATH_BYTES = 107
 REQUEST_READ_TIMEOUT_SECONDS = 10
 REPOSITORY = Path(__file__).resolve().parents[1]
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "decision-page.html"
@@ -150,6 +149,40 @@ def validate_answers(payload, decisions):
     return checked
 
 
+def _write_answer_document(answers_path, document):
+    """Write a complete answer file and publish it without overwriting."""
+    temporary_path = None
+    published = False
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=answers_path.parent,
+            prefix=f".{answers_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary_path = Path(output.name)
+            json.dump(document, output, ensure_ascii=False, indent=2)
+            output.write("\n")
+        os.link(temporary_path, answers_path)
+        published = True
+        temporary_path.unlink()
+        temporary_path = None
+    except OSError:
+        if published:
+            try:
+                answers_path.unlink()
+            except OSError:
+                pass
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except OSError:
+                pass
+        raise
+
+
 class DecisionHTTPServer(socketserver.UnixStreamServer):
     """Serve one decision page and accept one complete answer on a Unix socket."""
 
@@ -157,8 +190,6 @@ class DecisionHTTPServer(socketserver.UnixStreamServer):
 
     def __init__(self, socket_path, page, decisions, answers_path):
         self.socket_path = Path(socket_path)
-        if len(os.fsencode(str(self.socket_path))) > MAX_SOCKET_PATH_BYTES:
-            raise OSError("Unix socket 路径超过 107 字节")
         self.page = page
         self.decisions = decisions
         self.answers_path = Path(answers_path)
@@ -183,7 +214,7 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self):
-        if urlsplit(self.path).path not in ("/", "/index.html"):
+        if urlsplit(self.path).path != "/":
             self._send_json(404, {"error": "找不到页面"})
             return
         body = self.server.page.encode("utf-8")
@@ -227,9 +258,7 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
 
         document = {"title": self.server.decisions["title"], "answers": answers}
         try:
-            with self.server.answers_path.open("x", encoding="utf-8") as output:
-                json.dump(document, output, ensure_ascii=False, indent=2)
-                output.write("\n")
+            _write_answer_document(self.server.answers_path, document)
         except OSError as error:
             self._send_json(500, {"error": f"无法写入回答文件：{error}"})
             return

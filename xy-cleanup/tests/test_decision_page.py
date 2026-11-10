@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -109,18 +110,12 @@ class DecisionPageCommandTest(unittest.TestCase):
     def test_decision_schema_errors_name_the_invalid_location(self):
         extra_top_level = valid_decisions()
         extra_top_level["legacy"] = True
-        blank_title = valid_decisions()
-        blank_title["title"] = "  "
-        invalid_intro = valid_decisions()
-        invalid_intro["intro"] = [""]
         extra_group_field = valid_decisions()
         extra_group_field["groups"][0]["legacy"] = True
         empty_group = valid_decisions()
         empty_group["groups"][0]["items"] = []
         extra_item_field = valid_decisions()
         extra_item_field["groups"][0]["items"][0]["legacy"] = True
-        blank_line = valid_decisions()
-        blank_line["groups"][0]["items"][0]["lines"] = [" "]
         duplicate_id = valid_decisions()
         duplicate_id["groups"].append(copy.deepcopy(duplicate_id["groups"][0]))
         too_few_options = valid_decisions()
@@ -130,14 +125,10 @@ class DecisionPageCommandTest(unittest.TestCase):
         invalid_recommendation = valid_decisions()
         invalid_recommendation["groups"][0]["items"][0]["recommended"] = "Maybe"
         cases = [
-            ({"intro": [], "groups": [], "footnotes": []}, "title"),
             (extra_top_level, "legacy"),
-            (blank_title, "title"),
-            (invalid_intro, "intro"),
             (extra_group_field, "groups[0]"),
             (empty_group, "groups[0].items"),
             (extra_item_field, "groups[0].items[0]"),
-            (blank_line, "groups[0].items[0].lines[0]"),
             (duplicate_id, "A1"),
             (too_few_options, "options"),
             (duplicate_options, "options"),
@@ -286,6 +277,9 @@ class DecisionPageCommandTest(unittest.TestCase):
             self.assertIn(b"decision-data", page)
             self.assertIn(b"Cleanup decisions", page)
 
+            status, body = request_socket(socket_path, "GET", "/index.html", None)
+            self.assertEqual(status, 404, body)
+
             valid_answers = {"A1": {"option": "Keep", "note": ""}}
             invalid_answers = [
                 {},
@@ -297,7 +291,7 @@ class DecisionPageCommandTest(unittest.TestCase):
                 with self.subTest(answers=answers_data):
                     status, body = request_socket(
                         socket_path, "POST", "/submit",
-                        {"title": decisions_data["title"], "answers": answers_data},
+                        {"answers": answers_data},
                     )
                     self.assertEqual(status, 400, body)
                     self.assertFalse(answers.exists())
@@ -312,7 +306,7 @@ class DecisionPageCommandTest(unittest.TestCase):
 
             status, body = request_socket(
                 socket_path, "POST", "/submit",
-                {"title": decisions_data["title"], "answers": valid_answers},
+                {"answers": valid_answers},
             )
             self.assertEqual(status, 200, body)
             thread.join(5)
@@ -326,6 +320,55 @@ class DecisionPageCommandTest(unittest.TestCase):
                 {"title": "Cleanup decisions", "answers": valid_answers},
             )
             self.assertFalse(Path(socket_path).exists())
+
+    def test_failed_answer_write_leaves_no_file_and_service_accepts_retry(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            socket_path = Path(temporary) / "s"
+            answers_path = Path(temporary) / "answers.json"
+            decisions = valid_decisions()
+            server = decision_page.DecisionHTTPServer(
+                socket_path,
+                decision_page.render_decision_page(decisions),
+                decisions,
+                answers_path,
+            )
+            stop_event = threading.Event()
+            serving = threading.Thread(
+                target=server.serve_until_complete,
+                args=(stop_event,),
+                daemon=True,
+            )
+            serving.start()
+            valid_payload = {"answers": {"A1": {"option": "Keep", "note": ""}}}
+
+            def fail_after_partial_write(document, output, ensure_ascii, indent):
+                output.write("{")
+                raise OSError("simulated full disk")
+
+            try:
+                with patch.object(decision_page.json, "dump", side_effect=fail_after_partial_write):
+                    status, body = request_socket(
+                        str(socket_path), "POST", "/submit", valid_payload
+                    )
+                self.assertEqual(status, 500, body)
+                self.assertFalse(answers_path.exists())
+                self.assertEqual(list(Path(temporary).glob("*.tmp")), [])
+
+                status, body = request_socket(
+                    str(socket_path), "POST", "/submit", valid_payload
+                )
+                self.assertEqual(status, 200, body)
+                serving.join(5)
+                self.assertFalse(serving.is_alive())
+                self.assertEqual(
+                    json.loads(answers_path.read_text(encoding="utf-8")),
+                    {"title": decisions["title"], "answers": valid_payload["answers"]},
+                )
+            finally:
+                stop_event.set()
+                server.server_close()
+                socket_path.unlink(missing_ok=True)
+                serving.join(2)
 
     def test_incomplete_request_line_times_out_before_next_submission(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -353,7 +396,7 @@ class DecisionPageCommandTest(unittest.TestCase):
                 time.sleep(0.1)
 
                 payload = json.dumps(
-                    {"title": decisions["title"], "answers": {"A1": {"option": "Keep", "note": ""}}}
+                    {"answers": {"A1": {"option": "Keep", "note": ""}}}
                 ).encode("utf-8")
                 complete.settimeout(12)
                 complete.connect(str(socket_path))

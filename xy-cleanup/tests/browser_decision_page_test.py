@@ -41,6 +41,20 @@ def browser_decisions():
                     "options": ["Use current name", "Rename"],
                     "recommended": "Use current name",
                 },
+                {
+                    "id": "__proto__",
+                    "title": "Prototype id",
+                    "lines": ["This id is valid."],
+                    "options": ["Keep prototype", "Change prototype"],
+                    "recommended": "Keep prototype",
+                },
+                {
+                    "id": "constructor",
+                    "title": "Constructor id",
+                    "lines": ["This id is valid too."],
+                    "options": ["Keep constructor", "Change constructor"],
+                    "recommended": "Keep constructor",
+                },
             ],
         }],
         "footnotes": [{"title": "Already handled", "lines": ["No answer needed."]}],
@@ -139,35 +153,57 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     page.on("pageerror", lambda error: script_errors.append(str(error)))
                     page.goto(f"http://127.0.0.1:{bridge.server_port}/")
 
-                    self.assertEqual(page.locator(".item").count(), 2)
+                    self.assertEqual(page.locator(".item").count(), 4)
                     first_item = page.locator('[data-item-id="A1"]')
                     second_item = page.locator('[data-item-id="B1"]')
+                    prototype_item = page.locator('[data-item-id="__proto__"]')
+                    constructor_item = page.locator('[data-item-id="constructor"]')
                     self.assertTrue(first_item.locator('input[value="Keep"]').is_checked())
                     self.assertTrue(first_item.locator(".suggested").count() == 1)
                     self.assertIn("写了字就以你写的为准", first_item.locator("textarea").get_attribute("placeholder"))
-                    self.assertIn("共 2 条", page.locator("#status").inner_text())
+                    self.assertIn("共 4 条", page.locator("#status").inner_text())
 
                     first_item.locator('input[value="Remove"]').check()
                     first_item.locator("textarea").fill("Use the simpler behavior.")
                     second_item.locator("textarea").fill("Keep this note.")
+                    prototype_item.locator('input[value="Change prototype"]').check()
+                    prototype_item.locator("textarea").fill("Prototype answer.")
+                    constructor_item.locator('input[value="Change constructor"]').check()
+                    constructor_item.locator("textarea").fill("Constructor answer.")
                     self.assertTrue(first_item.evaluate("element => element.classList.contains('changed')"))
                     self.assertTrue(second_item.evaluate("element => element.classList.contains('changed')"))
-                    self.assertIn("改了或写了 2 条", page.locator("#status").inner_text())
+                    self.assertTrue(prototype_item.evaluate("element => element.classList.contains('changed')"))
+                    self.assertTrue(constructor_item.evaluate("element => element.classList.contains('changed')"))
+                    self.assertIn("改了或写了 4 条", page.locator("#status").inner_text())
                     page.reload()
                     self.assertTrue(first_item.locator('input[value="Remove"]').is_checked())
                     self.assertEqual(first_item.locator("textarea").input_value(), "Use the simpler behavior.")
+                    self.assertTrue(prototype_item.locator('input[value="Change prototype"]').is_checked())
+                    self.assertEqual(prototype_item.locator("textarea").input_value(), "Prototype answer.")
+                    self.assertTrue(constructor_item.locator('input[value="Change constructor"]').is_checked())
+                    self.assertEqual(constructor_item.locator("textarea").input_value(), "Constructor answer.")
 
                     bridge.page = second_page
                     page.reload()
                     first_item = page.locator('[data-item-id="A1"]')
                     second_item = page.locator('[data-item-id="B1"]')
+                    prototype_item = page.locator('[data-item-id="__proto__"]')
+                    constructor_item = page.locator('[data-item-id="constructor"]')
                     self.assertTrue(first_item.locator('input[value="Keep"]').is_checked())
                     self.assertEqual(first_item.locator("textarea").input_value(), "")
                     self.assertTrue(second_item.locator('input[value="Use current name"]').is_checked())
+                    self.assertTrue(prototype_item.locator('input[value="Keep prototype"]').is_checked())
+                    self.assertTrue(constructor_item.locator('input[value="Keep constructor"]').is_checked())
+                    self.assertEqual(prototype_item.locator("textarea").input_value(), "")
+                    self.assertEqual(constructor_item.locator("textarea").input_value(), "")
                     self.assertFalse(first_item.evaluate("element => element.classList.contains('changed')"))
 
                     first_item.locator('input[value="Remove"]').check()
                     first_item.locator("textarea").fill("My written decision wins.")
+                    prototype_item.locator('input[value="Change prototype"]').check()
+                    prototype_item.locator("textarea").fill("Saved prototype answer.")
+                    constructor_item.locator('input[value="Change constructor"]').check()
+                    constructor_item.locator("textarea").fill("Saved constructor answer.")
                     self.assertLessEqual(
                         page.evaluate("document.documentElement.scrollWidth"),
                         page.evaluate("window.innerWidth"),
@@ -183,6 +219,10 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     self.assertIn("temporary test failure", page.locator("#feedback").inner_text())
                     self.assertTrue(first_item.locator('input[value="Remove"]').is_checked())
                     self.assertEqual(first_item.locator("textarea").input_value(), "My written decision wins.")
+                    self.assertTrue(prototype_item.locator('input[value="Change prototype"]').is_checked())
+                    self.assertEqual(prototype_item.locator("textarea").input_value(), "Saved prototype answer.")
+                    self.assertTrue(constructor_item.locator('input[value="Change constructor"]').is_checked())
+                    self.assertEqual(constructor_item.locator("textarea").input_value(), "Saved constructor answer.")
                     self.assertFalse(first_item.locator("textarea").is_disabled())
 
                     page.locator("#submit").click()
@@ -199,14 +239,17 @@ class DecisionPageBrowserTest(unittest.TestCase):
                         "answers": {
                             "A1": {"option": "Remove", "note": "My written decision wins."},
                             "B1": {"option": "Use current name", "note": ""},
+                            "__proto__": {"option": "Change prototype", "note": "Saved prototype answer."},
+                            "constructor": {"option": "Change constructor", "note": "Saved constructor answer."},
                         },
                     },
                 )
                 submitted = {
-                    "title": "Cleanup decisions",
                     "answers": {
                         "A1": {"option": "Remove", "note": "My written decision wins."},
                         "B1": {"option": "Use current name", "note": ""},
+                        "__proto__": {"option": "Change prototype", "note": "Saved prototype answer."},
+                        "constructor": {"option": "Change constructor", "note": "Saved constructor answer."},
                     },
                 }
                 self.assertEqual(bridge.received_payloads, [submitted, submitted])

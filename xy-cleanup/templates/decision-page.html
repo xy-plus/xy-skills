@@ -78,9 +78,9 @@ function make(tag, className, text) {
 
 function loadSaved() {
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
+    const saved = new Map(Object.entries(JSON.parse(localStorage.getItem(storageKey) || "{}")));
     for (const item of items) {
-      const answer = saved[item.id];
+      const answer = saved.get(item.id);
       if (!answer || typeof answer !== "object") continue;
       if (item.options.includes(answer.option)) selected.set(item.id, answer.option);
       if (typeof answer.note === "string") notes.set(item.id, answer.note);
@@ -92,11 +92,11 @@ function loadSaved() {
 
 function save() {
   try {
-    const saved = {};
+    const saved = new Map();
     for (const item of items) {
-      saved[item.id] = { option: selected.get(item.id), note: notes.get(item.id) };
+      saved.set(item.id, { option: selected.get(item.id), note: notes.get(item.id) });
     }
-    localStorage.setItem(storageKey, JSON.stringify(saved));
+    localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(saved)));
   } catch (error) {
     // Keep the current edits in the page when browser storage is unavailable.
   }
@@ -164,9 +164,9 @@ async function submitAnswers() {
   submitButton.disabled = true;
   submitButton.textContent = "正在提交…";
   feedback.hidden = true;
-  const answers = {};
+  const answers = new Map();
   for (const item of items) {
-    answers[item.id] = { option: selected.get(item.id), note: notes.get(item.id) };
+    answers.set(item.id, { option: selected.get(item.id), note: notes.get(item.id) });
   }
 
   let problem = "";
@@ -174,7 +174,7 @@ async function submitAnswers() {
     const response = await fetch("submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: decisions.title, answers }),
+      body: JSON.stringify({ answers: Object.fromEntries(answers) }),
     });
     if (!response.ok) {
       const reply = await response.json().catch(() => ({}));
