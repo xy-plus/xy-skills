@@ -105,6 +105,27 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(sources["assets/binary.go"], ("other", ""))
         self.assertEqual(data["features"]["root"]["lines"]["total"]["code"], 1)
 
+    def test_vendor_unsupported_suffix_is_other_and_not_counted(self):
+        repository = make_repo(self, {
+            "vendor/legacy.go": "package legacy\nvalue = 1\n",
+        }, feature("root", ""))
+
+        checked = subprocess.run(
+            ["python3", "-B", str(COMMAND), "check", "--repo", str(repository)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+
+        data, sources = build_map_with_sources(repository)
+
+        self.assertEqual(sources["vendor/legacy.go"], ("other", ""))
+        self.assertEqual(
+            data["features"]["root"]["lines"]["total"],
+            {"code": 0, "docs": 0, "comments": 0, "tests": 0},
+        )
+
     def test_invalid_utf8_text_is_replaced_and_keeps_counts_and_dependencies(self):
         repository = make_repo(self, {
             "pkg/source.py": "import pkg.target\n# invalid text\n",
