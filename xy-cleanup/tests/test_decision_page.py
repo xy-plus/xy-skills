@@ -49,8 +49,7 @@ class UnixSocketHTTPConnection(http.client.HTTPConnection):
 
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        if self.timeout is not None:
-            self.sock.settimeout(self.timeout)
+        self.sock.settimeout(self.timeout)
         self.sock.connect(self.socket_path)
 
 

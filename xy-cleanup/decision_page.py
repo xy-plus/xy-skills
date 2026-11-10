@@ -314,7 +314,6 @@ def run_ask(decisions, name, answers_path, platform_runner, stdout, stderr, stop
         request_thread = threading.Thread(
             target=server.serve_until_complete,
             args=(stop_event,),
-            daemon=True,
         )
         request_thread.start()
         serving_thread = request_thread
