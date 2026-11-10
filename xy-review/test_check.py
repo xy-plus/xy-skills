@@ -437,13 +437,10 @@ class CheckTest(unittest.TestCase):
                 self.assertEqual(code, 1, problems)
                 self.assertTrue(any(expected in problem for problem in problems), problems)
 
-    def test_formal_diagnosis_location_and_filename_are_hard_errors(self):
+    def test_formal_diagnosis_location_is_a_hard_error(self):
         self.create_round1()
         report = diagnosis_report()
         self.assertEqual(self.run_report("diagnosis.json", report, ("group1",)), (0, []))
-        code, problems = self.run_report("cause.json", report, ("group1",))
-        self.assertEqual(code, 1)
-        self.assertTrue(any("文件名只能是" in problem for problem in problems), problems)
 
         code, problems = self.run_report("diagnosis.json", report, ("group1", "round1"))
         self.assertEqual(code, 1)

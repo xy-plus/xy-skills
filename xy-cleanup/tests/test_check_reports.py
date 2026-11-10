@@ -2,49 +2,20 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "xy-repo-map" / "tests"))
+
+from map_fixture import feature, make_repo  # noqa: E402
+
+
 COMMAND = ROOT / "xy-cleanup" / "check_reports.py"
 RULE_SOURCE = "xy-iron-law 第 3 条"
 RULE_TEXT = "如无必要，勿增实体（奥卡姆剃刀）。"
-
-
-def why():
-    return {"text": "说明功能用途。", "source": "起草", "quote": "", "from": ""}
-
-
-def feature(feature_id, directory, children=None, entries=None):
-    return {
-        "id": feature_id,
-        "title": feature_id,
-        "what": "提供对应功能。",
-        "why": why(),
-        "directory": directory,
-        "entries": [] if entries is None else entries,
-        "children": [] if children is None else children,
-    }
-
-
-def make_repository(test_case):
-    temporary = tempfile.TemporaryDirectory()
-    test_case.addCleanup(temporary.cleanup)
-    repository = Path(temporary.name) / "sample-repo"
-    repository.mkdir()
-    (repository / "README.md").write_text("Demo.\n", encoding="utf-8")
-    (repository / "alpha").mkdir()
-    (repository / "alpha" / "main.py").write_text("value = 1\n", encoding="utf-8")
-    (repository / "beta").mkdir()
-    (repository / "beta" / "main.py").write_text("value = 2\n", encoding="utf-8")
-    root = feature("root", "", children=[feature("alpha", "alpha"), feature("beta", "beta")])
-    feature_path = repository / "repo-map" / "features.json"
-    feature_path.parent.mkdir()
-    feature_path.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
-    subprocess.run(["git", "-C", str(repository), "init", "-q"], check=True)
-    subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
-    return repository
 
 
 def review_feature(feature_id):
@@ -74,7 +45,14 @@ def finding(kind="重构", changes_behavior=True, decision="问你", basis=None)
 
 class CheckReportsTest(unittest.TestCase):
     def setUp(self):
-        self.repository = make_repository(self)
+        self.repository = make_repo(self, {
+            "README.md": "Demo.\n",
+            "alpha/main.py": "value = 1\n",
+            "beta/main.py": "value = 2\n",
+        }, feature("root", "", children=[
+            feature("alpha", "alpha"),
+            feature("beta", "beta"),
+        ]))
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)

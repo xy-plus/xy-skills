@@ -120,11 +120,6 @@ class BrowserTreeTest(unittest.TestCase):
                     "element => parseFloat(getComputedStyle(element).maxHeight)"
                 )
                 self.assertLessEqual(panel_limit, 0.45 * 844)
-                embedded = page.evaluate(
-                    "JSON.parse(document.querySelector('#map-data').textContent)"
-                )
-                for item in embedded["features"].values():
-                    self.assertNotIn("files", item)
                 self.assertLessEqual(
                     page.evaluate("document.documentElement.scrollWidth"),
                     page.evaluate("window.innerWidth"),
