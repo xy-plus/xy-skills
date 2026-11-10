@@ -92,27 +92,10 @@ let answer = 42; // inline
                 counts = code_counts("raw.rs", source)
                 self.assertEqual((counts.code, counts.docs, counts.comments), (3, 0, 0))
 
-    def test_template_interpolation_comments_follow_code_rules_through_nesting(self):
-        samples = (
-            ("const text = `value ${value\n  // interpolation comment\n  + 1\n}`;\n",
-             (3, 0, 1)),
-            ("const text = `outer ${`inner ${1\n  // nested comment\n  + 2}`\n"
-             "  // outer interpolation comment\n}`;\n", (3, 0, 2)),
-        )
-
-        for source, expected in samples:
-            with self.subTest(source=source):
-                counts = code_counts("template.ts", source)
-                self.assertEqual((counts.code, counts.docs, counts.comments), expected)
-
-    def test_c_and_javascript_doc_blocks_count_as_documentation(self):
+    def test_c_doc_blocks_count_as_documentation(self):
         c_source = "/** API docs\n * continued\n */\nint value;\n/* note */\n"
         c_counts = code_counts("file.c", c_source)
         self.assertEqual((c_counts.code, c_counts.docs, c_counts.comments), (1, 3, 1))
-
-        js_source = "/** docs */\nexport function run() {}\n// note\nconst x = 1;\n"
-        js_counts = code_counts("file.mjs", js_source)
-        self.assertEqual((js_counts.code, js_counts.docs, js_counts.comments), (2, 1, 1))
 
     def test_count_file_counts_the_four_file_categories(self):
         code = count_file("sample.py", "code", "value = 1\n")

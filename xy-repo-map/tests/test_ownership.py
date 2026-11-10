@@ -53,4 +53,4 @@ class OwnershipTest(unittest.TestCase):
         package = result["features"]["package"]
 
         self.assertIn("pkg/tests/test_orphan.py", package["files"]["whole"])
-        self.assertIn("没归到功能的代码", package["markers"])
+        self.assertIn("没归到功能的代码或测试", package["markers"])

@@ -111,75 +111,18 @@ def _rust_raw_string_end(source, start):
     return len(source) if ending < 0 else ending + len(delimiter)
 
 
-def _javascript_expression_end(source, start):
-    depth = 1
-    index = start
-    while index < len(source):
-        char = source[index]
-        if char in ('"', "'"):
-            end = _quoted_end(source, index, char)
-            index = end if end is not None else index + 1
-        elif char == "`":
-            end, _ = _template_literal_end(source, index)
-            index = end
-        elif source.startswith("//", index):
-            end = source.find("\n", index)
-            index = len(source) if end < 0 else end + 1
-        elif source.startswith("/*", index):
-            end = source.find("*/", index + 2)
-            index = len(source) if end < 0 else end + 2
-        elif char == "{":
-            depth += 1
-            index += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return index
-            index += 1
-        else:
-            index += 1
-    return None
-
-
-def _template_literal_end(source, start):
-    spans = []
-    index = start + 1
-    while index < len(source):
-        if source[index] == "\\":
-            index += 2
-        elif source[index] == "`":
-            return index + 1, spans
-        elif source.startswith("${", index):
-            expression_start = index + 2
-            expression_end = _javascript_expression_end(source, expression_start)
-            if expression_end is None:
-                return len(source), spans
-            for left, right, is_doc in _comment_spans(
-                    source[expression_start:expression_end], "TS/JS"):
-                spans.append((expression_start + left, expression_start + right, is_doc))
-            index = expression_end + 1
-        else:
-            index += 1
-    return len(source), spans
-
-
 def _comment_spans(source, language):
     spans = []
     index = 0
     length = len(source)
     while index < length:
         char = source[index]
-        if language == "TS/JS" and char == "`":
-            template_end, template_spans = _template_literal_end(source, index)
-            spans.extend(template_spans)
-            index = template_end
-            continue
         if language == "Rust":
             raw_string_end = _rust_raw_string_end(source, index)
             if raw_string_end is not None:
                 index = raw_string_end
                 continue
-        if char in ('"', "`", "'"):
+        if char in ('"', "'"):
             if language == "Rust" and char == "'":
                 # Rust lifetimes are not quoted strings; only skip character literals.
                 end = _quoted_end(source, index, char)
@@ -208,7 +151,7 @@ def _comment_spans(source, language):
         if source.startswith("/*", index):
             is_doc = (language == "Rust" and
                       (source.startswith("/**", index) or source.startswith("/*!", index))) or (
-                          language in ("C", "TS/JS") and source.startswith("/**", index))
+                          language == "C" and source.startswith("/**", index))
             cursor = index + 2
             depth = 1
             while cursor < length and depth:

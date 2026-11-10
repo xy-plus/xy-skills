@@ -231,7 +231,7 @@ def build_map(repository):
             )
             for path in paths
         ):
-            markers.append("没归到功能的代码")
+            markers.append("没归到功能的代码或测试")
         for marker in markers:
             marker_counts[marker] += 1
         feature_uses = uses_by_source[feature_id]

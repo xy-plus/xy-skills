@@ -272,7 +272,7 @@ class DerivationTest(unittest.TestCase):
         }, child_tree([package]))
         data = build_map(self, repository)
         self.assertEqual(data["features"]["package"]["files"]["whole"], ["pkg/orphan.py"])
-        self.assertIn("没归到功能的代码", data["features"]["package"]["markers"])
+        self.assertIn("没归到功能的代码或测试", data["features"]["package"]["markers"])
 
     def test_unregistered_tests_follow_imported_code_and_share_multiple_targets(self):
         package = feature("package", "pkg", children=[
@@ -340,6 +340,21 @@ class DerivationTest(unittest.TestCase):
         data = build_map(self, repository)
         self.assertEqual(data["features"]["alpha"]["uses"], [{"feature": "beta", "by": "mention"}])
 
+    def test_ambiguous_directory_name_does_not_create_directory_mentions(self):
+        repository = make_repo(self, {
+            "alpha/shared/main.py": "value = 1\n",
+            "beta/shared/main.py": "value = 2\n",
+            "observer/guide.md": "shared\n",
+        }, child_tree([
+            feature("alpha-shared", "alpha/shared"),
+            feature("beta-shared", "beta/shared"),
+            feature("observer", "observer"),
+        ]))
+
+        data = build_map(self, repository)
+
+        self.assertEqual(data["features"]["observer"]["uses"], [])
+
     def test_mentions_from_ancestor_directory_do_not_create_uses(self):
         repository = make_repo(self, {
             "README.md": "See pkg/module.py and the pkg directory.\n",
@@ -397,8 +412,8 @@ class DerivationTest(unittest.TestCase):
         data = build_map(self, repository)
         self.assertIn("等你拍板", data["features"]["alpha"]["markers"])
         self.assertIn("还没实现", data["features"]["future"]["markers"])
-        self.assertIn("没归到功能的代码", data["features"]["package"]["markers"])
-        self.assertEqual(data["markers"], {"等你拍板": 2, "还没实现": 2, "没归到功能的代码": 1})
+        self.assertIn("没归到功能的代码或测试", data["features"]["package"]["markers"])
+        self.assertEqual(data["markers"], {"等你拍板": 2, "还没实现": 2, "没归到功能的代码或测试": 1})
 
 
 if __name__ == "__main__":

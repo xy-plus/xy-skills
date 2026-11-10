@@ -193,6 +193,15 @@ class FeatureCheckTest(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 self.assertIn(f"legacy{suffix}", result.stdout + result.stderr)
 
+    def test_rejects_and_lists_a_typescript_source_file(self):
+        self.write("src/application.ts", "const answer = 42;\n")
+        subprocess.run(["git", "-C", str(self.repo), "add", "src/application.ts"], check=True)
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("src/application.ts", result.stdout + result.stderr)
+
     def test_bad_arguments_exit_with_two(self):
         result = subprocess.run(
             ["python3", "-B", str(COMMAND), "check", "--repo", str(self.repo / "missing")],
