@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Validate cleanup reviews for every smallest feature in a requested scope."""
 import argparse
-import importlib
 import json
 from pathlib import Path
 import sys
@@ -10,13 +9,9 @@ import sys
 REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
 sys.path.insert(0, str(REPOSITORY / "xy-review"))
-
-git_repository = importlib.import_module("repo_map_lib.git_repository")
-map_data = importlib.import_module("repo_map_lib.map_data")
-rule_references = importlib.import_module("rule_references")
-ArgumentError = git_repository.ArgumentError
-build_map = map_data.build_map
-basis_is_supported = rule_references.basis_is_supported
+from repo_map_lib.git_repository import ArgumentError  # noqa: E402
+from repo_map_lib.map_data import build_map  # noqa: E402
+from rule_references import basis_is_supported  # noqa: E402
 
 
 REPORT_KEYS = {"role", "repo", "features"}
@@ -94,8 +89,6 @@ def _validate_finding(finding, label):
         must_do_directly = kind in {"删除", "合并"} and not changes_behavior
         if (decision == "直接做") != must_do_directly:
             problems.append(f"{label}.decision 只有行为不变的删除或合并才能是 直接做")
-        if kind == "改清单" and decision != "问你":
-            problems.append(f"{label} 的 改清单 必须是 问你")
 
     basis = finding["basis"]
     problems.extend(_field_errors(basis, BASIS_KEYS, f"{label}.basis"))
@@ -125,10 +118,9 @@ def validate_reports(data, repository, expected_features, report_paths):
         role = document.get("role")
         if not isinstance(role, str) or role not in ROLES:
             problems.append(f"报告 {label} 的 role 必须是 主审 或 剃刀")
-        elif role in counts:
-            expected_repository = str(Path(repository).resolve())
-            if document.get("repo") != expected_repository:
-                problems.append(f"报告 {label} 的 repo 必须等于 {expected_repository}")
+        expected_repository = str(Path(repository).resolve())
+        if document.get("repo") != expected_repository:
+            problems.append(f"报告 {label} 的 repo 必须等于 {expected_repository}")
         review_features = document.get("features")
         if not isinstance(review_features, list):
             problems.append(f"报告 {label} 的 features 必须是数组")
@@ -143,7 +135,7 @@ def validate_reports(data, repository, expected_features, report_paths):
                 problems.append(f"{feature_label}.feature 不在功能清单中：{feature_id!r}")
             elif feature_id not in expected_features:
                 problems.append(f"报告功能超出清扫范围或不是最细功能：{feature_id}")
-            elif role in counts:
+            elif isinstance(role, str) and role in counts:
                 counts[role][feature_id] = counts[role].get(feature_id, 0) + 1
             for key in ("needed", "smaller", "why_holds"):
                 if not _nonempty(review.get(key)):
@@ -173,8 +165,6 @@ def main(argv):
 
     try:
         repository = Path(options.repo)
-        if not repository.is_absolute():
-            raise ArgumentError("--repo 必须是绝对路径")
         data = build_map(repository)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)

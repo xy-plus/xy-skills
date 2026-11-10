@@ -152,6 +152,14 @@ class RealRepositoryTest(unittest.TestCase):
         self.assertEqual(map_data["markers"]["还没实现"], 1)
         self.assertEqual(map_data["markers"]["没归到功能的代码"], 0)
 
+        cleanup_id = by_title["仓库清扫"]
+        cleanup_uses = {
+            map_data["features"][use["feature"]]["title"]: use["by"]
+            for use in map_data["features"][cleanup_id]["uses"]
+        }
+        self.assertEqual(cleanup_uses["仓库功能图"], "import")
+        self.assertEqual(cleanup_uses["对抗审查"], "import")
+
 
 if __name__ == "__main__":
     unittest.main()
