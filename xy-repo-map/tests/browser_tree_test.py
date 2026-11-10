@@ -52,12 +52,19 @@ class BrowserTreeTest(unittest.TestCase):
                 page.on("pageerror", lambda error: script_errors.append(str(error)))
                 page.goto((output / "index.html").as_uri())
 
-                row_ids = page.locator(".feature-row").evaluate_all(
-                    "rows => rows.map(row => row.dataset.featureId)"
-                )
-                self.assertNotIn(expected["root"], row_ids)
-                self.assertEqual(len(row_ids), len(expected["features"]) - 1, script_errors)
                 root_feature = expected["features"][expected["root"]]
+                row_titles = page.locator(".feature-row .feature-title .title").all_text_contents()
+                self.assertNotIn(root_feature["title"], row_titles)
+                self.assertEqual(len(row_titles), len(expected["features"]) - 1, script_errors)
+
+                def row_for_title(title):
+                    matches = [
+                        row for row in page.locator(".feature-row").all()
+                        if row.locator(".feature-title .title").text_content() == title
+                    ]
+                    self.assertEqual(len(matches), 1, title)
+                    return matches[0]
+
                 with self.subTest(page_part="root rationale"):
                     root_why = page.locator("#page-why")
                     self.assertEqual(root_why.count(), 1)
@@ -73,19 +80,13 @@ class BrowserTreeTest(unittest.TestCase):
                 }
                 guide = expected["features"][by_title["Guide"]]
                 self.assertEqual(guide["uses"], [])
-                alpha_id = by_title["Alpha"]
-                mention_chips = page.locator(
-                    f'.feature-row[data-feature-id="{alpha_id}"] .uses .use-link'
-                )
+                mention_chips = row_for_title("Alpha").locator(".uses .use-link")
                 self.assertEqual(mention_chips.all_text_contents(), ["Group提及", "Ready提及"])
                 for chip in mention_chips.all():
                     self.assertEqual(chip.locator(".mention").text_content(), "提及")
-                consumer_id = by_title["Consumer"]
-                consumer_uses = page.locator(
-                    f'.feature-row[data-feature-id="{consumer_id}"] .uses .use-link'
-                ).all_text_contents()
+                consumer_uses = row_for_title("Consumer").locator(".uses .use-link").all_text_contents()
                 self.assertEqual(consumer_uses, ["Ready", "Alpha"])
-                consumer_row = page.locator(f'.feature-row[data-feature-id="{consumer_id}"]')
+                consumer_row = row_for_title("Consumer")
                 why_row = consumer_row.locator(".why")
                 self.assertEqual(why_row.evaluate("element => element.tagName"), "P")
                 self.assertEqual(why_row.locator("strong").text_content(), "为什么：")
@@ -109,21 +110,15 @@ class BrowserTreeTest(unittest.TestCase):
                 for feature_id, feature_data in expected["features"].items():
                     if feature_id == expected["root"] or not any(feature_data["lines"]["total"].values()):
                         continue
-                    row = page.locator(f'.feature-row[data-feature-id="{feature_id}"]')
+                    row = row_for_title(feature_data["title"])
                     widths = row.locator(".fill i").evaluate_all(
                         "parts => parts.map(part => part.getBoundingClientRect().width)"
                     )
                     self.assertTrue(any(width > 0 for width in widths), feature_id)
                 page.locator(".feature-row").first.click()
-                panel_style = page.locator(".detail-panel").evaluate(
-                    "element => { const style = getComputedStyle(element); return {"
-                    "borderTopWidth: style.borderTopWidth, borderTopColor: style.borderTopColor, "
-                    "borderTopLeftRadius: style.borderTopLeftRadius, maxHeight: style.maxHeight }; }"
+                panel_limit = page.locator(".detail-panel").evaluate(
+                    "element => parseFloat(getComputedStyle(element).maxHeight)"
                 )
-                self.assertEqual(panel_style["borderTopWidth"], "1px")
-                self.assertEqual(panel_style["borderTopColor"], "rgb(221, 227, 233)")
-                self.assertEqual(panel_style["borderTopLeftRadius"], "16px")
-                panel_limit = float(panel_style["maxHeight"].removesuffix("px"))
                 self.assertLessEqual(panel_limit, 0.45 * 844)
                 embedded = page.evaluate(
                     "JSON.parse(document.querySelector('#map-data').textContent)"
@@ -136,9 +131,9 @@ class BrowserTreeTest(unittest.TestCase):
                 )
 
                 page.locator("#decision-filter").click()
-                visible = page.locator(".feature-row:not([hidden])").evaluate_all(
-                    "rows => rows.map(row => row.dataset.featureId)"
-                )
+                visible_titles = page.locator(
+                    ".feature-row:not([hidden]) .feature-title .title"
+                ).all_text_contents()
                 features = expected["features"]
 
                 def has_decision_in_branch(feature_id):
@@ -148,14 +143,14 @@ class BrowserTreeTest(unittest.TestCase):
                         for child_id in feature_data["children"]
                     )
 
-                expected_visible = {
-                    feature_id
-                    for feature_id in features
+                expected_visible_titles = {
+                    feature_data["title"]
+                    for feature_id, feature_data in features.items()
                     if feature_id != expected["root"]
                     and has_decision_in_branch(feature_id)
                 }
                 with self.subTest(page_part="decision rows and ancestors"):
-                    self.assertEqual(set(visible), expected_visible)
+                    self.assertEqual(set(visible_titles), expected_visible_titles)
                 with self.subTest(page_part="undivided code summary"):
                     self.assertEqual(page.locator(".undivided:visible").count(), 0)
                 page.locator("#decision-filter").click()
@@ -173,8 +168,7 @@ class BrowserTreeTest(unittest.TestCase):
                         root_panel.locator(".close-detail").click()
                         self.assertFalse(root_panel.is_visible())
                     self.assertEqual(script_errors, [])
-                guide_id = by_title["Guide"]
-                page.locator(f'.feature-row[data-feature-id="{guide_id}"] .feature-title').click()
+                row_for_title("Guide").locator(".feature-title").click()
                 panel = page.locator(".detail-panel")
                 headings = panel.locator("h3").all_text_contents()
                 self.assertNotIn("出处", headings)
@@ -183,15 +177,14 @@ class BrowserTreeTest(unittest.TestCase):
                 self.assertIn("用户说过的话。", citation.inner_text())
                 self.assertIn("测试契约", citation.inner_text())
 
-                page.locator(f'.feature-row[data-feature-id="{consumer_id}"] .feature-title').click()
+                row_for_title("Consumer").locator(".feature-title").click()
                 panel = page.locator(".detail-panel")
                 self.assertNotIn("出处", panel.locator("h3").all_text_contents())
                 self.assertEqual(panel.locator(".why-detail-body .source-label").text_content(), "你确认过")
                 self.assertIn("本次回答", panel.inner_text())
                 self.assertEqual(panel.locator("blockquote").count(), 0)
 
-                future_id = by_title["Future"]
-                page.locator(f'.feature-row[data-feature-id="{future_id}"] .feature-title').click()
+                row_for_title("Future").locator(".feature-title").click()
                 panel = page.locator(".detail-panel")
                 self.assertNotIn("出处", panel.locator("h3").all_text_contents())
                 self.assertEqual(panel.locator(".why-detail-body .source-label").text_content(), "AI 起草 · 等你拍板")

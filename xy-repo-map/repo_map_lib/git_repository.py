@@ -103,7 +103,10 @@ def _untracked_repositories(root, start, own_common):
 
 
 def discover_subrepositories(repository):
-    """Return child gitlinks and direct nested repositories, excluding this repo's worktrees."""
+    """Find gitlinks, nested repos in visible directories, and ignored repos named directly.
+
+    Ignored directories are not searched inside because they commonly contain worktrees and caches.
+    """
     root = Path(repository).resolve()
     own_common = _common_directory(root)
     candidates = set(gitlink_paths(root))

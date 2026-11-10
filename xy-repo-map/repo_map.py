@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from repo_map_lib.git_repository import ArgumentError, require_repository_root
+from repo_map_lib.git_repository import ArgumentError
 from repo_map_lib.map_data import build_map
 from repo_map_lib.publish_command import publish_repository
 from repo_map_lib.render_command import render_repository
@@ -41,12 +41,11 @@ def main(argv):
     try:
         if options.command == "publish":
             return publish_repository(options.out, options.name)
-        repository = require_repository_root(options.repo)
         if options.command == "render":
-            directory = render_repository(repository, options.out)
+            directory = render_repository(options.repo, options.out)
             print(f"页面已生成：{directory}")
             return 0
-        data = build_map(repository)
+        data = build_map(options.repo)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
         return 2

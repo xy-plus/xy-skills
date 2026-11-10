@@ -118,6 +118,12 @@ const mapData = JSON.parse(document.querySelector("#map-data").textContent);
 const features = mapData.features;
 const rootId = mapData.root;
 const rootFeature = features[rootId];
+const incomingUses = new Map(Object.keys(features).map((featureId) => [featureId, []]));
+for (const [sourceId, feature] of Object.entries(features)) {
+  for (const use of feature.uses) {
+    incomingUses.get(use.feature).push({ feature: sourceId, by: use.by });
+  }
+}
 const lineKeys = ["code", "tests", "docs", "comments"];
 const lineTitles = { code: "代码", tests: "测试", docs: "文档", comments: "注释" };
 const markerOrder = ["等你拍板", "还没实现", "没归到功能的代码"];
@@ -130,7 +136,6 @@ const manualExpansion = new Map();
 let depth = 2;
 let maximumDepth = 1;
 let showDecisions = false;
-let selected = null;
 
 function make(tag, className, text) {
   const element = document.createElement(tag);
@@ -230,10 +235,8 @@ function usesList(featureId) {
 
 function incomingCounts(featureId) {
   const counts = { import: 0, mention: 0 };
-  for (const feature of Object.values(features)) {
-    for (const use of feature.uses) {
-      if (use.feature === featureId) counts[use.by]++;
-    }
+  for (const use of incomingUses.get(featureId)) {
+    counts[use.by]++;
   }
   return counts;
 }
@@ -269,7 +272,6 @@ function renderFeature(featureId, level) {
   const section = make("section", "feature-node");
   const decision = feature.markers.includes("等你拍板") ? " decision" : "";
   const row = make("div", `feature-row${decision}`);
-  row.dataset.featureId = featureId;
   rows.set(featureId, row);
 
   const guides = make("div", "guides");
@@ -433,8 +435,6 @@ function relationList(items) {
 }
 
 function openDetails(featureId) {
-  selected = featureId;
-  for (const [id, row] of rows) row.classList.toggle("selected", id === featureId);
   const feature = features[featureId];
   const panel = document.querySelector("#detail-panel");
   panel.replaceChildren();
@@ -473,13 +473,7 @@ function openDetails(featureId) {
   }
 
   panel.append(make("h3", "", "用到"), relationList(feature.uses));
-  const incoming = [];
-  for (const [otherId, other] of Object.entries(features)) {
-    for (const use of other.uses) {
-      if (use.feature === featureId) incoming.push({ feature: otherId, by: use.by });
-    }
-  }
-  panel.append(make("h3", "", "被用到"), relationList(incoming));
+  panel.append(make("h3", "", "被用到"), relationList(incomingUses.get(featureId)));
   panel.hidden = false;
   document.body.classList.add("detail-open");
 }
@@ -487,11 +481,6 @@ function openDetails(featureId) {
 function closeDetails() {
   document.querySelector("#detail-panel").hidden = true;
   document.body.classList.remove("detail-open");
-  if (selected !== null) {
-    const row = rows.get(selected);
-    if (row) row.classList.remove("selected");
-  }
-  selected = null;
 }
 
 function revealFeature(featureId) {

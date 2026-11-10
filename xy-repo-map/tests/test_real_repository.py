@@ -13,7 +13,7 @@ COMMAND = ROOT / "xy-repo-map" / "repo_map.py"
 LINE_NAMES = ("code", "docs", "comments", "tests")
 
 sys.path.insert(0, str(ROOT / "xy-repo-map"))
-from repo_map_lib.map_data import _file_category, _source_text  # noqa: E402
+from repo_map_lib.map_data import _file_category, _read_source  # noqa: E402
 from repo_map_lib.metrics import count_file  # noqa: E402
 
 
@@ -56,8 +56,8 @@ class RealRepositoryTest(unittest.TestCase):
 
         expected_lines = dict.fromkeys(LINE_NAMES, 0)
         for path in sorted(tracked_paths):
-            source = _source_text(ROOT, path) or ""
-            counts = count_file(path, _file_category(path), source)
+            category, source = _read_source(ROOT, path, _file_category(path))
+            counts = count_file(path, category, source)
             for name in LINE_NAMES:
                 expected_lines[name] += getattr(counts, name)
         root_lines = map_data["features"][map_data["root"]]["lines"]["total"]

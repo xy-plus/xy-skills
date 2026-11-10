@@ -55,16 +55,27 @@ def _file_category(path):
 
 
 def _source_text(repository, path):
-    try:
-        content = (Path(repository) / path).read_bytes()
-    except OSError:
+    """Read text sources, keeping symlinks and binary files out of text categories."""
+    source_path = Path(repository) / path
+    if source_path.is_symlink():
         return None
+    try:
+        content = source_path.read_bytes()
+    except OSError as error:
+        raise OSError(f"无法读取 Git 跟踪文件 {path}：{error}") from error
     if b"\0" in content:
         return None
-    try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    return content.decode("utf-8", errors="replace")
+
+
+def _read_source(repository, path, category):
+    """Return the effective file category and text, without reading other files."""
+    if category == "other":
+        return "other", ""
+    source = _source_text(repository, path)
+    if source is None:
+        return "other", ""
+    return category, source
 
 
 def _entry_files(features, order, paths):
@@ -102,13 +113,21 @@ def build_map(repository):
     if unsupported:
         raise ValueError("已知是代码但不支持统计的文件：" + ", ".join(unsupported))
 
-    categories = {path: _file_category(path) for path in paths}
-    source_texts = {path: _source_text(root, path) for path in paths}
-    counts = {path: count_file(path, categories[path], source_texts[path] or "") for path in paths}
+    categories = {}
+    source_texts = {}
+    for path in paths:
+        categories[path], source_texts[path] = _read_source(
+            root, path, _file_category(path)
+        )
+
+    counts = {
+        path: count_file(path, categories[path], source_texts[path])
+        for path in paths
+    }
     python_paths = [path for path in paths if Path(path).suffix.lower() == ".py"]
     imports = {}
     for path in paths:
-        if categories[path] in ("code", "tests") and source_texts[path] is not None:
+        if categories[path] in ("code", "tests"):
             imports[path] = imports_for_file(path, source_texts[path], python_paths)
         else:
             imports[path] = set()
@@ -165,8 +184,6 @@ def build_map(repository):
             if target_path in owners:
                 _add_use(uses, source_owner, owners[target_path], "import", features)
         source = source_texts[source_path]
-        if source is None:
-            continue
         own_directory = feature_home[source_owner]
         # Parent-directory overview files can name child features without depending on them.
         for target_path in file_mentions(source_path, source, paths):
@@ -181,6 +198,15 @@ def build_map(repository):
                 _add_use(uses, source_owner, target_feature, "mention", features)
 
     index = {feature_id: position for position, feature_id in enumerate(order)}
+    uses_by_source = {feature_id: [] for feature_id in order}
+    for (source_id, target_id), kinds in uses.items():
+        uses_by_source[source_id].append({
+            "feature": target_id,
+            "by": "import" if "import" in kinds else "mention",
+        })
+    for feature_uses in uses_by_source.values():
+        feature_uses.sort(key=lambda item: index[item["feature"]])
+
     result_features = {}
     marker_counts = {name: 0 for name in MARKER_NAMES}
     for feature_id in order:
@@ -200,13 +226,7 @@ def build_map(repository):
             markers.append("没归到功能的代码")
         for marker in markers:
             marker_counts[marker] += 1
-        feature_uses = []
-        for (source_id, target_id), kinds in uses.items():
-            if source_id != feature_id:
-                continue
-            feature_uses.append({"feature": target_id,
-                                 "by": "import" if "import" in kinds else "mention"})
-        feature_uses.sort(key=lambda item: index[item["feature"]])
+        feature_uses = uses_by_source[feature_id]
         result_features[feature_id] = {
             "title": value["title"],
             "directory_name": directory_name,

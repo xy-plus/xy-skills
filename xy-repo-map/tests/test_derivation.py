@@ -2,14 +2,32 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from map_fixture import build_map, feature, make_repo
+from map_fixture import COMMAND, build_map, feature, make_repo
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import repo_map_lib.map_data as map_data  # noqa: E402
 
 
 def child_tree(children, entries=None):
     return feature("root", "", children=children, entries=entries)
+
+
+def build_map_with_sources(repository):
+    sources = {}
+    count_file = map_data.count_file
+
+    def record_source(path, category, source):
+        sources[path] = (category, source)
+        return count_file(path, category, source)
+
+    with patch.object(map_data, "count_file", record_source):
+        data = map_data.build_map(repository)
+    return data, sources
 
 
 class DerivationTest(unittest.TestCase):
@@ -27,26 +45,90 @@ class DerivationTest(unittest.TestCase):
         counts = data["features"]["root"]["lines"]["own"]
         self.assertEqual(counts, {"code": 5, "docs": 3, "comments": 3, "tests": 2})
 
-    def test_binary_and_invalid_utf8_files_have_zero_lines_in_build_map(self):
+    def test_files_classified_as_other_are_not_read(self):
         repository = make_repo(self, {
-            "assets/binary.py": "placeholder = True\n",
-            "assets/invalid/broken.py": "placeholder = True\n",
+            "assets/data.bin": "placeholder\n",
+        }, feature("root", ""))
+        other_path = repository / "assets/data.bin"
+        read_bytes = Path.read_bytes
+
+        def reject_other_file(path):
+            if path == other_path:
+                raise AssertionError(f"read an other file: {path}")
+            return read_bytes(path)
+
+        with patch.object(Path, "read_bytes", reject_other_file):
+            data, sources = build_map_with_sources(repository)
+
+        self.assertEqual(sources["assets/data.bin"], ("other", ""))
+        self.assertEqual(data["features"]["root"]["lines"]["total"]["code"], 0)
+
+    def test_symlinks_and_nul_files_are_other_and_count_zero_lines(self):
+        repository = make_repo(self, {
+            "assets/target.py": "value = 1\n",
+            "assets/link.py": "placeholder\n",
+            "assets/video.ts": "placeholder\n",
+        }, feature("root", ""))
+        symlink = repository / "assets/link.py"
+        symlink.unlink()
+        symlink.symlink_to("target.py")
+        (repository / "assets/video.ts").write_bytes(b"\x00video data\n")
+
+        data, sources = build_map_with_sources(repository)
+
+        self.assertEqual(sources["assets/link.py"], ("other", ""))
+        self.assertEqual(sources["assets/video.ts"], ("other", ""))
+        self.assertEqual(data["features"]["root"]["lines"]["total"]["code"], 1)
+
+    def test_invalid_utf8_text_is_replaced_and_keeps_counts_and_dependencies(self):
+        repository = make_repo(self, {
+            "pkg/source.py": "import pkg.target\n# invalid text\n",
+            "pkg/guide.md": "See pkg/target.py for details.\ninvalid text\n",
+            "pkg/target.py": "value = 1\n",
         }, feature("root", "", children=[
-            feature("assets", "assets", children=[
-                feature("invalid", "assets/invalid"),
+            feature("package", "pkg", children=[
+                feature("source", None, entries=["pkg/source.py"]),
+                feature("guide", None, entries=["pkg/guide.md"]),
+                feature("target", None, entries=["pkg/target.py"]),
             ]),
         ]))
-        (repository / "assets/binary.py").write_bytes(b"\x00value = 1\n")
-        (repository / "assets/invalid/broken.py").write_bytes(b"\xffvalue = 1\n")
+        (repository / "pkg/source.py").write_bytes(b"import pkg.target\n# invalid: \xff\n")
+        (repository / "pkg/guide.md").write_bytes(
+            b"See pkg/target.py for details.\ninvalid: \xff\n"
+        )
 
-        data = build_map(self, repository)
+        data, sources = build_map_with_sources(repository)
 
-        for feature_id in ("assets", "invalid"):
-            with self.subTest(feature=feature_id):
-                self.assertEqual(
-                    data["features"][feature_id]["lines"]["own"],
-                    {"code": 0, "docs": 0, "comments": 0, "tests": 0},
-                )
+        self.assertEqual(sources["pkg/source.py"], ("code", "import pkg.target\n# invalid: \ufffd\n"))
+        self.assertEqual(
+            sources["pkg/guide.md"],
+            ("docs", "See pkg/target.py for details.\ninvalid: \ufffd\n"),
+        )
+        self.assertEqual(data["features"]["source"]["lines"]["own"]["code"], 1)
+        self.assertEqual(data["features"]["source"]["lines"]["own"]["comments"], 1)
+        self.assertEqual(data["features"]["guide"]["lines"]["own"]["docs"], 2)
+        self.assertEqual(data["features"]["source"]["uses"], [
+            {"feature": "target", "by": "import"},
+        ])
+        self.assertEqual(data["features"]["guide"]["uses"], [
+            {"feature": "target", "by": "mention"},
+        ])
+
+    def test_unreadable_tracked_file_fails_check_with_its_path(self):
+        repository = make_repo(self, {
+            "src/missing.py": "value = 1\n",
+        }, feature("root", ""))
+        (repository / "src/missing.py").unlink()
+
+        result = subprocess.run(
+            ["python3", "-B", str(COMMAND), "check", "--repo", str(repository)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("src/missing.py", result.stdout + result.stderr)
 
     def test_directory_feature_owns_unclaimed_files(self):
         repository = make_repo(self, {
