@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>决定</title>
+<link rel="icon" href="data:,">
+<style>
+:root{color-scheme:light dark;--page:#f3f5f7;--surface:#fff;--ink:#10151b;--ink2:#4d5966;--muted:#8792a0;--hair:#dde3e9;--pick:#2a78d6;--pick-wash:#e8f1fc;--mark:#fab219;--sans:system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--page:#0d1013;--surface:#161a1f;--ink:#eef1f4;--ink2:#b9c2cc;--muted:#7f8a97;--hair:#2a3038;--pick:#3987e5;--pick-wash:#17263a}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 var(--sans)}
+button{font:inherit;color:inherit}
+.wrap{max-width:820px;margin:0 auto;padding:16px 12px 150px}
+h1{margin:0 0 7px;font-size:21px;line-height:1.3;overflow-wrap:anywhere}
+h2{margin:28px 0 5px;font-size:17px;line-height:1.35;overflow-wrap:anywhere}
+p{margin:6px 0;color:var(--ink2);overflow-wrap:anywhere}
+.intro p,.group-note{font-size:14px}
+.item{min-width:0;margin:10px 0;padding:10px 11px 12px;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--hair);border-left:4px solid var(--hair);border-radius:10px}
+.item.changed{border-left-color:var(--mark)}
+.head{font-weight:650;overflow-wrap:anywhere}
+.head .no{margin-right:7px;color:var(--muted);font:700 13px var(--mono)}
+.line{margin:4px 0 0;color:var(--ink2);font-size:14px}
+.choices{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.choices label{position:relative;display:flex;flex:1 1 130px;min-width:110px;align-items:center;justify-content:center;gap:5px;padding:9px 10px;border:1px solid var(--hair);border-radius:9px;background:var(--surface);font-size:14px;text-align:center;overflow-wrap:anywhere;cursor:pointer;user-select:none}
+.choices label.picked{border-color:var(--pick);background:var(--pick-wash);color:var(--pick);font-weight:650}
+.choices label.suggested::after{content:"建议";flex:none;padding:0 5px;border:1px solid currentColor;border-radius:4px;font-size:11px;font-weight:650;opacity:.75}
+.choices input{position:absolute;width:1px;height:1px;opacity:0}
+.choices input:focus-visible+span{outline:2px solid var(--pick);outline-offset:4px}
+textarea{display:block;width:100%;min-height:54px;margin-top:9px;padding:8px 10px;border:1px solid var(--hair);border-radius:9px;background:var(--page);color:var(--ink);font:14px/1.5 var(--sans);resize:vertical}
+textarea::placeholder{color:var(--muted)}
+textarea:disabled,.choices input:disabled+span{opacity:.72}
+.footnote{font-size:14px}
+.bar{position:fixed;right:0;bottom:0;left:0;z-index:5;padding:10px max(12px,calc((100% - 820px)/2 + 12px)) calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--hair);background:var(--surface);box-shadow:0 -8px 30px #0002}
+.status{color:var(--ink2);font-size:13px;overflow-wrap:anywhere}
+.feedback{margin-top:5px;color:#a74416;font-size:13px;overflow-wrap:anywhere}
+@media(prefers-color-scheme:dark){.feedback{color:#ffb18b}}
+.bar button{width:100%;margin-top:8px;padding:12px;border:0;border-radius:10px;background:var(--pick);color:#fff;font:650 15px var(--sans);text-align:center;cursor:pointer}
+.bar button:disabled{opacity:.65;cursor:wait}
+.bar button[hidden]{display:none}
+@media(min-width:600px){.wrap{padding-right:14px;padding-left:14px}.bar{padding-right:max(14px,calc((100% - 820px)/2 + 14px));padding-left:max(14px,calc((100% - 820px)/2 + 14px))}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1 id="page-title"></h1>
+  <div class="intro" id="intro"></div>
+  <div id="groups"></div>
+  <div id="footnotes"></div>
+</main>
+<footer class="bar">
+  <div class="status" id="status" aria-live="polite"></div>
+  <div class="feedback" id="feedback" role="status" hidden></div>
+  <button type="button" id="submit">提交我的回答</button>
+</footer>
+<script id="decision-data" type="application/json">__DECISION_DATA__</script>
+<script>
+"use strict";
+
+const pageData = JSON.parse(document.querySelector("#decision-data").textContent);
+const decisions = pageData.decisions;
+const storageKey = `cleanup-decisions:${pageData.call_id}`;
+const items = decisions.groups.flatMap((group) => group.items);
+const selected = new Map(items.map((item) => [item.id, item.recommended]));
+const notes = new Map(items.map((item) => [item.id, ""]));
+const cards = new Map();
+const feedback = document.querySelector("#feedback");
+const submitButton = document.querySelector("#submit");
+
+function make(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+function loadSaved() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
+    for (const item of items) {
+      const answer = saved[item.id];
+      if (!answer || typeof answer !== "object") continue;
+      if (item.options.includes(answer.option)) selected.set(item.id, answer.option);
+      if (typeof answer.note === "string") notes.set(item.id, answer.note);
+    }
+  } catch (error) {
+    // The page still works when browser storage is unavailable.
+  }
+}
+
+function save() {
+  try {
+    const saved = {};
+    for (const item of items) {
+      saved[item.id] = { option: selected.get(item.id), note: notes.get(item.id) };
+    }
+    localStorage.setItem(storageKey, JSON.stringify(saved));
+  } catch (error) {
+    // Keep the current edits in the page when browser storage is unavailable.
+  }
+}
+
+function refresh() {
+  let changed = 0;
+  for (const item of items) {
+    const itemChanged = selected.get(item.id) !== item.recommended || notes.get(item.id) !== "";
+    changed += Number(itemChanged);
+    cards.get(item.id).classList.toggle("changed", itemChanged);
+  }
+  document.querySelector("#status").textContent =
+    `共 ${items.length} 条，你改了或写了 ${changed} 条（左边有黄线）；其余按建议办。`;
+}
+
+function renderItem(item) {
+  const card = make("section", "item");
+  card.dataset.itemId = item.id;
+  cards.set(item.id, card);
+  const heading = make("div", "head");
+  heading.append(make("span", "no", item.id), document.createTextNode(item.title));
+  card.append(heading);
+  for (const line of item.lines) card.append(make("p", "line", line));
+
+  const choices = make("div", "choices");
+  for (const option of item.options) {
+    const label = make("label", option === item.recommended ? "suggested" : "");
+    const input = make("input");
+    input.type = "radio";
+    input.name = item.id;
+    input.value = option;
+    input.checked = selected.get(item.id) === option;
+    label.classList.toggle("picked", input.checked);
+    input.addEventListener("change", () => {
+      selected.set(item.id, option);
+      for (const other of choices.querySelectorAll("label")) {
+        other.classList.toggle("picked", other.querySelector("input").checked);
+      }
+      save();
+      refresh();
+      feedback.hidden = true;
+    });
+    label.append(input, make("span", "", option));
+    choices.append(label);
+  }
+  card.append(choices);
+
+  const note = make("textarea");
+  note.rows = 2;
+  note.placeholder = "写了字就以你写的为准；选项只作参考。可以不填。";
+  note.setAttribute("aria-label", `${item.id} 自己的说明`);
+  note.value = notes.get(item.id);
+  note.addEventListener("input", () => {
+    notes.set(item.id, note.value);
+    save();
+    refresh();
+    feedback.hidden = true;
+  });
+  card.append(note);
+  return card;
+}
+
+async function submitAnswers() {
+  submitButton.disabled = true;
+  submitButton.textContent = "正在提交…";
+  feedback.hidden = true;
+  const answers = {};
+  for (const item of items) {
+    answers[item.id] = { option: selected.get(item.id), note: notes.get(item.id) };
+  }
+
+  let problem = "";
+  try {
+    const response = await fetch("submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: decisions.title, answers }),
+    });
+    if (!response.ok) {
+      const reply = await response.json().catch(() => ({}));
+      problem = reply.error || `服务返回 ${response.status}`;
+    }
+  } catch (error) {
+    problem = "连不上接收回答的服务";
+  }
+
+  if (problem) {
+    submitButton.disabled = false;
+    submitButton.textContent = "再提交一次";
+    feedback.textContent = `提交失败：${problem}。已选和已写内容还在，可以再试。`;
+    feedback.hidden = false;
+    return;
+  }
+
+  for (const control of document.querySelectorAll(".item input, .item textarea")) {
+    control.disabled = true;
+  }
+  submitButton.hidden = true;
+  document.querySelector("#status").textContent = "已收到。所有输入已锁定，可以关掉这个页面。";
+  try {
+    localStorage.removeItem(storageKey);
+  } catch (error) {
+    // Nothing saved to clear.
+  }
+}
+
+loadSaved();
+document.title = decisions.title;
+document.querySelector("#page-title").textContent = decisions.title;
+for (const paragraph of decisions.intro) {
+  document.querySelector("#intro").append(make("p", "", paragraph));
+}
+for (const group of decisions.groups) {
+  const container = document.querySelector("#groups");
+  container.append(make("h2", "", group.title));
+  for (const note of group.notes) container.append(make("p", "group-note", note));
+  for (const item of group.items) container.append(renderItem(item));
+}
+for (const footnote of decisions.footnotes) {
+  const container = document.querySelector("#footnotes");
+  container.append(make("h2", "", footnote.title));
+  for (const line of footnote.lines) container.append(make("p", "footnote", line));
+}
+submitButton.addEventListener("click", submitAnswers);
+refresh();
+</script>
+</body>
+</html>

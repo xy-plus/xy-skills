@@ -110,6 +110,7 @@ python3 -B -m unittest discover -s xy-goal/tests
 python3 -B -m unittest discover -s xy-handoff
 python3 -B -m unittest discover -s xy-review
 python3 -B -m unittest discover -s xy-cleanup/tests
+XY_REPO_MAP_CHROMIUM=/path/to/chrome python3 -B -m unittest discover -s xy-cleanup/tests -p 'browser_*_test.py'
 python3 -B -m unittest discover -s xy-runs/tests
 python3 -B -m unittest discover -s xy-repo-map/tests -p 'test_*.py'
 XY_REPO_MAP_CHROMIUM=/path/to/chrome python3 -B -m unittest discover -s xy-repo-map/tests -p 'browser_*_test.py'
@@ -124,4 +125,4 @@ python -m pip install playwright
 python -m playwright install chromium
 ```
 
-把 `XY_REPO_MAP_CHROMIUM` 设为 Chromium 可执行文件的绝对路径后运行浏览器测试。缺少路径或浏览器不可用时测试会失败，不会跳过。
+把 `XY_REPO_MAP_CHROMIUM` 设为 Chromium 可执行文件的绝对路径后运行两个浏览器测试命令。缺少路径或浏览器不可用时测试会失败，不会跳过。

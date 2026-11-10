@@ -441,6 +441,7 @@
               "entries": [
                 "xy-repo-map/repo_map_lib/render_command.py",
                 "xy-repo-map/repo_map_lib/render_page.py",
+                "xy-repo-map/repo_map_lib/embedded_json.py",
                 "xy-repo-map/repo_map_lib/templates/feature-tree.html",
                 "xy-repo-map/tests/test_render.py",
                 "xy-repo-map/tests/browser_tree_test.py"
@@ -495,6 +496,25 @@
               "entries": [
                 "xy-cleanup/check_reports.py",
                 "xy-cleanup/tests/test_check_reports.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "decision-page",
+              "title": "用网页问要我定的事",
+              "what": "清扫里要我定的事放在一个网页上，每条有自己的选项和一个可以自己写的框，我点完提交就行。",
+              "why": {
+                "text": "几十条靠来回反馈太麻烦，要能在网页上一次答完。",
+                "source": "原话",
+                "quote": "我通过网页的形式点击给你反馈，然后你通过我网页上的反馈来得到结果",
+                "from": "20261110-070411-xy-skills-repo-map-cleanup-redesign 原话 64"
+              },
+              "directory": null,
+              "entries": [
+                "xy-cleanup/decision_page.py",
+                "xy-cleanup/templates/decision-page.html",
+                "xy-cleanup/tests/test_decision_page.py",
+                "xy-cleanup/tests/browser_decision_page_test.py"
               ],
               "children": []
             },
