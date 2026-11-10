@@ -21,6 +21,7 @@ ITEM_KEYS = {"id", "title", "lines", "options", "recommended"}
 FOOTNOTE_KEYS = {"title", "lines"}
 MAX_REQUEST_BYTES = 200 * 1024
 MAX_SOCKET_PATH_BYTES = 107
+REQUEST_READ_TIMEOUT_SECONDS = 10
 REPOSITORY = Path(__file__).resolve().parents[1]
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "decision-page.html"
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
@@ -173,6 +174,10 @@ class DecisionHTTPServer(socketserver.UnixStreamServer):
 
 class DecisionRequestHandler(BaseHTTPRequestHandler):
     """Return the page and validate a single JSON answer submission."""
+
+    def setup(self):
+        self.request.settimeout(REQUEST_READ_TIMEOUT_SECONDS)
+        super().setup()
 
     def log_message(self, format_string, *arguments):
         return

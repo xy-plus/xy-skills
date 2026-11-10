@@ -327,6 +327,65 @@ class DecisionPageCommandTest(unittest.TestCase):
             )
             self.assertFalse(Path(socket_path).exists())
 
+    def test_incomplete_request_line_times_out_before_next_submission(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            socket_path = Path(temporary) / "s"
+            answers = Path(temporary) / "answers.json"
+            decisions = valid_decisions()
+            server = decision_page.DecisionHTTPServer(
+                socket_path,
+                decision_page.render_decision_page(decisions),
+                decisions,
+                answers,
+            )
+            stop_event = threading.Event()
+            serving = threading.Thread(
+                target=server.serve_until_complete,
+                args=(stop_event,),
+                daemon=True,
+            )
+            serving.start()
+            partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            complete = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                partial.connect(str(socket_path))
+                partial.sendall(b"POST /sub")
+                time.sleep(0.1)
+
+                payload = json.dumps(
+                    {"title": decisions["title"], "answers": {"A1": {"option": "Keep", "note": ""}}}
+                ).encode("utf-8")
+                complete.settimeout(12)
+                complete.connect(str(socket_path))
+                complete.sendall(
+                    b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
+                    b"Content-Type: application/json\r\nContent-Length: "
+                    + str(len(payload)).encode("ascii")
+                    + b"\r\n\r\n"
+                    + payload
+                )
+                response = bytearray()
+                try:
+                    while True:
+                        chunk = complete.recv(4096)
+                        if not chunk:
+                            break
+                        response.extend(chunk)
+                except socket.timeout:
+                    pass
+
+                self.assertIn(b"HTTP/1.0 200 OK", response)
+                self.assertTrue(answers.exists())
+            finally:
+                partial.shutdown(socket.SHUT_WR)
+                stop_event.set()
+                serving.join(3)
+                partial.close()
+                complete.close()
+                server.server_close()
+                socket_path.unlink(missing_ok=True)
+            self.assertFalse(serving.is_alive())
+
     def test_mount_failure_stops_service_without_unmounting(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             decisions = Path(temporary) / "decisions.json"
@@ -388,6 +447,8 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                 stderr=subprocess.PIPE,
                 text=True,
             )
+            partial = None
+            socket_path = None
             try:
                 deadline = time.monotonic() + 5
                 calls = []
@@ -402,17 +463,40 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                 self.assertTrue(calls, "mount was not attempted")
                 socket_path = calls[0][5]
                 self.assertTrue(Path(socket_path).exists())
+                partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                partial.connect(socket_path)
+                partial.sendall(b"POST /sub")
+                time.sleep(0.1)
+                started = time.monotonic()
                 process.send_signal(signal.SIGTERM)
-                stdout, stderr = process.communicate(timeout=5)
+                exited_on_timeout = True
+                try:
+                    stdout, stderr = process.communicate(timeout=12)
+                except subprocess.TimeoutExpired:
+                    exited_on_timeout = False
+                    partial.close()
+                    stdout, stderr = process.communicate(timeout=5)
+                elapsed = time.monotonic() - started
+                partial.close()
                 calls = json.loads(call_log.read_text(encoding="utf-8"))
                 self.assertEqual(process.returncode, 1, stdout + stderr)
                 self.assertEqual([call[2] for call in calls], ["mount", "unmount"])
                 self.assertFalse(answers.exists())
                 self.assertFalse(Path(socket_path).exists())
+                self.assertTrue(exited_on_timeout, f"TERM exit waited too long: {elapsed:.2f}s")
+                self.assertLess(elapsed, 11.5, f"TERM exit waited too long: {elapsed:.2f}s")
             finally:
+                if partial is not None:
+                    partial.close()
                 if process.poll() is None:
-                    process.kill()
-                    process.communicate(timeout=5)
+                    process.send_signal(signal.SIGTERM)
+                    try:
+                        process.communicate(timeout=12)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.communicate(timeout=5)
+                if socket_path is not None:
+                    Path(socket_path).unlink(missing_ok=True)
 
     def test_accepts_a_valid_decision_list(self):
         decisions = valid_decisions()

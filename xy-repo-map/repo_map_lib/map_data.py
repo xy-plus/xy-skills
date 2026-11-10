@@ -225,7 +225,10 @@ def build_map(repository):
             markers.append("还没实现")
         if directory is not None and children[feature_id] and any(
             groups[path] == "whole" and owners[path] == feature_id
-            and categories[path] == "code" and counts[path].code > 0
+            and (
+                (categories[path] == "code" and counts[path].code > 0)
+                or (categories[path] == "tests" and counts[path].tests > 0)
+            )
             for path in paths
         ):
             markers.append("没归到功能的代码")

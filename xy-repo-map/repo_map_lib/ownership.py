@@ -90,13 +90,24 @@ def assign_files(features, order, paths, categories, entries, imports):
         elif categories[path] == "tests":
             imported_code = {
                 target for target in imports.get(path, set())
-                if target in owners and categories[target] == "code" and directory_by_path[target] == home
+                if target in owners and categories[target] == "code"
             }
-            matched_code = _test_code_match(path, imported_code)
+            same_directory_code = {
+                target for target in imported_code if directory_by_path[target] == home
+            }
+            matched_code = _test_code_match(path, same_directory_code)
             if matched_code is not None:
                 owners[path], groups[path] = owners[matched_code], "reached"
                 continue
-            imported_owners = {owners[target] for target in imported_code}
+            if same_directory_code:
+                imported_owners = {owners[target] for target in same_directory_code}
+            else:
+                other_directory_code = imported_code - same_directory_code
+                matched_code = _test_code_match(path, other_directory_code)
+                if matched_code is not None:
+                    owners[path], groups[path] = owners[matched_code], "reached"
+                    continue
+                imported_owners = {owners[target] for target in other_directory_code}
             if imported_owners:
                 selected = imported_owners
                 group = "reached"

@@ -20,10 +20,20 @@ def audit(directory):
     problems = []
     for directory_path, numbers in sorted(reports_by_directory.items()):
         last_number = max(numbers)
-        if last_number >= 3 and not (directory_path / "diagnosis.json").is_file():
-            problems.append(
-                f"{directory_path}：report-round{last_number}.md 已达到非正式循环上限 3，缺少 diagnosis.json"
-            )
+        if last_number >= 3:
+            diagnosis_path = directory_path / "diagnosis.json"
+            if not diagnosis_path.is_file():
+                problems.append(
+                    f"{directory_path}：report-round{last_number}.md 已达到非正式循环上限 3，缺少 diagnosis.json"
+                )
+            else:
+                from check import diagnosis_file_problems
+
+                diagnosis_problems = diagnosis_file_problems(diagnosis_path)
+                if diagnosis_problems:
+                    problems.append(
+                        f"{directory_path}：判因报告无效：" + "；".join(diagnosis_problems)
+                    )
     return problems
 
 

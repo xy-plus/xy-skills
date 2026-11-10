@@ -65,6 +65,15 @@ class BrowserTreeTest(unittest.TestCase):
                     self.assertEqual(len(matches), 1, title)
                     return matches[0]
 
+                group_section = row_for_title("Group").locator("xpath=ancestor::section[1]")
+                group_summary = group_section.locator(".undivided")
+                self.assertEqual(group_summary.count(), 1)
+                self.assertTrue(group_summary.is_visible())
+                row_for_title("Group").locator(".caret").click()
+                self.assertFalse(group_summary.is_visible())
+                row_for_title("Group").locator(".caret").click()
+                self.assertTrue(group_summary.is_visible())
+
                 with self.subTest(page_part="root rationale"):
                     root_why = page.locator("#page-why")
                     self.assertEqual(root_why.count(), 1)

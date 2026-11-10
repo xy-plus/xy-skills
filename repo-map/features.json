@@ -4,9 +4,9 @@
   "what": "一组 Claude Code skill：定规矩、管流程、记账、协作、管文件、收拾仓库。",
   "why": {
     "text": "AI 能干活，但不守规矩、不记事、不收拾；我不想每次都盯着。",
-    "source": "起草",
+    "source": "确认",
     "quote": "",
-    "from": ""
+    "from": "20261110 清扫决定页面第一页"
   },
   "directory": "",
   "entries": [],
@@ -17,9 +17,9 @@
       "what": "AI 做任何事都要守的底线。",
       "why": {
         "text": "AI 写东西爱打补丁、爱多加东西，得有底线管住。",
-        "source": "起草",
+        "source": "确认",
         "quote": "",
-        "from": ""
+        "from": "20261110 清扫决定页面第一页"
       },
       "directory": null,
       "entries": [],
@@ -55,41 +55,41 @@
       ]
     },
     {
-      "id": "workflow",
-      "title": "管流程",
-      "what": "一件事从讨论走到合入的固定走法。",
+      "id": "xy-workflow",
+      "title": "标准工作流程",
+      "what": "按改动大小分档，走讨论、spec、审查、实现、终审、合入。",
       "why": {
-        "text": "不管哪个 AI、哪个会话，做事都走同一套步骤，结果才可预期。",
-        "source": "起草",
+        "text": "步骤一个不少，结果才靠得住；小改动是把每一步做小，不是跳过。",
+        "source": "确认",
         "quote": "",
-        "from": ""
+        "from": "20261110 清扫决定页面第一页"
+      },
+      "directory": "xy-workflow",
+      "entries": [],
+      "children": []
+    },
+    {
+      "id": "workflow-capabilities",
+      "title": "流程用到、也能单独用的本事",
+      "what": "标准工作流程会用到、我也会单独叫来用的三样本事：问我、审查、记账。",
+      "why": {
+        "text": "这些本事流程里要用，我有时也直接单独用。",
+        "source": "原话",
+        "quote": "它虽然会被标准工作流用到，但偶尔我需要用的时候，也会直接单独去调用",
+        "from": "20261110 清扫决定页面第二页 R1"
       },
       "directory": null,
       "entries": [],
       "children": [
-        {
-          "id": "xy-workflow",
-          "title": "标准工作流程",
-          "what": "按改动大小分档，走讨论、spec、审查、实现、终审、合入。",
-          "why": {
-            "text": "步骤一个不少，结果才靠得住；小改动是把每一步做小，不是跳过。",
-            "source": "起草",
-            "quote": "",
-            "from": ""
-          },
-          "directory": "xy-workflow",
-          "entries": [],
-          "children": []
-        },
         {
           "id": "sync-think",
           "title": "需求澄清",
           "what": "把只有我能定的事做成带建议的选择题，一次问一道。",
           "why": {
             "text": "AI 自己查得到的事别来打断我；必须我定的事要一次问清，并带上建议。",
-            "source": "起草",
+            "source": "确认",
             "quote": "",
-            "from": ""
+            "from": "20261110 清扫决定页面第一页"
           },
           "directory": "sync-think",
           "entries": [],
@@ -98,12 +98,12 @@
         {
           "id": "xy-review",
           "title": "对抗审查",
-          "what": "主审和剃刀两个子代理独立审 spec 和代码，报告格式能用脚本校验。",
+          "what": "主审和剃刀两个子代理各自独立审 spec 和代码：主审做加法（找缺的、错的），剃刀做减法（找多余的）；报告格式能用脚本校验。",
           "why": {
-            "text": "写的人审不出自己的问题，要两个互不通气的审查者来挑。",
-            "source": "起草",
-            "quote": "",
-            "from": ""
+            "text": "AI 喜欢做加法、不喜欢做减法，项目会膨胀得很快；一个代理同时做加法和减法效果不好，所以拆成两个。",
+            "source": "原话",
+            "quote": "如果只开一个代理，同时做加法和减法效果不好，而且 AI 会喜欢做加法，不喜欢做减法，导致项目膨胀非常快。",
+            "from": "20261110 清扫决定页面第一页 A6"
           },
           "directory": "xy-review",
           "entries": [
@@ -116,9 +116,9 @@
               "what": "审查报告是不是按模板写的、结论和问题清单对不对得上，用脚本查。",
               "why": {
                 "text": "格式靠审查者自觉会走样，报告就没法机器核对。",
-                "source": "起草",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
               "entries": [
@@ -132,9 +132,9 @@
               "what": "报告里引用铁律或仓库规范时，核对引的是不是那一条的逐字原文。",
               "why": {
                 "text": "审查者容易凭印象转述规范，一转述就可能走样。",
-                "source": "起草",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "20261110 清扫决定页面第二页 R3"
               },
               "directory": null,
               "entries": [
@@ -148,9 +148,9 @@
               "what": "同一件东西改了三轮还没过，必须先判断为什么没过，再继续改。",
               "why": {
                 "text": "反复改同一处却不过，多半是方向错了，继续改只是空转。",
-                "source": "起草",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
               "entries": [
@@ -159,103 +159,103 @@
               "children": []
             }
           ]
-        }
-      ]
-    },
-    {
-      "id": "xy-goal",
-      "title": "长目标契约",
-      "what": "我说过的话不丢，事情按我的原话验收。",
-      "why": {
-        "text": "长任务里 AI 会忘掉或悄悄放宽我的要求，所以以我的原话为准。",
-        "source": "起草",
-        "quote": "",
-        "from": ""
-      },
-      "directory": "xy-goal",
-      "entries": [
-        "xy-goal/README.md"
-      ],
-      "children": [
-        {
-          "id": "capture-quotes",
-          "title": "逐字记录我的原话",
-          "what": "我在主会话里发的每条消息、答的每道选择题，都自动逐字记下来并编号。",
-          "why": {
-            "text": "让 AI 自己抄会抄错、抄漏。",
-            "source": "起草",
-            "quote": "",
-            "from": ""
-          },
-          "directory": null,
-          "entries": [
-            "xy-goal/SKILL.md",
-            "xy-goal/goal.py"
-          ],
-          "children": []
         },
         {
-          "id": "track-and-verify",
-          "title": "事项对账与验收",
-          "what": "每件事挂到原话上，按判据验收，关闭前整体复核。",
+          "id": "xy-goal",
+          "title": "长目标契约",
+          "what": "我说过的话不丢，事情按我的原话验收。",
           "why": {
-            "text": "事情做没做完，要对着我的原话核，不能凭 AI 自己说。",
-            "source": "起草",
+            "text": "长任务里 AI 会忘掉或悄悄放宽我的要求，所以以我的原话为准。",
+            "source": "确认",
             "quote": "",
-            "from": ""
+            "from": "20261110 清扫决定页面第一页"
           },
-          "directory": null,
+          "directory": "xy-goal",
           "entries": [
-            "xy-goal/SKILL.md",
-            "xy-goal/goal.py"
+            "xy-goal/README.md"
           ],
-          "children": []
-        },
-        {
-          "id": "scheduled-review",
-          "title": "定时自查",
-          "what": "在办的事每半小时回看一次，能推进的接着推进；只剩等我的时候暂停。",
-          "why": {
-            "text": "我不在的时候，事情不能停在半路。",
-            "source": "起草",
-            "quote": "",
-            "from": ""
-          },
-          "directory": null,
-          "entries": [
-            "xy-goal/SKILL.md",
-            "xy-goal/goal.py"
-          ],
-          "children": []
-        },
-        {
-          "id": "contract-takeover",
-          "title": "换会话接着办",
-          "what": "换一个会话也能接着办同一件事，原话和事项跟着走。",
-          "why": {
-            "text": "长任务难免换会话，不能每次从头再说一遍。",
-            "source": "起草",
-            "quote": "",
-            "from": ""
-          },
-          "directory": null,
-          "entries": [
-            "xy-goal/SKILL.md",
-            "xy-goal/goal.py"
-          ],
-          "children": []
+          "children": [
+            {
+              "id": "capture-quotes",
+              "title": "自动逐字记录我的原话",
+              "what": "不用 AI 动手抄：我在主会话里发的每条消息、答的每道选择题，都由程序自动逐字记下来并编号。",
+              "why": {
+                "text": "让 AI 自己抄会抄错、抄漏。",
+                "source": "确认",
+                "quote": "",
+                "from": "20261110 清扫决定页面第二页 R4"
+              },
+              "directory": null,
+              "entries": [
+                "xy-goal/SKILL.md",
+                "xy-goal/goal.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "track-and-verify",
+              "title": "事项对账与验收",
+              "what": "每件事挂到原话上，按判据验收，关闭前整体复核。",
+              "why": {
+                "text": "事情做没做完，要对着我的原话核，不能凭 AI 自己说。",
+                "source": "确认",
+                "quote": "",
+                "from": "20261110 清扫决定页面第一页"
+              },
+              "directory": null,
+              "entries": [
+                "xy-goal/SKILL.md",
+                "xy-goal/goal.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "scheduled-review",
+              "title": "定时自查",
+              "what": "在办的事每半小时回看一次，能推进的接着推进；只剩等我的时候暂停。",
+              "why": {
+                "text": "我不在的时候，事情不能停在半路。",
+                "source": "确认",
+                "quote": "",
+                "from": "20261110 清扫决定页面第一页"
+              },
+              "directory": null,
+              "entries": [
+                "xy-goal/SKILL.md",
+                "xy-goal/goal.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "contract-takeover",
+              "title": "换会话接着办",
+              "what": "换一个会话也能接着办同一件事，原话和事项跟着走。",
+              "why": {
+                "text": "长任务难免换会话，不能每次从头再说一遍。",
+                "source": "确认",
+                "quote": "",
+                "from": "20261110 清扫决定页面第一页"
+              },
+              "directory": null,
+              "entries": [
+                "xy-goal/SKILL.md",
+                "xy-goal/goal.py"
+              ],
+              "children": []
+            }
+          ]
         }
       ]
     },
     {
       "id": "xy-handoff",
       "title": "会话任务交接",
-      "what": "大任务归谁、怎么拆、怎么交接和收尾。",
+      "what": "一件事太大时，拆成几件中等的事分给不同的会话；每个会话再把自己那件拆成小任务交给小会话，各自按标准工作流程做完。",
       "why": {
-        "text": "任务有大有小，小任务要挂在大任务下面，不能各做各的。",
+        "text": "很大的事一个会话装不下，AI 要能发现它太大并逐层拆开；换个干净的会话接着做只是其中一种用法。",
         "source": "原话",
-        "quote": "希望 AI 能够创建大任务，并把小任务挂在大任务下面。",
-        "from": "20261025-070412-xy-skills-task-handoff 原话 1"
+        "quote": "比如说我有一个超级巨大的事情，AI 应该能够发现这个事情太大了，可以被拆成多个中等大小的事情。",
+        "from": "20261110 清扫决定页面第一页 A14"
       },
       "directory": "xy-handoff",
       "entries": [
@@ -268,9 +268,9 @@
           "what": "交接说明是不是按固定结构写全了，用脚本查，查不过不启动接手的会话。",
           "why": {
             "text": "交接说明缺一块，接手的会话就会带着缺口干活。",
-            "source": "起草",
+            "source": "确认",
             "quote": "",
-            "from": ""
+            "from": "20261110 清扫决定页面第一页"
           },
           "directory": null,
           "entries": [
@@ -287,9 +287,9 @@
       "what": "工作中产生的文件各有去处，过期的自动清掉。",
       "why": {
         "text": "AI 干活会到处留临时文件，不管就越积越多。",
-        "source": "起草",
+        "source": "确认",
         "quote": "",
-        "from": ""
+        "from": "20261110 清扫决定页面第一页"
       },
       "directory": "xy-runs",
       "entries": [],
@@ -300,9 +300,9 @@
           "what": "工作中写出的每个文件，按要活多久、归谁管，只有三个去处；工作树和工具自己管的位置除外。",
           "why": {
             "text": "去处说不清，文件就会被放错地方。",
-            "source": "起草",
+            "source": "确认",
             "quote": "",
-            "from": ""
+            "from": "20261110 清扫决定页面第一页"
           },
           "directory": null,
           "entries": [
@@ -316,9 +316,9 @@
           "what": "满 30 天没动、也没有我的进程在用的运行目录（含 Codex 子代理的会话目录），每天自动删掉。",
           "why": {
             "text": "没人会记得回头手动删。",
-            "source": "起草",
+            "source": "确认",
             "quote": "",
-            "from": ""
+            "from": "20261110 清扫决定页面第一页"
           },
           "directory": null,
           "entries": [
@@ -359,7 +359,8 @@
             "xy-repo-map/repo_map.py",
             "xy-repo-map/repo_map_lib/map_data.py",
             "xy-repo-map/tests/test_derivation.py",
-            "xy-repo-map/tests/test_real_repository.py"
+            "xy-repo-map/tests/test_real_repository.py",
+            "xy-repo-map/tests/map_fixture.py"
           ],
           "children": [
             {
@@ -368,9 +369,9 @@
               "what": "清单写得对不对：字段齐不齐、出处有没有填、目录和入口在不在。",
               "why": {
                 "text": "功能清单是人写的，写错了要当场指出来。",
-                "source": "起草",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
               "entries": [
@@ -385,9 +386,9 @@
               "what": "每个被跟踪的文件恰好归到一个功能。",
               "why": {
                 "text": "行数要算到功能头上，先得知道每个文件是谁的。",
-                "source": "起草",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
               "entries": [
@@ -454,9 +455,9 @@
               "what": "把页面发到我自己的网页平台上，给我一个能打开的链接。",
               "why": {
                 "text": "图要发出来，我才看得到。",
-                "source": "起草",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
               "entries": [
@@ -523,10 +524,10 @@
               "title": "只审变过的功能",
               "what": "重复清扫同一个仓库时，只审上次认可之后变过的功能。",
               "why": {
-                "text": "这次重做时用户决定先不做，并要求别忘了；要不要做、怎么做，等真有需要时由用户定。",
-                "source": "起草",
+                "text": "用户决定先不做、留作提醒；清扫大仓库嫌慢了再做。",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
               "entries": [],

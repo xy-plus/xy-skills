@@ -26,16 +26,20 @@ def _python_doc_lines(source):
         return set()
     result = set()
 
-    def visit_body(body):
+    def add_docstring(body):
         if body and isinstance(body[0], ast.Expr):
             value = body[0].value
             if isinstance(value, ast.Constant) and isinstance(value.value, str):
                 result.update(range(body[0].lineno, body[0].end_lineno + 1))
-        for item in body:
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                visit_body(item.body)
 
-    visit_body(tree.body)
+    def visit_definitions(node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            add_docstring(node.body)
+        for child in ast.iter_child_nodes(node):
+            visit_definitions(child)
+
+    add_docstring(tree.body)
+    visit_definitions(tree)
     return result
 
 

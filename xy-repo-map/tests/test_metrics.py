@@ -37,6 +37,33 @@ def public_function():
         counts = code_counts("sample.py", source)
         self.assertEqual((counts.code, counts.docs, counts.comments), (8, 5, 1))
 
+    def test_python_docstrings_inside_control_flow_blocks_are_documentation(self):
+        source = '''if condition:
+    def in_if_function():
+        """Function docs in if."""
+    class InIfClass:
+        """Class docs in if."""
+try:
+    def in_try_function():
+        """Function docs in try."""
+    class InTryClass:
+        """Class docs in try."""
+except Exception:
+    pass
+with manager:
+    def in_with_function():
+        """Function docs in with."""
+    class InWithClass:
+        """Class docs in with."""
+for item in items:
+    def in_for_function():
+        """Function docs in for."""
+    class InForClass:
+        """Class docs in for."""
+'''
+        counts = code_counts("sample.py", source)
+        self.assertEqual(counts.docs, 8)
+
     def test_shell_shebang_is_code_but_full_line_hash_is_comment(self):
         counts = code_counts("script.sh", "#!/bin/sh\n# explanation\necho hi # inline\n\n")
         self.assertEqual((counts.code, counts.docs, counts.comments), (2, 0, 1))

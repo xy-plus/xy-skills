@@ -464,7 +464,7 @@ class CheckTest(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertTrue(any(invalid_round in problem for problem in problems), problems)
 
-    def test_opening_a_group_requires_previous_diagnosis_file(self):
+    def test_opening_a_group_requires_a_valid_previous_diagnosis(self):
         folders = ("group2", "round1")
         code, problems = self.run_report("review-main.json", main_report(), folders)
         self.assertEqual(code, 1)
@@ -472,7 +472,13 @@ class CheckTest(unittest.TestCase):
 
         os.makedirs(os.path.join(self.root, "group1", "round1"), exist_ok=True)
         with open(os.path.join(self.root, "group1", "diagnosis.json"), "w", encoding="utf-8") as stream:
-            stream.write("此文件存在即可，不读取内容。")
+            stream.write(json_text(diagnosis_report(actions=["无效动作"])))
+        code, problems = self.run_report("review-main.json", main_report(), folders)
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(any("actions 只能包含" in problem for problem in problems), problems)
+
+        with open(os.path.join(self.root, "group1", "diagnosis.json"), "w", encoding="utf-8") as stream:
+            stream.write(json_text(diagnosis_report()))
         self.assertEqual(self.run_report("review-main.json", main_report(), folders), (0, []))
 
     def test_round3_failure_is_only_a_reminder(self):

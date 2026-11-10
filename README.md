@@ -20,7 +20,10 @@
 ```bash
 git clone https://github.com/xy-plus/xy-skills ~/xy-skills
 mkdir -p ~/.claude/skills
-for d in ~/xy-skills/*/; do ln -sfn "${d%/}" ~/.claude/skills/$(basename "$d"); done
+for d in ~/xy-skills/*/; do
+  [[ -f "${d}SKILL.md" ]] || continue
+  ln -sfn "${d%/}" ~/.claude/skills/"$(basename "$d")"
+done
 ```
 
 在全局 `~/.claude/settings.json` 的 `env` 里显式设置 runs 的绝对路径，保留已有配置，例如：

@@ -293,7 +293,7 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(data["features"]["package"]["files"]["shared"], ["pkg/tests/test_multi.py"])
         self.assertEqual(data["features"]["package"]["files"]["whole"], ["pkg/tests/test_none.py"])
 
-    def test_unregistered_test_only_matches_imported_code_in_its_directory_feature(self):
+    def test_unregistered_test_follows_other_directory_import_when_no_local_import_exists(self):
         repository = make_repo(self, {
             "pkg/alpha.py": "alpha = 1\n",
             "pkg/tests/test_alpha.py": "import external.alpha\n",
@@ -306,7 +306,8 @@ class DerivationTest(unittest.TestCase):
         ]))
         data = build_map(self, repository)
         self.assertEqual(data["features"]["alpha"]["files"]["reached"], [])
-        self.assertIn("pkg/tests/test_alpha.py", data["features"]["package"]["files"]["whole"])
+        self.assertEqual(data["features"]["external"]["files"]["reached"], ["pkg/tests/test_alpha.py"])
+        self.assertEqual(data["features"]["package"]["files"]["whole"], [])
 
     def test_child_registration_wins_over_ancestor_registration(self):
         package = feature("package", "pkg", children=[

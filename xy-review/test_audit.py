@@ -55,6 +55,11 @@ class AuditTest(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertTrue(any("diagnosis.json" in problem for problem in problems), problems)
 
+            write_file(loop, "diagnosis.json", '{"diagnosis":"已复核","actions":["无效动作"]}')
+            code, problems = self.run_audit(root)
+            self.assertEqual(code, 1, problems)
+            self.assertTrue(any("actions 只能包含" in problem for problem in problems), problems)
+
             write_file(loop, "diagnosis.json", '{"diagnosis":"已复核","actions":["重想"]}')
             self.assertEqual(self.run_audit(root), (0, []))
 

@@ -356,7 +356,9 @@ function applyVisibility() {
     const toggle = rows.get(featureId).querySelector(".caret");
     toggle.setAttribute("aria-expanded", String(!list.hidden));
   }
-  for (const block of undividedBlocks.values()) block.hidden = showDecisions;
+  for (const [featureId, block] of undividedBlocks) {
+    block.hidden = showDecisions || childLists.get(featureId).hidden;
+  }
   const filter = document.querySelector("#decision-filter");
   if (filter) filter.setAttribute("aria-pressed", String(showDecisions));
   document.querySelector("#depth-value").textContent = String(depth);

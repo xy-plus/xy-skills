@@ -204,6 +204,16 @@ def check(text, filename):
     return problems
 
 
+def diagnosis_file_problems(path):
+    """Return validation problems for a diagnosis file using this report checker."""
+    diagnosis_path = pathlib.Path(path)
+    try:
+        text = diagnosis_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        return [f"无法读取判因报告：{error}"]
+    return check(text, "diagnosis.json")
+
+
 def main(argv):
     if len(argv) != 2:
         print("用法：check.py <报告路径>")
@@ -255,6 +265,12 @@ def main(argv):
                 problems.append(
                     f"{previous_diagnosis} 不存在；一组要复审到第 3 轮仍不通过、派判因写下原因后才能开新组"
                 )
+            else:
+                diagnosis_problems = diagnosis_file_problems(previous_diagnosis)
+                if diagnosis_problems:
+                    problems.append(
+                        f"{previous_diagnosis} 判因报告无效：" + "；".join(diagnosis_problems)
+                    )
 
     if problems:
         print("\n".join(problems))
