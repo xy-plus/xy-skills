@@ -1,0 +1,72 @@
+"""Test offline render output and its embedded map contract."""
+import json
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import unittest
+
+from map_fixture import COMMAND, feature, make_repo
+
+
+class RenderTest(unittest.TestCase):
+    def setUp(self):
+        self.repository = make_repo(self, {
+            "README.md": "Demo repository.\n",
+            "alpha/main.py": "value = 1\n",
+            "branch/approved.py": "value = 2\n",
+        }, feature("root", "", children=[
+            feature("alpha", "alpha"),
+            feature("branch", "branch", children=[
+                feature("approved", None, entries=["branch/approved.py"]),
+                feature("future", None, source="起草"),
+            ]),
+        ]))
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.output = Path(self.temporary.name) / "rendered"
+
+    def render(self, output=None):
+        return subprocess.run(
+            ["python3", "-B", str(COMMAND), "render", "--repo", str(self.repository),
+             "--out", str(output or self.output)],
+            capture_output=True, text=True, check=False,
+        )
+
+    def test_render_writes_map_data_and_a_self_contained_page(self):
+        result = self.render()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = json.loads((self.output / "map-data.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(data), {"root", "features", "markers"})
+        self.assertEqual(data["root"], "root")
+        self.assertEqual(data["markers"]["等你拍板"], 1)
+        page = (self.output / "index.html").read_text(encoding="utf-8")
+        embedded = re.search(r'<script id="map-data" type="application/json">(.*?)</script>',
+                             page, re.DOTALL)
+        self.assertIsNotNone(embedded)
+        page_data = json.loads(embedded.group(1))
+        expected = json.loads(json.dumps(data))
+        for item in expected["features"].values():
+            del item["files"]
+        self.assertEqual(page_data, expected)
+        self.assertNotIn("files", page_data["features"]["root"])
+        self.assertNotIn("<script src=", page)
+        self.assertNotIn("<link rel=\"stylesheet\" href=", page)
+
+    def test_render_does_not_write_a_page_when_the_feature_list_is_invalid(self):
+        feature_path = self.repository / "repo-map" / "features.json"
+        feature_path.write_text("{}", encoding="utf-8")
+        result = self.render()
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(self.output.exists())
+
+    def test_render_rejects_a_nonempty_output_directory(self):
+        self.output.mkdir()
+        (self.output / "keep.txt").write_text("keep", encoding="utf-8")
+        result = self.render()
+        self.assertEqual(result.returncode, 2)
+        self.assertTrue((self.output / "keep.txt").is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()

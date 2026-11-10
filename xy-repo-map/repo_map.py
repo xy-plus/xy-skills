@@ -5,6 +5,8 @@ import sys
 
 from repo_map_lib.git_repository import ArgumentError, require_repository_root
 from repo_map_lib.map_data import build_map
+from repo_map_lib.publish_command import publish_repository
+from repo_map_lib.render_command import render_repository
 
 
 def parser():
@@ -13,6 +15,14 @@ def parser():
 
     check = commands.add_parser("check", help="校验功能清单并推导文件归属")
     check.add_argument("--repo", required=True, help="git 仓根的绝对路径")
+
+    render = commands.add_parser("render", help="生成离线功能树页面")
+    render.add_argument("--repo", required=True, help="git 仓根的绝对路径")
+    render.add_argument("--out", required=True, help="不存在或为空的输出目录")
+
+    publish = commands.add_parser("publish", help="发布 render 生成的页面")
+    publish.add_argument("--out", required=True, help="render 生成的目录")
+    publish.add_argument("--name", required=True, help="平台站点名")
     return result
 
 
@@ -29,7 +39,13 @@ def main(argv):
     except SystemExit as error:
         return int(error.code)
     try:
+        if options.command == "publish":
+            return publish_repository(options.out, options.name)
         repository = require_repository_root(options.repo)
+        if options.command == "render":
+            directory = render_repository(repository, options.out)
+            print(f"页面已生成：{directory}")
+            return 0
         data = build_map(repository)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
