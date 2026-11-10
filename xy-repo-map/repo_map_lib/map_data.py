@@ -23,13 +23,14 @@ from .ownership import assign_files
 
 
 SOURCE_SUFFIXES = set(CODE_SUFFIXES) | {".html", ".css"}
+CODE_CANDIDATE_SUFFIXES = SOURCE_SUFFIXES | UNSUPPORTED_CODE_SUFFIXES
 TEST_FILE_ENDINGS = ("_test.py", "_test.rs")
 
 
 def _is_test_file(path):
     suffix = Path(path).suffix.lower()
     name = Path(path).name
-    has_code_suffix = suffix in SOURCE_SUFFIXES
+    has_code_suffix = suffix in CODE_CANDIDATE_SUFFIXES
     in_test_directory = any(part in TEST_DIRECTORY_NAMES for part in Path(path).parts[:-1])
     named_test = (
         (name.startswith("test_") and suffix == ".py")
@@ -45,7 +46,7 @@ def _file_category(path):
     if _is_test_file(path):
         return "tests"
     suffix = Path(path).suffix.lower()
-    if suffix in SOURCE_SUFFIXES:
+    if suffix in CODE_CANDIDATE_SUFFIXES:
         return "code"
     if suffix in (".md", ".rst") and not any(
         part in TEST_DIRECTORY_NAMES for part in Path(path).parts[:-1]
@@ -109,16 +110,20 @@ def build_map(repository):
     if subrepositories:
         raise ValueError("还不支持子仓：" + ", ".join(subrepositories))
 
-    unsupported = sorted(path for path in paths if Path(path).suffix.lower() in UNSUPPORTED_CODE_SUFFIXES)
-    if unsupported:
-        raise ValueError("已知是代码但不支持统计的文件：" + ", ".join(unsupported))
-
     categories = {}
     source_texts = {}
     for path in paths:
         categories[path], source_texts[path] = _read_source(
             root, path, _file_category(path)
         )
+
+    unsupported = sorted(
+        path for path in paths
+        if Path(path).suffix.lower() in UNSUPPORTED_CODE_SUFFIXES
+        and categories[path] != "other"
+    )
+    if unsupported:
+        raise ValueError("已知是代码但不支持统计的文件：" + ", ".join(unsupported))
 
     counts = {
         path: count_file(path, categories[path], source_texts[path])
