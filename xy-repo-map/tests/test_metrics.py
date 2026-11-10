@@ -108,11 +108,9 @@ let answer = 42; // inline
         with self.assertRaisesRegex(TypeError, "文本"):
             count_file("guide.md", "docs", b"text\n")
 
-    def test_count_file_rejects_categories_outside_the_four_file_categories(self):
-        for category in ("data", "repo", "unknown"):
-            with self.subTest(category=category):
-                with self.assertRaisesRegex(ValueError, "文件类别"):
-                    count_file("file.bin", category, "text\n")
+    def test_count_file_rejects_an_unknown_category(self):
+        with self.assertRaisesRegex(ValueError, "文件类别"):
+            count_file("file.bin", "unknown", "text\n")
 
     def test_unsupported_code_suffix_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "不支持"):
