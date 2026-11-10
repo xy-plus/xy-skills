@@ -246,8 +246,12 @@ def _lexed_counts(source, language):
 
 
 def code_counts(path, source):
-    """Classify non-empty code-file lines; inline comments stay code."""
+    """Classify non-empty source lines; inline comments stay code."""
     suffix = Path(path).suffix.lower()
+    if suffix == ".css":
+        return _lexed_counts(source, "C")
+    if suffix == ".html":
+        return _html_counts(source)
     if suffix not in CODE_SUFFIXES:
         raise ValueError(f"code 文件后缀不支持：{suffix or '<无后缀>'}")
     language = CODE_SUFFIXES[suffix]
@@ -266,6 +270,34 @@ def code_counts(path, source):
                 code += 1
         return LineCounts(code, 0, comments, 0)
     return _lexed_counts(source, language)
+
+
+def _html_counts(source):
+    spans = []
+    start = 0
+    while True:
+        start = source.find("<!--", start)
+        if start < 0:
+            break
+        end = source.find("-->", start + 4)
+        if end < 0:
+            spans.append((start, len(source)))
+            break
+        spans.append((start, end + 3))
+        start = end + 3
+
+    counts = {"code": 0, "comments": 0}
+    offset = 0
+    for line in source.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        visible = [offset + index for index, char in enumerate(content) if not char.isspace()]
+        if visible:
+            if all(any(begin <= position < end for begin, end in spans) for position in visible):
+                counts["comments"] += 1
+            else:
+                counts["code"] += 1
+        offset += len(line)
+    return LineCounts(counts["code"], 0, counts["comments"], 0)
 
 
 def _public_python_coverage(source):
@@ -358,6 +390,6 @@ def count_file(path, category, content):
         return LineCounts(0, sum(bool(line.strip()) for line in source.splitlines()), 0, 0)
     if category == "tests":
         return LineCounts(0, 0, 0, sum(bool(line.strip()) for line in source.splitlines()))
-    if category in ("data", "repo"):
+    if category in ("data", "repo", "other"):
         return ZERO_COUNTS
     raise ValueError(f"未知链接类别：{category}")

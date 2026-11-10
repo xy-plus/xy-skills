@@ -1,97 +1,143 @@
-"""Map each tracked repository path to exactly one model element."""
-import posixpath
+"""Assign tracked files to the features that register or import them."""
 from pathlib import Path
-from typing import NamedTuple
-from urllib.parse import urlparse
 
 
-class Owner(NamedTuple):
-    element: str
-    category: str
+def _under(path, directory):
+    return directory == "" or path.startswith(directory + "/")
 
 
-def link_records(model):
-    """Return normalized links as (element id, repo-relative path, category)."""
-    records = []
-    for element_id, element in model.get("elements", {}).items():
-        for link in element.get("links", []):
-            url = link.get("url", "")
-            parsed = urlparse(url)
-            if parsed.scheme or parsed.netloc or url.startswith("/"):
-                records.append((element_id, None, link.get("title"), url))
+def _home(feature_id, features):
+    current = feature_id
+    while current is not None:
+        if features[current]["directory"] is not None:
+            return current
+        current = features[current]["parent"]
+    return None
+
+
+def _ancestors(feature_id, features):
+    result = []
+    current = feature_id
+    while current is not None:
+        result.append(current)
+        current = features[current]["parent"]
+    return result
+
+
+def _is_ancestor(ancestor, feature_id, features):
+    return ancestor in _ancestors(feature_id, features)
+
+
+def _common_parent(feature_ids, features):
+    if not feature_ids:
+        return None
+    shared = set(_ancestors(feature_ids[0], features))
+    for feature_id in feature_ids[1:]:
+        shared.intersection_update(_ancestors(feature_id, features))
+    return next(item for item in _ancestors(feature_ids[0], features) if item in shared)
+
+
+def _prune_ancestors(feature_ids, features):
+    return {feature_id for feature_id in feature_ids
+            if not any(feature_id != other and _is_ancestor(feature_id, other, features)
+                       for other in feature_ids)}
+
+
+def _test_code_match(test_path, code_paths):
+    name = Path(test_path).name
+    candidate = None
+    if name.startswith("test_") and name.endswith(".py"):
+        candidate = name[5:]
+    elif name.startswith("test_") and name.endswith("_test.py"):
+        candidate = name[5:-8] + ".py"
+    elif name.endswith("_test.py"):
+        candidate = name[:-8] + ".py"
+    elif name.endswith("_test.rs"):
+        candidate = name[:-8] + ".rs"
+    if candidate is None:
+        return None
+    matches = [path for path in code_paths if Path(path).name == candidate]
+    return matches[0] if len(matches) == 1 else None
+
+
+def assign_files(features, order, paths, categories, entries, imports):
+    """Return each tracked path's owner and its reason group."""
+    directories = [(feature_id, features[feature_id]["directory"]) for feature_id in order
+                   if features[feature_id]["directory"] is not None]
+    directory_for = {}
+    for path in sorted(paths, key=lambda item: categories[item] == "tests"):
+        matches = [(feature_id, directory) for feature_id, directory in directories
+                   if _under(path, directory)]
+        directory_for[path] = max(matches, key=lambda item: len(item[1]), default=(None, None))[0]
+
+    entry_owners = {path: set() for path in paths}
+    for feature_id, feature_paths in entries.items():
+        for path in feature_paths:
+            entry_owners[path].add(feature_id)
+    effective_entries = {path: _prune_ancestors(owners, features)
+                         for path, owners in entry_owners.items()}
+
+    reached_by = {path: set() for path in paths}
+    feature_home = {feature_id: _home(feature_id, features) for feature_id in order}
+    for feature_id in order:
+        home = feature_home[feature_id]
+        pending = [path for path in entries[feature_id] if categories[path] != "tests"]
+        seen = set(pending)
+        while pending:
+            source = pending.pop()
+            for target in imports.get(source, set()):
+                if target not in directory_for or directory_for[target] != home or target in seen:
+                    continue
+                blockers = effective_entries[target]
+                if any(not (_is_ancestor(feature_id, owner, features)
+                            or _is_ancestor(owner, feature_id, features)) for owner in blockers):
+                    continue
+                seen.add(target)
+                pending.append(target)
+        for path in seen:
+            reached_by[path].add(feature_id)
+
+    owners, groups = {}, {}
+    code_paths = [path for path in paths if categories[path] == "code"]
+    for path in sorted(paths, key=lambda item: categories[item] == "tests"):
+        home = directory_for[path]
+        if home is None:
+            continue
+        if not features[home]["children"]:
+            owners[path], groups[path] = home, "directory"
+            continue
+        registered = effective_entries[path]
+        if registered:
+            selected = registered
+            group = "registered"
+        elif categories[path] == "tests":
+            matched_code = _test_code_match(path, code_paths)
+            if matched_code is not None:
+                owners[path], groups[path] = owners[matched_code], "reached"
                 continue
-            normalized = posixpath.normpath(posixpath.join("repo-map", parsed.path))
-            if normalized.startswith("repo-map/"):
-                relative = normalized[len("repo-map/"):]
-            elif normalized == "repo-map":
-                relative = "."
-            elif normalized == ".." or normalized.startswith("../"):
-                relative = None
+            imported_owners = {
+                owners[target] for target in imports.get(path, set())
+                if target in owners and categories[target] == "code"
+            }
+            if imported_owners:
+                selected = imported_owners
+                group = "reached"
             else:
-                relative = normalized
-            records.append((element_id, relative, link.get("title"), url))
-    return records
-
-
-def check_ownership(repo_root, model, tracked_paths, gitlink_paths, subrepo_paths):
-    """Check link targets, path overlap, gitlinks, child repositories, and coverage."""
-    root = Path(repo_root)
-    problems = []
-    records = link_records(model)
-    targets = {}
-    for element_id, target, category, original in records:
-        if target is None:
-            problems.append(f"链接必须是 repo-map 内的相对路径：{element_id} -> {original}")
-            continue
-        if target in targets:
-            problems.append(f"重复链接路径 {target}：{targets[target]} 与 {element_id}")
+                owners[path], groups[path] = home, "whole"
+                continue
         else:
-            targets[target] = element_id
-        if target != "." and not (root / target).exists():
-            problems.append(f"链接目标不存在：{element_id} -> {target}")
-
-    child_links = {}
-    for element_id, target, category, original in records:
-        if target is None or category != "repo":
-            continue
-        child_links.setdefault(target, []).append(element_id)
-        if target not in subrepo_paths:
-            problems.append(f"repo 链接没有指向识别出的子仓：{element_id} -> {target}")
-        elif not (root / target / "repo-map").is_dir():
-            problems.append(f"子仓缺少 repo-map：{target}")
-    for subrepo in sorted(set(subrepo_paths)):
-        matching = child_links.get(subrepo, [])
-        if len(matching) != 1:
-            problems.append(f"子仓 {subrepo} 必须对应恰好一个 repo 元素，实际 {len(matching)} 个")
-
-    owners = {}
-    for tracked in sorted(set(tracked_paths)):
-        if tracked == "repo-map" or tracked.startswith("repo-map/"):
-            continue
-        if tracked in gitlink_paths:
-            matching = [(element_id, target, category) for element_id, target, category, _ in records
-                        if target == tracked]
-            if len(matching) != 1 or matching[0][2] != "repo":
-                problems.append(f"submodule gitlink {tracked} 只能由 repo 链接覆盖")
+            selected = reached_by[path]
+            if selected:
+                group = "reached"
+            else:
+                owners[path], groups[path] = home, "whole"
                 continue
-        candidates = []
-        for element_id, target, category, _ in records:
-            if target is None:
-                continue
-            target_path = root / target
-            is_directory = target == "." or target_path.is_dir()
-            below_target = target == "." or tracked.startswith(target.rstrip("/") + "/")
-            if tracked == target or (is_directory and below_target):
-                candidates.append((len(target), element_id, category))
-        if not candidates:
-            problems.append(f"跟踪文件未归属任何节点：{tracked}")
-            continue
-        longest = max(size for size, _, _ in candidates)
-        winners = [(element_id, category) for size, element_id, category in candidates if size == longest]
-        if len(winners) != 1:
-            problems.append(f"跟踪文件有多个最长路径归属：{tracked}")
-            continue
-        owners[tracked] = Owner(*winners[0])
-        if tracked in gitlink_paths and winners[0][1] != "repo":
-            problems.append(f"submodule gitlink {tracked} 只能由 repo 链接覆盖")
-    return problems, owners
+
+        selected = _prune_ancestors(selected, features)
+        if len(selected) == 1:
+            owners[path] = next(iter(selected))
+            groups[path] = group
+        else:
+            owners[path] = _common_parent(sorted(selected), features)
+            groups[path] = "shared"
+    return owners, groups

@@ -1,297 +1,233 @@
-"""Compose checked repository models into page data and its public JSON contract."""
-from pathlib import Path, PurePosixPath
+"""Derive feature ownership, line totals, dependencies, and review markers."""
+from collections import defaultdict
+from pathlib import Path
 
-from .metrics import ZERO_COUNTS, count_file, coverage_counts
-from .ownership import link_records
-from .rendering import add_counts, add_coverage, coverage_text
-from .sibling_order import visual_children_order
-
-
-COUNT_NAMES = ("code", "docs", "comments", "tests")
-
-
-def _description(element):
-    value = element.get("description", "")
-    if isinstance(value, dict):
-        return value.get("txt", "")
-    return value
-
-
-def _endpoint(value):
-    if isinstance(value, dict):
-        return value.get("model", value.get("id", ""))
-    return value
+from .constants import (
+    CODE_SUFFIXES,
+    FILE_GROUPS,
+    LINE_NAMES,
+    MARKER_NAMES,
+    TEST_DIRECTORY_NAMES,
+    UNSUPPORTED_CODE_SUFFIXES,
+)
+from .dependencies import directory_mentions, file_mentions, imports_for_file
+from .features import load_features
+from .git_repository import discover_subrepositories, require_repository_root, tracked_paths
+from .metrics import count_file
+from .ownership import assign_files
 
 
-def _lowest_common_ancestor(element_ids, parents):
-    ancestor_paths = []
-    for element_id in sorted(element_ids):
-        path = []
-        seen = set()
-        current = element_id
-        while current is not None:
-            if current in seen:
-                raise ValueError(f"仓图树出现循环层级：{element_id}")
-            seen.add(current)
-            path.append(current)
-            current = parents[current]
-        ancestor_paths.append(path)
-    common = set(ancestor_paths[0]).intersection(*ancestor_paths[1:])
-    return next(element_id for element_id in ancestor_paths[0] if element_id in common)
+SOURCE_SUFFIXES = set(CODE_SUFFIXES) | {".html", ".css"}
+TEST_FILE_ENDINGS = ("_test.py", "_test.rs")
 
 
-def _unit_names(repositories, elements, parents, root_ids, repository_unit_names):
-    """Use assigned code, docs, and tests to find each node's shallowest exclusive dirs."""
-    names = {element_id: [] for element_id in elements}
-    for item in repositories:
-        owners_by_directory = {}
-        for file_path, owner in item["owners"].items():
-            if owner.category not in ("code", "docs", "tests"):
-                continue
-            parts = PurePosixPath(file_path).parts[:-1]
-            for depth in range(1, len(parts) + 1):
-                directory = PurePosixPath(*parts[:depth]).as_posix()
-                owners_by_directory.setdefault(directory, set()).add(owner.element)
-
-        directory_owners = {
-            directory: _lowest_common_ancestor(element_ids, parents)
-            for directory, element_ids in owners_by_directory.items()
-        }
-        directories_by_element = {}
-        for directory in sorted(directory_owners):
-            element_id = directory_owners[directory]
-            if element_id in root_ids:
-                continue
-            parent_directory = PurePosixPath(directory).parent.as_posix()
-            if directory_owners.get(parent_directory) == element_id:
-                continue
-            directories_by_element.setdefault(element_id, []).append(
-                PurePosixPath(directory).name)
-
-        for element_id, directory_names in directories_by_element.items():
-            names[element_id] = list(dict.fromkeys(directory_names))
-
-    for element_id, name in repository_unit_names.items():
-        names[element_id] = [name]
-    return names
+def _is_test_file(path):
+    suffix = Path(path).suffix.lower()
+    name = Path(path).name
+    has_code_suffix = suffix in SOURCE_SUFFIXES
+    in_test_directory = any(part in TEST_DIRECTORY_NAMES for part in Path(path).parts[:-1])
+    named_test = (
+        (name.startswith("test_") and suffix in (".py", ".rs"))
+        or name in ("conftest.py",)
+        or name.endswith(TEST_FILE_ENDINGS)
+    )
+    return has_code_suffix and (in_test_directory or named_test)
 
 
-def _count_dict(counts):
-    return {name: getattr(counts, name) for name in COUNT_NAMES}
+def _file_category(path):
+    if any(part in ("third_party", "vendor", "node_modules") for part in Path(path).parts):
+        return "other"
+    if _is_test_file(path):
+        return "tests"
+    suffix = Path(path).suffix.lower()
+    if suffix in SOURCE_SUFFIXES:
+        return "code"
+    if suffix in (".md", ".rst") and not any(
+        part in TEST_DIRECTORY_NAMES for part in Path(path).parts[:-1]
+    ):
+        return "docs"
+    return "other"
 
 
-def _visible_ancestor(element_id, visible, parents):
-    current = element_id
-    while current is not None:
-        if current in visible:
-            return current
-        current = parents.get(current)
-    return None
+def _source_text(repository, path):
+    try:
+        content = (Path(repository) / path).read_bytes()
+    except OSError:
+        return None
+    if b"\0" in content:
+        return None
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
-def _relation_container(source, target, parents, aliases):
-    source = aliases.get(source, source)
-    target = aliases.get(target, target)
-
-    def parent_of(element_id):
-        parent = parents.get(element_id)
-        return aliases.get(parent, parent)
-
-    source_ancestors = []
-    current = source
-    while current is not None:
-        source_ancestors.append(current)
-        current = parent_of(current)
-    target_ancestors = set()
-    current = target
-    while current is not None:
-        target_ancestors.add(current)
-        current = parent_of(current)
-    common = next((element_id for element_id in source_ancestors
-                   if element_id in target_ancestors), None)
-    if common in (source, target):
-        return parent_of(common)
-    return common
-
-
-def _drill_views(nodes, children, parents, relations, repo_roots):
-    result = {}
-    repository_root_ids = set(repo_roots.values())
-    for element_id in sorted(nodes):
-        child_root = repo_roots.get(element_id, element_id)
-        visible = children.get(child_root, []) or [element_id]
-        visible_set = set(visible)
-        labels_by_pair = {}
-        for relation in relations:
-            source = _visible_ancestor(relation["source"], visible_set, parents)
-            target = _visible_ancestor(relation["target"], visible_set, parents)
-            if source is None or target is None or source == target:
-                continue
-            pair = (source, target)
-            labels = labels_by_pair.setdefault(pair, [])
-            if relation["title"] and relation["title"] not in labels:
-                labels.append(relation["title"])
-        path = []
-        current = element_id
-        while current is not None:
-            if current not in repository_root_ids:
-                path.append(current)
-            current = parents.get(current)
-        result[element_id] = {
-            "nodes": visible,
-            "relations": [
-                {"source": source, "target": target, "title": " · ".join(labels)}
-                for (source, target), labels in sorted(labels_by_pair.items())
-            ],
-            "breadcrumbs": list(reversed(path)),
-        }
+def _entry_files(features, order, paths):
+    result = {feature_id: set() for feature_id in order}
+    path_set = set(paths)
+    for feature_id in order:
+        for entry in features[feature_id]["entries"]:
+            if entry.endswith("/"):
+                prefix = entry
+                result[feature_id].update(path for path in paths if path.startswith(prefix))
+            elif entry in path_set:
+                result[feature_id].add(entry)
     return result
 
 
-def build_page_data(repositories, mode):
-    """Build page data from models and owners already checked for each repository."""
-    if mode not in ("草稿", "正式"):
-        raise ValueError("mode 只能是 草稿 或 正式")
+def _belongs_to_related(source, target, features):
+    current = source
+    while current is not None:
+        if current == target:
+            return True
+        current = features[current]["parent"]
+    current = target
+    while current is not None:
+        if current == source:
+            return True
+        current = features[current]["parent"]
+    return False
 
-    elements = {}
-    repository_by_path = {Path(item["path"]).resolve(): item for item in repositories}
-    root_ids = set()
-    for item in repositories:
-        root_id = item["root_id"]
-        if root_id in root_ids:
-            raise ValueError(f"整棵仓树的根 id 重复：{root_id}")
-        root_ids.add(root_id)
-        for element_id, element in item["model"].get("elements", {}).items():
-            if element_id in elements:
-                raise ValueError(f"组合模型有重复元素 id：{element_id}")
-            elements[element_id] = element
 
-    repo_roots = {}
-    repository_unit_names = {}
-    parent_for_root = {}
-    relations = []
-    for item in repositories:
-        model = item["model"]
-        for element_id, target, category, _ in link_records(model):
-            if category != "repo" or target is None:
-                continue
-            child_path = (Path(item["path"]) / target).resolve()
-            child = repository_by_path.get(child_path)
-            if child is None:
-                continue
-            child_root = child["root_id"]
-            if element_id in repo_roots or child_root in parent_for_root:
-                raise ValueError(f"子仓入口重复：{element_id} → {child_root}")
-            repo_roots[element_id] = child_root
-            repository_unit_names[element_id] = Path(target).name
-            parent_for_root[child_root] = element_id
-        for relation in model.get("relations", {}).values():
-            relations.append({
-                "source": _endpoint(relation.get("source", "")),
-                "target": _endpoint(relation.get("target", "")),
-                "title": relation.get("title", ""),
-            })
+def _add_use(uses, source, target, kind, features):
+    if source == target or _belongs_to_related(source, target, features):
+        return
+    uses[(source, target)].add(kind)
 
-    parents = {}
-    children = {element_id: [] for element_id in elements}
-    for element_id in elements:
-        parent = parent_for_root.get(element_id, element_id.rpartition(".")[0] or None)
-        if parent is not None and parent not in elements:
-            raise ValueError(f"节点上级不存在：{element_id} → {parent}")
-        parents[element_id] = parent
+
+def build_map(repository):
+    """Return the complete machine-readable map, raising ValueError on invalid input."""
+    root = require_repository_root(repository)
+    paths = sorted(tracked_paths(root))
+    features, order, errors = load_features(root, paths)
+    if errors:
+        raise ValueError("\n".join(errors))
+    subrepositories = discover_subrepositories(root)
+    if subrepositories:
+        raise ValueError("还不支持子仓：" + ", ".join(subrepositories))
+
+    unsupported = sorted(path for path in paths if Path(path).suffix.lower() in UNSUPPORTED_CODE_SUFFIXES)
+    if unsupported:
+        raise ValueError("已知是代码但不支持统计的文件：" + ", ".join(unsupported))
+
+    categories = {path: _file_category(path) for path in paths}
+    source_texts = {path: _source_text(root, path) for path in paths}
+    counts = {path: count_file(path, categories[path], source_texts[path] or "") for path in paths}
+    python_paths = [path for path in paths if Path(path).suffix.lower() == ".py"]
+    imports = {}
+    for path in paths:
+        if categories[path] in ("code", "tests") and source_texts[path] is not None:
+            imports[path] = imports_for_file(path, source_texts[path], python_paths)
+        else:
+            imports[path] = set()
+
+    entries = _entry_files(features, order, paths)
+    owners, groups = assign_files(features, order, paths, categories, entries, imports)
+    if len(owners) != len(paths):
+        missing = sorted(set(paths) - owners.keys())
+        raise ValueError("文件没有归到功能：" + ", ".join(missing))
+
+    lines = {feature_id: {name: 0 for name in LINE_NAMES} for feature_id in order}
+    files = {feature_id: {group: [] for group in FILE_GROUPS} for feature_id in order}
+    for path in paths:
+        owner = owners[path]
+        files[owner][groups[path]].append(path)
+        for name in LINE_NAMES:
+            lines[owner][name] += getattr(counts[path], name)
+
+    children = {feature_id: [] for feature_id in order}
+    for feature_id in order:
+        parent = features[feature_id]["parent"]
         if parent is not None:
-            children[parent].append(element_id)
-    for child_ids in children.values():
-        child_ids.sort()
-
-    unit_names = _unit_names(
-        repositories, elements, parents, root_ids, repository_unit_names)
-
-    own_counts = {element_id: ZERO_COUNTS for element_id in elements}
-    own_coverage = {element_id: {} for element_id in elements}
-    for item in repositories:
-        root = Path(item["path"]).resolve()
-        owners = item["owners"]
-        for file_path, owner in owners.items():
-            category = owner.category
-            if category not in ("code", "docs", "tests"):
-                continue
-            source_path = root / file_path
-            try:
-                content = source_path.read_bytes()
-            except OSError as error:
-                raise ValueError(f"无法读取归属文件以统计行数：{source_path}：{error}") from error
-            own_counts[owner.element] = add_counts(
-                own_counts[owner.element], count_file(file_path, category, content))
-            if category == "code":
-                covered, total, language = coverage_counts(
-                    file_path, content.decode("utf-8", errors="ignore"))
-                if language == "不适用":
-                    own_coverage[owner.element] = add_coverage(
-                        own_coverage[owner.element], {"不适用": (0, 0)})
-                else:
-                    own_coverage[owner.element] = add_coverage(
-                        own_coverage[owner.element], {language: (covered, total)})
+            children[parent].append(feature_id)
 
     totals = {}
-    total_coverage = {}
-    active = set()
 
-    def calculate(element_id):
-        if element_id in totals:
-            return totals[element_id], total_coverage[element_id]
-        if element_id in active:
-            raise ValueError(f"仓图树出现循环层级：{element_id}")
-        active.add(element_id)
-        count = own_counts[element_id]
-        coverage = own_coverage[element_id]
-        for child_id in children.get(element_id, []):
-            child_count, child_coverage = calculate(child_id)
-            count = add_counts(count, child_count)
-            coverage = add_coverage(coverage, child_coverage)
-        active.remove(element_id)
-        totals[element_id] = count
-        total_coverage[element_id] = coverage
-        return count, coverage
+    def total(feature_id):
+        result = dict(lines[feature_id])
+        for child in children[feature_id]:
+            for name, value in total(child).items():
+                result[name] += value
+        totals[feature_id] = result
+        return result
 
-    for element_id in elements:
-        calculate(element_id)
+    root_id = order[0]
+    total(root_id)
 
-    map_nodes = {}
-    page_nodes = {}
-    for element_id in sorted(elements):
-        element = elements[element_id]
-        map_node = {
-            "title": element.get("title", ""),
-            "kind": element.get("kind", ""),
-            "parent": parents[element_id],
-            "own": _count_dict(own_counts[element_id]),
-            "total": _count_dict(totals[element_id]),
-        }
-        map_nodes[element_id] = map_node
-        page_nodes[element_id] = {
-            **map_node,
-            "description": _description(element),
-            "coverage": coverage_text(total_coverage[element_id]),
-        }
-
-    top_roots = sorted(element_id for element_id, parent in parents.items() if parent is None)
-    aliases = {root: placeholder for placeholder, root in repo_roots.items()}
-    # Keep layout order in embedded page data; map-data.json remains the analysis contract.
-    visual_children = visual_children_order(page_nodes, children, repo_roots, relations)
-    map_document = {"mode": mode, "nodes": map_nodes}
-    page_document = {
-        "mode": mode,
-        "top_roots": top_roots,
-        "nodes": page_nodes,
-        "visual_children": visual_children,
-        "relations": sorted([
-            {**relation, "container": _relation_container(
-                relation["source"], relation["target"], parents, aliases)}
-            for relation in relations
-        ], key=lambda item: (item["source"], item["target"], item["title"])),
-        "repo_roots": repo_roots,
-        "unit_names": unit_names,
-        "drill_views": _drill_views(page_nodes, children, parents, relations, repo_roots),
+    directories = {
+        feature_id: features[feature_id]["directory"]
+        for feature_id in order if features[feature_id]["directory"] is not None
     }
-    return map_document, page_document
+    directory_for = {}
+    for feature_id in order:
+        directory_for[feature_id] = feature_id if features[feature_id]["directory"] is not None else next(
+            ancestor for ancestor in _parent_chain(feature_id, features)
+            if features[ancestor]["directory"] is not None
+        )
+
+    uses = defaultdict(set)
+    for source_path in paths:
+        if categories[source_path] not in ("code", "docs"):
+            continue
+        source_owner = owners[source_path]
+        for target_path in imports[source_path]:
+            if target_path in owners:
+                _add_use(uses, source_owner, owners[target_path], "import", features)
+        source = source_texts[source_path]
+        if source is None:
+            continue
+        for target_path in file_mentions(source_path, source, paths):
+            if target_path in owners:
+                _add_use(uses, source_owner, owners[target_path], "mention", features)
+        own_directory = directory_for[source_owner]
+        for target_feature in directory_mentions(source, directories, own_directory):
+            _add_use(uses, source_owner, target_feature, "mention", features)
+
+    index = {feature_id: position for position, feature_id in enumerate(order)}
+    result_features = {}
+    marker_counts = {name: 0 for name in MARKER_NAMES}
+    for feature_id in order:
+        value = features[feature_id]
+        directory = value["directory"]
+        directory_name = root.name if directory == "" else Path(directory).name if directory is not None else None
+        markers = []
+        if value["why"]["source"] == "起草":
+            markers.append("等你拍板")
+        if directory is None and not children[feature_id] and not value["entries"]:
+            markers.append("还没实现")
+        if directory is not None and children[feature_id] and any(
+            groups[path] == "whole" and owners[path] == feature_id
+            and categories[path] == "code" and counts[path].code > 0
+            for path in paths
+        ):
+            markers.append("没归到功能的代码")
+        for marker in markers:
+            marker_counts[marker] += 1
+        feature_uses = []
+        for (source_id, target_id), kinds in uses.items():
+            if source_id != feature_id:
+                continue
+            feature_uses.append({"feature": target_id,
+                                 "by": "import" if "import" in kinds else "mention"})
+        feature_uses.sort(key=lambda item: index[item["feature"]])
+        result_features[feature_id] = {
+            "title": value["title"],
+            "directory_name": directory_name,
+            "parent": value["parent"],
+            "children": children[feature_id],
+            "what": value["what"],
+            "why": value["why"],
+            "lines": {"own": lines[feature_id], "total": totals[feature_id]},
+            "files": files[feature_id],
+            "uses": feature_uses,
+            "markers": markers,
+        }
+
+    return {"root": root_id, "features": result_features, "markers": marker_counts}
+
+
+def _parent_chain(feature_id, features):
+    current = feature_id
+    while current is not None:
+        yield current
+        current = features[current]["parent"]
