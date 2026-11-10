@@ -10,7 +10,7 @@ PLATFORM_PYTHON = "python3"
 PORTAL_SCRIPT = Path("/home/xy/web-portal/portal.py")
 
 
-def render_directory(output, name):
+def require_render_output_directory(output, name):
     """Require the two files produced by render and a nonempty site name."""
     if not isinstance(name, str) or not name.strip():
         raise ArgumentError("--name 必须是非空站点名")
@@ -25,7 +25,7 @@ def render_directory(output, name):
 
 def publish_repository(output, name):
     """Call the platform publication script after validating a render output."""
-    directory = render_directory(output, name)
+    directory = require_render_output_directory(output, name)
     result = subprocess.run(
         [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "publish", name, str(directory)],
         capture_output=True, text=True, check=False,

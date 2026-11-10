@@ -11,7 +11,7 @@ from .constants import (
     UNSUPPORTED_CODE_SUFFIXES,
 )
 from .dependencies import directory_mentions, file_mentions, imports_for_file
-from .features import load_features
+from .features import directory_home, is_feature_ancestor, load_features
 from .git_repository import (
     discover_subrepositories,
     primary_checkout_name,
@@ -32,8 +32,8 @@ def _is_test_file(path):
     has_code_suffix = suffix in SOURCE_SUFFIXES
     in_test_directory = any(part in TEST_DIRECTORY_NAMES for part in Path(path).parts[:-1])
     named_test = (
-        (name.startswith("test_") and suffix in (".py", ".rs"))
-        or name in ("conftest.py",)
+        (name.startswith("test_") and suffix == ".py")
+        or name == "conftest.py"
         or name.endswith(TEST_FILE_ENDINGS)
     )
     return has_code_suffix and (in_test_directory or named_test)
@@ -80,22 +80,9 @@ def _entry_files(features, order, paths):
     return result
 
 
-def _belongs_to_related(source, target, features):
-    current = source
-    while current is not None:
-        if current == target:
-            return True
-        current = features[current]["parent"]
-    current = target
-    while current is not None:
-        if current == source:
-            return True
-        current = features[current]["parent"]
-    return False
-
-
 def _add_use(uses, source, target, kind, features):
-    if source == target or _belongs_to_related(source, target, features):
+    if (source == target or is_feature_ancestor(source, target, features)
+            or is_feature_ancestor(target, source, features)):
         return
     uses[(source, target)].add(kind)
 
@@ -164,12 +151,10 @@ def build_map(repository):
         feature_id: features[feature_id]["directory"]
         for feature_id in order if features[feature_id]["directory"] is not None
     }
-    directory_for = {}
-    for feature_id in order:
-        directory_for[feature_id] = feature_id if features[feature_id]["directory"] is not None else next(
-            ancestor for ancestor in _parent_chain(feature_id, features)
-            if features[ancestor]["directory"] is not None
-        )
+    feature_home = {
+        feature_id: directory_home(feature_id, features)
+        for feature_id in order
+    }
 
     uses = defaultdict(set)
     for source_path in paths:
@@ -182,16 +167,17 @@ def build_map(repository):
         source = source_texts[source_path]
         if source is None:
             continue
+        own_directory = feature_home[source_owner]
+        # Parent-directory overview files can name child features without depending on them.
         for target_path in file_mentions(source_path, source, paths):
             target_owner = owners.get(target_path)
-            if target_owner is not None and not _directory_is_ancestor(
-                directory_for[source_owner], directory_for[target_owner], features
+            if target_owner is not None and not is_feature_ancestor(
+                own_directory, feature_home[target_owner], features
             ):
                 _add_use(uses, source_owner, target_owner, "mention", features)
-        own_directory = directory_for[source_owner]
         for target_feature in directory_mentions(source, directories, own_directory):
-            target_directory = directory_for[target_feature]
-            if not _directory_is_ancestor(own_directory, target_directory, features):
+            target_directory = feature_home[target_feature]
+            if not is_feature_ancestor(own_directory, target_directory, features):
                 _add_use(uses, source_owner, target_feature, "mention", features)
 
     index = {feature_id: position for position, feature_id in enumerate(order)}
@@ -235,20 +221,3 @@ def build_map(repository):
         }
 
     return {"root": root_id, "features": result_features, "markers": marker_counts}
-
-
-def _parent_chain(feature_id, features):
-    current = feature_id
-    while current is not None:
-        yield current
-        current = features[current]["parent"]
-
-
-# Parent-directory overview files can name child features without depending on them.
-def _directory_is_ancestor(source_directory, target_directory, features):
-    current = features[target_directory]["parent"]
-    while current is not None:
-        if current == source_directory:
-            return True
-        current = features[current]["parent"]
-    return False

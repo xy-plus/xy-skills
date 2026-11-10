@@ -9,6 +9,47 @@ WHY_KEYS = {"text", "source", "quote", "from"}
 FEATURE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
+def feature_chain(feature_id, features):
+    """Yield a feature and its parents, starting at the feature itself."""
+    current = feature_id
+    while current is not None:
+        yield current
+        current = features[current]["parent"]
+
+
+def is_feature_ancestor(ancestor_id, feature_id, features):
+    """Return whether one feature is a strict ancestor of another."""
+    return ancestor_id != feature_id and ancestor_id in feature_chain(feature_id, features)
+
+
+def path_is_under(path, directory):
+    """Return whether a repository-relative path belongs to a directory."""
+    return directory == "" or path.startswith(directory + "/")
+
+
+def directory_home(feature_id, features):
+    """Return the nearest directory feature containing a feature."""
+    return next(
+        (item for item in feature_chain(feature_id, features)
+         if features[item].get("directory") is not None),
+        None,
+    )
+
+
+def deepest_directory(path, features, order):
+    """Return the most specific directory feature containing a path."""
+    matches = [
+        feature_id for feature_id in order
+        if features[feature_id].get("directory") is not None
+        and path_is_under(path, features[feature_id]["directory"])
+    ]
+    return max(
+        matches,
+        key=lambda feature_id: len(features[feature_id]["directory"]),
+        default=None,
+    )
+
+
 def _nonempty_text(value):
     return isinstance(value, str) and bool(value.strip())
 
@@ -17,8 +58,6 @@ def _safe_relative_path(value, allow_directory_marker):
     if not isinstance(value, str) or not value or value.startswith("/") or "\\" in value:
         return False
     path = value[:-1] if allow_directory_marker and value.endswith("/") else value
-    if not path:
-        return allow_directory_marker and value == "/"
     return all(part not in ("", ".", "..") for part in path.split("/"))
 
 
@@ -49,7 +88,7 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
 
     why = value.get("why")
     if not isinstance(why, dict):
-            errors.append(f"{label}的 why 必须是对象")
+        errors.append(f"{label}的 why 必须是对象")
     else:
         for key in sorted(WHY_KEYS - why.keys()):
             errors.append(f"{label}的 why 缺少键 {key}")
@@ -89,20 +128,7 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
         _collect_features(child, current, features, order, errors, child_label)
 
 
-def _directory_ancestor(feature_id, features):
-    current = feature_id
-    while current is not None:
-        if features[current].get("directory") is not None:
-            return current
-        current = features[current]["parent"]
-    return None
-
-
-def _is_under(path, directory):
-    return directory == "" or path.startswith(directory + "/")
-
-
-def _validate_paths(features, order, tracked, repository, errors):
+def _validate_paths(features, order, tracked, errors):
     if features[order[0]].get("directory") != "":
         errors.append("根功能的 directory 必须是空字符串")
 
@@ -116,14 +142,16 @@ def _validate_paths(features, order, tracked, repository, errors):
             errors.append(f"两个功能不能共用 directory {directory!r}：{directory_owner[directory]} 和 {feature_id}")
         else:
             directory_owner[directory] = feature_id
-        if not any(_is_under(path, directory) for path in tracked):
+        if not any(path_is_under(path, directory) for path in tracked):
             errors.append(f"功能 {feature_id} 的 directory 下没有被跟踪的文件：{directory!r}")
-        ancestor = features[feature_id]["parent"]
-        while ancestor is not None and features[ancestor].get("directory") is None:
-            ancestor = features[ancestor]["parent"]
+        ancestor = next(
+            (candidate for candidate in feature_chain(feature_id, features)
+             if candidate != feature_id and features[candidate].get("directory") is not None),
+            None,
+        )
         if ancestor is not None:
             parent_directory = features[ancestor]["directory"]
-            if not _is_under(directory, parent_directory):
+            if not path_is_under(directory, parent_directory):
                 errors.append(f"功能 {feature_id} 的 directory 不在祖先目录内：{directory!r}")
 
         children = value.get("children", [])
@@ -135,34 +163,21 @@ def _validate_paths(features, order, tracked, repository, errors):
         entries = value.get("entries")
         if not isinstance(entries, list):
             continue
-        home = _directory_ancestor(feature_id, features)
+        home = directory_home(feature_id, features)
         for entry in entries:
             is_directory = entry.endswith("/")
             clean_entry = entry[:-1] if is_directory else entry
             if is_directory:
-                matched = [path for path in tracked if path.startswith(clean_entry + "/")]
+                matched = [path for path in tracked if path_is_under(path, clean_entry)]
             else:
                 matched = [entry] if entry in tracked else []
             if not matched:
                 errors.append(f"功能 {feature_id} 的 entries 不存在或没有被跟踪文件：{entry}")
                 continue
             for path in matched:
-                if home is None or _directory_ancestor(feature_id, features) != _directory_ancestor(
-                    _deepest_directory(path, features, order), features
-                ):
+                if home is None or deepest_directory(path, features, order) != home:
                     errors.append(f"功能 {feature_id} 的入口不在所属目录功能内：{path}")
                     break
-                deepest_id = _deepest_directory(path, features, order)
-                if deepest_id != home:
-                    errors.append(f"功能 {feature_id} 的入口落在另一个目录功能内：{path}")
-                    break
-
-
-def _deepest_directory(path, features, order):
-    matches = [feature_id for feature_id in order
-               if features[feature_id].get("directory") is not None
-               and _is_under(path, features[feature_id]["directory"])]
-    return max(matches, key=lambda feature_id: len(features[feature_id]["directory"]), default=None)
 
 
 def load_features(repository, tracked_paths):
@@ -182,5 +197,5 @@ def load_features(repository, tracked_paths):
         return features, order, errors or ["功能清单必须包含根功能"]
     if errors:
         return features, order, errors
-    _validate_paths(features, order, tracked_paths, root, errors)
+    _validate_paths(features, order, tracked_paths, errors)
     return features, order, errors

@@ -1,45 +1,27 @@
 """Assign tracked files to the features that register or import them."""
 from pathlib import Path
 
-
-def _under(path, directory):
-    return directory == "" or path.startswith(directory + "/")
-
-
-def _home(feature_id, features):
-    current = feature_id
-    while current is not None:
-        if features[current]["directory"] is not None:
-            return current
-        current = features[current]["parent"]
-    return None
-
-
-def _ancestors(feature_id, features):
-    result = []
-    current = feature_id
-    while current is not None:
-        result.append(current)
-        current = features[current]["parent"]
-    return result
-
-
-def _is_ancestor(ancestor, feature_id, features):
-    return ancestor in _ancestors(feature_id, features)
+from .features import (
+    deepest_directory,
+    directory_home,
+    feature_chain,
+    is_feature_ancestor,
+)
 
 
 def _common_parent(feature_ids, features):
     if not feature_ids:
         return None
-    shared = set(_ancestors(feature_ids[0], features))
+    first_chain = list(feature_chain(feature_ids[0], features))
+    shared = set(first_chain)
     for feature_id in feature_ids[1:]:
-        shared.intersection_update(_ancestors(feature_id, features))
-    return next(item for item in _ancestors(feature_ids[0], features) if item in shared)
+        shared.intersection_update(feature_chain(feature_id, features))
+    return next(item for item in first_chain if item in shared)
 
 
 def _prune_ancestors(feature_ids, features):
     return {feature_id for feature_id in feature_ids
-            if not any(feature_id != other and _is_ancestor(feature_id, other, features)
+            if not any(is_feature_ancestor(feature_id, other, features)
                        for other in feature_ids)}
 
 
@@ -48,8 +30,6 @@ def _test_code_match(test_path, code_paths):
     candidate = None
     if name.startswith("test_") and name.endswith(".py"):
         candidate = name[5:]
-    elif name.startswith("test_") and name.endswith("_test.py"):
-        candidate = name[5:-8] + ".py"
     elif name.endswith("_test.py"):
         candidate = name[:-8] + ".py"
     elif name.endswith("_test.rs"):
@@ -62,13 +42,10 @@ def _test_code_match(test_path, code_paths):
 
 def assign_files(features, order, paths, categories, entries, imports):
     """Return each tracked path's owner and its reason group."""
-    directories = [(feature_id, features[feature_id]["directory"]) for feature_id in order
-                   if features[feature_id]["directory"] is not None]
-    directory_for = {}
-    for path in sorted(paths, key=lambda item: categories[item] == "tests"):
-        matches = [(feature_id, directory) for feature_id, directory in directories
-                   if _under(path, directory)]
-        directory_for[path] = max(matches, key=lambda item: len(item[1]), default=(None, None))[0]
+    directory_by_path = {
+        path: deepest_directory(path, features, order)
+        for path in paths
+    }
 
     entry_owners = {path: set() for path in paths}
     for feature_id, feature_paths in entries.items():
@@ -78,7 +55,7 @@ def assign_files(features, order, paths, categories, entries, imports):
                          for path, owners in entry_owners.items()}
 
     reached_by = {path: set() for path in paths}
-    feature_home = {feature_id: _home(feature_id, features) for feature_id in order}
+    feature_home = {feature_id: directory_home(feature_id, features) for feature_id in order}
     for feature_id in order:
         home = feature_home[feature_id]
         pending = [path for path in entries[feature_id] if categories[path] != "tests"]
@@ -86,11 +63,12 @@ def assign_files(features, order, paths, categories, entries, imports):
         while pending:
             source = pending.pop()
             for target in imports.get(source, set()):
-                if target not in directory_for or directory_for[target] != home or target in seen:
+                if target not in directory_by_path or directory_by_path[target] != home or target in seen:
                     continue
                 blockers = effective_entries[target]
-                if any(not (_is_ancestor(feature_id, owner, features)
-                            or _is_ancestor(owner, feature_id, features)) for owner in blockers):
+                if any(not (feature_id == owner
+                            or is_feature_ancestor(feature_id, owner, features)
+                            or is_feature_ancestor(owner, feature_id, features)) for owner in blockers):
                     continue
                 seen.add(target)
                 pending.append(target)
@@ -99,7 +77,7 @@ def assign_files(features, order, paths, categories, entries, imports):
 
     owners, groups = {}, {}
     for path in sorted(paths, key=lambda item: categories[item] == "tests"):
-        home = directory_for[path]
+        home = directory_by_path[path]
         if home is None:
             continue
         if not features[home]["children"]:
@@ -112,7 +90,7 @@ def assign_files(features, order, paths, categories, entries, imports):
         elif categories[path] == "tests":
             imported_code = {
                 target for target in imports.get(path, set())
-                if target in owners and categories[target] == "code" and directory_for[target] == home
+                if target in owners and categories[target] == "code" and directory_by_path[target] == home
             }
             matched_code = _test_code_match(path, imported_code)
             if matched_code is not None:
