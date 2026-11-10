@@ -24,6 +24,7 @@ class BrowserTreeTest(unittest.TestCase):
             "alpha/guide.md": "See group/ready.py for details.\n",
             "group/ready.py": "value = 2\n",
             "group/consumer.py": "import alpha.main\nimport group.ready\n",
+            "group/orphan.py": "orphan = True\n",
             "group/tests/test_ready.py": "import group.ready\n",
         }, feature("root", "", children=[
             feature("alpha", "alpha"),
@@ -33,7 +34,7 @@ class BrowserTreeTest(unittest.TestCase):
                 feature("future", None, source="起草"),
             ]),
             feature("guide", None, entries=["README.md"]),
-        ]))
+        ], source="起草"))
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "rendered"
             rendered = subprocess.run(
@@ -56,6 +57,16 @@ class BrowserTreeTest(unittest.TestCase):
                 )
                 self.assertNotIn(expected["root"], row_ids)
                 self.assertEqual(len(row_ids), len(expected["features"]) - 1, script_errors)
+                root_feature = expected["features"][expected["root"]]
+                with self.subTest(page_part="root rationale"):
+                    root_why = page.locator("#page-why")
+                    self.assertEqual(root_why.count(), 1)
+                    if root_why.count():
+                        self.assertIn(root_feature["why"]["text"], root_why.text_content())
+                        self.assertEqual(
+                            root_why.locator(".source-label").text_content(),
+                            "AI 起草 · 等你拍板",
+                        )
                 by_title = {
                     feature_data["title"]: feature_id
                     for feature_id, feature_data in expected["features"].items()
@@ -128,9 +139,40 @@ class BrowserTreeTest(unittest.TestCase):
                 visible = page.locator(".feature-row:not([hidden])").evaluate_all(
                     "rows => rows.map(row => row.dataset.featureId)"
                 )
-                self.assertEqual(visible, ["future"])
+                features = expected["features"]
+
+                def has_decision_in_branch(feature_id):
+                    feature_data = features[feature_id]
+                    return "等你拍板" in feature_data["markers"] or any(
+                        has_decision_in_branch(child_id)
+                        for child_id in feature_data["children"]
+                    )
+
+                expected_visible = {
+                    feature_id
+                    for feature_id in features
+                    if feature_id != expected["root"]
+                    and has_decision_in_branch(feature_id)
+                }
+                with self.subTest(page_part="decision rows and ancestors"):
+                    self.assertEqual(set(visible), expected_visible)
+                with self.subTest(page_part="undivided code summary"):
+                    self.assertEqual(page.locator(".undivided:visible").count(), 0)
                 page.locator("#decision-filter").click()
                 self.assertEqual(script_errors, [])
+                with self.subTest(page_part="root detail and close"):
+                    page.locator("#page-title").click()
+                    root_panel = page.locator(".detail-panel")
+                    self.assertTrue(root_panel.is_visible())
+                    if root_panel.is_visible():
+                        self.assertEqual(
+                            root_panel.locator("h2").text_content(),
+                            f'{root_feature["title"]}（{root_feature["directory_name"]}）',
+                        )
+                        self.assertIn("上级路径：无", root_panel.inner_text())
+                        root_panel.locator(".close-detail").click()
+                        self.assertFalse(root_panel.is_visible())
+                    self.assertEqual(script_errors, [])
                 guide_id = by_title["Guide"]
                 page.locator(f'.feature-row[data-feature-id="{guide_id}"] .feature-title').click()
                 panel = page.locator(".detail-panel")
