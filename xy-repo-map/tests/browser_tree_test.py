@@ -56,6 +56,17 @@ class BrowserTreeTest(unittest.TestCase):
                         "parts => parts.map(part => part.getBoundingClientRect().width)"
                     )
                     self.assertTrue(any(width > 0 for width in widths), feature_id)
+                page.locator(".feature-row").first.click()
+                panel_style = page.locator(".detail-panel").evaluate(
+                    "element => { const style = getComputedStyle(element); return {"
+                    "borderTopWidth: style.borderTopWidth, borderTopColor: style.borderTopColor, "
+                    "borderTopLeftRadius: style.borderTopLeftRadius, maxHeight: style.maxHeight }; }"
+                )
+                self.assertEqual(panel_style["borderTopWidth"], "1px")
+                self.assertEqual(panel_style["borderTopColor"], "rgb(221, 227, 233)")
+                self.assertEqual(panel_style["borderTopLeftRadius"], "16px")
+                panel_limit = float(panel_style["maxHeight"].removesuffix("px"))
+                self.assertLessEqual(panel_limit, 0.45 * 844)
                 embedded = page.evaluate(
                     "JSON.parse(document.querySelector('#map-data').textContent)"
                 )
