@@ -305,11 +305,20 @@ def run_ask(decisions, name, answers_path, platform_runner, stdout, stderr, stop
     temporary = tempfile.TemporaryDirectory(prefix="d", dir="/tmp")
     socket_path = Path(temporary.name) / "s"
     server = None
+    serving_thread = None
     mounted = False
     exit_code = 1
     try:
         page = render_decision_page(decisions)
         server = DecisionHTTPServer(socket_path, page, decisions, answers_path)
+        request_thread = threading.Thread(
+            target=server.serve_until_complete,
+            args=(stop_event,),
+            daemon=True,
+        )
+        request_thread.start()
+        serving_thread = request_thread
+        # The platform requests the page to verify the mount before mount returns.
         mount_command = [
             PLATFORM_PYTHON,
             str(PORTAL_SCRIPT),
@@ -327,11 +336,15 @@ def run_ask(decisions, name, answers_path, platform_runner, stdout, stderr, stop
         stderr.flush()
         if mount_result.returncode == 0:
             mounted = True
-            exit_code = 0 if server.serve_until_complete(stop_event) else 1
+            serving_thread.join()
+            exit_code = 0 if server.submitted else 1
     except Exception as error:
         stderr.write(f"错误：决定页面服务失败：{error}\n")
         exit_code = 1
     finally:
+        if serving_thread is not None:
+            stop_event.set()
+            serving_thread.join()
         if server is not None:
             server.server_close()
         socket_path.unlink(missing_ok=True)
