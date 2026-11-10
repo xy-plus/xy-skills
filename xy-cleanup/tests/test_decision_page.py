@@ -87,6 +87,26 @@ def request_content_length(socket_path, content_length):
     return result
 
 
+def request_raw_socket(socket_path, raw_body):
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.connect(socket_path)
+    body = raw_body.encode("utf-8")
+    client.sendall(
+        b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
+        b"Content-Type: application/json\r\nContent-Length: "
+        + str(len(body)).encode("ascii") + b"\r\n\r\n" + body
+    )
+    try:
+        response = http.client.HTTPResponse(client)
+        response.begin()
+        result = response.status, response.read()
+    except (ConnectionError, http.client.HTTPException, OSError):
+        result = None, b""
+    finally:
+        client.close()
+    return result
+
+
 class DecisionPageCommandTest(unittest.TestCase):
     def test_invalid_decisions_exit_two_and_name_the_missing_field(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -107,6 +127,29 @@ class DecisionPageCommandTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("title", result.stderr)
+
+    def test_decision_list_with_duplicate_json_key_exits_two(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            decisions = Path(temporary) / "decisions.json"
+            answers = Path(temporary) / "answers.json"
+            encoded = json.dumps(valid_decisions())
+            encoded = encoded.replace(
+                '"title": "Cleanup decisions"',
+                '"title": "First title", "title": "Cleanup decisions"',
+                1,
+            )
+            decisions.write_text(encoded, encoding="utf-8")
+            stderr = io.StringIO()
+            code = decision_page.main(
+                ["ask", "--decisions", str(decisions), "--name", "decision-test",
+                 "--answers", str(answers)],
+                lambda arguments: self.fail(f"不应启动平台：{arguments}"),
+                io.StringIO(),
+                stderr,
+            )
+
+        self.assertEqual(code, 2, stderr.getvalue())
+        self.assertIn("重复键：title", stderr.getvalue())
 
     def test_decision_schema_errors_name_the_invalid_location(self):
         extra_top_level = valid_decisions()
@@ -431,6 +474,41 @@ class DecisionPageCommandTest(unittest.TestCase):
                     json.loads(answers_path.read_text(encoding="utf-8")),
                     {"title": decisions["title"], "answers": valid_payload["answers"]},
                 )
+            finally:
+                stop_event.set()
+                server.server_close()
+                socket_path.unlink(missing_ok=True)
+                serving.join(2)
+
+    def test_answer_with_duplicate_json_key_returns_400_without_writing(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            socket_path = Path(temporary) / "s"
+            answers_path = Path(temporary) / "answers.json"
+            decisions = valid_decisions()
+            server = decision_page.DecisionHTTPServer(
+                socket_path,
+                decision_page.render_decision_page(decisions),
+                decisions,
+                answers_path,
+            )
+            stop_event = threading.Event()
+            serving = threading.Thread(
+                target=server.serve_until_complete,
+                args=(stop_event,),
+                daemon=True,
+            )
+            serving.start()
+            raw_answer = (
+                '{"answers":{"A1":{"option":"Keep","option":"Remove",'
+                '"note":""}}}'
+            )
+
+            try:
+                with patch.object(decision_page.DecisionHTTPServer, "handle_error"):
+                    status, body = request_raw_socket(str(socket_path), raw_answer)
+                self.assertEqual(status, 400, body)
+                self.assertIn("重复键：option", body.decode("utf-8"))
+                self.assertFalse(answers_path.exists())
             finally:
                 stop_event.set()
                 server.server_close()

@@ -9,8 +9,11 @@ import sys
 REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
 sys.path.insert(0, str(REPOSITORY / "xy-review"))
+sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
 from repo_map_lib.git_repository import ArgumentError  # noqa: E402
+from repo_map_lib.git_repository import tracked_paths  # noqa: E402
 from repo_map_lib.map_data import build_map  # noqa: E402
+from check_handoff import object_without_duplicate_keys  # noqa: E402
 from rule_references import basis_is_supported  # noqa: E402
 
 
@@ -101,14 +104,41 @@ def _validate_finding(finding, label):
     return problems
 
 
-def validate_reports(data, repository, expected_features, report_paths):
+def _valid_target(target, data, repository, tracked_files):
+    if target in data["features"]:
+        return True
+    path, separator, line_text = target.rpartition(":")
+    if (not separator or path not in tracked_files
+            or not line_text.isascii() or not line_text.isdecimal()):
+        return False
+    try:
+        line_number = int(line_text)
+    except ValueError:
+        return False
+    if line_number < 1:
+        return False
+    file_path = Path(repository) / path
+    try:
+        if file_path.is_symlink():
+            line_count = len(file_path.readlink().splitlines())
+        else:
+            line_count = len(file_path.read_bytes().splitlines())
+    except OSError:
+        return False
+    return line_number <= line_count
+
+
+def validate_reports(data, repository, expected_features, report_paths, tracked_files):
     """Return all structural, coverage, decision, and rule-quote problems."""
     problems = []
     counts = {role: {} for role in ROLES}
     for report_path in report_paths:
         try:
-            document = json.loads(Path(report_path).read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            document = json.loads(
+                Path(report_path).read_text(encoding="utf-8"),
+                object_pairs_hook=object_without_duplicate_keys,
+            )
+        except (OSError, UnicodeError, ValueError) as error:
             problems.append(f"无法读取报告 {report_path}：{error}")
             continue
         label = str(report_path)
@@ -145,7 +175,16 @@ def validate_reports(data, repository, expected_features, report_paths):
                 problems.append(f"{feature_label}.findings 必须是数组")
                 continue
             for finding_index, finding in enumerate(findings):
-                problems.extend(_validate_finding(finding, f"{feature_label}.findings[{finding_index}]"))
+                finding_label = f"{feature_label}.findings[{finding_index}]"
+                problems.extend(_validate_finding(finding, finding_label))
+                if (isinstance(finding, dict) and _nonempty(finding.get("target"))
+                        and not _valid_target(
+                            finding["target"], data, repository, tracked_files
+                        )):
+                    problems.append(
+                        f"{finding_label}.target 必须是功能 id 或 文件:行号："
+                        f"{finding['target']}"
+                    )
 
     for role in sorted(ROLES):
         for feature_id in expected_features:
@@ -192,7 +231,9 @@ def main(argv):
         print("--reports 必须全部指向已有文件：" + ", ".join(map(str, missing)), file=sys.stderr)
         return 2
 
-    problems = validate_reports(data, repository, expected, report_paths)
+    problems = validate_reports(
+        data, repository, expected, report_paths, set(tracked_paths(repository))
+    )
     if problems:
         print("\n".join(problems))
         return 1

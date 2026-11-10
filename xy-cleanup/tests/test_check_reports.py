@@ -208,6 +208,51 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("basis", result.stdout)
 
+    def test_rejects_duplicate_json_keys_in_reports(self):
+        self.main_path.write_text(
+            '{"role":"主审","role":"剃刀"}', encoding="utf-8"
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            f"无法读取报告 {self.main_path}：重复键：role", result.stdout
+        )
+
+    def test_finding_target_must_be_a_tracked_feature_or_valid_file_line(self):
+        main = report("主审", self.repository)
+        main["features"][0]["findings"] = [finding()]
+        self.write_reports(main, report("剃刀", self.repository))
+        self.assertEqual(self.run_check().returncode, 0)
+
+        invalid_targets = (
+            "alpha/main.py:2",
+            "missing.py:1",
+            "alpha/main.py:0",
+            "alpha/main.py:line",
+            "alpha/main.py:" + "9" * 5000,
+        )
+        for target in invalid_targets:
+            with self.subTest(target=target):
+                main = report("主审", self.repository)
+                bad_finding = finding()
+                bad_finding["target"] = target
+                main["features"][0]["findings"] = [bad_finding]
+                self.write_reports(main, report("剃刀", self.repository))
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(
+                    "features[0].findings[0].target 必须是功能 id 或 文件:行号："
+                    + target,
+                    result.stdout,
+                )
+
+        main = report("主审", self.repository)
+        feature_target = finding()
+        feature_target["target"] = "alpha"
+        main["features"][0]["findings"] = [feature_target]
+        self.write_reports(main, report("剃刀", self.repository))
+        self.assertEqual(self.run_check().returncode, 0)
+
     def test_requires_both_review_roles_and_matching_repository(self):
         result = self.run_check(reports=(str(self.main_path),))
         self.assertEqual(result.returncode, 1)

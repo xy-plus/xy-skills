@@ -24,8 +24,10 @@ REQUEST_READ_TIMEOUT_SECONDS = 10
 REPOSITORY = Path(__file__).resolve().parents[1]
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "decision-page.html"
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
+sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
 from repo_map_lib.embedded_json import json_for_html  # noqa: E402
 from repo_map_lib.publish_command import PLATFORM_PYTHON, PORTAL_SCRIPT  # noqa: E402
+from check_handoff import object_without_duplicate_keys  # noqa: E402
 
 
 class DecisionFormatError(ValueError):
@@ -246,9 +248,15 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "请求体不能超过 200 KB"})
             return
         try:
-            payload = json.loads(self.rfile.read(length))
+            payload = json.loads(
+                self.rfile.read(length),
+                object_pairs_hook=object_without_duplicate_keys,
+            )
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._send_json(400, {"error": "请求体必须是有效 JSON"})
+            return
+        except ValueError as error:
+            self._send_json(400, {"error": str(error)})
             return
         try:
             answers = validate_answers(payload, self.server.decisions)
@@ -290,8 +298,11 @@ def make_parser():
 
 def _load_decisions(path):
     try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        value = json.loads(
+            Path(path).read_text(encoding="utf-8"),
+            object_pairs_hook=object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
         raise DecisionFormatError(f"无法读取决定清单：{error}") from error
     return validate_decisions(value)
 
