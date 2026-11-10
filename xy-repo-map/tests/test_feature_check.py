@@ -199,18 +199,6 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("linked", result.stdout + result.stderr)
 
-    def test_old_model_path_helper_is_removed(self):
-        script = (
-            "import sys; sys.path.insert(0,sys.argv[1]); "
-            "import repo_map_lib.git_repository as repository; "
-            "assert not hasattr(repository,'model_paths')"
-        )
-        result = subprocess.run(
-            ["python3", "-B", "-c", script, str(ROOT / "xy-repo-map")],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def test_rejects_a_known_but_unsupported_code_suffix(self):
         suffixes = (".go", ".java", ".kt", ".swift", ".cpp", ".cc", ".hpp",
                     ".cs", ".rb", ".php", ".scala", ".lua")

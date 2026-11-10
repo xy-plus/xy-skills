@@ -300,22 +300,15 @@ def _html_counts(source):
 
 
 def count_file(path, category, content):
-    """Count one file according to its link category, ignoring binary data."""
-    if isinstance(content, bytes):
-        if b"\x00" in content:
-            return ZERO_COUNTS
-        try:
-            source = content.decode("utf-8")
-        except UnicodeDecodeError:
-            return ZERO_COUNTS
-    else:
-        source = content
+    """Count one file from decoded text and its file category."""
+    if not isinstance(content, str):
+        raise TypeError("文件内容必须是文本")
     if category == "code":
-        return code_counts(path, source)
+        return code_counts(path, content)
     if category == "docs":
-        return LineCounts(0, sum(bool(line.strip()) for line in source.splitlines()), 0, 0)
+        return LineCounts(0, sum(bool(line.strip()) for line in content.splitlines()), 0, 0)
     if category == "tests":
-        return LineCounts(0, 0, 0, sum(bool(line.strip()) for line in source.splitlines()))
-    if category in ("data", "repo", "other"):
+        return LineCounts(0, 0, 0, sum(bool(line.strip()) for line in content.splitlines()))
+    if category == "other":
         return ZERO_COUNTS
-    raise ValueError(f"未知链接类别：{category}")
+    raise ValueError(f"未知文件类别：{category}")

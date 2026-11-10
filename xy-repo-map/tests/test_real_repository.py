@@ -124,11 +124,11 @@ class RealRepositoryTest(unittest.TestCase):
 
         script = (
             "import json,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); "
-            "from repo_map_lib.map_data import _file_category; "
+            "from repo_map_lib.map_data import _file_category, _source_text; "
             "from repo_map_lib.metrics import count_file; "
             "paths=[p for p in Path(sys.argv[3]).read_text().split('\\0') if p]; "
             "totals=dict.fromkeys(('code','docs','comments','tests'),0); "
-            "[totals.__setitem__(k,totals[k]+getattr(count_file(p,_file_category(p),(Path(sys.argv[2])/p).read_bytes()),k)) for p in paths for k in totals]; "
+            "[totals.__setitem__(k,totals[k]+getattr(count_file(p,_file_category(p),_source_text(sys.argv[2],p) or ''),k)) for p in paths for k in totals]; "
             "print(json.dumps(totals))"
         )
         with tempfile.TemporaryDirectory() as temporary:

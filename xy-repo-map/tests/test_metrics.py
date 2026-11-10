@@ -1,11 +1,10 @@
-"""Four-number and public documentation coverage tests."""
+"""Test code, documentation, comment, and test line counts."""
 from pathlib import Path
 import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import repo_map_lib.metrics as metrics
 from repo_map_lib import constants
 from repo_map_lib.metrics import LineCounts, code_counts, count_file
 
@@ -20,9 +19,6 @@ class MetricsTest(unittest.TestCase):
     def test_line_count_record_requires_all_categories_explicitly(self):
         with self.assertRaises(TypeError):
             LineCounts()
-
-    def test_public_coverage_helpers_are_not_part_of_line_metrics(self):
-        self.assertFalse(hasattr(metrics, "coverage_counts"))
 
     def test_python_docstrings_comments_and_inline_comments(self):
         source = '''"""Module docs.
@@ -98,13 +94,25 @@ let answer = 42; // inline
         js_counts = code_counts("file.mjs", js_source)
         self.assertEqual((js_counts.code, js_counts.docs, js_counts.comments), (2, 1, 1))
 
-    def test_docs_and_tests_count_nonempty_lines_and_binary_files_count_zero(self):
-        docs = count_file("guide.md", "docs", b"text\n\n next \n")
-        tests = count_file("test.py", "tests", b"one\n\nnext\n")
-        binary = count_file("data.bin", "code", b"\x00\xff\x01")
+    def test_count_file_counts_the_four_file_categories(self):
+        code = count_file("sample.py", "code", "value = 1\n")
+        docs = count_file("guide.md", "docs", "text\n\n next \n")
+        tests = count_file("test.py", "tests", "one\n\nnext\n")
+        other = count_file("data.json", "other", '{"value": 1}\n')
+        self.assertEqual((code.code, code.docs, code.comments, code.tests), (1, 0, 0, 0))
         self.assertEqual((docs.code, docs.docs, docs.comments, docs.tests), (0, 2, 0, 0))
         self.assertEqual((tests.code, tests.docs, tests.comments, tests.tests), (0, 0, 0, 2))
-        self.assertEqual((binary.code, binary.docs, binary.comments, binary.tests), (0, 0, 0, 0))
+        self.assertEqual((other.code, other.docs, other.comments, other.tests), (0, 0, 0, 0))
+
+    def test_count_file_requires_text_content(self):
+        with self.assertRaisesRegex(TypeError, "文本"):
+            count_file("guide.md", "docs", b"text\n")
+
+    def test_count_file_rejects_categories_outside_the_four_file_categories(self):
+        for category in ("data", "repo", "unknown"):
+            with self.subTest(category=category):
+                with self.assertRaisesRegex(ValueError, "文件类别"):
+                    count_file("file.bin", category, "text\n")
 
     def test_unsupported_code_suffix_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "不支持"):

@@ -27,6 +27,27 @@ class DerivationTest(unittest.TestCase):
         counts = data["features"]["root"]["lines"]["own"]
         self.assertEqual(counts, {"code": 5, "docs": 3, "comments": 3, "tests": 2})
 
+    def test_binary_and_invalid_utf8_files_have_zero_lines_in_build_map(self):
+        repository = make_repo(self, {
+            "assets/binary.py": "placeholder = True\n",
+            "assets/invalid/broken.py": "placeholder = True\n",
+        }, feature("root", "", children=[
+            feature("assets", "assets", children=[
+                feature("invalid", "assets/invalid"),
+            ]),
+        ]))
+        (repository / "assets/binary.py").write_bytes(b"\x00value = 1\n")
+        (repository / "assets/invalid/broken.py").write_bytes(b"\xffvalue = 1\n")
+
+        data = build_map(self, repository)
+
+        for feature_id in ("assets", "invalid"):
+            with self.subTest(feature=feature_id):
+                self.assertEqual(
+                    data["features"][feature_id]["lines"]["own"],
+                    {"code": 0, "docs": 0, "comments": 0, "tests": 0},
+                )
+
     def test_directory_feature_owns_unclaimed_files(self):
         repository = make_repo(self, {
             "README.md": "root docs\n",
