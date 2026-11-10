@@ -183,11 +183,16 @@ def build_map(repository):
         if source is None:
             continue
         for target_path in file_mentions(source_path, source, paths):
-            if target_path in owners:
-                _add_use(uses, source_owner, owners[target_path], "mention", features)
+            target_owner = owners.get(target_path)
+            if target_owner is not None and not _directory_is_ancestor(
+                directory_for[source_owner], directory_for[target_owner], features
+            ):
+                _add_use(uses, source_owner, target_owner, "mention", features)
         own_directory = directory_for[source_owner]
         for target_feature in directory_mentions(source, directories, own_directory):
-            _add_use(uses, source_owner, target_feature, "mention", features)
+            target_directory = directory_for[target_feature]
+            if not _directory_is_ancestor(own_directory, target_directory, features):
+                _add_use(uses, source_owner, target_feature, "mention", features)
 
     index = {feature_id: position for position, feature_id in enumerate(order)}
     result_features = {}
@@ -237,3 +242,13 @@ def _parent_chain(feature_id, features):
     while current is not None:
         yield current
         current = features[current]["parent"]
+
+
+# Parent-directory overview files can name child features without depending on them.
+def _directory_is_ancestor(source_directory, target_directory, features):
+    current = features[target_directory]["parent"]
+    while current is not None:
+        if current == source_directory:
+            return True
+        current = features[current]["parent"]
+    return False

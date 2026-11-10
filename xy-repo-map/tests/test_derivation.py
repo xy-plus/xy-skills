@@ -166,11 +166,22 @@ class DerivationTest(unittest.TestCase):
             "alpha/guide.md": "See beta/helper.py and the beta directory.\n",
             "beta/helper.py": "value = 1\n",
         }, child_tree([
-            feature("alpha", None, entries=["alpha/guide.md"]),
-            feature("beta", "beta", entries=[]),
+            feature("alpha", "alpha"),
+            feature("beta", "beta"),
         ]))
         data = build_map(self, repository)
         self.assertEqual(data["features"]["alpha"]["uses"], [{"feature": "beta", "by": "mention"}])
+
+    def test_mentions_from_ancestor_directory_do_not_create_uses(self):
+        repository = make_repo(self, {
+            "README.md": "See pkg/module.py and the pkg directory.\n",
+            "pkg/module.py": "value = 1\n",
+        }, child_tree([
+            feature("guide", None, entries=["README.md"]),
+            feature("package", "pkg"),
+        ]))
+        data = build_map(self, repository)
+        self.assertEqual(data["features"]["guide"]["uses"], [])
 
     def test_nested_path_mention_does_not_match_a_root_level_file(self):
         repository = make_repo(self, {
