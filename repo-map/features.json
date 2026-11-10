@@ -106,8 +106,59 @@
             "from": ""
           },
           "directory": "xy-review",
-          "entries": [],
-          "children": []
+          "entries": [
+            "xy-review/SKILL.md"
+          ],
+          "children": [
+            {
+              "id": "review-report-check",
+              "title": "检查审查报告的格式",
+              "what": "审查报告是不是按模板写的、结论和问题清单对不对得上，用脚本查。",
+              "why": {
+                "text": "格式靠审查者自觉会走样，报告就没法机器核对。",
+                "source": "起草",
+                "quote": "",
+                "from": ""
+              },
+              "directory": null,
+              "entries": [
+                "xy-review/check.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "rule-quote-check",
+              "title": "引用规范要逐字",
+              "what": "报告里引用铁律或仓库规范时，核对引的是不是那一条的逐字原文。",
+              "why": {
+                "text": "审查者容易凭印象转述规范，一转述就可能走样。",
+                "source": "起草",
+                "quote": "",
+                "from": ""
+              },
+              "directory": null,
+              "entries": [
+                "xy-review/rule_references.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "stuck-loop-audit",
+              "title": "三轮没过要停下来找原因",
+              "what": "同一件东西改了三轮还没过，必须先判断为什么没过，再继续改。",
+              "why": {
+                "text": "反复改同一处却不过，多半是方向错了，继续改只是空转。",
+                "source": "起草",
+                "quote": "",
+                "from": ""
+              },
+              "directory": null,
+              "entries": [
+                "xy-review/audit.py"
+              ],
+              "children": []
+            }
+          ]
         }
       ]
     },
@@ -190,8 +241,28 @@
         "from": "20261025-070412-xy-skills-task-handoff 原话 1"
       },
       "directory": "xy-handoff",
-      "entries": [],
-      "children": []
+      "entries": [
+        "xy-handoff/SKILL.md"
+      ],
+      "children": [
+        {
+          "id": "handoff-note-check",
+          "title": "检查交接说明",
+          "what": "交接说明是不是按固定结构写全了，用脚本查，查不过不启动接手的会话。",
+          "why": {
+            "text": "交接说明缺一块，接手的会话就会带着缺口干活。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": null,
+          "entries": [
+            "xy-handoff/check_handoff.py",
+            "xy-handoff/test_check_handoff.py"
+          ],
+          "children": []
+        }
+      ]
     },
     {
       "id": "xy-runs",
@@ -268,15 +339,18 @@
           "directory": "xy-repo-map",
           "entries": [
             "xy-repo-map/SKILL.md",
-            "xy-repo-map/repo_map.py"
+            "xy-repo-map/repo_map.py",
+            "xy-repo-map/repo_map_lib/map_data.py",
+            "xy-repo-map/tests/test_derivation.py",
+            "xy-repo-map/tests/test_real_repository.py"
           ],
           "children": [
             {
               "id": "validate-feature-list",
               "title": "校验功能清单",
-              "what": "清单写得对不对，每个文件是否归到了功能上。",
+              "what": "清单写得对不对：字段、出处、目录和入口。",
               "why": {
-                "text": "功能清单和仓库文件的对应关系需要能自动检查。",
+                "text": "功能清单是人写的，写错了要当场指出来。",
                 "source": "起草",
                 "quote": "",
                 "from": ""
@@ -284,7 +358,55 @@
               "directory": null,
               "entries": [
                 "xy-repo-map/repo_map_lib/features.py",
-                "xy-repo-map/repo_map_lib/map_data.py"
+                "xy-repo-map/tests/test_feature_check.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "assign-files",
+              "title": "每个文件归到哪个功能",
+              "what": "每个被跟踪的文件恰好归到一个功能。",
+              "why": {
+                "text": "行数要算到功能头上，先得知道每个文件是谁的。",
+                "source": "起草",
+                "quote": "",
+                "from": ""
+              },
+              "directory": null,
+              "entries": [
+                "xy-repo-map/repo_map_lib/ownership.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "count-lines",
+              "title": "数代码、测试、文档各多少行",
+              "what": "每个功能的代码、测试、文档、注释各多少行。",
+              "why": {
+                "text": "一眼看出每个功能用了多少行。",
+                "source": "原话",
+                "quote": "图上最好能一目了然每个功能用了多少行代码、文档、测试。",
+                "from": "20261031-002858-xy-skills-cleanup-skill 原话 12"
+              },
+              "directory": null,
+              "entries": [
+                "xy-repo-map/repo_map_lib/metrics.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "find-dependencies",
+              "title": "看出功能之间谁用到谁",
+              "what": "功能之间谁用到谁、谁只是提到谁。",
+              "why": {
+                "text": "功能之间的依赖要不用点就看得出来。",
+                "source": "原话",
+                "quote": "有一些依赖关系依然看不出来",
+                "from": "20261110-070411-xy-skills-repo-map-cleanup-redesign 原话 6"
+              },
+              "directory": null,
+              "entries": [
+                "xy-repo-map/repo_map_lib/dependencies.py"
               ],
               "children": []
             },
@@ -302,7 +424,9 @@
               "entries": [
                 "xy-repo-map/repo_map_lib/render_command.py",
                 "xy-repo-map/repo_map_lib/render_page.py",
-                "xy-repo-map/repo_map_lib/templates/feature-tree.html"
+                "xy-repo-map/repo_map_lib/templates/feature-tree.html",
+                "xy-repo-map/tests/test_render.py",
+                "xy-repo-map/tests/browser_tree_test.py"
               ],
               "children": []
             },
@@ -318,7 +442,8 @@
               },
               "directory": null,
               "entries": [
-                "xy-repo-map/repo_map_lib/publish_command.py"
+                "xy-repo-map/repo_map_lib/publish_command.py",
+                "xy-repo-map/tests/test_publish.py"
               ],
               "children": []
             }
@@ -336,10 +461,26 @@
           },
           "directory": "xy-cleanup",
           "entries": [
-            "xy-cleanup/SKILL.md",
-            "xy-cleanup/check_reports.py"
+            "xy-cleanup/SKILL.md"
           ],
           "children": [
+            {
+              "id": "cleanup-report-check",
+              "title": "检查清扫审查报告",
+              "what": "两位审查者的报告是否覆盖了范围内每个功能、格式和决定合不合规，用脚本查。",
+              "why": {
+                "text": "审查要有能用机器核对的标准格式。",
+                "source": "原话",
+                "quote": "审查需要有标准的验收格式",
+                "from": "20261031-002858-xy-skills-cleanup-skill 原话 7"
+              },
+              "directory": null,
+              "entries": [
+                "xy-cleanup/check_reports.py",
+                "xy-cleanup/tests/test_check_reports.py"
+              ],
+              "children": []
+            },
             {
               "id": "changed-features-only",
               "title": "只审变过的功能",
