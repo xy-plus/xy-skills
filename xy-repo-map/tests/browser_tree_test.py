@@ -15,16 +15,24 @@ class BrowserTreeTest(unittest.TestCase):
     def test_tree_filters_decisions_and_fits_a_phone_viewport(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        alpha_source = "# one comment\n" + "".join(
+            f"value_{index} = {index}\n" for index in range(12)
+        )
         repository = make_repo(self, {
-            "README.md": "Demo.\n",
-            "alpha/main.py": "value = 1\n",
+            "README.md": "See alpha/main.py and group.\n",
+            "alpha/main.py": alpha_source,
+            "alpha/guide.md": "See group/ready.py for details.\n",
             "group/ready.py": "value = 2\n",
+            "group/consumer.py": "import alpha.main\nimport group.ready\n",
+            "group/tests/test_ready.py": "import group.ready\n",
         }, feature("root", "", children=[
             feature("alpha", "alpha"),
             feature("group", "group", children=[
                 feature("ready", None, entries=["group/ready.py"]),
+                feature("consumer", None, entries=["group/consumer.py"], source="确认"),
                 feature("future", None, source="起草"),
             ]),
+            feature("guide", None, entries=["README.md"]),
         ]))
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "rendered"
@@ -48,6 +56,45 @@ class BrowserTreeTest(unittest.TestCase):
                 )
                 self.assertNotIn(expected["root"], row_ids)
                 self.assertEqual(len(row_ids), len(expected["features"]) - 1, script_errors)
+                by_title = {
+                    feature_data["title"]: feature_id
+                    for feature_id, feature_data in expected["features"].items()
+                }
+                guide = expected["features"][by_title["Guide"]]
+                self.assertEqual(guide["uses"], [])
+                alpha_id = by_title["Alpha"]
+                mention_chips = page.locator(
+                    f'.feature-row[data-feature-id="{alpha_id}"] .uses .use-link'
+                )
+                self.assertEqual(mention_chips.all_text_contents(), ["Group提及", "Ready提及"])
+                for chip in mention_chips.all():
+                    self.assertEqual(chip.locator(".mention").text_content(), "提及")
+                consumer_id = by_title["Consumer"]
+                consumer_uses = page.locator(
+                    f'.feature-row[data-feature-id="{consumer_id}"] .uses .use-link'
+                ).all_text_contents()
+                self.assertEqual(consumer_uses, ["Ready", "Alpha"])
+                consumer_row = page.locator(f'.feature-row[data-feature-id="{consumer_id}"]')
+                why_row = consumer_row.locator(".why")
+                self.assertEqual(why_row.evaluate("element => element.tagName"), "P")
+                self.assertEqual(why_row.locator("strong").text_content(), "为什么：")
+                self.assertEqual(why_row.locator(".source-label").count(), 1)
+                line_totals = expected["features"][expected["root"]]["lines"]["total"]
+                line_total = sum(line_totals.values())
+                bar_width = page.locator("#summary-bar").evaluate(
+                    "element => element.getBoundingClientRect().width"
+                )
+                for key, count in line_totals.items():
+                    if not count:
+                        continue
+                    segment = page.locator(f"#summary-bar > .{key}")
+                    segment_width = segment.evaluate(
+                        "element => element.getBoundingClientRect().width"
+                    )
+                    expected_width = bar_width * count / line_total
+                    self.assertLessEqual(abs(segment_width - expected_width), 2, key)
+                    if count / line_total < 0.12:
+                        self.assertEqual(segment.inner_text(), "", key)
                 for feature_id, feature_data in expected["features"].items():
                     if feature_id == expected["root"] or not any(feature_data["lines"]["total"].values()):
                         continue
@@ -84,6 +131,29 @@ class BrowserTreeTest(unittest.TestCase):
                 self.assertEqual(visible, ["future"])
                 page.locator("#decision-filter").click()
                 self.assertEqual(script_errors, [])
+                guide_id = by_title["Guide"]
+                page.locator(f'.feature-row[data-feature-id="{guide_id}"] .feature-title').click()
+                panel = page.locator(".detail-panel")
+                headings = panel.locator("h3").all_text_contents()
+                self.assertNotIn("出处", headings)
+                self.assertEqual(panel.locator(".why-detail-body .source-label").text_content(), "你的原话")
+                citation = panel.locator("blockquote")
+                self.assertIn("用户说过的话。", citation.inner_text())
+                self.assertIn("测试契约", citation.inner_text())
+
+                page.locator(f'.feature-row[data-feature-id="{consumer_id}"] .feature-title').click()
+                panel = page.locator(".detail-panel")
+                self.assertNotIn("出处", panel.locator("h3").all_text_contents())
+                self.assertEqual(panel.locator(".why-detail-body .source-label").text_content(), "你确认过")
+                self.assertIn("本次回答", panel.inner_text())
+                self.assertEqual(panel.locator("blockquote").count(), 0)
+
+                future_id = by_title["Future"]
+                page.locator(f'.feature-row[data-feature-id="{future_id}"] .feature-title').click()
+                panel = page.locator(".detail-panel")
+                self.assertNotIn("出处", panel.locator("h3").all_text_contents())
+                self.assertEqual(panel.locator(".why-detail-body .source-label").text_content(), "AI 起草 · 等你拍板")
+                self.assertNotIn("来源：", panel.inner_text())
                 browser.close()
 
 
