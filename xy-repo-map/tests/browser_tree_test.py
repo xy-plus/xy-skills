@@ -43,7 +43,19 @@ class BrowserTreeTest(unittest.TestCase):
                 page.on("pageerror", lambda error: script_errors.append(str(error)))
                 page.goto((output / "index.html").as_uri())
 
-                self.assertEqual(page.locator(".feature-row").count(), len(expected["features"]), script_errors)
+                row_ids = page.locator(".feature-row").evaluate_all(
+                    "rows => rows.map(row => row.dataset.featureId)"
+                )
+                self.assertNotIn(expected["root"], row_ids)
+                self.assertEqual(len(row_ids), len(expected["features"]) - 1, script_errors)
+                for feature_id, feature_data in expected["features"].items():
+                    if feature_id == expected["root"] or not any(feature_data["lines"]["total"].values()):
+                        continue
+                    row = page.locator(f'.feature-row[data-feature-id="{feature_id}"]')
+                    widths = row.locator(".fill i").evaluate_all(
+                        "parts => parts.map(part => part.getBoundingClientRect().width)"
+                    )
+                    self.assertTrue(any(width > 0 for width in widths), feature_id)
                 embedded = page.evaluate(
                     "JSON.parse(document.querySelector('#map-data').textContent)"
                 )

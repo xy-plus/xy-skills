@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>仓库功能树</title>
+<link rel="icon" href="data:,">
+<style>
+:root{color-scheme:light dark;--page:#f3f5f7;--surface:#fff;--ink:#10151b;--ink2:#4d5966;--muted:#8792a0;--hair:#dde3e9;--track:#e8ecf0;--code:#2a78d6;--tests:#eb6834;--docs:#1baf7a;--comments:#eda100;--uses:#2a78d6;--uses-wash:#e8f1fc;--sans:system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--page:#0d1013;--surface:#161a1f;--ink:#eef1f4;--ink2:#b9c2cc;--muted:#7f8a97;--hair:#2a3038;--track:#232a32;--code:#3987e5;--tests:#d95926;--docs:#199e70;--comments:#c98500;--uses:#3987e5;--uses-wash:#17263a}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 var(--sans)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+.wrap{max-width:980px;margin:0 auto;padding-left:14px;padding-right:14px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.hero{padding:18px 0 12px}
+h1{margin:0;font:700 22px/1.2 var(--mono);letter-spacing:-.01em;overflow-wrap:anywhere}
+.hero p{margin:6px 0 0;color:var(--ink2);font-size:14px;overflow-wrap:anywhere}
+.facts{margin-top:10px;font-size:13px;color:var(--ink2)}
+.facts b{color:var(--ink);font-weight:650}
+.summary-bar{display:flex;gap:2px;height:28px;margin-top:12px;overflow:hidden;border-radius:4px;background:var(--track)}
+.summary-bar span{display:block;min-width:3px;padding-left:7px;overflow:hidden;color:#fff;font:600 11px/28px var(--sans);white-space:nowrap}
+.summary-bar .comments{color:#0b0b0b;padding-left:0}
+.code{--color:var(--code)}.tests{--color:var(--tests)}.docs{--color:var(--docs)}.comments{--color:var(--comments)}
+.summary-bar span,.fill i{background:var(--color)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;font-size:12px;color:var(--ink2)}
+.legend span:before,.metric i{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:var(--color)}
+.signals{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.chip{display:inline-block;font-size:12px;border:1px solid var(--hair);background:var(--surface);border-radius:99px;padding:4px 10px;color:var(--ink2);white-space:nowrap}
+button.chip{cursor:pointer}.chip b{color:var(--ink);font-weight:650;margin-left:4px}
+.chip.decision{background:#fab219;border-color:#fab219;color:#0b0b0b;font-weight:650}
+.chip.decision b{color:#0b0b0b}.chip[aria-pressed=true]{box-shadow:0 0 0 2px var(--ink)}
+.sticky{position:sticky;top:0;z-index:4;background:color-mix(in srgb,var(--page) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--hair)}
+.sticky .wrap{display:flex;align-items:center;justify-content:flex-end;height:48px}
+.toolbar{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px}
+.toolbar button{min-width:30px;height:30px;border:1px solid var(--hair);border-radius:8px;background:var(--surface);text-align:center}
+.toolbar button:last-child{padding:0 9px}
+#depth-value{min-width:14px;text-align:center;color:var(--ink);font-weight:650}
+main{padding-top:10px;padding-bottom:45vh}
+.tree{background:var(--surface);border:1px solid var(--hair);border-radius:14px;padding:8px 12px}
+.feature-node{min-width:0}
+.feature-row{display:flex;align-items:stretch;min-height:46px;border-bottom:1px solid #edf0f4;border-radius:10px;min-width:0}
+@media(prefers-color-scheme:dark){.feature-row{border-bottom-color:var(--hair)}}
+.feature-row[hidden]{display:none}
+.feature-row.decision{box-shadow:inset 3px 0 0 #fab219}
+.guides{flex:none;background:repeating-linear-gradient(to right,transparent 0 9px,var(--hair) 9px 10px,transparent 10px 18px)}
+.caret{flex:none;width:28px;padding-top:9px;text-align:center;color:var(--muted);font-size:11px;align-self:flex-start}
+.caret:disabled{cursor:default}.caret span{display:inline-block;transition:transform .12s}.caret[aria-expanded=true] span{transform:rotate(90deg)}
+.row-body{flex:1;min-width:0;padding:6px 8px 8px 0}
+.line-one{display:flex;align-items:baseline;gap:7px;min-width:0}
+.feature-title{display:flex;align-items:baseline;gap:5px;min-width:0;max-width:100%;font-weight:650;overflow:hidden}
+.feature-title .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feature-title .directory-name{font:12px var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feature-total{margin-left:auto;flex:none;padding-left:6px;color:var(--ink2);font:12px var(--mono);white-space:nowrap}
+.what{margin:3px 0 0;color:var(--ink2);font-size:13.5px;overflow-wrap:anywhere}
+.why{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;margin-top:3px;color:var(--ink2);font-size:13px;overflow-wrap:anywhere}
+.why strong{color:var(--ink);font-weight:650}
+.source-label{display:inline-block;border:1px solid var(--hair);border-radius:4px;padding:0 5px;font-size:10.5px;color:var(--muted);white-space:nowrap}
+.source-label.quote{border-color:var(--docs);color:var(--ink2)}
+.source-label.draft{background:#fab219;border-color:#fab219;color:#0b0b0b;font-weight:650}
+.meter-line{display:flex;align-items:center;gap:8px;margin-top:6px;min-width:0}
+.meter{flex:1;height:6px;max-width:560px;min-width:0;background:var(--track);border-radius:3px;overflow:hidden}
+.fill{display:flex;height:100%;min-width:3px;overflow:hidden}
+.fill i{display:block;flex:0 0 auto;min-width:1px;height:100%}
+.metrics{display:flex;flex-wrap:wrap;gap:4px 11px;color:var(--ink2);font-size:12px}
+.metric{white-space:nowrap}.metric i{width:8px;height:8px;border-radius:50%;margin-right:4px}
+.incoming{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:4px;color:var(--muted);font-size:12px}
+.uses{display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px;margin-top:6px;font-size:12.5px;color:var(--ink2)}
+.uses-label{font-weight:650;color:var(--ink);margin-right:2px}
+.use-link{max-width:100%;padding:1px 8px;border:1px solid transparent;border-radius:6px;background:var(--surface);color:var(--uses);overflow-wrap:anywhere}
+.use-link.same-parent{border-color:var(--uses);box-shadow:inset 0 0 0 .5px var(--uses)}
+.mention{margin-left:4px;color:var(--muted);font-size:10.5px}
+.feature-children{margin-left:18px;border-left:1px solid var(--hair);padding-left:0}
+.feature-children[hidden]{display:none}
+.feature-markers{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.feature-markers .chip{padding:1px 6px;font-size:11px}
+.undivided{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;margin:6px 0 9px 46px;padding:7px 9px;background:var(--page);color:var(--ink2);font-size:13px;border-radius:7px}
+.detail-panel{position:fixed;z-index:5;left:0;right:0;bottom:0;max-height:72vh;overflow:auto;background:var(--surface);border-top:2px solid #7593b6;box-shadow:0 -8px 28px #1f293322;padding:16px max(16px,calc((100% - 760px)/2)) 24px}
+.detail-panel[hidden]{display:none}
+.detail-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.detail-panel h2{font-size:19px;margin:0 0 3px;overflow-wrap:anywhere}
+.detail-path{color:var(--muted);font-size:13px;margin:0 0 12px;overflow-wrap:anywhere}
+.close-detail{flex:none;width:32px;height:32px;border:1px solid var(--hair);border-radius:8px;background:var(--page);text-align:center}
+.detail-panel p{margin:8px 0;overflow-wrap:anywhere}
+.detail-panel h3{margin:14px 0 5px;font-size:13px}
+.detail-panel blockquote{margin:6px 0 0;padding:6px 10px;border-left:3px solid var(--docs);background:var(--page);font-size:13px;color:var(--ink2);border-radius:0 6px 6px 0;overflow-wrap:anywhere}
+.detail-list{list-style:none;margin:0;padding:0}
+.detail-list li{border-bottom:1px solid var(--hair);padding:7px 2px;font-size:13px}
+.detail-list button{color:var(--uses);overflow-wrap:anywhere}
+.detail-list small{margin-left:5px;color:var(--muted);font-size:11px}
+@media(max-width:520px){.wrap{padding-left:12px;padding-right:12px}.hero{padding-top:15px}.feature-title{font-size:14px}.feature-title .directory-name{font-size:11px}.meter-line{gap:5px}.metrics{gap:3px 7px}.feature-children{margin-left:10px}.undivided{margin-left:38px}.detail-panel{padding-left:14px;padding-right:14px}}
+</style>
+</head>
+<body>
+<header class="wrap hero">
+  <h1 id="page-title"></h1>
+  <p id="page-what"></p>
+  <div class="facts" id="facts"></div>
+  <div class="summary-bar" id="summary-bar" aria-label="代码、测试、文档和注释行数"></div>
+  <div class="legend" id="legend"></div>
+  <div class="signals" id="marker-list"></div>
+</header>
+<nav class="sticky"><div class="wrap">
+  <div class="toolbar"><span>层级</span><button type="button" id="depth-minus" aria-label="少一层">−</button><b id="depth-value">2</b><button type="button" id="depth-plus" aria-label="多一层">＋</button><button type="button" id="depth-all">全部</button></div>
+</div></nav>
+<main class="wrap"><div class="tree" id="tree"></div></main>
+<aside class="detail-panel" id="detail-panel" hidden></aside>
+<script id="map-data" type="application/json">__MAP_DATA__</script>
+<script>
+"use strict";
+const mapData=JSON.parse(document.querySelector("#map-data").textContent);
+const features=mapData.features;
+const rootId=mapData.root;
+const rootFeature=features[rootId];
+const lineKeys=["code","tests","docs","comments"];
+const lineTitles={code:"代码",tests:"测试",docs:"文档",comments:"注释"};
+const markerOrder=["等你拍板","还没实现","没归到功能的代码"];
+const sourceLabels={原话:"你的原话",确认:"你确认过",起草:"AI 起草 · 等你拍板"};
+const rows=new Map();
+const childLists=new Map();
+const manualExpansion=new Map();
+let depth=2;
+let maximumDepth=1;
+let showDecisions=false;
+let selected=null;
+function make(tag,className,text){const element=document.createElement(tag);if(className)element.className=className;if(text!==undefined)element.textContent=text;return element;}
+function sumLines(lines){return lineKeys.reduce((sum,key)=>sum+lines[key],0);}
+function formatNumber(value){return value.toLocaleString("zh-CN");}
+function featureName(feature){return feature.directory_name?`${feature.title}（${feature.directory_name}）`:feature.title;}
+function featureLevel(featureId){let level=0;let current=featureId;while(current&&current!==rootId){level++;current=features[current].parent;}return level;}
+function appendSourceLabel(parent,source){const label=make("span","source-label"+(source==="原话"?" quote":source==="起草"?" draft":""),sourceLabels[source]);parent.append(label);}
+function appendMetrics(parent,lines){const list=make("div","metrics");for(const key of lineKeys){if(!lines[key])continue;const item=make("span","metric");item.append(make("i",key));item.append(document.createTextNode(`${lineTitles[key]} ${formatNumber(lines[key])}`));list.append(item);}if(list.childElementCount)parent.append(list);}
+function addSegments(parent,lines){for(const key of lineKeys){if(!lines[key])continue;const part=make("i",key);part.style.flexGrow=String(lines[key]);parent.append(part);}}
+function appendBar(parent,feature){const total=sumLines(feature.lines.total);if(!total)return;const parentTotal=feature.parent?sumLines(features[feature.parent].lines.total):total;const line=make("div","meter-line");const meter=make("div","meter");const fill=make("div","fill");fill.style.width=`${parentTotal?Math.max(0,100*total/parentTotal):100}%`;addSegments(fill,feature.lines.total);meter.append(fill);line.append(meter);appendMetrics(line,feature.lines.total);parent.append(line);}
+function usesList(featureId){const feature=features[featureId];if(!feature.uses.length)return null;const line=make("div","uses");line.append(make("span","uses-label","用到"));for(const use of feature.uses){const target=features[use.feature];const wrap=make("span","");const button=make("button","use-link"+(target.parent===feature.parent?" same-parent":""),featureName(target));button.type="button";button.addEventListener("click",()=>{showDecisions=false;applyVisibility();revealFeature(use.feature);openDetails(use.feature);});wrap.append(button);if(use.by==="mention")wrap.append(make("small","mention","提及"));line.append(wrap);}return line;}
+function incomingCounts(featureId){const counts={import:0,mention:0};for(const feature of Object.values(features)){for(const use of feature.uses){if(use.feature===featureId)counts[use.by]++;}}return counts;}
+function appendIncoming(parent,featureId){const counts=incomingCounts(featureId);if(!counts.import&&!counts.mention)return;const line=make("div","incoming");if(counts.import)line.append(make("span","",`被用 ${counts.import}`));if(counts.mention)line.append(make("span","",`被提及 ${counts.mention}`));parent.append(line);}
+function appendMarkers(parent,feature){const labels=feature.markers.filter(marker=>marker!=="等你拍板");if(!labels.length)return;const list=make("div","feature-markers");for(const marker of markerOrder){if(labels.includes(marker))list.append(make("span","chip",marker));}parent.append(list);}
+function descendantsHaveDecision(featureId){const feature=features[featureId];return feature.markers.includes("等你拍板")||feature.children.some(descendantsHaveDecision);}
+function renderFeature(featureId,level){maximumDepth=Math.max(maximumDepth,level);const feature=features[featureId];const section=make("section","feature-node");const row=make("div","feature-row"+(feature.markers.includes("等你拍板")?" decision":""));row.dataset.featureId=featureId;rows.set(featureId,row);
+  const guides=make("div","guides");guides.style.width=`${Math.max(0,level-1)*18}px`;row.append(guides);
+  const toggle=make("button","caret");toggle.type="button";toggle.setAttribute("aria-label",feature.children.length?`展开或收起${featureName(feature)}`:"无子功能");toggle.disabled=!feature.children.length;toggle.setAttribute("aria-expanded",String(level<depth));toggle.append(make("span","",feature.children.length?"▸":""));toggle.addEventListener("click",()=>{const list=childLists.get(featureId);manualExpansion.set(featureId,list.hidden);applyVisibility();});row.append(toggle);
+  const body=make("div","row-body");const first=make("div","line-one");const name=make("button","feature-title");name.type="button";name.addEventListener("click",()=>openDetails(featureId));name.append(make("span","title",feature.title));if(feature.directory_name)name.append(make("span","directory-name",`（${feature.directory_name}）`));first.append(name);const lineTotal=sumLines(feature.lines.total);first.append(make("span","feature-total",lineTotal?`${formatNumber(lineTotal)} 行`:"—"));body.append(first);
+  body.append(make("p","what",feature.what));const why=make("div","why");why.append(make("strong","","为什么："));why.append(document.createTextNode(feature.why.text));appendSourceLabel(why,feature.why.source);body.append(why);
+  appendBar(body,feature);appendIncoming(body,featureId);const uses=usesList(featureId);if(uses)body.append(uses);appendMarkers(body,feature);row.append(body);section.append(row);
+  if(feature.children.length){const list=make("div","feature-children");childLists.set(featureId,list);for(const childId of feature.children)list.append(renderFeature(childId,level+1));section.append(list);}
+  if(feature.children.length&&sumLines(feature.lines.own)){const own=make("div","undivided");own.append(make("span","","没细分到子功能的部分"));own.append(make("span","",`${formatNumber(sumLines(feature.lines.own))} 行`));section.append(own);}
+  return section;
+}
+function applyVisibility(){for(const [featureId,row] of rows)row.hidden=showDecisions&&!features[featureId].markers.includes("等你拍板");for(const [featureId,list] of childLists){const feature=features[featureId];const featureDepth=featureLevel(featureId);if(showDecisions)list.hidden=!feature.children.some(descendantsHaveDecision);else if(manualExpansion.has(featureId))list.hidden=!manualExpansion.get(featureId);else list.hidden=featureDepth>=depth;const toggle=rows.get(featureId).querySelector(".caret");toggle.setAttribute("aria-expanded",String(!list.hidden));}const filter=document.querySelector("#decision-filter");if(filter)filter.setAttribute("aria-pressed",String(showDecisions));document.querySelector("#depth-value").textContent=String(depth);}
+function renderHeader(){document.querySelector("#page-title").textContent=featureName(rootFeature);document.querySelector("#page-what").textContent=rootFeature.what;const totalLines=rootFeature.lines.total;const total=sumLines(totalLines);const facts=document.querySelector("#facts");facts.append(make("b","",`${formatNumber(total)} 行`),document.createTextNode(" · "),make("b","",`${Object.keys(features).length} 个功能`));const summary=document.querySelector("#summary-bar");for(const key of lineKeys){if(!totalLines[key])continue;const segment=make("span",key,`${lineTitles[key]} ${Math.round(totalLines[key]*100/total)}%`);segment.style.flexGrow=String(totalLines[key]);segment.title=`${lineTitles[key]} ${formatNumber(totalLines[key])}`;summary.append(segment);}const legend=document.querySelector("#legend");for(const key of lineKeys){const item=make("span",key,`${lineTitles[key]} ${formatNumber(totalLines[key])}`);legend.append(item);}const markers=document.querySelector("#marker-list");for(const marker of markerOrder){const count=mapData.markers[marker];if(!count)continue;if(marker==="等你拍板"){const button=make("button","chip decision",`${marker} ${count}`);button.type="button";button.id="decision-filter";button.setAttribute("aria-pressed","false");button.addEventListener("click",()=>{showDecisions=!showDecisions;applyVisibility();});markers.append(button);}else markers.append(make("span","chip",`${marker} ${count}`));}}
+function relationList(items){const list=make("ul","detail-list");if(!items.length){list.append(make("li","","无"));return list;}for(const item of items){const line=make("li","");const button=make("button","",featureName(features[item.feature]));button.type="button";button.addEventListener("click",()=>{showDecisions=false;applyVisibility();revealFeature(item.feature);openDetails(item.feature);});line.append(button);if(item.by==="mention")line.append(make("small","","提及"));list.append(line);}return list;}
+function openDetails(featureId){selected=featureId;for(const [id,row] of rows)row.classList.toggle("selected",id===featureId);const feature=features[featureId];const panel=document.querySelector("#detail-panel");panel.replaceChildren();const top=make("div","detail-top");top.append(make("h2","",featureName(feature)));const close=make("button","close-detail","×");close.type="button";close.setAttribute("aria-label","关闭详情");close.addEventListener("click",closeDetails);top.append(close);panel.append(top);const path=[];let current=feature.parent;while(current){path.unshift(featureName(features[current]));current=features[current].parent;}panel.append(make("p","detail-path",`上级路径：${path.join(" › ")||"无"}`));panel.append(make("h3","","要什么"),make("p","",feature.what));const why=make("p","",`为什么：${feature.why.text} `);appendSourceLabel(why,feature.why.source);panel.append(make("h3","","为什么要"),why);if(feature.why.quote)panel.append(make("blockquote","",`「${feature.why.quote}」`));panel.append(make("h3","","出处"),make("p","",`${sourceLabels[feature.why.source]}${feature.why.from?` · ${feature.why.from}`:""} `));const quote=feature.why.quote;if(quote)panel.append(make("p","detail-path",`来源：${feature.why.from}`));panel.append(make("h3","","用到"),relationList(feature.uses));const incoming=[];for(const [otherId,other] of Object.entries(features)){for(const use of other.uses){if(use.feature===featureId)incoming.push({feature:otherId,by:use.by});}}panel.append(make("h3","","被用到"),relationList(incoming));panel.hidden=false;}
+function closeDetails(){document.querySelector("#detail-panel").hidden=true;if(selected!==null)rows.get(selected).classList.remove("selected");selected=null;}
+function revealFeature(featureId){let current=features[featureId].parent;while(current&&current!==rootId){manualExpansion.set(current,true);current=features[current].parent;}showDecisions=false;applyVisibility();const row=rows.get(featureId);if(row)row.scrollIntoView({block:"center",behavior:"smooth"});}
+function setDepth(value){depth=value;manualExpansion.clear();applyVisibility();}
+renderHeader();const tree=document.querySelector("#tree");for(const childId of rootFeature.children)tree.append(renderFeature(childId,1));document.querySelector("#depth-minus").addEventListener("click",()=>setDepth(Math.max(1,depth-1)));document.querySelector("#depth-plus").addEventListener("click",()=>setDepth(Math.min(maximumDepth,depth+1)));document.querySelector("#depth-all").addEventListener("click",()=>setDepth(maximumDepth));applyVisibility();
+</script>
+</body>
+</html>

@@ -36,6 +36,64 @@ class RealRepositoryTest(unittest.TestCase):
 
         feature_path = ROOT / "repo-map" / "features.json"
         feature_tree = json.loads(feature_path.read_text(encoding="utf-8"))
+        by_title = {}
+
+        def index_features(feature):
+            by_title[feature["title"]] = feature
+            for child in feature["children"]:
+                index_features(child)
+
+        index_features(feature_tree)
+
+        goal = by_title["长目标契约"]
+        self.assertEqual(goal["entries"], ["xy-goal/README.md"])
+        for title in ("逐字记录我的原话", "事项对账与验收", "定时自查"):
+            with self.subTest(goal_feature=title):
+                self.assertEqual(by_title[title]["entries"], ["xy-goal/SKILL.md", "xy-goal/goal.py"])
+        self.assertTrue(all(
+            not any(value for value in map_data["features"][by_title[title]["id"]]["lines"]["total"].values())
+            for title in ("逐字记录我的原话", "事项对账与验收", "定时自查")
+        ))
+
+        runs = by_title["运行目录管理"]
+        self.assertEqual(runs["entries"], [])
+        self.assertEqual(by_title["文件去处规则"]["entries"], ["xy-runs/SKILL.md"])
+        self.assertEqual(by_title["定期清理运行目录"]["entries"], [
+            "xy-runs/clean.py", "xy-runs/README.md", "xy-runs/systemd/",
+        ])
+
+        self.assertEqual(by_title["校验功能清单"]["entries"], [
+            "xy-repo-map/repo_map_lib/features.py",
+            "xy-repo-map/repo_map_lib/map_data.py",
+        ])
+        self.assertIn(
+            "xy-repo-map/repo_map_lib/templates/feature-tree.html",
+            by_title["出图"]["entries"],
+        )
+
+        def collect_entries(feature):
+            yield from feature["entries"]
+            for child in feature["children"]:
+                yield from collect_entries(child)
+
+        for entry in collect_entries(feature_tree):
+            self.assertNotIn("tests/", entry)
+            self.assertNotIn("test_", Path(entry.rstrip("/")).name)
+
+        self.assertEqual(by_title["会话任务交接"]["why"]["from"],
+                         "20261025-070412-xy-skills-task-handoff 原话 1")
+        self.assertEqual(by_title["收拾仓库"]["why"]["source"], "原话")
+        self.assertEqual(by_title["收拾仓库"]["why"]["quote"],
+                         "ai写的代码太多了，应该怎么整理，让仓库干净？")
+        self.assertEqual(by_title["收拾仓库"]["why"]["from"],
+                         "20261031-002858-xy-skills-cleanup-skill 原话 1")
+        self.assertEqual(by_title["仓库功能图"]["why"]["from"],
+                         "20261031-002858-xy-skills-cleanup-skill 原话 5")
+        self.assertEqual(by_title["出图"]["why"]["from"],
+                         "20261031-002858-xy-skills-cleanup-skill 原话 159")
+        self.assertEqual(by_title["仓库清扫"]["why"]["from"],
+                         "20261110-070411-xy-skills-repo-map-cleanup-redesign 原话 1")
+
         directory_features = []
 
         def collect(feature):
@@ -91,6 +149,8 @@ class RealRepositoryTest(unittest.TestCase):
                            if map_data["features"][child]["title"] == "只审变过的功能")
         self.assertIn("等你拍板", map_data["features"][reminder_id]["markers"])
         self.assertIn("还没实现", map_data["features"][reminder_id]["markers"])
+        self.assertEqual(map_data["markers"]["还没实现"], 1)
+        self.assertEqual(map_data["markers"]["没归到功能的代码"], 0)
 
 
 if __name__ == "__main__":

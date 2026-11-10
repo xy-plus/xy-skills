@@ -123,7 +123,7 @@
       },
       "directory": "xy-goal",
       "entries": [
-        "xy-goal/SKILL.md"
+        "xy-goal/README.md"
       ],
       "children": [
         {
@@ -138,6 +138,7 @@
           },
           "directory": null,
           "entries": [
+            "xy-goal/SKILL.md",
             "xy-goal/goal.py"
           ],
           "children": []
@@ -154,7 +155,8 @@
           },
           "directory": null,
           "entries": [
-            "xy-goal/tests/test_goal.py"
+            "xy-goal/SKILL.md",
+            "xy-goal/goal.py"
           ],
           "children": []
         },
@@ -170,7 +172,8 @@
           },
           "directory": null,
           "entries": [
-            "xy-goal/README.md"
+            "xy-goal/SKILL.md",
+            "xy-goal/goal.py"
           ],
           "children": []
         }
@@ -184,7 +187,7 @@
         "text": "任务有大有小，小任务要挂在大任务下面，不能各做各的。",
         "source": "原话",
         "quote": "希望 AI 能够创建大任务，并把小任务挂在大任务下面。",
-        "from": "用户原话原件目录：/data/user/xy/runs/-home-xy-xy-skills/20261025-070412-xy-skills-task-handoff/xy-goal/quotes/"
+        "from": "20261025-070412-xy-skills-task-handoff 原话 1"
       },
       "directory": "xy-handoff",
       "entries": [],
@@ -201,11 +204,7 @@
         "from": ""
       },
       "directory": "xy-runs",
-      "entries": [
-        "xy-runs/SKILL.md",
-        "xy-runs/systemd/runs-cleaner.service",
-        "xy-runs/systemd/runs-cleaner.timer"
-      ],
+      "entries": [],
       "children": [
         {
           "id": "file-placement",
@@ -219,7 +218,7 @@
           },
           "directory": null,
           "entries": [
-            "xy-runs/README.md"
+            "xy-runs/SKILL.md"
           ],
           "children": []
         },
@@ -236,8 +235,8 @@
           "directory": null,
           "entries": [
             "xy-runs/clean.py",
-            "xy-runs/tests/test_clean.py",
-            "xy-runs/tests/test_service.py"
+            "xy-runs/README.md",
+            "xy-runs/systemd/"
           ],
           "children": []
         }
@@ -249,9 +248,9 @@
       "what": "看清仓库里有哪些功能、各占多少，定期把多余的清掉。",
       "why": {
         "text": "AI 写的代码太多了，要能整理，让仓库干净。",
-        "source": "起草",
-        "quote": "",
-        "from": ""
+        "source": "原话",
+        "quote": "ai写的代码太多了，应该怎么整理，让仓库干净？",
+        "from": "20261031-002858-xy-skills-cleanup-skill 原话 1"
       },
       "directory": null,
       "entries": [],
@@ -264,7 +263,7 @@
             "text": "以后审核，就是看仓库实际情况和图的情况，功能多了应该删掉或更新图。",
             "source": "原话",
             "quote": "以后审核，就是看仓库实际情况和图的情况，功能多了应该删掉or更新图",
-            "from": "用户原话原件目录：/data/user/xy/runs/-home-xy-xy-skills/20261031-002858-xy-skills-cleanup-skill/xy-goal/quotes/"
+            "from": "20261031-002858-xy-skills-cleanup-skill 原话 5"
           },
           "directory": "xy-repo-map",
           "entries": [
@@ -284,16 +283,8 @@
               },
               "directory": null,
               "entries": [
-                "xy-repo-map/repo_map_lib/constants.py",
-                "xy-repo-map/repo_map_lib/dependencies.py",
                 "xy-repo-map/repo_map_lib/features.py",
-                "xy-repo-map/repo_map_lib/git_repository.py",
-                "xy-repo-map/repo_map_lib/metrics.py",
-                "xy-repo-map/repo_map_lib/ownership.py",
-                "xy-repo-map/repo_map_lib/map_data.py",
-                "xy-repo-map/tests/test_feature_check.py",
-                "xy-repo-map/tests/test_derivation.py",
-                "xy-repo-map/tests/test_real_repository.py"
+                "xy-repo-map/repo_map_lib/map_data.py"
               ],
               "children": []
             },
@@ -305,14 +296,13 @@
                 "text": "用户主要用手机看功能图。",
                 "source": "原话",
                 "quote": "需要对手机有好的支持 我主要用手机看",
-                "from": "用户原话原件目录：/data/user/xy/runs/-home-xy-xy-skills/20261031-002858-xy-skills-cleanup-skill/xy-goal/quotes/"
+                "from": "20261031-002858-xy-skills-cleanup-skill 原话 159"
               },
               "directory": null,
               "entries": [
                 "xy-repo-map/repo_map_lib/render_command.py",
                 "xy-repo-map/repo_map_lib/render_page.py",
-                "xy-repo-map/tests/test_render.py",
-                "xy-repo-map/tests/browser_tree_test.py"
+                "xy-repo-map/repo_map_lib/templates/feature-tree.html"
               ],
               "children": []
             },
@@ -328,8 +318,7 @@
               },
               "directory": null,
               "entries": [
-                "xy-repo-map/repo_map_lib/publish_command.py",
-                "xy-repo-map/tests/test_publish.py"
+                "xy-repo-map/repo_map_lib/publish_command.py"
               ],
               "children": []
             }
@@ -343,7 +332,7 @@
             "text": "现在图不好看，清扫也有很多问题，需要把仓库整理干净。",
             "source": "原话",
             "quote": "cleanup 也有很多问题，它不能够把图片做得非常干净",
-            "from": "用户原话原件目录：/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/xy-goal/quotes/"
+            "from": "20261110-070411-xy-skills-repo-map-cleanup-redesign 原话 1"
           },
           "directory": "xy-cleanup",
           "entries": [
