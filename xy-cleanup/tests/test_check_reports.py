@@ -1,0 +1,252 @@
+"""Test the public validator for per-feature cleanup review reports."""
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+COMMAND = ROOT / "xy-cleanup" / "check_reports.py"
+RULE_SOURCE = "xy-iron-law 第 3 条"
+RULE_TEXT = "如无必要，勿增实体（奥卡姆剃刀）。"
+
+
+def why():
+    return {"text": "说明功能用途。", "source": "起草", "quote": "", "from": ""}
+
+
+def feature(feature_id, directory, children=None, entries=None):
+    return {
+        "id": feature_id,
+        "title": feature_id,
+        "what": "提供对应功能。",
+        "why": why(),
+        "directory": directory,
+        "entries": [] if entries is None else entries,
+        "children": [] if children is None else children,
+    }
+
+
+def make_repository(test_case):
+    temporary = tempfile.TemporaryDirectory()
+    test_case.addCleanup(temporary.cleanup)
+    repository = Path(temporary.name) / "sample-repo"
+    repository.mkdir()
+    (repository / "README.md").write_text("Demo.\n", encoding="utf-8")
+    (repository / "alpha").mkdir()
+    (repository / "alpha" / "main.py").write_text("value = 1\n", encoding="utf-8")
+    (repository / "beta").mkdir()
+    (repository / "beta" / "main.py").write_text("value = 2\n", encoding="utf-8")
+    root = feature("root", "", children=[feature("alpha", "alpha"), feature("beta", "beta")])
+    feature_path = repository / "repo-map" / "features.json"
+    feature_path.parent.mkdir()
+    feature_path.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+    return repository
+
+
+def review_feature(feature_id):
+    return {"feature": feature_id, "needed": "需要。", "smaller": "不能更少。",
+            "why_holds": "理由仍成立。", "findings": []}
+
+
+def report(role, repository, feature_ids=("alpha", "beta")):
+    return {"role": role, "repo": str(repository),
+            "features": [review_feature(feature_id) for feature_id in feature_ids]}
+
+
+def finding(kind="重构", changes_behavior=True, decision="问你", basis=None):
+    return {
+        "kind": kind,
+        "target": "alpha/main.py:1",
+        "problem": "实现重复。",
+        "proposal": "合并重复逻辑。",
+        "changes_behavior": changes_behavior,
+        "decision": decision,
+        "basis": {"source": RULE_SOURCE, "text": RULE_TEXT} if basis is None else basis,
+        "evidence": "两个位置执行相同逻辑。",
+        "benefit": "减少重复代码。",
+        "cost": "需要调整调用。",
+    }
+
+
+class CheckReportsTest(unittest.TestCase):
+    def setUp(self):
+        self.repository = make_repository(self)
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.main_path = self.directory / "main.json"
+        self.razor_path = self.directory / "razor.json"
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+
+    def write_reports(self, main, razor):
+        self.main_path.write_text(json.dumps(main, ensure_ascii=False), encoding="utf-8")
+        self.razor_path.write_text(json.dumps(razor, ensure_ascii=False), encoding="utf-8")
+
+    def run_check(self, scope=("全部",), reports=None):
+        paths = reports or (str(self.main_path), str(self.razor_path))
+        return subprocess.run(
+            ["python3", "-B", str(COMMAND), "--repo", str(self.repository),
+             "--scope", *scope, "--reports", *paths],
+            capture_output=True, text=True, check=False,
+        )
+
+    def test_accepts_complete_reports_for_each_role(self):
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_requires_exact_top_level_and_feature_fields(self):
+        main = report("主审", self.repository)
+        main["legacy"] = "unused"
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("legacy", result.stdout)
+
+        main = report("主审", self.repository)
+        del main["features"][0]["needed"]
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("needed", result.stdout)
+
+    def test_rejects_empty_answers_and_extra_finding_fields(self):
+        main = report("主审", self.repository)
+        main["features"][0]["why_holds"] = "  "
+        main["features"][0]["findings"] = [finding()]
+        main["features"][0]["findings"][0]["extra"] = "not allowed"
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("why_holds", result.stdout)
+        self.assertIn("extra", result.stdout)
+
+    def test_requires_every_scoped_leaf_exactly_once_for_each_role(self):
+        cases = [
+            (("alpha",), ("beta",), "alpha"),
+            (("alpha", "alpha"), ("alpha",), "重复"),
+            (("alpha", "beta"), ("alpha",), "beta"),
+        ]
+        for main_ids, razor_ids, expected in cases:
+            with self.subTest(main=main_ids, razor=razor_ids):
+                self.write_reports(report("主审", self.repository, main_ids),
+                                   report("剃刀", self.repository, razor_ids))
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(expected, result.stdout)
+
+    def test_a_parent_scope_expands_to_its_finest_features(self):
+        root_path = self.repository / "repo-map" / "features.json"
+        root = json.loads(root_path.read_text(encoding="utf-8"))
+        root["children"].append(feature("group", None, children=[
+            feature("gamma", None, entries=[]), feature("delta", None, entries=[]),
+        ]))
+        root_path.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repository), "add", "-A"], check=True)
+        main = report("主审", self.repository, ("gamma", "delta"))
+        razor = report("剃刀", self.repository, ("gamma", "delta"))
+        self.write_reports(main, razor)
+        result = self.run_check(("group",))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_role_may_split_its_feature_coverage_across_reports(self):
+        second_main = self.directory / "main-second.json"
+        second_main.write_text(json.dumps(report("主审", self.repository, ("beta",)),
+                                          ensure_ascii=False), encoding="utf-8")
+        self.main_path.write_text(json.dumps(report("主审", self.repository, ("alpha",)),
+                                             ensure_ascii=False), encoding="utf-8")
+        result = self.run_check(reports=(str(self.main_path), str(second_main), str(self.razor_path)))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rejects_a_non_boolean_behavior_value_and_an_out_of_scope_feature(self):
+        main = report("主审", self.repository)
+        bad = finding()
+        bad["changes_behavior"] = 1
+        main["features"][0]["findings"] = [bad]
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("布尔值", result.stdout)
+
+        main["features"].insert(0, review_feature("root"))
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("最细功能", result.stdout)
+
+    def test_rejects_a_finding_with_missing_fields_or_invalid_values(self):
+        main = report("主审", self.repository)
+        bad = finding()
+        del bad["evidence"]
+        main["features"][0]["findings"] = [bad]
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("evidence", result.stdout)
+
+        main["features"][0]["findings"] = [finding(kind="不支持")]
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("kind", result.stdout)
+
+    def test_direct_decision_is_only_for_nonbehavioral_delete_or_merge(self):
+        valid = [
+            finding("删除", False, "直接做"),
+            finding("合并", False, "直接做"),
+            finding("删除", True, "问你"),
+            finding("重构", False, "问你"),
+            finding("改清单", True, "问你"),
+        ]
+        for item in valid:
+            with self.subTest(kind=item["kind"], changes=item["changes_behavior"], decision=item["decision"]):
+                main = report("主审", self.repository)
+                main["features"][0]["findings"] = [item]
+                self.write_reports(main, report("剃刀", self.repository))
+                result = self.run_check()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        invalid = [
+            finding("删除", False, "问你"),
+            finding("删除", True, "直接做"),
+            finding("重构", False, "直接做"),
+            finding("改清单", False, "直接做"),
+        ]
+        for item in invalid:
+            with self.subTest(kind=item["kind"], changes=item["changes_behavior"], decision=item["decision"]):
+                main = report("主审", self.repository)
+                main["features"][0]["findings"] = [item]
+                self.write_reports(main, report("剃刀", self.repository))
+                self.assertEqual(self.run_check().returncode, 1)
+
+    def test_basis_must_match_a_local_rule_quote(self):
+        main = report("主审", self.repository)
+        main["features"][0]["findings"] = [finding(basis={"source": RULE_SOURCE, "text": "拼接的引文"})]
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("basis", result.stdout)
+
+    def test_requires_both_review_roles_and_matching_repository(self):
+        result = self.run_check(reports=(str(self.main_path),))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("剃刀", result.stdout)
+        razor = report("剃刀", self.repository)
+        razor["repo"] = "/different/repo"
+        self.write_reports(report("主审", self.repository), razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("repo", result.stdout)
+
+    def test_bad_scope_arguments_exit_with_two(self):
+        result = self.run_check(("全部", "alpha"))
+        self.assertEqual(result.returncode, 2)
+        result = self.run_check(("missing",))
+        self.assertEqual(result.returncode, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
