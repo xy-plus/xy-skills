@@ -5,8 +5,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import repo_map_lib.metrics as metrics
 from repo_map_lib import constants
-from repo_map_lib.metrics import LineCounts, code_counts, count_file, coverage_counts
+from repo_map_lib.metrics import LineCounts, code_counts, count_file
 
 
 class MetricsTest(unittest.TestCase):
@@ -20,7 +21,10 @@ class MetricsTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             LineCounts()
 
-    def test_python_docstrings_comments_inline_comments_and_public_coverage(self):
+    def test_public_coverage_helpers_are_not_part_of_line_metrics(self):
+        self.assertFalse(hasattr(metrics, "coverage_counts"))
+
+    def test_python_docstrings_comments_and_inline_comments(self):
         source = '''"""Module docs.
 Second docs line.
 """
@@ -43,7 +47,6 @@ def public_function():
 '''
         counts = code_counts("sample.py", source)
         self.assertEqual((counts.code, counts.docs, counts.comments), (8, 5, 1))
-        self.assertEqual(coverage_counts("sample.py", source), (2, 3, "Python"))
 
     def test_shell_shebang_is_code_but_full_line_hash_is_comment(self):
         counts = code_counts("script.sh", "#!/bin/sh\n# explanation\necho hi # inline\n\n")
@@ -61,7 +64,6 @@ let answer = 42; // inline
 '''
         counts = code_counts("lib.rs", source)
         self.assertEqual((counts.code, counts.docs, counts.comments), (3, 2, 3))
-        self.assertEqual(coverage_counts("lib.rs", source), (1, 1, "Rust"))
 
     def test_rust_raw_string_bodies_do_not_turn_slashes_into_comments(self):
         samples = (
@@ -95,11 +97,6 @@ let answer = 42; // inline
         js_source = "/** docs */\nexport function run() {}\n// note\nconst x = 1;\n"
         js_counts = code_counts("file.mjs", js_source)
         self.assertEqual((js_counts.code, js_counts.docs, js_counts.comments), (2, 1, 1))
-        self.assertEqual(coverage_counts("file.mjs", js_source), (0, 0, "不适用"))
-        self.assertEqual(coverage_counts("script.sh", "echo hi\n"), (0, 0, "不适用"))
-        self.assertEqual(coverage_counts("header.h", "int value;\n"), (0, 0, "不适用"))
-        self.assertEqual(coverage_counts("file.tsx", "export const x = 1;\n"),
-                         (0, 0, "不适用"))
 
     def test_docs_and_tests_count_nonempty_lines_and_binary_files_count_zero(self):
         docs = count_file("guide.md", "docs", b"text\n\n next \n")

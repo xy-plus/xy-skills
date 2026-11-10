@@ -1,8 +1,7 @@
-"""Count lines and documentation coverage using the suffix-to-language table CODE_SUFFIXES in sibling constants.py."""
+"""Count code, documentation, comment, and test lines for tracked files."""
 from dataclasses import dataclass
 import ast
 import io
-import re
 import tokenize
 from pathlib import Path
 
@@ -298,79 +297,6 @@ def _html_counts(source):
                 counts["code"] += 1
         offset += len(line)
     return LineCounts(counts["code"], 0, counts["comments"], 0)
-
-
-def _public_python_coverage(source):
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return (0, 0)
-    covered = 0
-    total = 0
-
-    def inspect(body):
-        nonlocal covered, total
-        for item in body:
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                if item.name.startswith("_"):
-                    continue
-                total += 1
-                if ast.get_docstring(item, clean=False) is not None:
-                    covered += 1
-                if isinstance(item, ast.ClassDef):
-                    inspect(item.body)
-
-    inspect(tree.body)
-    return covered, total
-
-
-def _rust_public_coverage(source):
-    lines = source.splitlines()
-    declaration = re.compile(
-        r"^\s*pub\s+(?:(?:async|unsafe|const|extern\s+\"[^\"]+\")\s+)*"
-        r"(?:fn|struct|enum|trait|type|const|static|mod|union)\s+[A-Za-z_][A-Za-z0-9_]*"
-    )
-    covered = 0
-    total = 0
-    for index, line in enumerate(lines):
-        if declaration.search(line) is None:
-            continue
-        total += 1
-        cursor = index - 1
-        documented = False
-        while cursor >= 0:
-            stripped = lines[cursor].strip()
-            if stripped.startswith("///") and not stripped.startswith("////"):
-                documented = True
-                cursor -= 1
-                continue
-            if stripped.endswith("*/"):
-                block = cursor
-                while block >= 0:
-                    value = lines[block].strip()
-                    if value.startswith("/**") or value.startswith("/*!"):
-                        documented = True
-                        break
-                    if not value.startswith("*") and value != "*/":
-                        break
-                    block -= 1
-                break
-            break
-        covered += int(documented)
-    return covered, total
-
-
-def coverage_counts(path, source):
-    """Return (documented public items, public items, language label)."""
-    suffix = Path(path).suffix.lower()
-    language = CODE_SUFFIXES.get(suffix)
-    if language == "Python":
-        covered, total = _public_python_coverage(source)
-        return covered, total, "Python"
-    if language == "Rust":
-        covered, total = _rust_public_coverage(source)
-        return covered, total, "Rust"
-    return 0, 0, "不适用"
 
 
 def count_file(path, category, content):

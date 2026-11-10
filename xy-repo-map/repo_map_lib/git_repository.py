@@ -114,9 +114,3 @@ def discover_subrepositories(repository):
         if _is_repository(candidate) and _common_directory(candidate) != own_common:
             candidates.add(normalized)
     return sorted(candidates)
-
-
-def model_paths(repo_map):
-    root = Path(repo_map)
-    kinds_path = root / "kinds.c4"
-    return sorted(path for path in root.rglob("*.c4") if path != kinds_path)

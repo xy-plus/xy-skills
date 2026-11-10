@@ -180,6 +180,37 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("子仓", result.stdout + result.stderr)
 
+    def test_rejects_a_gitlink_child_repository(self):
+        child = self.repo.parent / "child-repository"
+        subprocess.run(["git", "-C", str(self.repo.parent), "init", str(child), "-q"], check=True)
+        subprocess.run(["git", "-C", str(child), "config", "user.name", "Fixture"], check=True)
+        subprocess.run(["git", "-C", str(child), "config", "user.email", "fixture@example.invalid"], check=True)
+        (child / "README.md").write_text("child\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(child), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(child), "commit", "-qm", "fixture"], check=True)
+        commit = subprocess.run(["git", "-C", str(child), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        subprocess.run(
+            ["git", "-C", str(self.repo), "update-index", "--add", "--cacheinfo",
+             f"160000,{commit},linked"],
+            check=True,
+        )
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("linked", result.stdout + result.stderr)
+
+    def test_old_model_path_helper_is_removed(self):
+        script = (
+            "import sys; sys.path.insert(0,sys.argv[1]); "
+            "import repo_map_lib.git_repository as repository; "
+            "assert not hasattr(repository,'model_paths')"
+        )
+        result = subprocess.run(
+            ["python3", "-B", "-c", script, str(ROOT / "xy-repo-map")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_rejects_a_known_but_unsupported_code_suffix(self):
         suffixes = (".go", ".java", ".kt", ".swift", ".cpp", ".cc", ".hpp",
                     ".cs", ".rb", ".php", ".scala", ".lua")

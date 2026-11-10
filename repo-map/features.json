@@ -1,0 +1,389 @@
+{
+  "id": "xy-skills",
+  "title": "让 AI 按我的规矩干活",
+  "what": "一组 Claude Code skill：定规矩、管流程、记账、协作、管文件、收拾仓库。",
+  "why": {
+    "text": "AI 能干活，但不守规矩、不记事、不收拾；我不想每次都盯着。",
+    "source": "起草",
+    "quote": "",
+    "from": ""
+  },
+  "directory": "",
+  "entries": [],
+  "children": [
+    {
+      "id": "rules",
+      "title": "定规矩",
+      "what": "AI 做任何事都要守的底线。",
+      "why": {
+        "text": "AI 写东西爱打补丁、爱多加东西，得有底线管住。",
+        "source": "起草",
+        "quote": "",
+        "from": ""
+      },
+      "directory": null,
+      "entries": [],
+      "children": [
+        {
+          "id": "xy-iron-law",
+          "title": "铁律",
+          "what": "第一性原理、难误用、如无必要勿增实体。",
+          "why": {
+            "text": "出了问题要改根因，不要在别处加东西收拾后果。",
+            "source": "原话",
+            "quote": "打补丁就是出错的地方不改、在别处加东西收拾后果。",
+            "from": "xy-iron-law/SKILL.md 第 1 条"
+          },
+          "directory": "xy-iron-law",
+          "entries": [],
+          "children": []
+        },
+        {
+          "id": "xy-repo-rules",
+          "title": "仓库规范",
+          "what": "仓库怎么组织、怎么命名、文档写在哪的七条规范。",
+          "why": {
+            "text": "任何人或 AI 拿到仓库都能立刻上手，不留历史包袱。",
+            "source": "原话",
+            "quote": "积极删除或合并不必要的代码或文档，我不喜欢历史包袱和打补丁。",
+            "from": "xy-repo-rules/SKILL.md 第 7 条"
+          },
+          "directory": "xy-repo-rules",
+          "entries": [],
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "workflow",
+      "title": "管流程",
+      "what": "一件事从讨论走到合入的固定走法。",
+      "why": {
+        "text": "不管哪个 AI、哪个会话，做事都走同一套步骤，结果才可预期。",
+        "source": "起草",
+        "quote": "",
+        "from": ""
+      },
+      "directory": null,
+      "entries": [],
+      "children": [
+        {
+          "id": "xy-workflow",
+          "title": "标准工作流程",
+          "what": "按改动大小分档，走讨论、spec、审查、实现、终审、合入。",
+          "why": {
+            "text": "小事不折腾，大事不跳步。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": "xy-workflow",
+          "entries": [],
+          "children": []
+        },
+        {
+          "id": "sync-think",
+          "title": "需求澄清",
+          "what": "把只有我能定的事做成带建议的选择题，一次问一道。",
+          "why": {
+            "text": "AI 自己查得到的事别来打断我；必须我定的事要一次问清，并带上建议。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": "sync-think",
+          "entries": [],
+          "children": []
+        },
+        {
+          "id": "xy-review",
+          "title": "对抗审查",
+          "what": "主审和剃刀两个子代理独立审 spec 和代码，报告格式能用脚本校验。",
+          "why": {
+            "text": "写的人审不出自己的问题，要两个互不通气的审查者来挑。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": "xy-review",
+          "entries": [],
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "xy-goal",
+      "title": "长目标契约",
+      "what": "我说过的话不丢，事情按我的原话验收。",
+      "why": {
+        "text": "长任务里 AI 会忘掉或悄悄放宽我的要求，所以以我的原话为准。",
+        "source": "起草",
+        "quote": "",
+        "from": ""
+      },
+      "directory": "xy-goal",
+      "entries": [
+        "xy-goal/SKILL.md"
+      ],
+      "children": [
+        {
+          "id": "capture-quotes",
+          "title": "逐字记录我的原话",
+          "what": "我的每条消息和选择题回答自动记下来并编号。",
+          "why": {
+            "text": "让 AI 自己抄会抄错、抄漏。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": null,
+          "entries": [
+            "xy-goal/goal.py"
+          ],
+          "children": []
+        },
+        {
+          "id": "track-and-verify",
+          "title": "事项对账与验收",
+          "what": "每件事挂到原话上，按判据验收，关闭前整体复核。",
+          "why": {
+            "text": "事情做没做完，要对着我的原话核，不能凭 AI 自己说。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": null,
+          "entries": [
+            "xy-goal/tests/test_goal.py"
+          ],
+          "children": []
+        },
+        {
+          "id": "scheduled-review",
+          "title": "定时自查",
+          "what": "在办的事每半小时核实一次并推进。",
+          "why": {
+            "text": "我不在的时候，事情不能停在半路。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": null,
+          "entries": [
+            "xy-goal/README.md"
+          ],
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "xy-handoff",
+      "title": "会话任务交接",
+      "what": "大任务归谁、怎么拆、怎么交接和收尾。",
+      "why": {
+        "text": "任务有大有小，小任务要挂在大任务下面，不能各做各的。",
+        "source": "原话",
+        "quote": "希望 AI 能够创建大任务，并把小任务挂在大任务下面。",
+        "from": "用户原话原件目录：/data/user/xy/runs/-home-xy-xy-skills/20261025-070412-xy-skills-task-handoff/xy-goal/quotes/"
+      },
+      "directory": "xy-handoff",
+      "entries": [],
+      "children": []
+    },
+    {
+      "id": "xy-runs",
+      "title": "运行目录管理",
+      "what": "工作中产生的文件各有去处，过期的自动清掉。",
+      "why": {
+        "text": "AI 干活会到处留临时文件，不管就越积越多。",
+        "source": "起草",
+        "quote": "",
+        "from": ""
+      },
+      "directory": "xy-runs",
+      "entries": [
+        "xy-runs/SKILL.md",
+        "xy-runs/systemd/runs-cleaner.service",
+        "xy-runs/systemd/runs-cleaner.timer"
+      ],
+      "children": [
+        {
+          "id": "file-placement",
+          "title": "文件去处规则",
+          "what": "每个文件按要活多久、归谁管，只有三个去处。",
+          "why": {
+            "text": "去处说不清，文件就会被放错地方。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": null,
+          "entries": [
+            "xy-runs/README.md"
+          ],
+          "children": []
+        },
+        {
+          "id": "scheduled-cleanup",
+          "title": "定期清理运行目录",
+          "what": "满 30 天没动、也没人在用的运行目录自动删除。",
+          "why": {
+            "text": "没人会记得回头手动删。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": null,
+          "entries": [
+            "xy-runs/clean.py",
+            "xy-runs/tests/test_clean.py",
+            "xy-runs/tests/test_service.py"
+          ],
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "repository-care",
+      "title": "收拾仓库",
+      "what": "看清仓库里有哪些功能、各占多少，定期把多余的清掉。",
+      "why": {
+        "text": "AI 写的代码太多了，要能整理，让仓库干净。",
+        "source": "起草",
+        "quote": "",
+        "from": ""
+      },
+      "directory": null,
+      "entries": [],
+      "children": [
+        {
+          "id": "xy-repo-map",
+          "title": "仓库功能图",
+          "what": "把仓库的功能画成图，一眼看到每个功能的代码、文档、测试行数。",
+          "why": {
+            "text": "以后审核，就是看仓库实际情况和图的情况，功能多了应该删掉或更新图。",
+            "source": "原话",
+            "quote": "以后审核，就是看仓库实际情况和图的情况，功能多了应该删掉or更新图",
+            "from": "用户原话原件目录：/data/user/xy/runs/-home-xy-xy-skills/20261031-002858-xy-skills-cleanup-skill/xy-goal/quotes/"
+          },
+          "directory": "xy-repo-map",
+          "entries": [
+            "xy-repo-map/SKILL.md",
+            "xy-repo-map/repo_map.py"
+          ],
+          "children": [
+            {
+              "id": "validate-feature-list",
+              "title": "校验功能清单",
+              "what": "清单写得对不对，每个文件是否归到了功能上。",
+              "why": {
+                "text": "功能清单和仓库文件的对应关系需要能自动检查。",
+                "source": "起草",
+                "quote": "",
+                "from": ""
+              },
+              "directory": null,
+              "entries": [
+                "xy-repo-map/repo_map_lib/constants.py",
+                "xy-repo-map/repo_map_lib/dependencies.py",
+                "xy-repo-map/repo_map_lib/features.py",
+                "xy-repo-map/repo_map_lib/git_repository.py",
+                "xy-repo-map/repo_map_lib/metrics.py",
+                "xy-repo-map/repo_map_lib/ownership.py",
+                "xy-repo-map/repo_map_lib/map_data.py",
+                "xy-repo-map/tests/test_feature_check.py",
+                "xy-repo-map/tests/test_derivation.py",
+                "xy-repo-map/tests/test_real_repository.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "render-feature-tree",
+              "title": "出图",
+              "what": "把功能清单画成手机上能看的一页。",
+              "why": {
+                "text": "用户主要用手机看功能图。",
+                "source": "原话",
+                "quote": "需要对手机有好的支持 我主要用手机看",
+                "from": "用户原话原件目录：/data/user/xy/runs/-home-xy-xy-skills/20261031-002858-xy-skills-cleanup-skill/xy-goal/quotes/"
+              },
+              "directory": null,
+              "entries": [
+                "xy-repo-map/repo_map_lib/render_command.py",
+                "xy-repo-map/repo_map_lib/render_page.py",
+                "xy-repo-map/tests/test_render.py",
+                "xy-repo-map/tests/browser_tree_test.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "publish-to-platform",
+              "title": "发布到平台",
+              "what": "把页面发到用户自己的平台上。",
+              "why": {
+                "text": "发布结果要能通过平台交给用户查看。",
+                "source": "起草",
+                "quote": "",
+                "from": ""
+              },
+              "directory": null,
+              "entries": [
+                "xy-repo-map/repo_map_lib/publish_command.py",
+                "xy-repo-map/tests/test_publish.py"
+              ],
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "xy-cleanup",
+          "title": "仓库清扫",
+          "what": "让代码相对功能清单最小，并把清单里等用户拍板的事问清。",
+          "why": {
+            "text": "现在图不好看，清扫也有很多问题，需要把仓库整理干净。",
+            "source": "原话",
+            "quote": "cleanup 也有很多问题，它不能够把图片做得非常干净",
+            "from": "用户原话原件目录：/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/xy-goal/quotes/"
+          },
+          "directory": "xy-cleanup",
+          "entries": [
+            "xy-cleanup/SKILL.md",
+            "xy-cleanup/check_reports.py"
+          ],
+          "children": [
+            {
+              "id": "changed-features-only",
+              "title": "只审变过的功能",
+              "what": "重复清扫同一个仓库时，只审上次认可之后变过的功能。",
+              "why": {
+                "text": "这次重做时用户决定先不做，并要求别忘了；要不要做、怎么做，等真有需要时由用户定。",
+                "source": "起草",
+                "quote": "",
+                "from": ""
+              },
+              "directory": null,
+              "entries": [],
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "getting-started",
+      "title": "上手与安装",
+      "what": "读完就能装上、用起来。",
+      "why": {
+        "text": "读完 README 就应该能上手。",
+        "source": "原话",
+        "quote": "任何人类或者 agent 阅读完 README.md 后，都能够立刻上手。",
+        "from": "xy-repo-rules/SKILL.md 第 1 条"
+      },
+      "directory": null,
+      "entries": [
+        "README.md"
+      ],
+      "children": []
+    }
+  ]
+}

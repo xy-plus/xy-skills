@@ -7,13 +7,13 @@
 | `xy-iron-law` | 三条铁律 |
 | `xy-repo-rules` | 仓库规范 |
 | `xy-workflow` | 标准工作流程 |
-| `xy-review` | 对抗审查：主审加剃刀两个子代理、报告格式与轮次结构检查（`check.py`）、非正式改—测循环上限（`audit.py`）和怎么处理结果；xy-workflow 的所有审查都用它 |
+| `xy-review` | 主审和剃刀的对抗审查、报告校验 |
 | `xy-goal` | 长目标契约与定时自查 |
 | `xy-runs` | 文件去处、runs 布局与定期清理规则 |
 | `xy-handoff` | 会话大任务归属、拆分交接与后台会话收尾 |
-| `xy-repo-map` | LikeC4 仓库功能图、文件归属、批准、校验和静态出图 |
-| `xy-cleanup` | 按范围清扫功能，结合全图和逐节点审查、引用对账与报告校验 |
-| `sync-think` | 只有用户能定的事，做成带建议的选择题问用户 |
+| `xy-repo-map` | 从功能清单推导文件归属并生成离线功能树 |
+| `xy-cleanup` | 按范围审查仓库并清理功能实现 |
+| `sync-think` | 把只有用户能定的事做成带建议的选择题 |
 
 ## 安装
 
@@ -33,7 +33,7 @@ for d in ~/xy-skills/*/; do ln -sfn "${d%/}" ~/.claude/skills/$(basename "$d"); 
 }
 ```
 
-重启会话后，先创建这个根目录，再按 [xy-goal/README.md](xy-goal/README.md) 的安装步骤，将 `UserPromptSubmit` 与 `PostToolUse`（matcher `AskUserQuestion`）两个 hook 合并到全局 settings.json。hook 和命令都用 `--root "$RUNS_ROOT"`，不另设根目录。配好后，用户原话和选择题回答会自动记录，开契约时领取之前的消息。
+重启会话后，先创建这个根目录，再按 [xy-goal/README.md](xy-goal/README.md) 的安装步骤，将 `UserPromptSubmit` 与 `PostToolUse`（matcher `AskUserQuestion`）两个 hook 合并到全局 settings.json。hook 和命令都用 `--root "$RUNS_ROOT"`，不另设根目录。配置后，用户原话和选择题回答会自动记录，开契约时领取之前的消息。
 
 ```bash
 mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT}"
@@ -55,17 +55,51 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 @~/xy-skills/xy-repo-rules/SKILL.md
 ```
 
-`xy-workflow` 依赖 Claude Code 插件 `superpowers` 不低于 6.4.1（装法：`/plugin install superpowers@claude-plugins-official`），以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 与定时任务工具 CronCreate、CronList、CronDelete，运行前提见它的 README；`xy-review/check.py` 复用同仓 `xy-handoff` 的 JSON 校验函数。`xy-handoff` 只单向依赖 `xy-runs`（交接说明放哪），以及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、SendMessage、PushNotification。
-
-`xy-goal` 管会话内原话、事项与验收的记账；`xy-workflow` 管一个大任务内部怎么做。
-
-`xy-repo-map` 需要 Node.js 和 `npx`，固定运行 LikeC4 `1.60.0` 做模型校验与导出；在全局 Claude Code 权限配置中加入 `Bash(npx -y likec4@1.60.0 *)`。钻入视图的布局使用仓库内原样保存的 elkjs `0.9.3`，许可证为 EPL-2.0，文件位于 `xy-repo-map/third_party/elkjs-0.9.3/`。升级 LikeC4 或 elkjs 版本前都要征得用户同意。
-
-草稿图只在批图时给用户看，用仓图命令发布，例如 `python3 xy-repo-map/repo_map.py publish --out <草稿 render 输出目录> --name xy-skills-draft`。正式仓图通过完整校验后，用同一子命令发布，例如 `python3 xy-repo-map/repo_map.py publish --out <正式 render 输出目录> --name xy-skills`，并把命令打印的链接给用户。发布命令会核对 `DRAFT` 标记与 `map-data.json` 的模式，并要求草稿站点名包含 `draft`、正式站点名不包含 `draft`；通过后才调用平台发布脚本。
+`xy-workflow` 依赖 Claude Code 插件 `superpowers` 不低于 6.4.1，以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 与定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见它的 README；`xy-review/check.py` 复用同仓 `xy-handoff` 的 JSON 校验函数。`xy-handoff` 单向依赖 `xy-runs`，以及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
 
 按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并按其中说明配置 runs 的清理范围。
 
-新加 skill：建目录、写 `SKILL.md`，再按上面的方式软链。只在有 SKILL.md 装不下的东西时，比如代码、前提，才给 skill 目录加 README。
+新加 skill：建目录、写 `SKILL.md`，再按上面的方式软链。只有 `SKILL.md` 装不下的代码或前提等内容时，才给 skill 目录加 README。
+
+## 仓库功能清单
+
+有功能图的仓库把唯一由人维护的功能清单放在根目录 `repo-map/features.json`。清单写功能要什么、为什么、理由出处和入口；文件归属、行数、依赖、标记与页面由 `xy-repo-map` 从 Git 跟踪文件推导。
+
+最小清单示例：
+
+```json
+{
+  "id": "sample",
+  "title": "示例仓库",
+  "what": "说明仓库提供什么。",
+  "why": {
+    "text": "需要一个可校验的功能清单。",
+    "source": "起草",
+    "quote": "",
+    "from": ""
+  },
+  "directory": "",
+  "entries": [],
+  "children": []
+}
+```
+
+在仓库中使用 `xy-repo-map/repo_map.py`，并给出仓库根目录的绝对路径：
+
+```bash
+python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py check \
+  --repo /absolute/path/to/repository
+
+python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py render \
+  --repo /absolute/path/to/repository \
+  --out /absolute/path/to/new-output-directory
+
+python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py publish \
+  --out /absolute/path/to/render-output-directory \
+  --name site-name
+```
+
+`check` 校验清单并推导文件归属。`render` 先执行同样的检查，再生成可离线打开的 `index.html` 与 `map-data.json`。`publish` 检查这两个文件存在后，调用平台发布脚本。
 
 ## 测试
 
@@ -79,18 +113,15 @@ python3 -B -m unittest discover -s xy-cleanup/tests
 python3 -B -m unittest discover -s xy-runs/tests
 python3 -B -m unittest discover -s xy-repo-map/tests -p 'test_*.py'
 XY_REPO_MAP_CHROMIUM=/path/to/chrome python3 -B -m unittest discover -s xy-repo-map/tests -p 'browser_*_test.py'
-python3 -B -m unittest discover -s xy-repo-map/tests -p 'likec4_integration_test.py'
 ```
 
-浏览器测试使用 Python Playwright 和它下载的 Chromium。在仓库根目录照抄以下命令创建独立环境、安装依赖并运行测试：
+浏览器测试需要 Python Playwright 和 Chromium。创建独立环境并安装依赖：
 
 ```bash
 python3 -m venv ~/.venvs/xy-repo-map-playwright
 source ~/.venvs/xy-repo-map-playwright/bin/activate
 python -m pip install playwright
 python -m playwright install chromium
-export XY_REPO_MAP_CHROMIUM="$(python -c 'from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()')"
-python3 -B -m unittest discover -s xy-repo-map/tests -p 'browser_*_test.py'
 ```
 
-`XY_REPO_MAP_CHROMIUM` 指向 Playwright 安装的 Chromium 可执行文件；路径缺失或浏览器不可用时测试会失败，不会跳过。测试命令清单的最后一条是真跑 LikeC4 的集成测试；`xy-cleanup` 测试也会用固定版本检查临时夹具仓图。若 `npx` 或固定版本不可用，相关测试会失败，不会跳过。
+把 `XY_REPO_MAP_CHROMIUM` 设为 Chromium 可执行文件的绝对路径后运行浏览器测试。缺少路径或浏览器不可用时测试会失败，不会跳过。
