@@ -55,7 +55,7 @@ def _scope_features(data, scope):
     return list(dict.fromkeys(result))
 
 
-def _validate_scope(data, scope):
+def validate_scope(data, scope):
     if "全部" in scope and scope != ["全部"]:
         raise ArgumentError("--scope 使用 全部 时不能再列功能 id")
     if scope != ["全部"] and len(scope) != len(set(scope)):
@@ -93,11 +93,11 @@ def feature_values(repository):
     return features, order
 
 
-def feature_fingerprints(repository, data, feature_values):
+def feature_fingerprints(repository, data, values_by_id):
     """Return content fingerprints for every feature in the checked map."""
     result = {}
-    for feature_id in feature_values:
-        feature = feature_values[feature_id]
+    for feature_id in values_by_id:
+        feature = values_by_id[feature_id]
         entry = {key: feature[key] for key in ENTRY_KEYS}
         entry["children"] = data["features"][feature_id]["children"]
         file_hashes = []
@@ -184,7 +184,7 @@ def main(argv):
         return 1
 
     try:
-        _validate_scope(data, options.scope)
+        validate_scope(data, options.scope)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
         return 2
@@ -198,7 +198,7 @@ def main(argv):
         else:
             print(_record(repository, data, values, fingerprints, records, options.scope))
     except (OSError, UnicodeError, ValueError) as error:
-        print(str(error), file=sys.stderr)
+        print(str(error))
         return 1
     return 0
 

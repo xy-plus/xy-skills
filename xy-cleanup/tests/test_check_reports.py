@@ -312,6 +312,28 @@ class CheckReportsTest(unittest.TestCase):
         self.write_reports(main, report("剃刀", self.repository))
         self.assertEqual(self.run_check().returncode, 0)
 
+    def test_finding_target_accepts_only_existing_lines_of_a_tracked_symlink(self):
+        link_path = self.repository / "alpha" / "source-link"
+        link_path.symlink_to("main.py")
+        subprocess.run(
+            ["git", "-C", str(self.repository), "add", "alpha/source-link"],
+            check=True,
+        )
+
+        main = report("主审", self.repository)
+        link_finding = finding()
+        link_finding["target"] = "alpha/source-link:1"
+        main["features"][0]["findings"] = [link_finding]
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        link_finding["target"] = "alpha/source-link:2"
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/source-link:2", result.stdout)
+
     def test_requires_both_review_roles_and_matching_repository(self):
         result = self.run_check(reports=(str(self.main_path),))
         self.assertEqual(result.returncode, 1)
@@ -326,8 +348,13 @@ class CheckReportsTest(unittest.TestCase):
     def test_bad_scope_arguments_exit_with_two(self):
         result = self.run_check(("全部", "alpha"))
         self.assertEqual(result.returncode, 2)
+        self.assertIn("--scope 使用 全部 时不能再列功能 id", result.stderr)
+        result = self.run_check(("alpha", "alpha"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--scope 不能重复列出功能 id", result.stderr)
         result = self.run_check(("missing",))
         self.assertEqual(result.returncode, 2)
+        self.assertIn("--scope 中有未知功能 id：missing", result.stderr)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 """Validate cleanup reviews for every smallest feature in a requested scope."""
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -20,6 +21,7 @@ from approvals import (  # noqa: E402
     feature_values,
     read_approvals,
     review_features,
+    validate_scope,
 )
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 from rule_references import basis_is_supported  # noqa: E402
@@ -102,21 +104,23 @@ def _valid_target(target, data, repository, tracked_files):
     if (not separator or path not in tracked_files
             or not line_text.isascii() or not line_text.isdecimal()):
         return False
-    try:
-        line_number = int(line_text)
-    except ValueError:
-        return False
-    if line_number < 1:
+    normalized_line_text = line_text.lstrip("0")
+    if not normalized_line_text:
         return False
     file_path = Path(repository) / path
     try:
         if file_path.is_symlink():
-            line_count = len(file_path.readlink().splitlines())
+            line_count = len(os.readlink(file_path).splitlines())
         else:
             line_count = len(file_path.read_bytes().splitlines())
     except OSError:
         return False
-    return line_number <= line_count
+    line_count_text = str(line_count)
+    return (
+        len(normalized_line_text) < len(line_count_text)
+        or (len(normalized_line_text) == len(line_count_text)
+            and normalized_line_text <= line_count_text)
+    )
 
 
 def validate_reports(data, repository, expected_features, report_paths, tracked_files):
@@ -204,15 +208,10 @@ def main(argv):
         return 1
 
     scope = options.scope
-    if "全部" in scope and scope != ["全部"]:
-        print("--scope 使用 全部 时不能再列功能 id", file=sys.stderr)
-        return 2
-    if scope != ["全部"] and len(scope) != len(set(scope)):
-        print("--scope 不能重复列出功能 id", file=sys.stderr)
-        return 2
-    unknown = [feature_id for feature_id in scope if feature_id not in data["features"] and feature_id != "全部"]
-    if unknown:
-        print("--scope 中有未知功能 id：" + ", ".join(unknown), file=sys.stderr)
+    try:
+        validate_scope(data, scope)
+    except ArgumentError as error:
+        print(str(error), file=sys.stderr)
         return 2
 
     report_paths = [Path(path) for path in options.reports]

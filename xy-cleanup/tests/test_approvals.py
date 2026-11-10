@@ -7,9 +7,11 @@ import json
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "xy-cleanup"))
 sys.path.insert(0, str(ROOT / "xy-repo-map" / "tests"))
 
-from map_fixture import feature, make_repo  # noqa: E402
+import approvals  # noqa: E402
+from map_fixture import build_map, feature, make_repo  # noqa: E402
 
 
 COMMAND = ROOT / "xy-cleanup" / "approvals.py"
@@ -42,6 +44,19 @@ class ApprovalPlanTest(unittest.TestCase):
         return self.run_approvals(
             "record", "--repo", str(self.repository), "--scope", *scope,
         )
+
+    def test_scope_validation_is_public_and_keeps_current_errors(self):
+        data = build_map(self, self.repository)
+        invalid_scopes = (
+            (("全部", "alpha"), "--scope 使用 全部 时不能再列功能 id"),
+            (("alpha", "alpha"), "--scope 不能重复列出功能 id"),
+            (("missing",), "--scope 中有未知功能 id：missing"),
+        )
+        for scope, message in invalid_scopes:
+            with self.subTest(scope=scope):
+                with self.assertRaises(approvals.ArgumentError) as context:
+                    approvals.validate_scope(data, scope)
+                self.assertEqual(str(context.exception), message)
 
     def test_plan_lists_unrecorded_feature_in_scope(self):
         result = self.run_approvals(
@@ -163,7 +178,8 @@ class ApprovalPlanTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("alpha", result.stderr)
+        self.assertIn("alpha", result.stdout)
+        self.assertEqual(result.stderr, "")
         self.assertFalse((temporary_repo / "repo-map" / "approved.json").exists())
 
     def test_record_preserves_other_current_records_and_drops_unknown_ids(self):
@@ -199,6 +215,8 @@ class ApprovalPlanTest(unittest.TestCase):
                     else:
                         result = self.record(("alpha",))
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("认可记录", result.stdout)
+                    self.assertEqual(result.stderr, "")
 
     def test_scope_arguments_reject_mixed_all_duplicates_and_unknown_ids(self):
         for arguments in (

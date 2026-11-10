@@ -84,7 +84,7 @@ def _quoted_end(source, start, quote):
             index += 2
         elif source[index] == quote:
             return index + 1
-        elif source[index] == "\n" and quote != "`":
+        elif source[index] == "\n":
             return None
         else:
             index += 1
