@@ -38,6 +38,15 @@ def tracked_paths(repository):
     return [path for path in result.stdout.split("\0") if path]
 
 
+def primary_checkout_name(repository):
+    """Return the directory name of Git's primary checkout, even from a linked worktree."""
+    result = run_git(repository, "worktree", "list", "--porcelain", "-z", check=True)
+    for item in result.stdout.split("\0"):
+        if item.startswith("worktree "):
+            return Path(item[len("worktree "):]).name
+    raise ValueError("无法从 Git 工作树列表找到主检出")
+
+
 def gitlink_paths(repository):
     result = run_git(repository, "ls-files", "--stage", "-z", check=True)
     paths = set()

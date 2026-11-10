@@ -1,4 +1,8 @@
 """Test file metrics, dependencies, ownership, and feature markers."""
+import json
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 from map_fixture import build_map, feature, make_repo
@@ -113,7 +117,7 @@ class DerivationTest(unittest.TestCase):
             "pkg/beta.py": "beta = 1\n",
             "pkg/tests/test_alpha.py": "import pkg.alpha\n",
             "pkg/tests/test_multi.py": "import pkg.alpha\nimport pkg.beta\n",
-            "pkg/tests/test_beta.py": "pass\n",
+            "pkg/tests/test_beta.py": "import pkg.beta\n",
             "pkg/tests/test_none.py": "pass\n",
         }, child_tree([package]))
         data = build_map(self, repository)
@@ -121,6 +125,21 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(data["features"]["beta"]["files"]["reached"], ["pkg/tests/test_beta.py"])
         self.assertEqual(data["features"]["package"]["files"]["shared"], ["pkg/tests/test_multi.py"])
         self.assertEqual(data["features"]["package"]["files"]["whole"], ["pkg/tests/test_none.py"])
+
+    def test_unregistered_test_only_matches_imported_code_in_its_directory_feature(self):
+        repository = make_repo(self, {
+            "pkg/alpha.py": "alpha = 1\n",
+            "pkg/tests/test_alpha.py": "import external.alpha\n",
+            "external/alpha.py": "alpha = 2\n",
+        }, child_tree([
+            feature("package", "pkg", children=[
+                feature("alpha", None, entries=["pkg/alpha.py"]),
+            ]),
+            feature("external", "external"),
+        ]))
+        data = build_map(self, repository)
+        self.assertEqual(data["features"]["alpha"]["files"]["reached"], [])
+        self.assertIn("pkg/tests/test_alpha.py", data["features"]["package"]["files"]["whole"])
 
     def test_child_registration_wins_over_ancestor_registration(self):
         package = feature("package", "pkg", children=[
@@ -152,6 +171,43 @@ class DerivationTest(unittest.TestCase):
         ]))
         data = build_map(self, repository)
         self.assertEqual(data["features"]["alpha"]["uses"], [{"feature": "beta", "by": "mention"}])
+
+    def test_nested_path_mention_does_not_match_a_root_level_file(self):
+        repository = make_repo(self, {
+            "README.md": "Root guide.\n",
+            "xy-goal/README.md": "Goal guide.\n",
+            "xy-workflow/SKILL.md": "See xy-goal/README.md.\n",
+        }, child_tree([
+            feature("root-guide", None, entries=["README.md"]),
+            feature("goal", "xy-goal"),
+            feature("workflow", "xy-workflow"),
+        ]))
+        data = build_map(self, repository)
+        self.assertEqual(data["features"]["workflow"]["uses"], [
+            {"feature": "goal", "by": "mention"},
+        ])
+
+    def test_root_directory_name_uses_the_primary_checkout_from_a_worktree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            primary = Path(temporary) / "primary-checkout-name"
+            worktree = Path(temporary) / "linked-worktree-name"
+            primary.mkdir()
+            (primary / "README.md").write_text("Root.\n", encoding="utf-8")
+            feature_path = primary / "repo-map" / "features.json"
+            feature_path.parent.mkdir()
+            feature_path.write_text(json.dumps(feature("root", "")), encoding="utf-8")
+            subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(primary), "config", "user.name", "Fixture"], check=True)
+            subprocess.run(["git", "-C", str(primary), "config", "user.email", "fixture@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(primary), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(primary), "commit", "-qm", "fixture"], check=True)
+            subprocess.run(
+                ["git", "-C", str(primary), "worktree", "add", "--quiet", "--detach", str(worktree), "HEAD"],
+                check=True,
+            )
+            data = build_map(self, worktree)
+
+        self.assertEqual(data["features"]["root"]["directory_name"], "primary-checkout-name")
 
     def test_reports_each_feature_marker_and_marker_count(self):
         package = feature("package", "pkg", children=[

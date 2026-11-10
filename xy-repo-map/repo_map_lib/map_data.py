@@ -12,7 +12,12 @@ from .constants import (
 )
 from .dependencies import directory_mentions, file_mentions, imports_for_file
 from .features import load_features
-from .git_repository import discover_subrepositories, require_repository_root, tracked_paths
+from .git_repository import (
+    discover_subrepositories,
+    primary_checkout_name,
+    require_repository_root,
+    tracked_paths,
+)
 from .metrics import count_file
 from .ownership import assign_files
 
@@ -153,6 +158,7 @@ def build_map(repository):
 
     root_id = order[0]
     total(root_id)
+    repository_name = primary_checkout_name(root)
 
     directories = {
         feature_id: features[feature_id]["directory"]
@@ -189,7 +195,7 @@ def build_map(repository):
     for feature_id in order:
         value = features[feature_id]
         directory = value["directory"]
-        directory_name = root.name if directory == "" else Path(directory).name if directory is not None else None
+        directory_name = repository_name if directory == "" else Path(directory).name if directory is not None else None
         markers = []
         if value["why"]["source"] == "起草":
             markers.append("等你拍板")

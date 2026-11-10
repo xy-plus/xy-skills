@@ -74,8 +74,15 @@ def imports_for_file(path, source, python_paths):
 
 
 def file_mentions(path, source, tracked_paths):
-    """Return other tracked files whose repository-relative path occurs in text."""
-    return {target for target in tracked_paths if target != path and target in source}
+    """Return other mentioned paths with explicit directories and clean boundaries."""
+    result = set()
+    for target in tracked_paths:
+        if target == path or "/" not in target:
+            continue
+        pattern = re.compile(rf"(?<![\w./-]){re.escape(target)}(?![\w./-])")
+        if pattern.search(source):
+            result.add(target)
+    return result
 
 
 def directory_mentions(source, directory_features, own_directory_feature):

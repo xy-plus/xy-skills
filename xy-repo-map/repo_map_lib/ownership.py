@@ -98,7 +98,6 @@ def assign_files(features, order, paths, categories, entries, imports):
             reached_by[path].add(feature_id)
 
     owners, groups = {}, {}
-    code_paths = [path for path in paths if categories[path] == "code"]
     for path in sorted(paths, key=lambda item: categories[item] == "tests"):
         home = directory_for[path]
         if home is None:
@@ -111,14 +110,15 @@ def assign_files(features, order, paths, categories, entries, imports):
             selected = registered
             group = "registered"
         elif categories[path] == "tests":
-            matched_code = _test_code_match(path, code_paths)
+            imported_code = {
+                target for target in imports.get(path, set())
+                if target in owners and categories[target] == "code" and directory_for[target] == home
+            }
+            matched_code = _test_code_match(path, imported_code)
             if matched_code is not None:
                 owners[path], groups[path] = owners[matched_code], "reached"
                 continue
-            imported_owners = {
-                owners[target] for target in imports.get(path, set())
-                if target in owners and categories[target] == "code"
-            }
+            imported_owners = {owners[target] for target in imported_code}
             if imported_owners:
                 selected = imported_owners
                 group = "reached"
