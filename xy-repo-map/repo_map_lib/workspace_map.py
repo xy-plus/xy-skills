@@ -1,15 +1,8 @@
 """Join maps from a repository and its registered child repositories."""
-import json
 from pathlib import Path
 
-from .git_repository import ArgumentError, require_repository_root
-from .map_data import build_map
-
-
-def _registered_paths(repository):
-    feature_path = Path(repository) / "repo-map" / "features.json"
-    features = json.loads(feature_path.read_text(encoding="utf-8"))
-    return features["subrepositories"]
+from .git_repository import ArgumentError
+from .map_data import build_map, build_map_with_root_feature
 
 
 def _build_child_map(repository, relative_path):
@@ -18,19 +11,14 @@ def _build_child_map(repository, relative_path):
         raise ValueError(
             f"子仓 {relative_path} 不存在；请到子仓所在的检出里运行 render-workspace"
         )
-    try:
-        child_root = require_repository_root(str(child_path))
-    except ArgumentError as error:
-        raise ValueError(f"子仓 {relative_path} 不是 Git 仓根：{error}") from error
-
-    feature_path = child_root / "repo-map" / "features.json"
+    feature_path = child_path / "repo-map" / "features.json"
     if not feature_path.is_file():
         raise ValueError(
             f"子仓 {relative_path} 缺少 repo-map/features.json；"
             "请先为它起草一份只有根功能的清单"
         )
     try:
-        return build_map(child_root)
+        return build_map(child_path)
     except (ArgumentError, OSError, ValueError) as error:
         raise ValueError(f"子仓 {relative_path} 的功能图检查失败：{error}") from error
 
@@ -98,7 +86,9 @@ def _compose_maps(main_map, child_maps):
         if feature["directory_name"] is None:
             continue
         repository_path = feature_repositories[feature_id]
-        if feature_id == repository_roots[repository_path] and repository_path:
+        if feature_id == repository_roots[repository_path]:
+            if not repository_path:
+                continue
             name = Path(repository_path).name
         else:
             name = feature["directory_name"]
@@ -132,9 +122,9 @@ def _compose_maps(main_map, child_maps):
 
 def build_workspace_map(repository):
     """Build each repository map independently, then join their existing results."""
-    main_map = build_map(repository)
+    main_map, main_root_feature = build_map_with_root_feature(repository)
     repository_root = Path(repository).expanduser().resolve()
-    registered = _registered_paths(repository_root)
+    registered = main_root_feature["subrepositories"]
     if not registered:
         raise ValueError("没有登记子仓，用 render 出本仓的图")
 

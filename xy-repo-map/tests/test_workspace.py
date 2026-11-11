@@ -3,9 +3,15 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import unittest
+from unittest.mock import patch
 
-from map_fixture import COMMAND, feature, make_workspace
+from map_fixture import COMMAND, LIBRARY, feature, make_workspace
+
+sys.path.insert(0, str(LIBRARY))
+
+from repo_map_lib.workspace_map import build_workspace_map  # noqa: E402
 
 
 class WorkspaceRenderTest(unittest.TestCase):
@@ -67,6 +73,40 @@ class WorkspaceRenderTest(unittest.TestCase):
             "没归到功能的代码或测试": 0,
         })
 
+    def test_external_use_named_after_workspace_checkout_stays_external(self):
+        manifest_path = self.workspace / "sub-a" / "repo-map" / "features.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["external_dependencies"].append("workspace")
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        (self.workspace / "sub-a" / "README.md").write_text(
+            "Uses sub-b missing-tool workspace.\n", encoding="utf-8",
+        )
+
+        result = self.render()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = json.loads((self.output / "map-data.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            data["features"]["sub-a/root"]["external_uses"],
+            ["missing-tool", "workspace"],
+        )
+
+    def test_workspace_reuses_the_parsed_main_manifest(self):
+        manifest_path = self.workspace / "repo-map" / "features.json"
+        manifest_text = manifest_path.read_text(encoding="utf-8")
+        parse_json = json.loads
+        main_manifest_parses = []
+
+        def parse_and_record(text):
+            if text == manifest_text:
+                main_manifest_parses.append(text)
+            return parse_json(text)
+
+        with patch("repo_map_lib.features.json.loads", side_effect=parse_and_record):
+            build_workspace_map(self.workspace)
+
+        self.assertEqual(main_manifest_parses, [manifest_text])
+
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")
         shutil.rmtree(self.workspace / "sub-b")
@@ -116,7 +156,7 @@ class WorkspaceRenderTest(unittest.TestCase):
         self.assertIn("缺少键", output)
         self.assertFalse(self.output.exists())
 
-    def test_render_workspace_rejects_a_registered_directory_that_is_not_a_git_root(self):
+    def test_render_workspace_reports_parent_check_for_a_registered_non_git_directory(self):
         shutil.rmtree(self.workspace / "sub-a")
         (self.workspace / "sub-a").mkdir()
         (self.workspace / "sub-a" / "README.md").write_text("Not a repository.\n")
@@ -125,8 +165,10 @@ class WorkspaceRenderTest(unittest.TestCase):
 
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 1, output)
-        self.assertIn("sub-a", output)
-        self.assertIn("不是被忽略规则直接点名的嵌套 Git 仓", output)
+        self.assertEqual(
+            output,
+            "登记的子仓不是被忽略规则直接点名的嵌套 Git 仓：sub-a\n",
+        )
 
     def test_render_workspace_rejects_a_nonempty_output_directory(self):
         self.output.mkdir()

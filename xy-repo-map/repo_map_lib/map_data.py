@@ -106,6 +106,12 @@ def _add_use(uses, source, target, kind, features):
 
 def build_map(repository):
     """Return the complete machine-readable map, raising ValueError on invalid input."""
+    data, _ = build_map_with_root_feature(repository)
+    return data
+
+
+def build_map_with_root_feature(repository):
+    """Build a map and return its validated root feature from the same manifest read."""
     root = require_repository_root(repository)
     paths = sorted(tracked_paths(root))
     features, order, errors = load_features(root, paths)
@@ -280,4 +286,5 @@ def build_map(repository):
             "markers": markers,
         }
 
-    return {"root": root_id, "features": result_features, "markers": marker_counts}
+    data = {"root": root_id, "features": result_features, "markers": marker_counts}
+    return data, features[root_id]
