@@ -131,6 +131,17 @@ class GoalTests(unittest.TestCase):
         )
         (contract / "links.md").write_text("1 T1\n", encoding="utf-8")
 
+    def add_closed_machine_cancel_quote(self, contract):
+        self.quote(contract, 1, "发布要求")
+        self.add_task(1)
+        self.quote(contract, 2, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做")
+        task = contract / "tasks" / "T1.md"
+        done = contract / "done" / "T1.md"
+        done.write_text(task.read_text(encoding="utf-8") + 'cancel_quote: "2"\n', encoding="utf-8")
+        task.unlink()
+        (contract / "links.md").write_text("1 T1\n2 T1\n", encoding="utf-8")
+        return done
+
     def test_open_creates_directory_and_outputs_exact_timer_prompt(self):
         output = self.succeeds("open", "release", "交付新版本")
         contract = self.project / "20261024-093000-release" / "xy-goal"
@@ -216,6 +227,51 @@ class GoalTests(unittest.TestCase):
         self.assertEqual((contract / "links.md").read_text(encoding="utf-8"),
                          "1 T1\n2 不必跟进 自动：本契约定时提示\n")
         self.succeeds("check")
+
+    def test_machine_cancel_quote_on_closed_task_remains_readable(self):
+        contract = self.open_goal("release")
+        self.add_closed_machine_cancel_quote(contract)
+
+        self.assertIn("目标：交付新版本", self.succeeds("show"))
+        self.assertIn("通过", self.succeeds("check"))
+
+    def test_relink_keeps_closed_machine_cancel_quote_without_error(self):
+        contract = self.open_goal("release")
+        done = self.add_closed_machine_cancel_quote(contract)
+        before_links = (contract / "links.md").read_bytes()
+        before_done = done.read_bytes()
+
+        output = self.succeeds("relink")
+
+        self.assertIn(f"已关闭事项的历史出处保留：{contract}", output)
+        self.assertEqual((contract / "links.md").read_bytes(), before_links)
+        self.assertEqual(done.read_bytes(), before_done)
+
+    def test_relink_clears_open_machine_mapping_but_keeps_closed_cancel_history(self):
+        contract = self.open_goal("release")
+        done = self.add_closed_machine_cancel_quote(contract)
+        self.add_task(1)
+        self.quote(contract, 3, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做")
+        (contract / "links.md").write_text("1 T1\n1 T2\n2 T1\n3 T2\n", encoding="utf-8")
+        self.rejects("check", message="原话 3 是机器输入（自动：本契约定时提示）")
+
+        output = self.succeeds("relink")
+
+        self.assertIn("丢弃：3 T2；原话 3 是机器输入", output)
+        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"),
+                         "1 T1\n1 T2\n2 T1\n3 不必跟进 自动：本契约定时提示\n")
+        self.assertEqual(goal.Contract(contract, (contract / "goal.md").read_bytes()).done["T1"]["cancel_quote"], "2")
+        self.assertTrue(done.exists())
+        self.succeeds("check")
+
+    def test_cancel_quote_refuses_machine_input(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 1, "发布要求")
+        self.add_task(1)
+        self.quote(contract, 2, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做")
+
+        self.rejects("cancel", "T1", "--quote", "2",
+                     message="原话 2 是机器输入（自动：本契约定时提示）")
 
     def test_author_initiated_add_stores_evidence_and_show_displays_it(self):
         contract = self.open_goal("release")

@@ -221,7 +221,10 @@ class Contract:
             read_text(links_path), self.quotes, self.tasks.keys() | self.done.keys())
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
-        for number, _ in self.links:
+        for number, task in self.links:
+            if task not in self.tasks:
+                # 关闭事项不再驱动工作；它的映射是历史，不能让整份契约因此读不出来。
+                continue
             reason = automatic_reason(self.quotes[number], path)
             if reason is not None:
                 # 机器输入挂上后，完好的契约里没有摘除映射的命令，因此只能在挂接时挡住。
@@ -701,10 +704,17 @@ def relink(path, goal_content, task, sources):
     if (task is None) != (sources is None):
         raise GoalError("事项与 --source 必须同时给或同时不给")
     try:
-        Contract(path, goal_content)
+        contract = Contract(path, goal_content)
     except GoalError:
         pass
     else:
+        has_closed_machine_source = any(
+            landing in contract.done and automatic_reason(contract.quotes[number], path) is not None
+            for number, landing in contract.links
+        )
+        if task is None and has_closed_machine_source:
+            print(f"已关闭事项的历史出处保留：{path}")
+            return 0
         raise GoalError("契约完好，挂出处用 update")
     links_path = path / "links.md"
     text = read_text(links_path)
@@ -721,6 +731,10 @@ def relink(path, goal_content, task, sources):
         print(f"丢弃：{line}；{reason}")
     kept_links = set()
     for number, landing in links:
+        if landing not in tasks:
+            # 只修开放事项的机器输入映射；关闭事项的记录已经是历史。
+            kept_links.add((number, landing))
+            continue
         reason = automatic_reason(quotes[number], path)
         if reason is None:
             kept_links.add((number, landing))
