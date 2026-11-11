@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from map_fixture import feature
+from map_fixture import build_map, feature
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,7 +18,7 @@ class FeatureCheckTest(unittest.TestCase):
         self.repo = Path(self.temporary.name) / "sample-repo"
         self.repo.mkdir()
         self.write("README.md", "仓库说明。\n")
-        self.write("repo-map/features.json", json.dumps(feature("root", ""), ensure_ascii=False))
+        self.write("repo-map/features.json", json.dumps(feature("root", "", subrepositories=[]), ensure_ascii=False))
         subprocess.run(["git", "-C", str(self.repo), "init", "-q"], check=True)
         subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
 
@@ -40,13 +40,149 @@ class FeatureCheckTest(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
 
+    def make_nested_repository(self, relative):
+        nested = self.repo / relative
+        nested.mkdir(parents=True)
+        subprocess.run(["git", "-C", str(nested), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(nested), "config", "user.name", "Fixture"], check=True)
+        subprocess.run(["git", "-C", str(nested), "config", "user.email", "fixture@example.invalid"], check=True)
+        (nested / "README.md").write_text("nested\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(nested), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(nested), "commit", "-qm", "fixture"], check=True)
+
+    def make_ignored_nested_repository(self, relative):
+        self.make_nested_repository(relative)
+
+    def test_rejects_a_root_without_subrepositories(self):
+        root = feature("root", "", subrepositories=[])
+        del root["subrepositories"]
+        self.set_features(root)
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("subrepositories", result.stdout + result.stderr)
+
+    def test_allows_subrepositories_only_on_the_root_feature(self):
+        child = feature("child", None, subrepositories=[])
+        self.set_features(feature("root", "", children=[child], subrepositories=[]))
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("子功能有多余键 subrepositories", output)
+        self.assertNotIn("根功能有多余键 subrepositories", output)
+
+    def test_rejects_invalid_subrepository_value_shapes_and_paths(self):
+        cases = [
+            ("不是数组", "sub", "subrepositories 必须是字符串数组"),
+            ("元素不是字符串", [1], "subrepositories 必须是字符串数组"),
+            ("空路径", [""], "subrepositories 必须是安全的仓内相对目录路径"),
+            ("绝对路径", ["/abs"], "subrepositories 必须是安全的仓内相对目录路径"),
+            ("结尾斜线", ["sub/"], "subrepositories 必须是安全的仓内相对目录路径"),
+            ("上级路径", ["../sub"], "subrepositories 必须是安全的仓内相对目录路径"),
+            ("反斜线", ["a\\b"], "subrepositories 必须是安全的仓内相对目录路径"),
+        ]
+        for name, subrepositories, expected in cases:
+            with self.subTest(value=name):
+                root = feature("root", "", subrepositories=subrepositories)
+                self.set_features(root)
+
+                result = self.check()
+                output = result.stdout + result.stderr
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(expected, output)
+
+    def test_rejects_unregistered_ignored_nested_repositories_and_lists_each_path(self):
+        self.write(".gitignore", "/sub-one/\n/sub-two/\n")
+        self.make_ignored_nested_repository("sub-one")
+        self.make_ignored_nested_repository("sub-two")
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("sub-one", output)
+        self.assertIn("sub-two", output)
+        self.assertIn("subrepositories", output)
+
+    def test_accepts_registered_ignored_nested_repository_without_adding_its_files_to_map(self):
+        self.write(".gitignore", "/sub/\n")
+        self.make_ignored_nested_repository("sub")
+        self.set_features(feature("root", "", subrepositories=["sub"]))
+
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        data = build_map(self, self.repo)
+        files = [
+            path
+            for feature_data in data["features"].values()
+            for group in feature_data["files"].values()
+            for path in group
+        ]
+        self.assertFalse(any(path.startswith("sub/") for path in files))
+
+    def test_accepts_a_registered_path_missing_from_the_checkout(self):
+        self.set_features(feature("root", "", subrepositories=["quant-deep"]))
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_reports_registered_paths_that_are_not_directly_ignored_repositories(self):
+        self.write("tracked/file.py", "value = 1\n")
+        self.write(".gitignore", "/ordinary/\n")
+        self.write("ordinary/file.py", "ignored data\n")
+        self.set_features(feature(
+            "root", "", subrepositories=["tracked", "ordinary", "visible"]
+        ))
+        self.make_nested_repository("visible")
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("登记的子仓不是被忽略规则直接点名的嵌套 Git 仓", output)
+        for path in ("tracked", "ordinary", "visible"):
+            with self.subTest(path=path):
+                self.assertIn(path, output)
+        self.assertIn("还不支持子仓", output)
+
+    def test_registered_gitlink_is_still_unsupported_and_mismatched(self):
+        child = self.repo.parent / "child-repository"
+        subprocess.run(["git", "-C", str(self.repo.parent), "init", str(child), "-q"], check=True)
+        subprocess.run(["git", "-C", str(child), "config", "user.name", "Fixture"], check=True)
+        subprocess.run(["git", "-C", str(child), "config", "user.email", "fixture@example.invalid"], check=True)
+        (child / "README.md").write_text("child\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(child), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(child), "commit", "-qm", "fixture"], check=True)
+        self.set_features(feature("root", "", subrepositories=["linked"]))
+        commit = subprocess.run(["git", "-C", str(child), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        subprocess.run(
+            ["git", "-C", str(self.repo), "update-index", "--add", "--cacheinfo",
+             f"160000,{commit},linked"],
+            check=True,
+        )
+        self.make_nested_repository("linked")
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("还不支持子仓：linked", output)
+        self.assertIn("登记的子仓不是被忽略规则直接点名的嵌套 Git 仓：linked", output)
+
     def test_accepts_a_valid_root_feature(self):
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("检查通过", result.stdout)
 
     def test_rejects_an_extra_feature_key(self):
-        root = feature("root", "")
+        root = feature("root", "", subrepositories=[])
         root["legacy"] = "旧字段"
         self.set_features(root)
         result = self.check()
@@ -54,7 +190,7 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("legacy", result.stdout + result.stderr)
 
     def test_rejects_a_missing_feature_key(self):
-        root = feature("root", "")
+        root = feature("root", "", subrepositories=[])
         del root["what"]
         self.set_features(root)
         result = self.check()
@@ -62,12 +198,12 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("what", result.stdout + result.stderr)
 
     def test_rejects_an_invalid_identifier_and_duplicate_identifier(self):
-        root = feature("Bad_ID", "")
+        root = feature("Bad_ID", "", subrepositories=[])
         self.set_features(root)
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("id", result.stdout + result.stderr)
-        root = feature("root", "", children=[feature("same", "pkg"), feature("same", "other")])
+        root = feature("root", "", subrepositories=[], children=[feature("same", "pkg"), feature("same", "other")])
         self.write("pkg/item.py", "value = 1\n")
         self.write("other/item.py", "value = 2\n")
         self.set_features(root)
@@ -78,7 +214,7 @@ class FeatureCheckTest(unittest.TestCase):
     def test_accepts_only_valid_why_source_combinations(self):
         for source in ("原话", "确认", "起草"):
             with self.subTest(source=source):
-                self.set_features(feature("root", "", source=source))
+                self.set_features(feature("root", "", subrepositories=[], source=source))
                 result = self.check()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -93,7 +229,7 @@ class FeatureCheckTest(unittest.TestCase):
         ]
         for source, quote, origin in invalid:
             with self.subTest(source=source, quote=quote, origin=origin):
-                root = feature("root", "")
+                root = feature("root", "", subrepositories=[])
                 root["why"].update(source=source, quote=quote, **{"from": origin})
                 self.set_features(root)
                 result = self.check()
@@ -101,16 +237,16 @@ class FeatureCheckTest(unittest.TestCase):
                 self.assertIn("why", result.stdout + result.stderr)
 
     def test_requires_the_root_to_cover_the_repository(self):
-        self.set_features(feature("root", "pkg"))
+        self.set_features(feature("root", "pkg", subrepositories=[]))
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("根", result.stdout + result.stderr)
 
     def test_rejects_missing_duplicate_and_outside_directories(self):
         cases = [
-            (feature("root", "", children=[feature("missing", "absent")]), "absent"),
-            (feature("root", "", children=[feature("first", "pkg"), feature("second", "pkg")]), "pkg"),
-            (feature("root", "", children=[feature("outer", "pkg", [feature("outside", "other")])]), "other"),
+            (feature("root", "", subrepositories=[], children=[feature("missing", "absent")]), "absent"),
+            (feature("root", "", subrepositories=[], children=[feature("first", "pkg"), feature("second", "pkg")]), "pkg"),
+            (feature("root", "", subrepositories=[], children=[feature("outer", "pkg", [feature("outside", "other")])]), "other"),
         ]
         self.write("pkg/item.py", "value = 1\n")
         self.write("other/item.py", "value = 2\n")
@@ -125,8 +261,8 @@ class FeatureCheckTest(unittest.TestCase):
         self.write("pkg/owned.py", "value = 1\n")
         self.write("other/owned.py", "value = 2\n")
         cases = [
-            (feature("root", "", children=[feature("pkg", "pkg", entries=["pkg/missing.py"])]), "missing.py"),
-            (feature("root", "", children=[feature("pkg", "pkg", entries=["other/owned.py"])]), "other/owned.py"),
+            (feature("root", "", subrepositories=[], children=[feature("pkg", "pkg", entries=["pkg/missing.py"])]), "missing.py"),
+            (feature("root", "", subrepositories=[], children=[feature("pkg", "pkg", entries=["other/owned.py"])]), "other/owned.py"),
         ]
         for root, expected in cases:
             with self.subTest(entry=expected):
@@ -138,7 +274,7 @@ class FeatureCheckTest(unittest.TestCase):
     def test_rejects_an_entry_inside_another_directory_feature(self):
         self.write("pkg/owned.py", "value = 1\n")
         self.write("other/owned.py", "value = 2\n")
-        root = feature("root", "", children=[
+        root = feature("root", "", subrepositories=[], children=[
             feature("pkg", "pkg", [feature("inner", None)], ["other/owned.py"]),
             feature("other", "other"),
         ])
@@ -149,7 +285,7 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_rejects_entries_on_a_leaf_directory_feature(self):
         self.write("pkg/owned.py", "value = 1\n")
-        self.set_features(feature("root", "", children=[feature("pkg", "pkg", entries=["pkg/owned.py"])]))
+        self.set_features(feature("root", "", subrepositories=[], children=[feature("pkg", "pkg", entries=["pkg/owned.py"])]))
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("entries", result.stdout + result.stderr)

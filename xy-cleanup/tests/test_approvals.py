@@ -25,7 +25,7 @@ class ApprovalPlanTest(unittest.TestCase):
             "README.md": "Demo.\n",
             "alpha/main.py": "value = 1\n",
             "beta/main.py": "value = 2\n",
-        }, feature("root", "", children=[
+        }, feature("root", "", subrepositories=[], children=[
             feature("alpha", "alpha"),
             feature("beta", "beta"),
         ]))
@@ -321,7 +321,7 @@ class ApprovalPlanTest(unittest.TestCase):
         temporary_repo = make_repo(self, {
             "README.md": "Demo.\n",
             "alpha/main.py": "value = 1\n",
-        }, feature("root", "", children=[
+        }, feature("root", "", subrepositories=[], children=[
             feature("alpha", "alpha", source="起草"),
         ]))
         result = self.run_approvals(

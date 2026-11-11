@@ -9,6 +9,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 COMMAND = ROOT / "xy-repo-map" / "repo_map.py"
 LIBRARY = ROOT / "xy-repo-map"
+_UNSET = object()
 
 
 def why(source="原话", text="让功能容易使用。", quote="用户说过的话。", origin="测试契约"):
@@ -19,8 +20,9 @@ def why(source="原话", text="让功能容易使用。", quote="用户说过的
     return {"text": text, "source": source, "quote": quote, "from": origin}
 
 
-def feature(feature_id, directory, children=None, entries=None, source="原话"):
-    return {
+def feature(feature_id, directory, children=None, entries=None, source="原话",
+            subrepositories=_UNSET):
+    result = {
         "id": feature_id,
         "title": feature_id.title(),
         "what": f"提供 {feature_id} 功能。",
@@ -29,6 +31,9 @@ def feature(feature_id, directory, children=None, entries=None, source="原话")
         "entries": [] if entries is None else entries,
         "children": [] if children is None else children,
     }
+    if subrepositories is not _UNSET:
+        result["subrepositories"] = subrepositories
+    return result
 
 
 def make_repo(test_case, files, root_feature):

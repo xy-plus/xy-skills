@@ -26,7 +26,7 @@ class BrowserTreeTest(unittest.TestCase):
             "group/consumer.py": "import alpha.main\nimport group.ready\n",
             "group/orphan.py": "orphan = True\n",
             "group/tests/test_ready.py": "import group.ready\n",
-        }, feature("root", "", children=[
+        }, feature("root", "", subrepositories=[], children=[
             feature("alpha", "alpha"),
             feature("group", "group", children=[
                 feature("ready", None, entries=["group/ready.py"]),
