@@ -123,6 +123,14 @@ class GoalTests(unittest.TestCase):
         self.assertRegex(output, r"T[1-9][0-9]*", "add 必须创建并返回事项编号")
         return output
 
+    def add_legacy_task(self, contract):
+        self.quote(contract, 1, "旧契约里的发布要求")
+        (contract / "tasks" / "T1.md").write_text(
+            'title: "旧事项"\ncriteria: "旧判据"\nstate: "在办"\npointer: "无"\n',
+            encoding="utf-8",
+        )
+        (contract / "links.md").write_text("1 T1\n", encoding="utf-8")
+
     def test_open_creates_directory_and_outputs_exact_timer_prompt(self):
         output = self.succeeds("open", "release", "交付新版本")
         contract = self.project / "20261024-093000-release" / "xy-goal"
@@ -192,7 +200,8 @@ class GoalTests(unittest.TestCase):
         self.add_task(1)
         self.quote(contract, 2, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做")
         (contract / "links.md").write_text("1 T1\n2 T1\n", encoding="utf-8")
-        self.rejects("check", message="原话 2 是机器输入（自动：本契约定时提示）")
+        errors = self.rejects("check", message="原话 2 是机器输入（自动：本契约定时提示）")
+        self.assertIn(goal.RELINK_USAGE, errors)
 
     def test_relink_drops_machine_mapping_and_records_automatic_reason(self):
         contract = self.open_goal("release")
@@ -291,6 +300,48 @@ class GoalTests(unittest.TestCase):
         self.assertNotIn("cancel_reason", closed)
         self.succeeds("check")
 
+    def test_legacy_four_field_task_supports_show_and_check(self):
+        contract = self.open_goal("release")
+        self.add_legacy_task(contract)
+
+        output = self.succeeds("show")
+
+        self.assertIn("T1 旧事项", output)
+        self.assertIn("出处：原话 1", output)
+        self.assertIn("通过", self.succeeds("check"))
+
+    def test_legacy_four_field_task_supports_add(self):
+        contract = self.open_goal("release")
+        self.add_legacy_task(contract)
+
+        self.assertIn("T2", self.add_task(1))
+
+        saved = goal.Contract(contract, (contract / "goal.md").read_bytes())
+        self.assertNotIn("evidence", saved.tasks["T1"])
+        self.assertNotIn("evidence", saved.tasks["T2"])
+        self.succeeds("check")
+
+    def test_legacy_four_field_task_supports_update(self):
+        contract = self.open_goal("release")
+        self.add_legacy_task(contract)
+
+        self.succeeds("update", "T1", "--title", "改过的旧事项")
+
+        saved = goal.Contract(contract, (contract / "goal.md").read_bytes())
+        self.assertEqual(saved.tasks["T1"], {
+            "title": "改过的旧事项", "criteria": "旧判据", "state": "在办", "pointer": "无",
+        })
+        self.succeeds("check")
+
+    def test_legacy_four_field_done_task_remains_readable(self):
+        contract = self.open_goal("release")
+        (contract / "done" / "T1.md").write_text(
+            'title: "旧事项"\ncriteria: "旧判据"\nstate: "在办"\npointer: "无"\n'
+            'verdict: "已验收"\n', encoding="utf-8")
+
+        self.succeeds("show")
+        self.assertIn("通过", self.succeeds("check"))
+
     def test_dismiss_rejects_quote_linked_to_closed_task(self):
         contract = self.open_goal("release")
         self.quote(contract, 1, "发布要求")
@@ -317,7 +368,7 @@ class GoalTests(unittest.TestCase):
         links = (contract / "links.md").read_bytes()
         self.succeeds("reopen", "T1")
         self.assertEqual(goal.Contract(contract, (contract / "goal.md").read_bytes()).tasks["T1"], {
-            "title": "发布", "criteria": "测试通过", "state": "在办", "pointer": "无", "evidence": "无",
+            "title": "发布", "criteria": "测试通过", "state": "在办", "pointer": "无",
         })
         self.assertFalse((contract / "done" / "T1.md").exists())
         self.assertEqual((contract / "links.md").read_bytes(), links)
@@ -337,7 +388,7 @@ class GoalTests(unittest.TestCase):
         links = (contract / "links.md").read_bytes()
         self.succeeds("reopen", "T1")
         self.assertEqual(goal.Contract(contract, (contract / "goal.md").read_bytes()).tasks["T1"], {
-            "title": "发布", "criteria": "测试通过", "state": "在办", "pointer": "无", "evidence": "无",
+            "title": "发布", "criteria": "测试通过", "state": "在办", "pointer": "无",
         })
         self.assertNotIn("cancel_quote", (contract / "tasks" / "T1.md").read_text(encoding="utf-8"))
         self.assertEqual((contract / "links.md").read_bytes(), links)
@@ -354,7 +405,7 @@ class GoalTests(unittest.TestCase):
         contract = self.open_goal("release")
         done_task = contract / "done" / "T1.md"
         done_task.write_text(
-            'title: "旧事项"\ncriteria: "原判据"\nstate: "在办"\npointer: "无"\nevidence: "无"\n'
+            'title: "旧事项"\ncriteria: "原判据"\nstate: "在办"\npointer: "无"\n'
             'verdict: "已验收"\n', encoding="utf-8")
         original = done_task.read_bytes()
         self.rejects("reopen", "T1", message="已关闭事项 T1 没有出处，不能重开")
@@ -365,7 +416,7 @@ class GoalTests(unittest.TestCase):
         self.quote(contract, 1, "取消依据")
         done_task = contract / "done" / "T1.md"
         done_task.write_text(
-            'title: "旧事项"\ncriteria: "原判据"\nstate: "在办"\npointer: "无"\nevidence: "无"\n'
+            'title: "旧事项"\ncriteria: "原判据"\nstate: "在办"\npointer: "无"\n'
             'cancel_quote: "1"\n', encoding="utf-8")
         (contract / "links.md").write_text("1 T1\n", encoding="utf-8")
         original = done_task.read_bytes()
@@ -849,11 +900,11 @@ class GoalTests(unittest.TestCase):
         self.assertIn("T2", self.add_task(1))
         self.assertEqual((contract / "links.md").read_text(encoding="utf-8"),
                          "1 T1\n1 T2\n2 T1\n")
-        self.assertEqual(goal.Contract(contract, (contract / "goal.md").read_bytes()).tasks["T1"]["evidence"], "无")
         output = self.succeeds("show")
         self.assertIn("T1 发布\n  判据：测试通过\n  出处：原话 1、2\n  状态：在办；指针：无", output)
         self.assertIn("还没处理的原话：无", output)
-        self.assertNotIn("source", (contract / "tasks" / "T1.md").read_text())
+        task_values = goal.Contract(contract, (contract / "goal.md").read_bytes()).tasks["T1"]
+        self.assertNotIn("evidence", task_values)
         self.assertIn("通过", self.succeeds("check"))
 
     def test_add_refuses_missing_source_and_invalid_state_before_writing(self):
@@ -968,7 +1019,7 @@ class GoalTests(unittest.TestCase):
         contract = self.open_goal("release")
         self.quote(contract, 1, "真实原话")
         (contract / "tasks" / "T0.md").write_text(
-            'title: "错误编号事项"\ncriteria: "完成要求"\nstate: "在办"\npointer: "无"\nevidence: "无"\n')
+            'title: "错误编号事项"\ncriteria: "完成要求"\nstate: "在办"\npointer: "无"\n')
         links = contract / "links.md"
         before_links = links.read_bytes()
         before = self.files()
@@ -1003,7 +1054,7 @@ class GoalTests(unittest.TestCase):
     def test_hook_with_empty_quotes_can_be_repaired_without_claiming_dangling_number(self):
         contract = self.open_goal("release")
         (contract / "tasks" / "T2.md").write_text(
-            'title: "手写事项"\ncriteria: "完成要求"\nstate: "在办"\npointer: "无"\nevidence: "无"\n')
+            'title: "手写事项"\ncriteria: "完成要求"\nstate: "在办"\npointer: "无"\n')
         (contract / "links.md").write_text("1 T2\n")
         before = self.files()
         result = self.run_goal("hook-prompt", session=None, pid=None,
@@ -1111,7 +1162,7 @@ class GoalTests(unittest.TestCase):
                 self.succeeds("check")
                 self.assertEqual(goal.Contract(contract, (contract / "goal.md").read_bytes()).done["T1"], {
                     "title": "发布", "criteria": "测试通过", "state": "在办", "pointer": "无",
-                    "evidence": "无", **conclusion,
+                    **conclusion,
                 })
                 self.assertFalse(task.exists())
                 self.hook("hook-prompt", {"session_id": self.session, "prompt": "后续要求"})
