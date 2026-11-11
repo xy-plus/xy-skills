@@ -17,7 +17,6 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-COMMAND = ROOT / "xy-cleanup" / "decision_page.py"
 sys.path.insert(0, str(ROOT / "xy-cleanup"))
 
 import decision_page  # noqa: E402
@@ -115,18 +114,17 @@ class DecisionPageCommandTest(unittest.TestCase):
             missing_title = valid_decisions()
             del missing_title["title"]
             decisions.write_text(json.dumps(missing_title), encoding="utf-8")
-
-            result = subprocess.run(
-                ["python3", "-B", str(COMMAND), "ask",
-                 "--decisions", str(decisions), "--name", "decision-test",
+            stderr = io.StringIO()
+            code = decision_page.main(
+                ["ask", "--decisions", str(decisions), "--name", "decision-test",
                  "--answers", str(answers)],
-                capture_output=True,
-                text=True,
-                check=False,
+                lambda arguments: self.fail(f"不应启动平台：{arguments}"),
+                io.StringIO(),
+                stderr,
             )
 
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("title", result.stderr)
+        self.assertEqual(code, 2, stderr.getvalue())
+        self.assertIn("title", stderr.getvalue())
 
     def test_decision_list_with_duplicate_json_key_exits_two(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -186,16 +184,16 @@ class DecisionPageCommandTest(unittest.TestCase):
                     decisions = Path(temporary) / "decisions.json"
                     answers = Path(temporary) / "answers.json"
                     decisions.write_text(json.dumps(decisions_data), encoding="utf-8")
-                    result = subprocess.run(
-                        ["python3", "-B", str(COMMAND), "ask",
-                         "--decisions", str(decisions), "--name", "decision-test",
+                    stderr = io.StringIO()
+                    code = decision_page.main(
+                        ["ask", "--decisions", str(decisions), "--name", "decision-test",
                          "--answers", str(answers)],
-                        capture_output=True,
-                        text=True,
-                        check=False,
+                        lambda arguments: self.fail(f"不应启动平台：{arguments}"),
+                        io.StringIO(),
+                        stderr,
                     )
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn(expected, result.stderr)
+                self.assertEqual(code, 2, stderr.getvalue())
+                self.assertIn(expected, stderr.getvalue())
 
     def test_existing_answers_exit_two_without_starting_platform(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -203,18 +201,18 @@ class DecisionPageCommandTest(unittest.TestCase):
             answers = Path(temporary) / "answers.json"
             decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
             answers.write_text("keep", encoding="utf-8")
-            result = subprocess.run(
-                ["python3", "-B", str(COMMAND), "ask",
-                 "--decisions", str(decisions), "--name", "decision-test",
+            stderr = io.StringIO()
+            code = decision_page.main(
+                ["ask", "--decisions", str(decisions), "--name", "decision-test",
                  "--answers", str(answers)],
-                capture_output=True,
-                text=True,
-                check=False,
+                lambda arguments: self.fail(f"不应启动平台：{arguments}"),
+                io.StringIO(),
+                stderr,
             )
             self.assertEqual(answers.read_text(encoding="utf-8"), "keep")
 
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("已经存在", result.stderr)
+        self.assertEqual(code, 2, stderr.getvalue())
+        self.assertIn("已经存在", stderr.getvalue())
 
     def test_existing_broken_answer_symlink_exits_two_without_mounting(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
