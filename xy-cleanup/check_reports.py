@@ -104,8 +104,11 @@ def _valid_target(target, data, repository, tracked_files):
     if (not separator or path not in tracked_files
             or not line_text.isascii() or not line_text.isdecimal()):
         return False
-    normalized_line_text = line_text.lstrip("0")
-    if not normalized_line_text:
+    try:
+        line_number = int(line_text)
+    except ValueError:
+        return False
+    if line_number < 1:
         return False
     file_path = Path(repository) / path
     try:
@@ -115,12 +118,7 @@ def _valid_target(target, data, repository, tracked_files):
             line_count = len(file_path.read_bytes().splitlines())
     except OSError:
         return False
-    line_count_text = str(line_count)
-    return (
-        len(normalized_line_text) < len(line_count_text)
-        or (len(normalized_line_text) == len(line_count_text)
-            and normalized_line_text <= line_count_text)
-    )
+    return line_number <= line_count
 
 
 def validate_reports(data, repository, expected_features, report_paths, tracked_files):
