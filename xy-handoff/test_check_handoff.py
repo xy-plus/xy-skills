@@ -114,18 +114,10 @@ class CheckHandoffTest(unittest.TestCase):
                     target[path[-1]] = value
                     self.assert_rejected(document, str(path[0]), "不能为空")
 
-    def test_empty_quotes_are_valid_when_facts_explain_the_handoff(self):
+    def test_quotes_must_not_be_empty(self):
         document = handoff()
         document["quotes"] = []
-        document["facts"] = ["不做会中断交付；完成后可继续验收；代价是两小时"]
-        result = self.run_check(document)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout + result.stderr, "")
-
-    def test_empty_quotes_require_nonempty_facts(self):
-        document = handoff()
-        document.update(quotes=[], facts=[])
-        self.assert_rejected(document, "facts", "不能为空")
+        self.assert_rejected(document, "quotes", "不能为空")
 
     def test_each_quote_requires_text_and_source(self):
         document = handoff()
