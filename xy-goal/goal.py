@@ -24,7 +24,7 @@ ITEM_LIMIT = 300
 TOTAL_LIMIT = 5000
 TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
 GOAL_FIELDS = ("target", "session_id", "claude_pid")
-HOOK_COMMANDS = ("hook-prompt", "hook-answer")
+HOOK_COMMANDS = ("hook-prompt", "hook-answer", "hook-stop")
 RELINK_USAGE = "；用 relink [<事项> --source <编号>…] 修复，编号看 quotes/"
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
 PID_USAGE = ('请在 Claude Code 的 Bash 工具中运行，在 open/adopt 命令后传入 '
@@ -550,7 +550,7 @@ def hook_input(command):
         text = payload.get("prompt")
         if not isinstance(text, str):
             raise GoalError("hook 输入缺少字符串 prompt")
-    else:
+    elif command == "hook-answer":
         if payload.get("tool_name") != "AskUserQuestion":
             raise GoalError("hook-answer 只接收 AskUserQuestion")
         if "tool_input" not in payload or "tool_response" not in payload:
@@ -558,7 +558,101 @@ def hook_input(command):
         # tool_response 格式没有官方保证：只序列化原值，不提取答案或重述问题。
         text = json.dumps({"tool_input": payload["tool_input"], "tool_response": payload["tool_response"]},
                           ensure_ascii=False, indent=2)
+    else:
+        return session_id, payload
     return session_id, text, payload.get("transcript_path")
+
+
+def stop_crons(payload):
+    if "session_crons" not in payload or not isinstance(payload["session_crons"], list):
+        raise GoalError("hook-stop 输入缺少数组 session_crons")
+    crons = payload["session_crons"]
+    for number, cron in enumerate(crons, start=1):
+        if not isinstance(cron, dict):
+            raise GoalError(f"hook-stop session_crons 第 {number} 项必须是对象")
+        if (not isinstance(cron.get("id"), str)
+                or not isinstance(cron.get("schedule"), str)
+                or not isinstance(cron.get("prompt"), str)):
+            raise GoalError(f"hook-stop session_crons 第 {number} 项的 id、schedule、prompt 必须是字符串")
+        if not isinstance(cron.get("recurring"), bool):
+            raise GoalError(f"hook-stop session_crons 第 {number} 项的 recurring 必须是布尔值")
+    return crons
+
+
+def timer_contract(prompt):
+    """从唯一提示构造函数推导模板边界，返回模板里的契约路径。"""
+    marker = "xy-goal-contract-marker"
+    template = timer_prompt(marker)
+    prefix, separator, suffix = template.partition(marker)
+    if (not separator or not prompt.startswith(prefix) or not prompt.endswith(suffix)
+            or len(prompt) <= len(prefix) + len(suffix)):
+        return None
+    return prompt[len(prefix):len(prompt) - len(suffix)]
+
+
+def stop_decision(root, session_id, crons):
+    found = find_contract(root, session_id)
+    path, goal_content = found if found is not None else (None, None)
+    contract = None
+    if path is not None:
+        try:
+            contract = Contract(path, goal_content)
+        except (GoalError, OSError, UnicodeError):
+            # 坏契约不能可靠地判暂停；保留绑定路径并要求定时自查暴露问题。
+            pass
+    paused = (contract is not None and bool(contract.tasks)
+              and all(task["state"].startswith("等用户：") for task in contract.tasks.values())
+              and not contract.pending())
+    wants_timer = path is not None and not paused
+    expected_prompt = timer_prompt(path) if wants_timer else None
+
+    timers = [(cron, timer_contract(cron["prompt"])) for cron in crons]
+    timers = [(cron, target) for cron, target in timers if target is not None]
+    keep = None
+    if wants_timer:
+        keep = next((cron for cron, target in timers
+                     if target == str(path) and cron["schedule"] == "*/30 * * * *"
+                     and cron["recurring"] is True), None)
+
+    if path is None:
+        first_line = "本会话没有契约"
+    elif paused:
+        first_line = (f"本会话契约：{path}；只剩等用户的事项、没有未处理原话："
+                      "先向用户汇报还剩哪几项、各在等用户什么，再删下面的定时器")
+    else:
+        first_line = f"本会话契约：{path}"
+
+    lines = [first_line]
+    for cron, target in timers:
+        if path is None:
+            reason = "本会话没有契约"
+        elif paused:
+            reason = "暂停"
+        elif cron is keep:
+            continue
+        elif (keep is not None and target == str(path)
+              and cron["schedule"] == "*/30 * * * *" and cron["recurring"] is True):
+            reason = "重复"
+        else:
+            reason = "不是本契约现在要的定时器"
+        lines.append(f"调用 CronDelete 删掉 {cron['id']}（{reason}）")
+
+    if wants_timer and keep is None:
+        lines.append('调用 CronCreate(cron="*/30 * * * *", recurring=true, '
+                     f"prompt={json.dumps(expected_prompt, ensure_ascii=False)})")
+    if len(lines) == 1:
+        return None
+    return "\n".join(lines)
+
+
+def hook_stop(root, session_id, crons):
+    # hook 只能给 agent 列出 CronCreate/CronDelete 调用；它本身不执行定时器工具。
+    context = stop_decision(root, session_id, crons)
+    if context is None:
+        return 0
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "Stop", "additionalContext": context}}, ensure_ascii=False))
+    return 0
 
 
 def record_hook(root, session_id, text, transcript_path):
@@ -714,14 +808,15 @@ def execute(options, *, root, session_id, claude_pid, now):
             else:
                 # 本会话已在入口核过；新会话接管还须核旧所有者的重复绑定。
                 find_contract(root, contract.metadata["session_id"])
+                # 原会话仍持有契约，它的 Stop hook 会要求保留定时器；应先结束原会话。
                 try:
                     os.kill(int(contract.metadata["claude_pid"]), 0)
                 except ProcessLookupError:
                     pass
                 except PermissionError:
-                    raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
+                    raise GoalError("原会话进程还在：先结束原会话")
                 else:
-                    raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
+                    raise GoalError("原会话进程还在：先结束原会话")
                 inbox = root / session_project(session_id) / "xy-goal-inbox" / session_id
                 if inbox.exists():
                     require_project_directory(root, inbox.parents[1])
@@ -733,7 +828,7 @@ def execute(options, *, root, session_id, claude_pid, now):
                 changes[path / "links.md"] = encode_links(contract.links, contract.dismissed)
                 with consume_inputs([inbox] if inbox.exists() else []):
                     write_files(changes, [])
-        print(timer_prompt(path))
+        print(path.resolve())
         return 0
     if path is None:
         raise GoalError("本会话没有契约")
@@ -775,14 +870,27 @@ def main(arguments, *, session_id, now):
         # 不依赖进程名、argv[0]，也不依赖未公开保证的 CLAUDE_PID 环境变量。
         claude_pid = options.claude_pid if options.command in ("open", "adopt") else None
         incoming = None
+        stop_session_id = None
+        stop_session_crons = None
         if options.command.startswith("hook-"):
             incoming = hook_input(options.command)
             if incoming is None:
                 return 0
+            if options.command == "hook-stop":
+                stop_session_id, payload = incoming
+                stop_hook_active = payload.get("stop_hook_active")
+                if not isinstance(stop_hook_active, bool):
+                    raise GoalError("hook-stop 输入缺少布尔 stop_hook_active")
+                # 本 hook 引起续跑后会再次触发 Stop；跳过可避免反复追问已照做或暂时做不到的事。
+                if stop_hook_active:
+                    return 0
+                stop_session_crons = stop_crons(payload)
         else:
             require_name(session_id, "CLAUDE_CODE_SESSION_ID")
         with root_lock(root):
             root = root.resolve()
+            if options.command == "hook-stop":
+                return hook_stop(root, stop_session_id, stop_session_crons)
             if incoming is not None:
                 record_hook(root, *incoming)
                 return 0
@@ -808,9 +916,14 @@ def main(arguments, *, session_id, now):
                     break
         if command in HOOK_COMMANDS:
             detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
-            record = "" if isinstance(error, HookRecordError) else "这次输入没有记入契约。原始错误："
-            context = f"请优先修复本会话契约或 hook 问题，再做别的。{record}{detail}"
-            event = "UserPromptSubmit" if command == "hook-prompt" else "PostToolUse"
+            if command == "hook-stop":
+                context = ("请优先修复本会话契约或 hook 问题，再做别的。"
+                           f"这一轮结束时没有核对定时器。原始错误：{detail}")
+                event = "Stop"
+            else:
+                record = "" if isinstance(error, HookRecordError) else "这次输入没有记入契约。原始错误："
+                context = f"请优先修复本会话契约或 hook 问题，再做别的。{record}{detail}"
+                event = "UserPromptSubmit" if command == "hook-prompt" else "PostToolUse"
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": event, "additionalContext": context}}, ensure_ascii=False))
             return 0
