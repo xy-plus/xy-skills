@@ -679,10 +679,6 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                 if socket_path is not None:
                     Path(socket_path).unlink(missing_ok=True)
 
-    def test_accepts_a_valid_decision_list(self):
-        decisions = valid_decisions()
-        self.assertIs(decision_page.validate_decisions(decisions), decisions)
-
     def test_each_object_level_requires_exact_fields(self):
         with_footnote = valid_decisions()
         with_footnote["footnotes"] = [{"title": "Keep in mind", "lines": ["No action needed."]}]

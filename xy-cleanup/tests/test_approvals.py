@@ -1,4 +1,6 @@
 from pathlib import Path
+from contextlib import redirect_stdout
+import io
 import os
 import subprocess
 import sys
@@ -76,6 +78,35 @@ class ApprovalPlanTest(unittest.TestCase):
             result.stdout,
             "alpha\t没有认可记录\n要审 1 个功能（范围内 1 个）\n",
         )
+
+    def test_plan_does_not_fingerprint_files_outside_its_scope(self):
+        data = build_map(self, self.repository)
+        values, _ = approvals.feature_values(self.repository)
+        beta_files = {
+            path
+            for group_paths in data["features"]["beta"]["files"].values()
+            for path in group_paths
+        }
+        self.assertIn("beta/main.py", beta_files)
+        read_files = []
+        read_bytes = Path.read_bytes
+
+        def record_read(path):
+            read_files.append(path.relative_to(self.repository).as_posix())
+            return read_bytes(path)
+
+        output = io.StringIO()
+        with mock.patch.object(approvals, "build_map", return_value=data), \
+                mock.patch.object(approvals, "feature_values", return_value=(values, [])), \
+                mock.patch.object(Path, "read_bytes", record_read), \
+                redirect_stdout(output):
+            result = approvals.main([
+                "approvals.py", "plan", "--repo", str(self.repository),
+                "--scope", "alpha", "--review", "变过的",
+            ])
+
+        self.assertEqual(result, 0, output.getvalue())
+        self.assertNotIn("beta/main.py", read_files)
 
     def test_record_writes_sorted_fingerprints_for_the_scope(self):
         result = self.record()

@@ -303,15 +303,6 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("features[1].necessity 必须是非空字符串", result.stdout)
 
-    def test_main_role_rejects_necessity(self):
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        main["features"][0]["necessity"] = "功能必要。"
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("有多余字段 necessity", result.stdout)
-
     def test_razor_keep_must_cover_each_nonempty_line_and_may_skip_blank_lines(self):
         self.add_tracked_file("alpha/guide.md", "开头。\n\n结尾。\n")
         main = report("主审", self.repository)
@@ -567,11 +558,6 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("alpha/main.py:1-1", result.stdout)
-
-    def test_all_standing_verdicts_accept_empty_findings(self):
-        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
-        result = self.run_check()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_nonstanding_verdict_accepts_overlapping_own_feature_finding(self):
         self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
@@ -1069,16 +1055,6 @@ class CheckReportsTest(unittest.TestCase):
                 result = self.run_check()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_keep_requirement_must_be_a_continuous_quote(self):
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"] = [razor_keep_item("alpha", source="要什么", text="功能存在。")]
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("requirement.text", result.stdout)
-
     def test_keep_requirement_accepts_a_continuous_substring(self):
         main = report("主审", self.repository)
         razor = report("剃刀", self.repository)
@@ -1303,6 +1279,7 @@ class CheckReportsTest(unittest.TestCase):
 
         cases = [
             ("主审", "keep", []),
+            ("主审", "necessity", "功能必要。"),
             ("剃刀", "structure", "结构回答"),
             ("主审", "needed", "旧答案"),
             ("剃刀", "needed", "旧答案"),

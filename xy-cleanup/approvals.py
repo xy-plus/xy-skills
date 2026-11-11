@@ -180,31 +180,19 @@ def _record(repository, data, feature_values, fingerprints, records, scope):
     }
     updated.update({feature_id: fingerprints[feature_id] for feature_id in selected})
     content = json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=approved_path.parent,
-            prefix=f".{approved_path.name}.", suffix=".tmp", delete=False,
-        ) as temporary_file:
-            temporary_path = Path(temporary_file.name)
-            temporary_file.write(content)
-        _require_approval_path_in_repository(repository, approved_path)
-        os.replace(temporary_path, approved_path)
-        temporary_path = None
-    finally:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=approved_path.parent,
+        prefix=f".{approved_path.name}.", suffix=".tmp", delete=False,
+    ) as temporary_file:
+        temporary_path = Path(temporary_file.name)
+        temporary_file.write(content)
+    _require_approval_path_in_repository(repository, approved_path)
+    os.replace(temporary_path, approved_path)
     return f"已记录 {len(selected)} 个功能：{approved_path}"
 
 
 def main(argv):
-    try:
-        options = parser().parse_args(argv[1:])
-    except SystemExit as error:
-        return int(error.code)
+    options = parser().parse_args(argv[1:])
 
     try:
         repository = Path(options.repo)
@@ -225,7 +213,9 @@ def main(argv):
     try:
         records = read_approvals(repository, repository / APPROVED_RELATIVE_PATH)
         values, _ = feature_values(repository)
-        fingerprints = feature_fingerprints(repository, data, values)
+        selected = _scope_features(data, options.scope)
+        selected_values = {feature_id: values[feature_id] for feature_id in selected}
+        fingerprints = feature_fingerprints(repository, data, selected_values)
         if options.command == "plan":
             print(_plan(data, fingerprints, records, options.scope, options.review))
         else:

@@ -189,21 +189,17 @@ def _preflight_answer_path(answers_path):
 class DecisionHTTPServer(socketserver.UnixStreamServer):
     """Serve one decision page and accept one complete answer on a Unix socket."""
 
-    request_queue_size = 1
-
     def __init__(self, socket_path, page, decisions, answers_path):
-        self.socket_path = Path(socket_path)
         self.page = page
         self.decisions = decisions
         self.answers_path = Path(answers_path)
         self.submitted = False
         self.timeout = 0.25
-        super().__init__(str(self.socket_path), DecisionRequestHandler)
+        super().__init__(str(socket_path), DecisionRequestHandler)
 
     def serve_until_complete(self, stop_event):
         while not self.submitted and not stop_event.is_set():
             self.handle_request()
-        return self.submitted
 
 
 class DecisionRequestHandler(BaseHTTPRequestHandler):
@@ -323,12 +319,11 @@ def run_ask(decisions, name, answers_path, platform_runner, stdout, stderr, stop
     try:
         page = render_decision_page(decisions)
         server = DecisionHTTPServer(socket_path, page, decisions, answers_path)
-        request_thread = threading.Thread(
+        serving_thread = threading.Thread(
             target=server.serve_until_complete,
             args=(stop_event,),
         )
-        request_thread.start()
-        serving_thread = request_thread
+        serving_thread.start()
         # The platform requests the page to verify the mount before mount returns.
         mount_command = [
             PLATFORM_PYTHON,
