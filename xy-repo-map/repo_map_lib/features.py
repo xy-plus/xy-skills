@@ -55,7 +55,8 @@ def _nonempty_text(value):
 
 
 def _safe_relative_path(value, allow_directory_marker):
-    if not isinstance(value, str) or not value or value.startswith("/") or "\\" in value:
+    if (not isinstance(value, str) or not value or "\0" in value
+            or value.startswith("/") or "\\" in value):
         return False
     path = value[:-1] if allow_directory_marker and value.endswith("/") else value
     return all(part not in ("", ".", "..") for part in path.split("/"))
