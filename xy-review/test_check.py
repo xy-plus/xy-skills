@@ -511,7 +511,7 @@ class CheckTest(unittest.TestCase):
         keep_old = razor_template["occams_razor"]["keep_old"][0]
         self.assertEqual(set(keep), {"entity", "requirement", "achieved", "cost"})
         self.assertIn("定了的要求：用户原话编号加原文、功能清单的条目和原文", keep["requirement"])
-        self.assertIn("派方、作者发起时写的证据", keep["requirement"])
+        self.assertIn("派方、作者发起时挂的原话和写的证据", keep["requirement"])
         self.assertEqual(set(keep_old), {"entity", "reason"})
         self.assertIn("同一文件里和这次改动不相干的旧东西可以合成一项", keep_old["reason"])
         self.assertIn("entity 写各样的名字", keep_old["reason"])

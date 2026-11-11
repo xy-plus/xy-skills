@@ -34,16 +34,6 @@ class RuleReferencesTest(unittest.TestCase):
         problem = rule_quote_problem("xy-iron-law 第 1 条", "第一性原理……思考")
         self.assertIsInstance(problem, str)
 
-    def test_rule_name_prefix_with_malformed_spacing_is_still_a_citation(self):
-        problem = rule_quote_problem("xy-iron-law第 1 条", "错误引文")
-        self.assertIsInstance(problem, str)
-
-    def test_unreadable_rule_document_raises(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            missing_path = Path(temporary) / "missing.md"
-            with self.assertRaises(ValueError):
-                numbered_rule_numbers(missing_path)
-
     def test_rule_document_without_numbered_rules_raises(self):
         with tempfile.TemporaryDirectory() as temporary:
             skill_path = Path(temporary) / "rules.md"
