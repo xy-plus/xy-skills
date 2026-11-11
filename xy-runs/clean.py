@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Remove whole expired, unused items from explicitly supplied Linux roots."""
 
 import argparse

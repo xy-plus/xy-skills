@@ -81,11 +81,4 @@ def basis_is_supported(basis):
         return False
     source = basis.get("source")
     text = basis.get("text")
-    rule = rule_text(source)
-    return (
-        is_rule_source(source)
-        and bool(rule)
-        and isinstance(text, str)
-        and bool(text.strip())
-        and text in rule
-    )
+    return is_rule_source(source) and rule_quote_problem(source, text) is None

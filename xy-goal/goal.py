@@ -276,9 +276,6 @@ class Contract:
         handled = {number for number, _ in self.links} | self.dismissed.keys()
         return sorted(self.quotes.keys() - handled)
 
-    def require_sources(self, sources):
-        require_source_quotes(sources, self.quotes, self.path)
-
     def require_task(self, task):
         if task not in self.tasks:
             raise GoalError(f"开放事项 {task} 不存在")
@@ -328,7 +325,7 @@ class Contract:
                 require_text(values[name], label)
             require_state(values["state"])
             if options.source is not None:
-                self.require_sources(options.source)
+                require_source_quotes(options.source, self.quotes, self.path)
             number = max([int(task[1:]) for task in self.tasks.keys() | self.done.keys()], default=0) + 1
             task = f"T{number}"
             if options.source is not None:
@@ -352,13 +349,13 @@ class Contract:
             if "criteria" in updated_values and options.source is None:
                 raise GoalError("改判据必须带 --source")
             if options.source is not None:
-                self.require_sources(options.source)
+                require_source_quotes(options.source, self.quotes, self.path)
                 self.links.update((number, task) for number in options.source)
             if updated_values:
                 self.tasks[task].update(updated_values)
                 changes[self.path / "tasks" / f"{task}.md"] = encode_fields(self.tasks[task])
         elif command == "dismiss":
-            self.require_sources([options.quote])
+            require_source_quotes([options.quote], self.quotes, self.path)
             require_text(options.reason, "原因")
             if any(char in options.reason for char in LINE_BREAKS):
                 raise GoalError("原因必须写成一行")
@@ -401,7 +398,7 @@ class Contract:
                 else:
                     if not sources:
                         raise GoalError("只挂证据的事项必须用 --reason")
-                    self.require_sources([options.quote])
+                    require_source_quotes([options.quote], self.quotes, self.path)
                     conclusion = {"cancel_quote": str(options.quote)}
                     self.links.add((options.quote, task))
             original = self.path / "tasks" / f"{task}.md"
