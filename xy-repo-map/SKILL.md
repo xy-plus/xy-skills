@@ -126,7 +126,7 @@ python3 <xy-repo-map目录>/repo_map.py render-workspace \
 
 python3 <xy-repo-map目录>/repo_map.py publish \
   --out <render 输出目录> \
-  --name <站点名>
+  --as <当前|清扫前|清扫后>
 ```
 
 `check` 校验清单、子仓、支持的后缀、文件归属、行数、依赖和标记。
@@ -137,4 +137,4 @@ python3 <xy-repo-map目录>/repo_map.py publish \
 
 组合时，每个功能的外部依赖名字只在声明该名字的仓以外查找目录名恰好匹配的功能。唯一匹配时，将名字从 `external_uses` 移到指向该功能的 `uses`，关系类型为 `mention`；已有同目标 `import` 时保留 `import`。如果源和目标互为祖先或子孙，则只移出外部依赖，不加关系。找不到或匹配多个目录功能时，该名字继续作为不可点击的外部依赖显示。功能行的「用到」按钮显示目标的完整功能名（标题和目录名），详情面板也显示完整功能名。`check` 和 `render` 仍只检查或生成当前仓自己的图；`publish` 行为不变。
 
-`publish` 要求目录内同时有 `index.html` 与 `map-data.json`，然后调用平台发布脚本。把命令输出的链接交给用户。
+`publish` 要求目录内同时有 `index.html` 与 `map-data.json`，并从 `map-data.json` 生成站点名，不接受手写站点名。根功能 `directory_name` 加 `-map` 是单仓的固定站点名；若功能 id 中有 `/`，则加 `-overview-map` 作为组合图固定站点名。`--as 当前` 每次覆盖固定站点；`--as 清扫前` 和 `--as 清扫后` 分别追加发布当天本地日期及 `-before`、`-after`，保留清扫快照。map-data 无法读取、缺少根功能或根功能没有 `directory_name` 时参数检查失败，退出 `2`。把命令输出的链接交给用户。

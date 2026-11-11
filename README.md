@@ -107,10 +107,10 @@ python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py render-workspace \
 
 python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py publish \
   --out /absolute/path/to/render-output-directory \
-  --name site-name
+  --as 当前
 ```
 
-`check` 校验清单并推导文件归属。`render` 先执行同样的检查，再生成可离线打开的 `index.html` 与 `map-data.json`。`render-workspace` 要求主仓根功能登记至少一个子仓，并要求每个登记的子仓都在当前检出中、是 Git 仓根且有自己的有效功能清单；它把各子仓的图接到主仓根下，并按外部依赖名字连接唯一匹配的跨仓目录功能。组合图中的子仓功能 id 和文件路径带有登记路径前缀。`publish` 检查这两个文件存在后，调用平台发布脚本。
+`check` 校验清单并推导文件归属。`render` 先执行同样的检查，再生成可离线打开的 `index.html` 与 `map-data.json`。`render-workspace` 要求主仓根功能登记至少一个子仓，并要求每个登记的子仓都在当前检出中、是 Git 仓根且有自己的有效功能清单；它把各子仓的图接到主仓根下，并按外部依赖名字连接唯一匹配的跨仓目录功能。组合图中的子仓功能 id 和文件路径带有登记路径前缀。`publish` 使用必填参数 `--as`，取值为 `当前`、`清扫前` 或 `清扫后`。它从 `map-data.json` 自动生成站点名，单仓使用 `<目录名>-map`，组合图使用 `<目录名>-overview-map`，清扫前后快照带发布当天的本地日期。
 
 ## 测试
 

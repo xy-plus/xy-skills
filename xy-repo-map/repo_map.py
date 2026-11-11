@@ -5,7 +5,7 @@ import sys
 
 from repo_map_lib.git_repository import ArgumentError
 from repo_map_lib.map_data import build_map
-from repo_map_lib.publish_command import publish_repository
+from repo_map_lib.publish_command import PUBLISH_MODES, publish_repository
 from repo_map_lib.render_command import render_repository, render_workspace_repository
 
 
@@ -28,7 +28,10 @@ def parser():
 
     publish = commands.add_parser("publish", help="发布 render 生成的页面")
     publish.add_argument("--out", required=True, help="render 生成的目录")
-    publish.add_argument("--name", required=True, help="平台站点名")
+    publish.add_argument(
+        "--as", dest="publish_as", required=True, choices=PUBLISH_MODES,
+        help="发布当前图或清扫前后快照",
+    )
     return result
 
 
@@ -46,7 +49,7 @@ def main(argv):
         return int(error.code)
     try:
         if options.command == "publish":
-            return publish_repository(options.out, options.name)
+            return publish_repository(options.out, options.publish_as)
         if options.command == "render":
             directory = render_repository(options.repo, options.out)
             print(f"页面已生成：{directory}")
