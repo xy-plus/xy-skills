@@ -66,7 +66,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 ## 仓库功能清单
 
-有功能图的仓库把唯一由人维护的功能清单放在根目录 `repo-map/features.json`。清单只写功能、目的、理由出处、入口和根功能的独立子仓登记；文件归属、行数、依赖、标记与页面由 `xy-repo-map` 从 Git 跟踪文件推导。
+有功能图的仓库把唯一由人维护的功能清单放在根目录 `repo-map/features.json`。清单只写功能、目的、理由出处、入口、根功能的独立子仓登记和外部依赖名字；外部依赖名字由人在根功能声明，谁用到从代码和文档推导。文件归属、行数、依赖、标记与页面由 `xy-repo-map` 从 Git 跟踪文件推导。
 
 清扫收尾时由 `xy-cleanup` 写 `repo-map/approved.json`（每个功能被认可时的指纹），下次清扫据此只审变过的功能。
 
@@ -85,6 +85,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
   },
   "directory": "",
   "subrepositories": [],
+  "external_dependencies": [],
   "entries": [],
   "children": []
 }
