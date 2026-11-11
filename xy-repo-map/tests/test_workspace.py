@@ -1,4 +1,3 @@
-"""Test map composition for a Git workspace and its registered repositories."""
 import json
 from pathlib import Path
 import shutil
@@ -146,16 +145,6 @@ class WorkspaceRenderTest(unittest.TestCase):
             output,
             "登记的子仓不是被忽略规则直接点名的嵌套 Git 仓：sub-a\n",
         )
-
-    def test_render_workspace_rejects_a_nonempty_output_directory(self):
-        self.output.mkdir()
-        (self.output / "keep.txt").write_text("keep", encoding="utf-8")
-
-        result = self.render()
-
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("--out 必须不存在或为空", result.stdout + result.stderr)
-        self.assertEqual((self.output / "keep.txt").read_text(encoding="utf-8"), "keep")
 
     def test_render_workspace_keeps_argument_errors_at_two(self):
         result = subprocess.run(

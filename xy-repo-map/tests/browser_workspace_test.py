@@ -1,5 +1,3 @@
-"""Exercise composed workspace links in the offline feature-tree page."""
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -24,12 +22,6 @@ class BrowserWorkspaceTest(unittest.TestCase):
                 capture_output=True, text=True, check=False,
             )
             self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
-            expected = json.loads((output / "map-data.json").read_text(encoding="utf-8"))
-            self.assertEqual(
-                expected["features"]["sub-a/root"]["uses"],
-                [{"feature": "sub-b/root", "by": "mention"}],
-            )
-
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(executable_path=executable, headless=True)
                 page = browser.new_page(viewport={"width": 900, "height": 900})

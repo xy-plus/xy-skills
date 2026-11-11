@@ -1,4 +1,3 @@
-"""Validate a rendered feature map before delegating publication."""
 from datetime import datetime
 import json
 from pathlib import Path
@@ -25,8 +24,6 @@ def require_render_output_directory(output):
 
 
 def _site_name(map_path, as_mode):
-    if as_mode not in PUBLISH_MODES:
-        raise ArgumentError("--as 只能是 当前、清扫前、清扫后")
     try:
         data = json.loads(map_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:

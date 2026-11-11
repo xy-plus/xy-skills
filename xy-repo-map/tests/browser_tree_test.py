@@ -1,4 +1,3 @@
-"""Check the rendered feature tree in a narrow, offline Chromium page."""
 import json
 import os
 from pathlib import Path

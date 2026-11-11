@@ -1,4 +1,3 @@
-"""Find Python imports and written path or directory mentions in repository files."""
 import ast
 from pathlib import Path
 import re

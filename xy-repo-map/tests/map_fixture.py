@@ -42,17 +42,7 @@ def make_repo(test_case, files, root_feature):
     temporary = tempfile.TemporaryDirectory()
     test_case.addCleanup(temporary.cleanup)
     repository = Path(temporary.name) / "sample-repo"
-    repository.mkdir()
-    for relative, content in files.items():
-        path = repository / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-    feature_path = repository / "repo-map" / "features.json"
-    feature_path.parent.mkdir(parents=True, exist_ok=True)
-    feature_path.write_text(json.dumps(root_feature, ensure_ascii=False), encoding="utf-8")
-    subprocess.run(["git", "-C", str(repository), "init", "-q"], check=True)
-    subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
-    return repository
+    return _make_repository(repository, files, root_feature)
 
 
 def _make_repository(repository, files, root_feature):

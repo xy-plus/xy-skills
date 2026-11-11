@@ -1,4 +1,3 @@
-"""Test offline render output and its embedded map contract."""
 import json
 from pathlib import Path
 import re
@@ -6,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from map_fixture import COMMAND, feature, make_repo
+from map_fixture import COMMAND, feature, make_repo, make_workspace
 
 
 class RenderTest(unittest.TestCase):
@@ -60,11 +59,24 @@ class RenderTest(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_render_rejects_a_nonempty_output_directory(self):
-        self.output.mkdir()
-        (self.output / "keep.txt").write_text("keep", encoding="utf-8")
-        result = self.render()
-        self.assertEqual(result.returncode, 2)
-        self.assertTrue((self.output / "keep.txt").is_file())
+        workspace = make_workspace(self)
+        for command, repository in (
+            ("render", self.repository),
+            ("render-workspace", workspace),
+        ):
+            with self.subTest(command=command):
+                output = self.output / command
+                output.mkdir(parents=True)
+                keep_file = output / "keep.txt"
+                keep_file.write_text("keep", encoding="utf-8")
+                result = subprocess.run(
+                    ["python3", "-B", str(COMMAND), command,
+                     "--repo", str(repository), "--out", str(output)],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("--out 必须不存在或为空", result.stdout + result.stderr)
+                self.assertEqual(keep_file.read_text(encoding="utf-8"), "keep")
 
 
 if __name__ == "__main__":

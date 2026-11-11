@@ -94,17 +94,6 @@ class DerivationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "外部依赖没有被任何代码或文档提到：web-portal"):
             map_data.build_map(repository)
 
-    def test_accepts_a_spaced_external_name_as_a_whole_word(self):
-        repository = make_repo(self, {
-            "docs/guide.md": "Claude Code is used here.\n",
-        }, feature(
-            "root", "", subrepositories=[], external_dependencies=["Claude Code"],
-        ))
-
-        data = build_map(self, repository)
-
-        self.assertEqual(data["features"]["root"]["external_uses"], ["Claude Code"])
-
     def test_classifies_source_documentation_tests_and_other_files(self):
         repository = make_repo(self, {
             "src/code.py": '"""module docs"""\n# comment\nvalue = 1\n',

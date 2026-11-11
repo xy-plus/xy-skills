@@ -53,15 +53,18 @@ class FeatureCheckTest(unittest.TestCase):
     def test_rejects_a_root_without_subrepositories(self):
         root = feature("root", "", subrepositories=[], external_dependencies=[])
         del root["subrepositories"]
+        del root["external_dependencies"]
         self.set_features(root)
 
         result = self.check()
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("subrepositories", result.stdout + result.stderr)
+        output = result.stdout + result.stderr
+        self.assertIn("根功能缺少键 subrepositories", output)
+        self.assertIn("根功能缺少键 external_dependencies", output)
 
     def test_allows_subrepositories_only_on_the_root_feature(self):
-        child = feature("child", None, subrepositories=[])
+        child = feature("child", None, subrepositories=[], external_dependencies=[])
         self.set_features(feature("root", "", children=[child], subrepositories=[], external_dependencies=[]))
 
         result = self.check()
@@ -69,7 +72,9 @@ class FeatureCheckTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("子功能有多余键 subrepositories", output)
+        self.assertIn("子功能有多余键 external_dependencies", output)
         self.assertNotIn("根功能有多余键 subrepositories", output)
+        self.assertNotIn("根功能有多余键 external_dependencies", output)
 
     def test_rejects_invalid_subrepository_value_shapes_and_paths(self):
         cases = [
@@ -80,6 +85,7 @@ class FeatureCheckTest(unittest.TestCase):
             ("结尾斜线", ["sub/"], "subrepositories 必须是安全的仓内相对目录路径"),
             ("上级路径", ["../sub"], "subrepositories 必须是安全的仓内相对目录路径"),
             ("反斜线", ["a\\b"], "subrepositories 必须是安全的仓内相对目录路径"),
+            ("NUL", ["sub\x00repo"], "subrepositories 必须是安全的仓内相对目录路径"),
         ]
         for name, subrepositories, expected in cases:
             with self.subTest(value=name):
@@ -91,16 +97,6 @@ class FeatureCheckTest(unittest.TestCase):
 
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(expected, output)
-
-    def test_rejects_nul_in_a_registered_subrepository_path(self):
-        self.set_features(feature(
-            "root", "", subrepositories=["sub\x00repo"], external_dependencies=[],
-        ))
-
-        result = self.check()
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("subrepositories", result.stdout + result.stderr)
 
     def test_rejects_unregistered_ignored_nested_repositories_and_lists_each_path(self):
         self.write(".gitignore", "/sub-one/\n/sub-two/\n")
@@ -138,27 +134,6 @@ class FeatureCheckTest(unittest.TestCase):
         result = self.check()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_requires_external_dependencies_on_the_root_feature(self):
-        self.set_features(feature("root", "", subrepositories=[]))
-
-        result = self.check()
-        output = result.stdout + result.stderr
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("根功能缺少键 external_dependencies", output)
-
-    def test_allows_external_dependencies_only_on_the_root_feature(self):
-        child = feature("child", None, external_dependencies=[])
-        root = feature("root", "", children=[child], subrepositories=[], external_dependencies=[])
-        self.set_features(root)
-
-        result = self.check()
-        output = result.stdout + result.stderr
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("子功能有多余键 external_dependencies", output)
-        self.assertNotIn("根功能有多余键 external_dependencies", output)
 
     def test_rejects_invalid_external_dependency_names(self):
         cases = [
@@ -243,11 +218,6 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("还不支持子仓：linked", output)
         self.assertIn("登记的子仓不是被忽略规则直接点名的嵌套 Git 仓：linked", output)
 
-    def test_accepts_a_valid_root_feature(self):
-        result = self.check()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("检查通过", result.stdout)
-
     def test_rejects_an_extra_feature_key(self):
         root = feature("root", "", subrepositories=[], external_dependencies=[])
         root["legacy"] = "旧字段"
@@ -284,6 +254,8 @@ class FeatureCheckTest(unittest.TestCase):
                 self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], source=source))
                 result = self.check()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                if source == "原话":
+                    self.assertIn("检查通过", result.stdout)
 
     def test_rejects_invalid_why_source_combinations(self):
         invalid = [
@@ -386,7 +358,7 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_rejects_a_known_but_unsupported_code_suffix(self):
         suffixes = (".go", ".java", ".kt", ".swift", ".cpp", ".cc", ".hpp",
-                    ".cs", ".rb", ".php", ".scala", ".lua")
+                    ".cs", ".rb", ".php", ".scala", ".lua", ".ts")
         for suffix in suffixes:
             self.write(f"src/legacy{suffix}", "unsupported source\n")
         subprocess.run(["git", "-C", str(self.repo), "add", "src"], check=True)
@@ -395,15 +367,6 @@ class FeatureCheckTest(unittest.TestCase):
         for suffix in suffixes:
             with self.subTest(suffix=suffix):
                 self.assertIn(f"legacy{suffix}", result.stdout + result.stderr)
-
-    def test_rejects_and_lists_a_typescript_source_file(self):
-        self.write("src/application.ts", "const answer = 42;\n")
-        subprocess.run(["git", "-C", str(self.repo), "add", "src/application.ts"], check=True)
-
-        result = self.check()
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("src/application.ts", result.stdout + result.stderr)
 
     def test_bad_arguments_exit_with_two(self):
         result = subprocess.run(

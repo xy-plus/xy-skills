@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Check, render, and publish the feature map for one Git repository."""
 import argparse
 import sys

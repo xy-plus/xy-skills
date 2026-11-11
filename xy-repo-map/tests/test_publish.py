@@ -1,4 +1,3 @@
-"""Test publication names derived from the rendered map without using the platform."""
 from contextlib import redirect_stdout
 from datetime import datetime
 import io

@@ -1,4 +1,3 @@
-"""Write map data and its self-contained feature-tree page."""
 import json
 from pathlib import Path
 

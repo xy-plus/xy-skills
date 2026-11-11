@@ -1,8 +1,8 @@
-"""Join maps from a repository and its registered child repositories."""
+import json
 from pathlib import Path
 
-from .features import is_feature_ancestor, load_features
-from .git_repository import ArgumentError, tracked_paths
+from .features import is_feature_ancestor
+from .git_repository import ArgumentError
 from .map_data import build_map
 
 
@@ -114,12 +114,11 @@ def build_workspace_map(repository):
     """Build each repository map independently, then join their existing results."""
     main_map = build_map(repository)
     repository_root = Path(repository).expanduser().resolve()
-    features, order, errors = load_features(
-        repository_root, tracked_paths(repository_root)
+    features_path = repository_root / "repo-map" / "features.json"
+    features = json.loads(
+        features_path.read_text(encoding="utf-8")
     )
-    if errors:
-        raise ValueError("\n".join(errors))
-    registered = features[order[0]]["subrepositories"]
+    registered = features["subrepositories"]
     if not registered:
         raise ValueError("没有登记子仓，用 render 出本仓的图")
 

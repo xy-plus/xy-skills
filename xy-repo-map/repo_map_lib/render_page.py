@@ -1,4 +1,3 @@
-"""Render an offline feature-tree page by embedding map data into its template."""
 from pathlib import Path
 
 from .embedded_json import json_for_html
