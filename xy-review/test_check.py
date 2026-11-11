@@ -44,6 +44,7 @@ def razor_report(verdict="通过", keep=None, keep_old=None, delete=None, ask_us
             "keep_old": [] if keep_old is None else keep_old,
             "delete": {"items": [] if delete is None else delete, "checked": "核对了依赖与调用方"},
             "ask_user": {"items": [] if ask_user is None else ask_user, "checked": "核对了行为变化"},
+            "quote_problems": section(),
         },
         "verdict": verdict,
     }
@@ -340,6 +341,45 @@ class CheckTest(unittest.TestCase):
             with self.subTest(message=message):
                 self.assert_rejected("review-razor.json", document, message)
 
+    def test_razor_report_requires_quote_problems(self):
+        document = razor_report()
+        del document["occams_razor"]["quote_problems"]
+        self.assert_rejected(
+            "review-razor.json", document,
+            "缺少字段：报告.occams_razor.quote_problems",
+        )
+
+    def test_razor_quote_problems_reject_wrong_item_keys(self):
+        document = razor_report()
+        document["occams_razor"]["quote_problems"]["items"] = [{
+            "problem": "原话把实现细节写成了必须项",
+            "evidence": "spec.md:12",
+            "quote": {"source": "Q1", "text": "用户原话"},
+            "suggested": "建议用户决定",
+        }]
+        self.assert_rejected(
+            "review-razor.json", document,
+            "缺少字段：报告.occams_razor.quote_problems.items[0].suggestion",
+            "多余字段：suggested",
+        )
+
+    def test_razor_quote_problems_check_rule_quotes_verbatim(self):
+        document = razor_report()
+        document["occams_razor"]["quote_problems"]["items"] = [{
+            "problem": "原话要求的东西没有必要",
+            "evidence": "spec.md:12",
+            "quote": {
+                "source": "xy-iron-law 第 3 条",
+                "text": "删了它，哪个要求做不到",
+            },
+            "suggestion": "请用户决定是否保留这项要求",
+        }]
+        self.assert_rejected(
+            "review-razor.json", document,
+            "报告.occams_razor.quote_problems.items[0].quote.text",
+            "必须逐字引用「xy-iron-law 第 3 条」",
+        )
+
     def test_razor_report_needs_at_least_one_list_item(self):
         document = razor_report(keep=[], keep_old=[], delete=[], ask_user=[])
         self.assert_rejected("review-razor.json", document, "四张清单合计至少要有一项")
@@ -442,7 +482,8 @@ class CheckTest(unittest.TestCase):
         keep = razor_template["occams_razor"]["keep"][0]
         keep_old = razor_template["occams_razor"]["keep_old"][0]
         self.assertEqual(set(keep), {"entity", "requirement", "achieved", "cost"})
-        self.assertIn("用户定了的要求", keep["requirement"])
+        self.assertIn("定了的要求：用户原话编号加原文、功能清单的条目和原文", keep["requirement"])
+        self.assertIn("派方、作者发起时写的证据", keep["requirement"])
         self.assertEqual(set(keep_old), {"entity", "reason"})
         self.assertIn("同一文件里和这次改动不相干的旧东西可以合成一项", keep_old["reason"])
         self.assertIn("entity 写各样的名字", keep_old["reason"])

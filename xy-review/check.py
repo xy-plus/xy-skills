@@ -51,6 +51,7 @@ REVIEW_RAZOR = {
             "items": [{"entity": str, "now": str, "change_to": str, "saving": str}],
             "checked": str,
         },
+        "quote_problems": QUOTE_PROBLEMS,
     },
     "verdict": str,
 }
@@ -111,18 +112,26 @@ def item_list(document, *path):
     return value if isinstance(value, list) else []
 
 
-def check_rule_quotes(document):
-    """Check every main-report citation that names a numbered rule."""
-    sections = [
-        ("first_principles.deviations", item_list(
-            document, "first_principles", "deviations", "items"
-        )),
-        ("hard_to_misuse", item_list(document, "hard_to_misuse", "items")),
-    ]
-    sections.extend(
-        (f"repo_rules.{number}", item_list(document, "repo_rules", str(number), "items"))
-        for number in REPO_RULE_NUMBERS
-    )
+def check_rule_quotes(document, report_kind):
+    """核对主审与剃刀发现中引用的编号规范条款。"""
+    if report_kind == "主审报告":
+        sections = [
+            ("first_principles.deviations", item_list(
+                document, "first_principles", "deviations", "items"
+            )),
+            ("hard_to_misuse", item_list(document, "hard_to_misuse", "items")),
+        ]
+        sections.extend(
+            (f"repo_rules.{number}", item_list(document, "repo_rules", str(number), "items"))
+            for number in REPO_RULE_NUMBERS
+        )
+    else:
+        # 原话也可能被当作保留理由，所以剃刀引用规范时必须逐字核对。
+        sections = [
+            ("occams_razor.quote_problems", item_list(
+                document, "occams_razor", "quote_problems", "items"
+            )),
+        ]
     problems = []
     for section, items in sections:
         for index, item in enumerate(items):
@@ -158,8 +167,10 @@ def check(text, filename):
     if not isinstance(document, dict):
         return problems
 
+    if report_kind in ("主审报告", "剃刀报告"):
+        problems += check_rule_quotes(document, report_kind)
+
     if report_kind == "主审报告":
-        problems += check_rule_quotes(document)
         verdict = document.get("verdict")
         if isinstance(verdict, str) and verdict not in VERDICTS:
             problems.append("报告.verdict 只能是「通过」「改了就过」或「不通过」")
