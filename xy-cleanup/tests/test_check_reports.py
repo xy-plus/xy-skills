@@ -18,15 +18,39 @@ RULE_SOURCE = "xy-iron-law 第 3 条"
 RULE_TEXT = "如无必要，勿增实体（奥卡姆剃刀）。"
 
 
-def review_feature(feature_id):
-    return {"feature": feature_id, "what_true": "实现与说明相符。",
-            "needed": "需要。", "smaller": "不能更少。",
-            "why_holds": "理由仍成立。", "todo_items": [], "findings": []}
+def razor_keep_item(feature_id, lines=None, source="要什么", text=None):
+    default_lines = {
+        "root": "README.md:1-1",
+        "alpha": "alpha/main.py:1-1",
+        "beta": "beta/main.py:1-1",
+    }
+    if text is None:
+        text = {
+            "要什么": f"提供 {feature_id} 功能。",
+            "为什么": "让功能容易使用。",
+            RULE_SOURCE: RULE_TEXT,
+        }.get(source, "")
+    return {
+        "lines": default_lines[feature_id] if lines is None else lines,
+        "requirement": {"source": source, "text": text},
+        "achieved": "实现了这项要求。",
+        "cost": "没有更小的做法，复杂度和代价配得上收益。",
+    }
+
+
+def review_feature(feature_id, role):
+    common = {"feature": feature_id, "todo_items": [], "findings": []}
+    if role == "主审":
+        return {**common, "what_true": "实现与说明相符。",
+                "why_holds": "理由仍成立。", "structure": "现有结构合适。"}
+    default_features = {"root", "alpha", "beta"}
+    keep = [razor_keep_item(feature_id)] if feature_id in default_features else []
+    return {**common, "keep": keep}
 
 
 def report(role, repository, feature_ids=("root", "alpha", "beta")):
     return {"role": role, "repo": str(repository),
-            "features": [review_feature(feature_id) for feature_id in feature_ids]}
+            "features": [review_feature(feature_id, role) for feature_id in feature_ids]}
 
 
 def finding(kind="重构", changes_behavior=True, decision="问你", basis=None):
@@ -109,6 +133,187 @@ class CheckReportsTest(unittest.TestCase):
         )
 
     def test_accepts_complete_reports_for_each_role(self):
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_razor_keep_must_cover_each_nonempty_line_and_may_skip_blank_lines(self):
+        self.add_tracked_file("alpha/guide.md", "开头。\n\n结尾。\n")
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha"),
+            razor_keep_item("alpha", "alpha/guide.md:1-1"),
+            razor_keep_item("alpha", "alpha/guide.md:3-3"),
+        ]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        alpha["keep"] = [
+            razor_keep_item("alpha"),
+            razor_keep_item("alpha", "alpha/guide.md:1-1"),
+        ]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/guide.md:3", result.stdout)
+
+    def test_finding_range_can_cover_lines_but_delete_range_cannot_overlap_keep(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = []
+        deletion = finding("删除", False, "直接做")
+        deletion["target"] = "alpha/main.py:1-1"
+        alpha["findings"] = [deletion]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        alpha["keep"] = [razor_keep_item("alpha")]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/main.py:1-1", result.stdout)
+        self.assertIn("重叠", result.stdout)
+
+    def test_one_python_keep_cannot_cover_two_definitions(self):
+        self.add_tracked_file(
+            "alpha/combined.py",
+            "def first():\n    return 1\ndef second():\n    return 2\n",
+        )
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"].append(razor_keep_item("alpha", "alpha/combined.py:1-4"))
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/combined.py:1-4", result.stdout)
+        self.assertIn("一个实体", result.stdout)
+
+    def test_class_methods_need_separate_keeps_and_nested_functions_are_not_entities(self):
+        self.add_tracked_file(
+            "alpha/service.py",
+            "class Service:\n    def first(self):\n        return 1\n"
+            "    def second(self):\n        return 2\n",
+        )
+        self.add_tracked_file(
+            "alpha/wrappers.py",
+            "def outer():\n    def first():\n        return 1\n"
+            "    def second():\n        return 2\n    return first(), second()\n",
+        )
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"].extend([
+            razor_keep_item("alpha", "alpha/service.py:1-1"),
+            razor_keep_item("alpha", "alpha/service.py:2-3"),
+            razor_keep_item("alpha", "alpha/service.py:4-5"),
+            razor_keep_item("alpha", "alpha/wrappers.py:1-6"),
+        ])
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_markdown_keep_cannot_cross_two_headings_but_code_fence_hash_is_not_a_heading(self):
+        self.add_tracked_file("alpha/two-headings.md", "# First\nText.\n## Second\n")
+        self.add_tracked_file(
+            "alpha/code-sample.md", "# Guide\n```python\n# inside\n```\n"
+        )
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"].extend([
+            razor_keep_item("alpha", "alpha/two-headings.md:1-3"),
+            razor_keep_item("alpha", "alpha/code-sample.md:1-4"),
+        ])
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/two-headings.md:1-3", result.stdout)
+        self.assertIn("一个实体", result.stdout)
+
+        alpha["keep"].remove(next(
+            item for item in alpha["keep"]
+            if item["lines"] == "alpha/two-headings.md:1-3"
+        ))
+        alpha["keep"].extend([
+            razor_keep_item("alpha", "alpha/two-headings.md:1-1"),
+            razor_keep_item("alpha", "alpha/two-headings.md:2-3"),
+        ])
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_keep_requirement_accepts_feature_text_and_supported_rule_quotes(self):
+        for source, text in (
+            ("要什么", "提供 alpha 功能。"),
+            ("为什么", "让功能容易使用。"),
+            (RULE_SOURCE, RULE_TEXT),
+        ):
+            with self.subTest(source=source):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["keep"] = [razor_keep_item("alpha", source=source, text=text)]
+                self.write_reports(main, razor)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_keep_requirement_must_be_a_continuous_quote(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [razor_keep_item("alpha", source="要什么", text="功能存在。")]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("requirement.text", result.stdout)
+
+    def test_keep_achieved_and_cost_must_be_nonempty(self):
+        for key in ("achieved", "cost"):
+            with self.subTest(key=key):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["keep"][0][key] = "  "
+                self.write_reports(main, razor)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(key, result.stdout)
+
+    def test_draft_reason_requires_empty_keep_and_skips_keep_coverage(self):
+        feature_path = self.repository / "repo-map" / "features.json"
+        features = json.loads(feature_path.read_text(encoding="utf-8"))
+        alpha_feature = next(item for item in features["children"] if item["id"] == "alpha")
+        alpha_feature["why"] = {"text": "让功能容易使用。", "source": "起草",
+                                 "quote": "", "from": ""}
+        feature_path.write_text(json.dumps(features, ensure_ascii=False), encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repository), "add", "repo-map/features.json"], check=True)
+
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("why.source 为 起草", result.stdout)
+
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = []
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_todo_file_is_covered_by_todo_items_not_razor_keep(self):
+        self.add_tracked_file("alpha/TODO.md", "待办事项。\n")
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        for document in (main, razor):
+            alpha = next(item for item in document["features"] if item["feature"] == "alpha")
+            alpha["todo_items"] = [todo_item("alpha/TODO.md:1-1")]
+        self.write_reports(main, razor)
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -231,7 +436,7 @@ class CheckReportsTest(unittest.TestCase):
     def test_todo_delete_must_be_asked_while_other_nonbehavioral_delete_is_direct(self):
         self.add_tracked_file("alpha/TODO.md", "约定。\n过时事项。\n")
         asked_todo_delete = finding("删除", False, "问你")
-        asked_todo_delete["target"] = "alpha/TODO.md:2"
+        asked_todo_delete["target"] = "alpha/TODO.md:2-2"
         self.write_todo_reports(
             {"alpha": [todo_item("alpha/TODO.md:1-2")]},
             {"root": [asked_todo_delete]},
@@ -240,7 +445,7 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         direct_todo_delete = finding("删除", False, "直接做")
-        direct_todo_delete["target"] = "alpha/TODO.md:2"
+        direct_todo_delete["target"] = "alpha/TODO.md:2-2"
         self.write_todo_reports(
             {"alpha": [todo_item("alpha/TODO.md:1-2")]},
             {"root": [direct_todo_delete]},
@@ -266,12 +471,22 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("legacy", result.stdout)
 
-        main = report("主审", self.repository)
-        del main["features"][0]["needed"]
-        self.write_reports(main, report("剃刀", self.repository))
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("needed", result.stdout)
+        cases = [
+            ("主审", "keep", []),
+            ("剃刀", "structure", "结构回答"),
+            ("主审", "needed", "旧答案"),
+            ("剃刀", "needed", "旧答案"),
+        ]
+        for role, key, value in cases:
+            with self.subTest(role=role, key=key):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                document = main if role == "主审" else razor
+                document["features"][0][key] = value
+                self.write_reports(main, razor)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(key, result.stdout)
 
     def test_what_true_is_required_and_nonempty(self):
         main = report("主审", self.repository)
@@ -378,7 +593,7 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("布尔值", result.stdout)
 
-        main["features"].insert(0, review_feature("root"))
+        main["features"].insert(0, review_feature("root", "主审"))
         self.write_reports(main, report("剃刀", self.repository))
         result = self.run_check(scope=("alpha",))
         self.assertEqual(result.returncode, 1)
@@ -447,16 +662,22 @@ class CheckReportsTest(unittest.TestCase):
             f"无法读取报告 {self.main_path}：重复键：role", result.stdout
         )
 
-    def test_finding_target_must_be_a_tracked_feature_or_valid_file_line(self):
+    def test_finding_target_must_be_a_tracked_feature_or_valid_file_range(self):
         main = report("主审", self.repository)
         main["features"][0]["findings"] = [finding()]
         self.write_reports(main, report("剃刀", self.repository))
         self.assertEqual(self.run_check().returncode, 0)
 
+        main["features"][0]["findings"][0]["target"] = "alpha/main.py:1-1"
+        self.write_reports(main, report("剃刀", self.repository))
+        self.assertEqual(self.run_check().returncode, 0)
+
         invalid_targets = (
             "alpha/main.py:2",
+            "alpha/main.py:1-2",
             "missing.py:1",
             "alpha/main.py:0",
+            "alpha/main.py:2-1",
             "alpha/main.py:line",
             "alpha/main.py:" + "9" * 5000,
         )
@@ -470,7 +691,7 @@ class CheckReportsTest(unittest.TestCase):
                 result = self.run_check()
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(
-                    "features[0].findings[0].target 必须是功能 id 或 文件:行号："
+                    "features[0].findings[0].target 必须是功能 id、文件:行号或 文件:起始行-结束行："
                     + target,
                     result.stdout,
                 )
