@@ -101,12 +101,16 @@ python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py render \
   --repo /absolute/path/to/repository \
   --out /absolute/path/to/new-output-directory
 
+python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py render-workspace \
+  --repo /absolute/path/to/workspace-repository \
+  --out /absolute/path/to/new-output-directory
+
 python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py publish \
   --out /absolute/path/to/render-output-directory \
   --name site-name
 ```
 
-`check` 校验清单并推导文件归属。`render` 先执行同样的检查，再生成可离线打开的 `index.html` 与 `map-data.json`。`publish` 检查这两个文件存在后，调用平台发布脚本。
+`check` 校验清单并推导文件归属。`render` 先执行同样的检查，再生成可离线打开的 `index.html` 与 `map-data.json`。`render-workspace` 要求主仓根功能登记至少一个子仓，并要求每个登记的子仓都在当前检出中、是 Git 仓根且有自己的有效功能清单；它把各子仓的图接到主仓根下，并按外部依赖名字连接唯一匹配的跨仓目录功能。组合图中的子仓功能 id 和文件路径带有登记路径前缀。`publish` 检查这两个文件存在后，调用平台发布脚本。
 
 ## 测试
 

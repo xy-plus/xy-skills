@@ -1,0 +1,153 @@
+"""Test map composition for a Git workspace and its registered repositories."""
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import unittest
+
+from map_fixture import COMMAND, feature, make_workspace
+
+
+class WorkspaceRenderTest(unittest.TestCase):
+    def setUp(self):
+        self.workspace = make_workspace(self)
+        self.output = self.workspace.parent / "rendered"
+
+    def render(self, output=None):
+        return subprocess.run(
+            ["python3", "-B", str(COMMAND), "render-workspace",
+             "--repo", str(self.workspace), "--out", str(output or self.output)],
+            capture_output=True, text=True, check=False,
+        )
+
+    def write_root_features(self, subrepositories):
+        root = feature(
+            "root", "", subrepositories=subrepositories,
+            external_dependencies=[],
+        )
+        path = self.workspace / "repo-map" / "features.json"
+        path.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
+
+    def test_render_workspace_combines_maps_and_resolves_external_names(self):
+        result = self.render()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = json.loads((self.output / "map-data.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            set(data["features"]),
+            {"root", "sub-a/root", "sub-a/part", "sub-b/root", "sub-b/part"},
+        )
+        self.assertEqual(data["features"]["root"]["children"], ["sub-a/root", "sub-b/root"])
+        self.assertEqual(data["features"]["sub-a/root"]["parent"], "root")
+        self.assertEqual(data["features"]["sub-a/part"]["parent"], "sub-a/root")
+        self.assertEqual(
+            data["features"]["root"]["lines"]["total"],
+            {"code": 2, "docs": 3, "comments": 0, "tests": 0},
+        )
+        sub_a_files = [
+            path
+            for group in data["features"]["sub-a/root"]["files"].values()
+            for path in group
+        ]
+        self.assertIn("sub-a/README.md", sub_a_files)
+        part_files = [
+            path
+            for group in data["features"]["sub-a/part"]["files"].values()
+            for path in group
+        ]
+        self.assertIn("sub-a/lib/main.py", part_files)
+        self.assertEqual(
+            data["features"]["sub-a/root"]["uses"],
+            [{"feature": "sub-b/root", "by": "mention"}],
+        )
+        self.assertEqual(data["features"]["sub-a/root"]["external_uses"], ["missing-tool"])
+        self.assertEqual(data["features"]["sub-a/part"]["external_uses"], [])
+        self.assertEqual(data["markers"], {
+            "等你拍板": 0,
+            "还没实现": 0,
+            "没归到功能的代码或测试": 0,
+        })
+
+    def test_render_workspace_rejects_an_empty_subrepository_list(self):
+        shutil.rmtree(self.workspace / "sub-a")
+        shutil.rmtree(self.workspace / "sub-b")
+        self.write_root_features([])
+
+        result = self.render()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("没有登记子仓", result.stdout + result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_render_workspace_reports_a_missing_child_checkout(self):
+        shutil.rmtree(self.workspace / "sub-a")
+
+        result = self.render()
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("sub-a", output)
+        self.assertIn("不存在", output)
+        self.assertIn("子仓所在的检出", output)
+        self.assertFalse(self.output.exists())
+
+    def test_render_workspace_reports_a_child_without_its_own_map(self):
+        (self.workspace / "sub-a" / "repo-map" / "features.json").unlink()
+
+        result = self.render()
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("sub-a", output)
+        self.assertIn("repo-map/features.json", output)
+        self.assertIn("起草", output)
+        self.assertFalse(self.output.exists())
+
+    def test_render_workspace_reports_an_invalid_child_map(self):
+        (self.workspace / "sub-a" / "repo-map" / "features.json").write_text(
+            "{}", encoding="utf-8",
+        )
+
+        result = self.render()
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("sub-a", output)
+        self.assertIn("功能图检查失败", output)
+        self.assertIn("缺少键", output)
+        self.assertFalse(self.output.exists())
+
+    def test_render_workspace_rejects_a_registered_directory_that_is_not_a_git_root(self):
+        shutil.rmtree(self.workspace / "sub-a")
+        (self.workspace / "sub-a").mkdir()
+        (self.workspace / "sub-a" / "README.md").write_text("Not a repository.\n")
+
+        result = self.render()
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("sub-a", output)
+        self.assertIn("不是被忽略规则直接点名的嵌套 Git 仓", output)
+
+    def test_render_workspace_rejects_a_nonempty_output_directory(self):
+        self.output.mkdir()
+        (self.output / "keep.txt").write_text("keep", encoding="utf-8")
+
+        result = self.render()
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--out 必须不存在或为空", result.stdout + result.stderr)
+        self.assertEqual((self.output / "keep.txt").read_text(encoding="utf-8"), "keep")
+
+    def test_render_workspace_keeps_argument_errors_at_two(self):
+        result = subprocess.run(
+            ["python3", "-B", str(COMMAND), "render-workspace", "--repo",
+             str(self.workspace)],
+            capture_output=True, text=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--out", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

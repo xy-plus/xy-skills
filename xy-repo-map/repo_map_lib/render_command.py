@@ -5,17 +5,21 @@ from pathlib import Path
 from .git_repository import ArgumentError
 from .map_data import build_map
 from .render_page import render_page
+from .workspace_map import build_workspace_map
 
 
-def render_repository(repository, output):
-    """Validate the repository and write a page to an empty output directory."""
+def require_empty_output_directory(output):
+    """Resolve an output path that is either absent or an empty directory."""
     directory = Path(output).expanduser().resolve()
     if directory.exists() and not directory.is_dir():
         raise ArgumentError(f"--out 必须是目录：{directory}")
     if directory.is_dir() and any(directory.iterdir()):
         raise ArgumentError(f"--out 必须不存在或为空：{directory}")
-    data = build_map(repository)
+    return directory
 
+
+def write_map(data, directory):
+    """Write the common map JSON and offline page into a checked output directory."""
     page_data = {
         "root": data["root"],
         "features": {
@@ -30,3 +34,15 @@ def render_repository(repository, output):
     (directory / "map-data.json").write_text(map_text, encoding="utf-8")
     (directory / "index.html").write_text(page_text, encoding="utf-8")
     return directory
+
+
+def render_repository(repository, output):
+    """Validate the repository and write a page to an empty output directory."""
+    directory = require_empty_output_directory(output)
+    return write_map(build_map(repository), directory)
+
+
+def render_workspace_repository(repository, output):
+    """Compose registered repository maps and write them like a regular render."""
+    directory = require_empty_output_directory(output)
+    return write_map(build_workspace_map(repository), directory)

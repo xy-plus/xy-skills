@@ -55,6 +55,55 @@ def make_repo(test_case, files, root_feature):
     return repository
 
 
+def _make_repository(repository, files, root_feature):
+    repository.mkdir(parents=True, exist_ok=True)
+    for relative, content in files.items():
+        path = repository / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    feature_path = repository / "repo-map" / "features.json"
+    feature_path.parent.mkdir(parents=True, exist_ok=True)
+    feature_path.write_text(json.dumps(root_feature, ensure_ascii=False), encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+    return repository
+
+
+def make_workspace(test_case, a_dependencies=("sub-b", "missing-tool"), b_dependencies=()):
+    """Create a Git workspace whose ignored child repositories have independent maps."""
+    temporary = tempfile.TemporaryDirectory()
+    test_case.addCleanup(temporary.cleanup)
+    workspace = Path(temporary.name) / "workspace"
+    workspace.mkdir()
+
+    for name, dependencies in (("sub-a", a_dependencies), ("sub-b", b_dependencies)):
+        dependency_text = " ".join(dependencies) or "no external dependencies"
+        _make_repository(
+            workspace / name,
+            {
+                "README.md": f"Uses {dependency_text}.\n",
+                "lib/main.py": "value = 1\n",
+            },
+            feature(
+                "root", "", subrepositories=[],
+                external_dependencies=list(dependencies), children=[
+                    feature("part", "lib"),
+                ],
+            ),
+        )
+
+    _make_repository(
+        workspace,
+        {
+            ".gitignore": "/sub-a/\n/sub-b/\n",
+            "README.md": "Workspace root.\n",
+        },
+        feature("root", "", subrepositories=["sub-a", "sub-b"],
+                external_dependencies=[]),
+    )
+    return workspace
+
+
 def build_map(test_case, repository):
     script = (
         "import json,sys; sys.path.insert(0,sys.argv[1]); "
