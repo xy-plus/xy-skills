@@ -855,6 +855,3 @@ class ProcessBoundaryTests(CleanerTestCase):
             self.fail(f"reading the UID must not decode the process name: {error}")
         self.assertTrue(item.exists())
 
-
-if __name__ == "__main__":
-    unittest.main()

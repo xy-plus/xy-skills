@@ -16,6 +16,7 @@ sys.path.insert(0, str(SCRIPT_DIRECTORY))
 import clean
 
 SERVICE = SCRIPT_DIRECTORY / "systemd" / "runs-cleaner.service"
+TIMER = SCRIPT_DIRECTORY / "systemd" / "runs-cleaner.timer"
 
 
 class ServiceTests(unittest.TestCase):
@@ -42,6 +43,12 @@ class ServiceTests(unittest.TestCase):
         environment.update(HOME=str(self.home), RUNS_ROOT="/must-not-use-environment")
         return subprocess.run(command, env=environment, text=True, capture_output=True,
                               check=False, cwd=self.home)
+
+    def test_timer_catches_up_after_power_off(self):
+        timer = configparser.ConfigParser(interpolation=None)
+        timer.read(TIMER)
+
+        self.assertTrue(timer["Timer"].getboolean("Persistent"))
 
     # The launcher must read settings at each invocation and preserve spaced paths.
     def test_service_reads_settings_each_time_and_starts_in_delete_mode(self):
@@ -126,6 +133,3 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(set(roots), {runs, project, inbox})
         self.assertEqual(errors.getvalue(), "")
 
-
-if __name__ == "__main__":
-    unittest.main()

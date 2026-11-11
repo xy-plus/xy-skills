@@ -3,6 +3,7 @@ Description=Run runs-cleaner once per day
 
 [Timer]
 OnCalendar=daily
+Persistent=true
 Unit=runs-cleaner.service
 
 [Install]
