@@ -85,6 +85,17 @@ def file_mentions(path, source, tracked_paths):
     return result
 
 
+def name_mentions(source, names):
+    """Return declared names mentioned as whole words in source text."""
+    return {
+        name for name in names
+        if re.search(
+            rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])",
+            source,
+        )
+    }
+
+
 def directory_mentions(source, directory_features, own_directory_feature):
     """Return other directory features named as whole words in source text."""
     result = set()
@@ -103,7 +114,6 @@ def directory_mentions(source, directory_features, own_directory_feature):
         name = directory_names[feature_id]
         if not name or name_counts[name] != 1:
             continue
-        pattern = re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])")
-        if pattern.search(source):
+        if name in name_mentions(source, (name,)):
             result.add(feature_id)
     return result

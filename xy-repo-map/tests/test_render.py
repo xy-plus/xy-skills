@@ -15,7 +15,7 @@ class RenderTest(unittest.TestCase):
             "README.md": "Demo repository.\n",
             "alpha/main.py": "value = 1\n",
             "branch/approved.py": "value = 2\n",
-        }, feature("root", "", subrepositories=[], children=[
+        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
             feature("alpha", "alpha"),
             feature("branch", "branch", children=[
                 feature("approved", None, entries=["branch/approved.py"]),

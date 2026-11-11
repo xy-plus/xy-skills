@@ -22,7 +22,7 @@ class OwnershipTest(unittest.TestCase):
             "pkg/owned.py": "value = 1\n",
             "tests/test_consumer.py": "import pkg.owned\n",
             "tests/test_owned.py": "import pkg.owned\n",
-        }, feature("root", "", subrepositories=[], children=[
+        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
             feature("package", "pkg", children=[
                 feature("owned", None, entries=["pkg/owned.py"]),
             ]),
@@ -43,7 +43,7 @@ class OwnershipTest(unittest.TestCase):
             "README.md": "A package test fixture.\n",
             "pkg/core.py": "value = 1\n",
             "pkg/tests/test_orphan.py": "def test_orphan():\n    return None\n",
-        }, feature("root", "", subrepositories=[], children=[
+        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
             feature("package", "pkg", children=[
                 feature("core", None, entries=["pkg/core.py"]),
             ]),

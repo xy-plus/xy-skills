@@ -10,6 +10,12 @@
   },
   "directory": "",
   "subrepositories": [],
+  "external_dependencies": [
+    "Claude Code",
+    "superpowers",
+    "web-portal",
+    "systemd"
+  ],
   "entries": [],
   "children": [
     {

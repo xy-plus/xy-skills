@@ -66,7 +66,9 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
     if not isinstance(value, dict):
         errors.append(f"{label}必须是对象")
         return
-    allowed_keys = FEATURE_KEYS | ({"subrepositories"} if parent is None else set())
+    allowed_keys = FEATURE_KEYS | (
+        {"subrepositories", "external_dependencies"} if parent is None else set()
+    )
     missing = allowed_keys - value.keys()
     extra = value.keys() - allowed_keys
     for key in sorted(missing):
@@ -132,6 +134,17 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
                 if not _safe_relative_path(path, False):
                     errors.append(
                         f"{label}的 subrepositories 必须是安全的仓内相对目录路径：{path!r}"
+                    )
+        external_dependencies = value.get("external_dependencies")
+        if not isinstance(external_dependencies, list) or any(
+            not isinstance(name, str) for name in external_dependencies
+        ):
+            errors.append(f"{label}的 external_dependencies 必须是字符串数组")
+        else:
+            for name in external_dependencies:
+                if not name or name.strip() != name or len(name.splitlines()) != 1:
+                    errors.append(
+                        f"{label}的 external_dependencies 名字必须是非空字符串、首尾无空白且不含换行：{name!r}"
                     )
     children = value.get("children")
     if not isinstance(children, list):

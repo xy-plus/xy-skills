@@ -14,7 +14,10 @@ import repo_map_lib.map_data as map_data  # noqa: E402
 
 
 def child_tree(children, entries=None):
-    return feature("root", "", subrepositories=[], children=children, entries=entries)
+    return feature(
+        "root", "", subrepositories=[], external_dependencies=[],
+        children=children, entries=entries,
+    )
 
 
 def build_map_with_sources(repository):
@@ -31,6 +34,50 @@ def build_map_with_sources(repository):
 
 
 class DerivationTest(unittest.TestCase):
+    def test_derives_sorted_unique_external_uses_from_owned_code_and_documentation(self):
+        repository = make_repo(self, {
+            "src/run.py": "# Claude Code and superpowers; superpowers again.\nvalue = 1\n",
+            "docs/guide.md": "web-portal and Claude Code.\n",
+        }, feature(
+            "root", "", subrepositories=[],
+            external_dependencies=["web-portal", "Claude Code", "superpowers", "web-portal"],
+            children=[feature("code", "src"), feature("guide", "docs")],
+        ))
+
+        data = build_map(self, repository)
+
+        self.assertEqual(data["features"]["root"]["external_uses"], [])
+        self.assertEqual(
+            data["features"]["code"]["external_uses"],
+            ["Claude Code", "superpowers"],
+        )
+        self.assertEqual(
+            data["features"]["guide"]["external_uses"],
+            ["Claude Code", "web-portal"],
+        )
+
+    def test_test_files_and_longer_words_do_not_satisfy_external_mentions(self):
+        repository = make_repo(self, {
+            "README.md": "web-portals are listed here.\n",
+            "tests/test_names.py": "# web-portal\n",
+        }, feature(
+            "root", "", subrepositories=[], external_dependencies=["web-portal"],
+        ))
+
+        with self.assertRaisesRegex(ValueError, "外部依赖没有被任何代码或文档提到：web-portal"):
+            map_data.build_map(repository)
+
+    def test_accepts_a_spaced_external_name_as_a_whole_word(self):
+        repository = make_repo(self, {
+            "docs/guide.md": "Claude Code is used here.\n",
+        }, feature(
+            "root", "", subrepositories=[], external_dependencies=["Claude Code"],
+        ))
+
+        data = build_map(self, repository)
+
+        self.assertEqual(data["features"]["root"]["external_uses"], ["Claude Code"])
+
     def test_classifies_source_documentation_tests_and_other_files(self):
         repository = make_repo(self, {
             "src/code.py": '"""module docs"""\n# comment\nvalue = 1\n',
@@ -40,7 +87,7 @@ class DerivationTest(unittest.TestCase):
             "tests/example.py": '"""test docs"""\n# test comment\n',
             "vendor/lib.py": "value = 2\n",
             "assets/data.json": '{"value": 1}\n',
-        }, feature("root", "", subrepositories=[]))
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
         data = build_map(self, repository)
         counts = data["features"]["root"]["lines"]["own"]
         self.assertEqual(counts, {"code": 5, "docs": 3, "comments": 3, "tests": 2})
@@ -48,7 +95,7 @@ class DerivationTest(unittest.TestCase):
     def test_files_classified_as_other_are_not_read(self):
         repository = make_repo(self, {
             "assets/data.bin": "placeholder\n",
-        }, feature("root", "", subrepositories=[]))
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
         other_path = repository / "assets/data.bin"
         read_bytes = Path.read_bytes
 
@@ -68,7 +115,7 @@ class DerivationTest(unittest.TestCase):
             "assets/target.py": "value = 1\n",
             "assets/link.py": "placeholder\n",
             "assets/video.ts": "placeholder\n",
-        }, feature("root", "", subrepositories=[]))
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
         symlink = repository / "assets/link.py"
         symlink.unlink()
         symlink.symlink_to("target.py")
@@ -85,7 +132,7 @@ class DerivationTest(unittest.TestCase):
             "assets/target.py": "value = 1\n",
             "assets/link.go": "placeholder\n",
             "assets/binary.go": "placeholder\n",
-        }, feature("root", "", subrepositories=[]))
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
         symlink = repository / "assets/link.go"
         symlink.unlink()
         symlink.symlink_to("target.py")
@@ -108,7 +155,7 @@ class DerivationTest(unittest.TestCase):
     def test_vendor_unsupported_suffix_is_other_and_not_counted(self):
         repository = make_repo(self, {
             "vendor/legacy.go": "package legacy\nvalue = 1\n",
-        }, feature("root", "", subrepositories=[]))
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
 
         checked = subprocess.run(
             ["python3", "-B", str(COMMAND), "check", "--repo", str(repository)],
@@ -131,7 +178,7 @@ class DerivationTest(unittest.TestCase):
             "pkg/source.py": "import pkg.target\n# invalid text\n",
             "pkg/guide.md": "See pkg/target.py for details.\ninvalid text\n",
             "pkg/target.py": "value = 1\n",
-        }, feature("root", "", subrepositories=[], children=[
+        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
             feature("package", "pkg", children=[
                 feature("source", None, entries=["pkg/source.py"]),
                 feature("guide", None, entries=["pkg/guide.md"]),
@@ -163,7 +210,7 @@ class DerivationTest(unittest.TestCase):
     def test_unreadable_tracked_file_fails_check_with_its_path(self):
         repository = make_repo(self, {
             "src/missing.py": "value = 1\n",
-        }, feature("root", "", subrepositories=[]))
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
         (repository / "src/missing.py").unlink()
 
         result = subprocess.run(
@@ -179,7 +226,7 @@ class DerivationTest(unittest.TestCase):
     def test_unreadable_unsupported_suffix_reports_read_error_first(self):
         repository = make_repo(self, {
             "src/missing.go": "value = 1\n",
-        }, feature("root", "", subrepositories=[]))
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
         (repository / "src/missing.go").unlink()
 
         result = subprocess.run(
@@ -389,7 +436,10 @@ class DerivationTest(unittest.TestCase):
             (primary / "README.md").write_text("Root.\n", encoding="utf-8")
             feature_path = primary / "repo-map" / "features.json"
             feature_path.parent.mkdir()
-            feature_path.write_text(json.dumps(feature("root", "", subrepositories=[])), encoding="utf-8")
+            root_feature = feature(
+                "root", "", subrepositories=[], external_dependencies=[],
+            )
+            feature_path.write_text(json.dumps(root_feature), encoding="utf-8")
             subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
             subprocess.run(["git", "-C", str(primary), "config", "user.name", "Fixture"], check=True)
             subprocess.run(["git", "-C", str(primary), "config", "user.email", "fixture@example.invalid"], check=True)

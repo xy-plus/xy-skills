@@ -19,14 +19,14 @@ class BrowserTreeTest(unittest.TestCase):
             f"value_{index} = {index}\n" for index in range(12)
         )
         repository = make_repo(self, {
-            "README.md": "See alpha/main.py and group.\n",
+            "README.md": "See alpha/main.py and group. Claude Code is used here.\n",
             "alpha/main.py": alpha_source,
             "alpha/guide.md": "See group/ready.py for details.\n",
             "group/ready.py": "value = 2\n",
             "group/consumer.py": "import alpha.main\nimport group.ready\n",
             "group/orphan.py": "orphan = True\n",
             "group/tests/test_ready.py": "import group.ready\n",
-        }, feature("root", "", subrepositories=[], children=[
+        }, feature("root", "", subrepositories=[], external_dependencies=["Claude Code"], children=[
             feature("alpha", "alpha"),
             feature("group", "group", children=[
                 feature("ready", None, entries=["group/ready.py"]),
@@ -89,6 +89,13 @@ class BrowserTreeTest(unittest.TestCase):
                 }
                 guide = expected["features"][by_title["Guide"]]
                 self.assertEqual(guide["uses"], [])
+                self.assertEqual(guide["external_uses"], ["Claude Code"])
+                guide_uses = row_for_title("Guide").locator(".uses")
+                self.assertEqual(guide_uses.locator(".uses-label").text_content(), "用到")
+                external_chip = guide_uses.locator(".external-use")
+                self.assertEqual(external_chip.text_content(), "Claude Code外部")
+                self.assertEqual(external_chip.evaluate("element => element.tagName"), "SPAN")
+                self.assertFalse(external_chip.evaluate("element => Boolean(element.closest('button'))"))
                 mention_chips = row_for_title("Alpha").locator(".uses .use-link")
                 self.assertEqual(mention_chips.all_text_contents(), ["Group提及", "Ready提及"])
                 for chip in mention_chips.all():
@@ -180,6 +187,10 @@ class BrowserTreeTest(unittest.TestCase):
                 citation = panel.locator("blockquote")
                 self.assertIn("用户说过的话。", citation.inner_text())
                 self.assertIn("测试契约", citation.inner_text())
+                detail_external = panel.locator(".detail-list").first.locator(".external-use")
+                self.assertEqual(detail_external.text_content(), "Claude Code外部")
+                self.assertEqual(detail_external.evaluate("element => element.tagName"), "SPAN")
+                self.assertFalse(detail_external.evaluate("element => Boolean(element.closest('button'))"))
 
                 row_for_title("Consumer").locator(".feature-title").click()
                 panel = page.locator(".detail-panel")

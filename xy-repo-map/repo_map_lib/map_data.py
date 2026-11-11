@@ -10,7 +10,12 @@ from .constants import (
     TEST_DIRECTORY_NAMES,
     UNSUPPORTED_CODE_SUFFIXES,
 )
-from .dependencies import directory_mentions, file_mentions, imports_for_file
+from .dependencies import (
+    directory_mentions,
+    file_mentions,
+    imports_for_file,
+    name_mentions,
+)
 from .features import directory_home, is_feature_ancestor, load_features
 from .git_repository import (
     primary_checkout_name,
@@ -125,6 +130,30 @@ def build_map(repository):
     if unsupported:
         raise ValueError("已知是代码但不支持统计的文件：" + ", ".join(unsupported))
 
+    external_dependencies = features[order[0]]["external_dependencies"]
+    external_directory_names = {
+        Path(features[feature_id]["directory"]).name
+        for feature_id in order
+        if features[feature_id]["directory"] not in (None, "")
+    }
+    external_mentions = {}
+    mentioned_external_dependencies = set()
+    for path in paths:
+        if categories[path] not in ("code", "docs"):
+            continue
+        names = name_mentions(source_texts[path], external_dependencies)
+        external_mentions[path] = names
+        mentioned_external_dependencies.update(names)
+
+    external_errors = []
+    for name in dict.fromkeys(external_dependencies):
+        if name not in mentioned_external_dependencies:
+            external_errors.append(f"外部依赖没有被任何代码或文档提到：{name}")
+        if name in external_directory_names:
+            external_errors.append(f"外部依赖不能与仓内目录功能同名：{name}")
+    if external_errors:
+        raise ValueError("\n".join(external_errors))
+
     counts = {
         path: count_file(path, categories[path], source_texts[path])
         for path in paths
@@ -181,10 +210,12 @@ def build_map(repository):
     }
 
     uses = defaultdict(set)
+    external_uses = {feature_id: set() for feature_id in order}
     for source_path in paths:
         if categories[source_path] not in ("code", "docs"):
             continue
         source_owner = owners[source_path]
+        external_uses[source_owner].update(external_mentions[source_path])
         for target_path in imports[source_path]:
             if target_path in owners:
                 _add_use(uses, source_owner, owners[target_path], "import", features)
@@ -245,6 +276,7 @@ def build_map(repository):
             "lines": {"own": lines[feature_id], "total": totals[feature_id]},
             "files": files[feature_id],
             "uses": feature_uses,
+            "external_uses": sorted(external_uses[feature_id]),
             "markers": markers,
         }
 

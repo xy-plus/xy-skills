@@ -70,6 +70,8 @@ body.detail-open main{padding-bottom:45vh}
 .uses-label{font-weight:650;color:var(--ink);margin-right:2px}
 .use-link{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:1px 8px;border:1px solid var(--hair);border-radius:6px;background:var(--surface);color:var(--uses);white-space:nowrap}
 .use-link.same-parent{border-color:var(--uses);box-shadow:inset 0 0 0 .5px var(--uses)}
+.external-use{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:1px 8px;border:1px dashed var(--hair);border-radius:6px;background:var(--page);color:var(--ink2);white-space:nowrap}
+.external-label{color:var(--muted);font-size:10.5px}
 .mention{color:var(--muted);font-size:10.5px}
 .feature-children{margin-left:18px;border-left:1px solid var(--hair);padding-left:0}
 .feature-children[hidden]{display:none}
@@ -209,7 +211,7 @@ function appendBar(parent, feature) {
 
 function usesList(featureId) {
   const feature = features[featureId];
-  if (!feature.uses.length) return null;
+  if (!feature.uses.length && !feature.external_uses.length) return null;
   const line = make("div", "uses");
   line.append(make("span", "uses-label", "用到"));
   const ordered = [...feature.uses].sort((left, right) => {
@@ -229,6 +231,11 @@ function usesList(featureId) {
     });
     if (use.by === "mention") button.append(make("small", "mention", "提及"));
     line.append(button);
+  }
+  for (const name of feature.external_uses) {
+    const item = make("span", "external-use", name);
+    item.append(make("small", "external-label", "外部"));
+    line.append(item);
   }
   return line;
 }
@@ -415,9 +422,9 @@ function renderHeader() {
   }
 }
 
-function relationList(items) {
+function relationList(items, externalUses) {
   const list = make("ul", "detail-list");
-  if (!items.length) {
+  if (!items.length && !externalUses.length) {
     list.append(make("li", "", "无"));
     return list;
   }
@@ -431,6 +438,13 @@ function relationList(items) {
     });
     line.append(button);
     if (item.by === "mention") line.append(make("small", "", "提及"));
+    list.append(line);
+  }
+  for (const name of externalUses) {
+    const line = make("li", "");
+    const item = make("span", "external-use", name);
+    item.append(make("small", "external-label", "外部"));
+    line.append(item);
     list.append(line);
   }
   return list;
@@ -474,8 +488,8 @@ function openDetails(featureId) {
     panel.append(make("p", "citation-origin", `确认来历：${feature.why.from}`));
   }
 
-  panel.append(make("h3", "", "用到"), relationList(feature.uses));
-  panel.append(make("h3", "", "被用到"), relationList(incomingUses.get(featureId)));
+  panel.append(make("h3", "", "用到"), relationList(feature.uses, feature.external_uses));
+  panel.append(make("h3", "", "被用到"), relationList(incomingUses.get(featureId), []));
   panel.hidden = false;
   document.body.classList.add("detail-open");
 }
