@@ -22,7 +22,8 @@ import tempfile
 # 用户要求的，保留：show 只提示压短，不阻止写入或 check。
 ITEM_LIMIT = 300
 TOTAL_LIMIT = 5000
-TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
+TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer",
+               "证据": "evidence"}
 GOAL_FIELDS = ("target", "session_id", "claude_pid")
 HOOK_COMMANDS = ("hook-prompt", "hook-answer")
 RELINK_USAGE = "；用 relink [<事项> --source <编号>…] 修复，编号看 quotes/"
@@ -227,14 +228,17 @@ class Contract:
                 # 机器输入挂上后，完好的契约里没有摘除映射的命令，因此只能在挂接时挡住。
                 raise GoalError(f"原话 {number} 是机器输入（{reason}），不能作为出处")
         linked_tasks = {task for _, task in self.links}
-        for task in self.tasks:
-            if task not in linked_tasks:
+        for task, values in self.tasks.items():
+            if task not in linked_tasks and values["evidence"] == "无":
                 raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
         for task, values in self.done.items():
             if "cancel_quote" in values:
                 number = int(values["cancel_quote"])
                 if number not in self.quotes or (number, task) not in self.links:
                     raise GoalError(f"{path / 'done' / (task + '.md')}: 取消原话不存在或缺少映射")
+            if "cancel_reason" in values:
+                if values["evidence"] == "无" or self.sources(task):
+                    raise GoalError(f"{path / 'done' / (task + '.md')}: 取消原因只用于没有原话出处的作者发起事项")
 
     def read_tasks(self, directory):
         tasks = {}
@@ -244,7 +248,11 @@ class Contract:
             content = read_bytes(path)
             fields = list(TASK_FIELDS.values())
             if directory == "done":
-                fields.append("verdict" if b"\nverdict: " in content else "cancel_quote")
+                conclusions = [name for name in ("verdict", "cancel_quote", "cancel_reason")
+                               if f"\n{name}: ".encode() in content]
+                if len(conclusions) != 1:
+                    raise GoalError(f"{path}: 格式错误：关闭事项必须且只能有一种结论")
+                fields.append(conclusions[0])
             values = parse_fields(path, fields, content)
             try:
                 require_state(values["state"])
@@ -283,8 +291,13 @@ class Contract:
             display = {key: value.translate({ord(char): json.dumps(char, ensure_ascii=True)[1:-1]
                                              for char in LINE_BREAKS})
                        for key, value in values.items()}
+            provenance = []
+            if sources_by_task[task]:
+                provenance.append("原话 " + "、".join(map(str, sources_by_task[task])))
+            if values["evidence"] != "无":
+                provenance.append("作者发起：" + display["evidence"])
             item = (f"{task} {display['title']}\n  判据：{display['criteria']}\n"
-                    f"  出处：原话 {'、'.join(map(str, sources_by_task[task]))}\n"
+                    f"  出处：{'；'.join(provenance)}\n"
                     f"  状态：{display['state']}；指针：{display['pointer']}")
             lines.append(item)
             if len(item) > ITEM_LIMIT:
@@ -300,13 +313,19 @@ class Contract:
         changes, removals = {}, []
         if command == "add":
             values = {name: getattr(options, name) for name in TASK_FIELDS.values()}
+            if options.source is None and values["evidence"] == "无":
+                raise GoalError("作者发起证据不能写「无」")
+            if options.source is not None:
+                values["evidence"] = "无"
             for label, name in TASK_FIELDS.items():
                 require_text(values[name], label)
             require_state(values["state"])
-            self.require_sources(options.source)
+            if options.source is not None:
+                self.require_sources(options.source)
             number = max([int(task[1:]) for task in self.tasks.keys() | self.done.keys()], default=0) + 1
             task = f"T{number}"
-            self.links.update((number, task) for number in options.source)
+            if options.source is not None:
+                self.links.update((number, task) for number in options.source)
             changes[self.path / "tasks" / f"{task}.md"] = encode_fields(values)
         elif command == "update":
             task = options.task
@@ -314,7 +333,7 @@ class Contract:
             updated_values = {
                 name: getattr(options, name)
                 for name in TASK_FIELDS.values()
-                if getattr(options, name) is not None
+                if name != "evidence" and getattr(options, name) is not None
             }
             if not updated_values and options.source is None:
                 raise GoalError("至少改一项")
@@ -348,10 +367,10 @@ class Contract:
             sources = self.sources(task)
             if cancel_quote is not None:
                 sources = [number for number in sources if number != int(cancel_quote)]
-            if not sources:
+            if not sources and self.done[task]["evidence"] == "无":
                 detail = "除取消依据外没有出处" if cancel_quote is not None else "没有出处"
                 raise GoalError(f"已关闭事项 {task} {detail}，不能重开")
-            # 只恢复四个开放字段；旧结论丢弃，取消依据映射仍保留在 links.md。
+            # 只恢复事项字段并丢弃旧结论；若取消依据是原话，它的映射仍保留在 links.md。
             values = {name: self.done[task][name] for name in TASK_FIELDS.values()}
             changes[self.path / "tasks" / f"{task}.md"] = encode_fields(values)
             removals.append(self.path / "done" / f"{task}.md")
@@ -362,9 +381,18 @@ class Contract:
                 require_text(options.verdict, "验收结论")
                 conclusion = {"verdict": options.verdict}
             else:
-                self.require_sources([options.quote])
-                conclusion = {"cancel_quote": str(options.quote)}
-                self.links.add((options.quote, task))
+                sources = self.sources(task)
+                if options.reason is not None:
+                    if sources:
+                        raise GoalError("挂了用户原话的事项必须用 --quote")
+                    require_text(options.reason, "取消原因")
+                    conclusion = {"cancel_reason": options.reason}
+                else:
+                    if not sources:
+                        raise GoalError("只挂证据的事项必须用 --reason")
+                    self.require_sources([options.quote])
+                    conclusion = {"cancel_quote": str(options.quote)}
+                    self.links.add((options.quote, task))
             original = self.path / "tasks" / f"{task}.md"
             # 统一编码已解析字段与结论，不依赖被接受的原文件是否带末尾 LF。
             changes[self.path / "done" / f"{task}.md"] = encode_fields({**self.tasks[task], **conclusion})
@@ -393,12 +421,16 @@ def parser():
                              help='在 Claude Code 的 Bash 中用 "$PPID" 显式传入本会话进程号')
     adding = commands.add_parser("add")
     for name in TASK_FIELDS.values():
-        adding.add_argument(f"--{name}", required=True)
-    adding.add_argument("--source", type=int, nargs="+", required=True)
+        if name != "evidence":
+            adding.add_argument(f"--{name}", required=True)
+    provenance = adding.add_mutually_exclusive_group(required=True)
+    provenance.add_argument("--source", type=int, nargs="+")
+    provenance.add_argument("--evidence")
     updating = commands.add_parser("update")
     updating.add_argument("task")
     for name in TASK_FIELDS.values():
-        updating.add_argument(f"--{name}")
+        if name != "evidence":
+            updating.add_argument(f"--{name}")
     updating.add_argument("--source", type=int, nargs="+")
     relinking = commands.add_parser("relink")
     relinking.add_argument("task", nargs="?")
@@ -411,7 +443,9 @@ def parser():
     accepting.add_argument("--verdict", required=True)
     cancelling = commands.add_parser("cancel")
     cancelling.add_argument("task")
-    cancelling.add_argument("--quote", type=int, required=True)
+    cancel_basis = cancelling.add_mutually_exclusive_group(required=True)
+    cancel_basis.add_argument("--quote", type=int)
+    cancel_basis.add_argument("--reason")
     reopening = commands.add_parser("reopen")
     reopening.add_argument("task")
     return result

@@ -5,7 +5,7 @@ description: 仅在用户或文档明确要求使用 xy-goal 时调用；只提�
 
 # xy-goal
 
-xy-goal 只管五件事：用户原话自动逐字记录，事项与原话对得上，契约能换会话接管，在办的事每半小时核实并推进，关闭前由新开的子代理整体复核。它是通用的长目标工具。
+xy-goal 只管五件事：用户原话自动逐字记录，事项有用户原话或作者发起的证据出处，契约能换会话接管，在办的事每半小时核实并推进，关闭前由新开的子代理整体复核。它是通用的长目标工具。
 
 前提与 hook 配置见 [README.md](README.md)。用户消息和选择题回答由 hook 记录、编号，agent 不抄。原话是权威；判据是它的索引，不能悄悄放宽要求。
 
@@ -17,11 +17,11 @@ xy-goal 只管五件事：用户原话自动逐字记录，事项与原话对得
 |---|---|
 | `goal.md` | 目标、会话 id、claude 进程号 |
 | `quotes/1.md` … | 一条原话一个文件，编号无前导零，写完不改 |
-| `tasks/T1.md` … | 开放事项：标题、判据、状态、指针 |
-| `done/T1.md` … | 原事项字段加验收结论或取消依据 |
+| `tasks/T1.md` … | 开放事项：标题、判据、状态、指针、证据（没有时写 `无`） |
+| `done/T1.md` … | 原事项字段加验收结论、取消原话或取消原因 |
 | `links.md` | 全契约唯一映射：`1 T1` 或 `1 不必跟进 原因`，一行一条 |
 
-一条原话可挂多个事项，一个事项可挂多条原话；出处与去向都从 `links.md` 算。每个开放事项都必须有出处。原话挂上事项后，「不必跟进」作废。
+一条原话可挂多个事项，一个事项可挂多条原话；原话出处与去向都从 `links.md` 算。每个开放事项都要有出处：用户原话，或作者发起时写的证据。原话挂上事项后，「不必跟进」作废。
 
 写入只经脚本，不手改契约；读取直接用 Read 或 cat。`--root` 必须显式提供，且指向事先创建的目录（首次安装步骤见 README）。根目录不存在或不是目录就报错退出，脚本不会自动创建。
 
@@ -57,6 +57,7 @@ hook 成功时 stdout、stderr 都为空；运行起来后的失败输出一行 
 
 ```bash
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> <M> --state '在办' --pointer '无'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --evidence '<不做的后果；做了的收益；代价>' --state '在办' --pointer '无'
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --title '<新标题>'
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --criteria '<新判据>' --source <N>
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --state '等用户：<待定的事>'
@@ -66,10 +67,13 @@ python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" relink [<T> --source <N> 
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" dismiss <N> --reason '<不必跟进的原因>'
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" accept <T> --verdict '<按判据核过的结论，如命令和退出码、审查结论>'
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" cancel <T> --quote <N>
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" cancel <T> --reason '<取消原因>'
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" reopen <T>
 ```
 
-`update` 至少要改一个字段或追加出处；改判据必须同时带原话；`--source` 只追加出处。出处和取消依据必须引用已存在的原话。取消必须有用户原话依据，未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明一行原因，不必硬建事项；已挂事项的原话不能 `dismiss`，命令会报出事项并拒绝；原因含 Unicode 分行符也会写前拒绝。已关闭事项的结论站不住就用 `reopen` 重开：只收已关闭事项，四个原字段回到开放清单，旧结论丢掉，出处不变，之后照常推进。
+`add` 的 `--source` 与 `--evidence` 必须且只能选一个。`--evidence` 不能为空，要写清不做会出什么事、做了能得到什么、代价多少；证据保存在事项的 `evidence` 字段，不写进 `links.md`。`show` 的出处行显示「作者发起：<证据>」。带证据的事项之后可用 `update --source` 补挂原话；有原话后，按有原话的事项处理。
+
+`update` 至少要改一个字段或追加出处；改判据必须同时带原话；`--source` 只追加出处。原话出处和 `cancel --quote` 都必须引用已存在的原话。取消用户要求的事项必须有用户原话依据；作者发起、没挂原话的事项用 `cancel --reason` 写明原因取消。未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明一行原因，不必硬建事项；已挂事项的原话不能 `dismiss`，命令会报出事项并拒绝；原因含 Unicode 分行符也会写前拒绝。已关闭事项的结论站不住就用 `reopen` 重开：只收已关闭事项，事项字段回到开放清单，旧结论丢掉，出处不变，之后照常推进。
 
 `relink` 只用于当前校验失败、links.md 与 quotes/ 都读得出的契约；健康契约挂出处用 `update`。不带参数只清理坏行；事项与 `--source` 必须同时给，事项必须是编号合法的开放事项，原话编号须先查看 quotes/、全部存在。它逐条打印丢掉的行与原因，保留合格映射并添加给定出处，只写 links.md。写后整体校验，通过时打印「修复完成：<路径>」并退出 0；仍有错误时向 stderr 报告、退出 1，已写修复保留，可接着对下一个事项用 `relink`。
 
