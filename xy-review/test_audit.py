@@ -91,6 +91,3 @@ class AuditTest(unittest.TestCase):
             self.assertEqual(invalid_path_code, 2)
             self.assertIn("用法：audit.py <目录路径>", output.getvalue())
 
-
-if __name__ == "__main__":
-    unittest.main()

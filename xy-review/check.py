@@ -225,7 +225,37 @@ def diagnosis_file_problems(path):
         text = diagnosis_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         return [f"无法读取判因报告：{error}"]
-    return check(text, "diagnosis.json")
+    problems = check(text, "diagnosis.json")
+    group_path = diagnosis_path.parent
+    if re.fullmatch(r"group[1-9]\d*", group_path.name):
+        problems += _formal_diagnosis_group_problems(group_path)
+    return problems
+
+
+def _formal_diagnosis_group_problems(group_path):
+    """Require a third-round failure before a formal group can record diagnosis."""
+    round3_path = group_path / "round3"
+    if not round3_path.is_dir():
+        return [f"{group_path}：判因报告所在组必须已有 round3"]
+
+    has_failure = False
+    for name in ("review-main.json", "review-razor.json"):
+        report_path = round3_path / name
+        if not report_path.is_file():
+            continue
+        try:
+            text = report_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if check(text, name):
+            continue
+        document = read_document(text)
+        if document.get("verdict") == "不通过":
+            has_failure = True
+            break
+    if not has_failure:
+        return [f"{group_path}：round3 至少要有一份结论为「不通过」的审查报告"]
+    return []
 
 
 def main(argv):
@@ -248,6 +278,8 @@ def main(argv):
                 child.is_file() and REPORT_ROUND_RE.fullmatch(child.name)
                 for child in group_path.iterdir()):
             problems.append("判因报告必须写在 group<G>/diagnosis.json 或含合法 report-round<N>.md 的循环目录下")
+        elif group_match is not None:
+            problems += _formal_diagnosis_group_problems(group_path)
     elif kind in ("主审报告", "剃刀报告"):
         round_path = path.parent
         group_path = round_path.parent

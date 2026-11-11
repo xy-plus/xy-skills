@@ -68,6 +68,3 @@ class RuleReferencesTest(unittest.TestCase):
                 numbered_text(skill_path, 2)
             self.assertEqual(reads, [skill_path])
 
-
-if __name__ == "__main__":
-    unittest.main()

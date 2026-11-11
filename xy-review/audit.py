@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """限制非正式改—测循环；正式报告结构由 check.py 检查。"""
 import pathlib
 import re

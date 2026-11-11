@@ -80,6 +80,24 @@ class CheckTest(unittest.TestCase):
     def create_round1(self, group="group1"):
         os.makedirs(os.path.join(self.root, group, "round1"), exist_ok=True)
 
+    def create_formal_round3(self, failed=False, group="group1"):
+        group_path = Path(self.root) / group
+        for number in (1, 2, 3):
+            (group_path / f"round{number}").mkdir(parents=True, exist_ok=True)
+        reports = [
+            ("review-main.json", main_report()),
+            ("review-razor.json", razor_report()),
+        ]
+        if failed:
+            reports[0] = ("review-main.json", main_report(verdict="不通过", hard_to_misuse=[{
+                "problem": "缺陷",
+                "evidence": "check.py:5",
+                "quote": {"source": "xy-repo-rules 第 7 条", "text": "积极删除或合并不必要的代码或文档"},
+            }]))
+        for name, report in reports:
+            code, output = self.run_report(name, report, (group, "round3"))
+            self.assertEqual(code, 0, output)
+
     def assert_rejected(self, name, document, *needles, folders=("group1", "round1")):
         code, problems = self.run_report(name, document, folders)
         self.assertEqual(code, 1, problems)
@@ -429,7 +447,7 @@ class CheckTest(unittest.TestCase):
         self.assert_rejected("review-razor.json", razor_report(verdict="不通过"), "但 delete.items 为空")
 
     def test_diagnosis_report_validates_structure_and_actions(self):
-        self.create_round1()
+        self.create_formal_round3(failed=True)
         self.assertEqual(self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",)), (0, []))
         self.assert_rejected("diagnosis.json", diagnosis_report(actions=[]), "actions 不能为空", folders=("group1",))
         self.assert_rejected("diagnosis.json", diagnosis_report(actions=["拆分", "拆分"]), "actions 不能重复",
@@ -537,13 +555,26 @@ class CheckTest(unittest.TestCase):
                 self.assertTrue(any(expected in problem for problem in problems), problems)
 
     def test_formal_diagnosis_location_is_a_hard_error(self):
-        self.create_round1()
+        self.create_formal_round3(failed=True)
         report = diagnosis_report()
         self.assertEqual(self.run_report("diagnosis.json", report, ("group1",)), (0, []))
 
         code, problems = self.run_report("diagnosis.json", report, ("group1", "round1"))
         self.assertEqual(code, 1)
         self.assertTrue(any("group<G>/diagnosis.json" in problem for problem in problems), problems)
+
+    def test_formal_diagnosis_requires_round3(self):
+        self.create_round1()
+        os.makedirs(os.path.join(self.root, "group1", "round2"), exist_ok=True)
+        code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(any("必须已有 round3" in problem for problem in problems), problems)
+
+    def test_formal_diagnosis_rejects_third_round_when_all_reports_pass(self):
+        self.create_formal_round3()
+        code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(any("至少要有一份结论为「不通过」" in problem for problem in problems), problems)
 
     def test_formal_group_must_start_with_round1(self):
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), ("group1",))
@@ -569,7 +600,7 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(any("一组要复审到第 3 轮" in problem for problem in problems), problems)
 
-        os.makedirs(os.path.join(self.root, "group1", "round1"), exist_ok=True)
+        self.create_formal_round3(failed=True)
         with open(os.path.join(self.root, "group1", "diagnosis.json"), "w", encoding="utf-8") as stream:
             stream.write(json_text(diagnosis_report(actions=["无效动作"])))
         code, problems = self.run_report("review-main.json", main_report(), folders)
@@ -599,6 +630,3 @@ class CheckTest(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(main(["check.py"]), 2)
 
-
-if __name__ == "__main__":
-    unittest.main()
