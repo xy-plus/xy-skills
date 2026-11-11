@@ -13,9 +13,9 @@ from .constants import (
 from .dependencies import directory_mentions, file_mentions, imports_for_file
 from .features import directory_home, is_feature_ancestor, load_features
 from .git_repository import (
-    discover_subrepositories,
     primary_checkout_name,
     require_repository_root,
+    subrepository_errors,
     tracked_paths,
 )
 from .metrics import count_file
@@ -106,9 +106,9 @@ def build_map(repository):
     features, order, errors = load_features(root, paths)
     if errors:
         raise ValueError("\n".join(errors))
-    subrepositories = discover_subrepositories(root)
-    if subrepositories:
-        raise ValueError("还不支持子仓：" + ", ".join(subrepositories))
+    errors = subrepository_errors(root, features[order[0]]["subrepositories"])
+    if errors:
+        raise ValueError("\n".join(errors))
 
     categories = {}
     source_texts = {}

@@ -1,4 +1,4 @@
-"""Git root checks, tracked paths, and nested repository discovery."""
+"""Git root checks, tracked paths, and subrepository classification."""
 from pathlib import Path
 import os
 import subprocess
@@ -102,21 +102,25 @@ def _untracked_repositories(root, start, own_common):
     return found
 
 
-def discover_subrepositories(repository):
-    """Find gitlinks, nested repos in visible directories, and ignored repos named directly.
+def _discover_subrepository_types(repository):
+    """Separate unsupported subrepositories from ignored repositories named directly.
 
-    Ignored directories are not searched inside because they commonly contain worktrees and caches.
+    Ignored candidates are checked at their listed path without walking inside, since ignored
+    directories commonly contain worktrees and caches.
     """
     root = Path(repository).resolve()
     own_common = _common_directory(root)
-    candidates = set(gitlink_paths(root))
+    unsupported = set(gitlink_paths(root))
     untracked = run_git(root, "ls-files", "--others", "--exclude-standard", "--directory", "-z",
                         check=True)
     ignored = run_git(root, "ls-files", "--others", "--ignored", "--exclude-standard",
                       "--directory", "-z", check=True)
     for entry in untracked.stdout.split("\0"):
         if entry:
-            candidates.update(_untracked_repositories(root, root / entry.rstrip("/"), own_common))
+            unsupported.update(
+                _untracked_repositories(root, root / entry.rstrip("/"), own_common)
+            )
+    ignored_repositories = set()
     for entry in ignored.stdout.split("\0"):
         if not entry:
             continue
@@ -124,5 +128,41 @@ def discover_subrepositories(repository):
         # Inspect each ignored candidate itself, at any depth, without walking inside it.
         candidate = root / normalized
         if _is_repository(candidate) and _common_directory(candidate) != own_common:
-            candidates.add(normalized)
-    return sorted(candidates)
+            ignored_repositories.add(normalized)
+    return unsupported, ignored_repositories
+
+
+def discover_subrepositories(repository):
+    """Find all gitlinks and nested repositories, without classifying their errors."""
+    unsupported, ignored = _discover_subrepository_types(repository)
+    return sorted(unsupported | ignored)
+
+
+def subrepository_errors(repository, registered_subrepositories):
+    """Return check errors for unsupported or incorrectly registered subrepositories."""
+    root = Path(repository).resolve()
+    unsupported, ignored = _discover_subrepository_types(root)
+    registered = set(registered_subrepositories)
+    errors = []
+
+    if unsupported:
+        errors.append("还不支持子仓：" + ", ".join(sorted(unsupported)))
+
+    missing = ignored - registered
+    if missing:
+        errors.append(
+            "被忽略规则直接点名的子仓未登记：" + ", ".join(sorted(missing))
+            + "；另有功能图的独立子仓写进根功能的 subrepositories"
+        )
+
+    # linked worktree 和新克隆里没有这些被忽略的目录，所以缺失路径不算错误。
+    mismatched = {
+        path for path in registered
+        if os.path.lexists(root / path) and path not in ignored
+    }
+    if mismatched:
+        errors.append(
+            "登记的子仓不是被忽略规则直接点名的嵌套 Git 仓："
+            + ", ".join(sorted(mismatched))
+        )
+    return errors

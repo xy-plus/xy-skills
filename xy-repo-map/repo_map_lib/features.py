@@ -65,8 +65,9 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
     if not isinstance(value, dict):
         errors.append(f"{label}必须是对象")
         return
-    missing = FEATURE_KEYS - value.keys()
-    extra = value.keys() - FEATURE_KEYS
+    allowed_keys = FEATURE_KEYS | ({"subrepositories"} if parent is None else set())
+    missing = allowed_keys - value.keys()
+    extra = value.keys() - allowed_keys
     for key in sorted(missing):
         errors.append(f"{label}缺少键 {key}")
     for key in sorted(extra):
@@ -119,6 +120,18 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
         errors.append(f"{label}的 entries 必须是字符串数组")
     elif any(not _safe_relative_path(entry, True) for entry in entries):
         errors.append(f"{label}的 entries 必须是安全的仓内相对路径")
+    if parent is None:
+        subrepositories = value.get("subrepositories")
+        if not isinstance(subrepositories, list) or any(
+            not isinstance(path, str) for path in subrepositories
+        ):
+            errors.append(f"{label}的 subrepositories 必须是字符串数组")
+        else:
+            for path in subrepositories:
+                if not _safe_relative_path(path, False):
+                    errors.append(
+                        f"{label}的 subrepositories 必须是安全的仓内相对目录路径：{path!r}"
+                    )
     children = value.get("children")
     if not isinstance(children, list):
         errors.append(f"{label}的 children 必须是数组")
