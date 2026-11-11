@@ -24,7 +24,7 @@ def _match_module(name, python_paths):
 
 def _relative_module(path, level, module):
     parts = Path(path).parent.parts
-    climb = max(level - 1, 0)
+    climb = level - 1
     if climb > len(parts):
         return None
     base = parts[:len(parts) - climb] if climb else parts

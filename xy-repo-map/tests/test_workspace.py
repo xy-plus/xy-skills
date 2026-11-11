@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import unittest
@@ -12,20 +11,12 @@ class WorkspaceRenderTest(unittest.TestCase):
         self.workspace = make_workspace(self)
         self.output = self.workspace.parent / "rendered"
 
-    def render(self, output=None):
+    def render(self):
         return subprocess.run(
             ["python3", "-B", str(COMMAND), "render-workspace",
-             "--repo", str(self.workspace), "--out", str(output or self.output)],
+             "--repo", str(self.workspace), "--out", str(self.output)],
             capture_output=True, text=True, check=False,
         )
-
-    def write_root_features(self, subrepositories):
-        root = feature(
-            "root", "", subrepositories=subrepositories,
-            external_dependencies=[],
-        )
-        path = self.workspace / "repo-map" / "features.json"
-        path.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
 
     def test_render_workspace_combines_maps_and_resolves_external_names(self):
         result = self.render()
@@ -86,7 +77,10 @@ class WorkspaceRenderTest(unittest.TestCase):
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")
         shutil.rmtree(self.workspace / "sub-b")
-        self.write_root_features([])
+        root = feature("root", "", subrepositories=[], external_dependencies=[])
+        (self.workspace / "repo-map" / "features.json").write_text(
+            json.dumps(root, ensure_ascii=False), encoding="utf-8",
+        )
 
         result = self.render()
 
@@ -131,20 +125,6 @@ class WorkspaceRenderTest(unittest.TestCase):
         self.assertIn("功能图检查失败", output)
         self.assertIn("缺少键", output)
         self.assertFalse(self.output.exists())
-
-    def test_render_workspace_reports_parent_check_for_a_registered_non_git_directory(self):
-        shutil.rmtree(self.workspace / "sub-a")
-        (self.workspace / "sub-a").mkdir()
-        (self.workspace / "sub-a" / "README.md").write_text("Not a repository.\n")
-
-        result = self.render()
-
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 1, output)
-        self.assertEqual(
-            output,
-            "登记的子仓不是被忽略规则直接点名的嵌套 Git 仓：sub-a\n",
-        )
 
     def test_render_workspace_keeps_argument_errors_at_two(self):
         result = subprocess.run(

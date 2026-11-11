@@ -34,13 +34,6 @@ def parser():
     return result
 
 
-def _print_markers(data):
-    for marker, count in data["markers"].items():
-        locations = [feature_id for feature_id, feature in data["features"].items()
-                     if marker in feature["markers"]]
-        print(f"{marker}：{count}" + (f"（{', '.join(locations)}）" if locations else ""))
-
-
 def main(argv):
     try:
         options = parser().parse_args(argv[1:])
@@ -57,7 +50,7 @@ def main(argv):
             directory = render_workspace_repository(options.repo, options.out)
             print(f"页面已生成：{directory}")
             return 0
-        data = build_map(options.repo)
+        build_map(options.repo)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
         return 2
@@ -66,7 +59,6 @@ def main(argv):
         return 1
 
     print("功能清单检查通过")
-    _print_markers(data)
     return 0
 
 

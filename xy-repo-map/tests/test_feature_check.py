@@ -269,8 +269,7 @@ class FeatureCheckTest(unittest.TestCase):
                 self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], source=source))
                 result = self.check()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                if source == "原话":
-                    self.assertIn("检查通过", result.stdout)
+                self.assertEqual(result.stdout, "功能清单检查通过\n")
 
     def test_rejects_invalid_why_source_combinations(self):
         invalid = [
@@ -317,6 +316,7 @@ class FeatureCheckTest(unittest.TestCase):
         cases = [
             (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("pkg", "pkg", entries=["pkg/missing.py"])]), "missing.py"),
             (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("pkg", "pkg", entries=["other/owned.py"])]), "other/owned.py"),
+            (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("pkg", "pkg", [feature("inner", None)], ["other/owned.py"]), feature("other", "other")]), "other/owned.py"),
         ]
         for root, expected in cases:
             with self.subTest(entry=expected):
@@ -324,18 +324,6 @@ class FeatureCheckTest(unittest.TestCase):
                 result = self.check()
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(expected, result.stdout + result.stderr)
-
-    def test_rejects_an_entry_inside_another_directory_feature(self):
-        self.write("pkg/owned.py", "value = 1\n")
-        self.write("other/owned.py", "value = 2\n")
-        root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("pkg", "pkg", [feature("inner", None)], ["other/owned.py"]),
-            feature("other", "other"),
-        ])
-        self.set_features(root)
-        result = self.check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("other/owned.py", result.stdout + result.stderr)
 
     def test_rejects_entries_on_a_leaf_directory_feature(self):
         self.write("pkg/owned.py", "value = 1\n")

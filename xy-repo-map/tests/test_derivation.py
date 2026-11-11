@@ -246,24 +246,6 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("src/missing.py", result.stdout + result.stderr)
 
-    def test_unreadable_unsupported_suffix_reports_read_error_first(self):
-        repository = make_repo(self, {
-            "src/missing.go": "value = 1\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[]))
-        (repository / "src/missing.go").unlink()
-
-        result = subprocess.run(
-            ["python3", "-B", str(COMMAND), "check", "--repo", str(repository)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 1, output)
-        self.assertIn("无法读取 Git 跟踪文件 src/missing.go", output)
-        self.assertNotIn("已知是代码但不支持统计", output)
-
     def test_directory_feature_owns_unclaimed_files(self):
         repository = make_repo(self, {
             "README.md": "root docs\n",

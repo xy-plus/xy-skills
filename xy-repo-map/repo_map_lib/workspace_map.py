@@ -26,21 +26,12 @@ def _build_child_map(repository, relative_path):
 
 def _compose_maps(main_map, child_maps):
     root_id = main_map["root"]
-    features = {
-        feature_id: dict(feature)
-        for feature_id, feature in main_map["features"].items()
-    }
-    root = dict(features[root_id])
-    root["children"] = list(root["children"])
-    root["lines"] = {
-        "own": dict(root["lines"]["own"]),
-        "total": dict(root["lines"]["total"]),
-    }
-    features[root_id] = root
+    features = main_map["features"]
+    root = features[root_id]
 
     feature_repositories = {feature_id: "" for feature_id in features}
     repository_roots = {"": root_id}
-    markers = dict(main_map["markers"])
+    markers = main_map["markers"]
 
     for relative_path, child_map in child_maps:
         child_root_id = f"{relative_path}/{child_map['root']}"

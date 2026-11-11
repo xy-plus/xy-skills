@@ -3,7 +3,6 @@ from datetime import datetime
 import io
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -49,7 +48,8 @@ class PublishTest(unittest.TestCase):
 
         def run(arguments, **options):
             calls.append((arguments, options))
-            return subprocess.CompletedProcess(arguments, 0, "published\n", "")
+            print("published")
+            return subprocess.CompletedProcess(arguments, 0)
 
         output = io.StringIO()
         with patch("repo_map_lib.publish_command.subprocess.run", run):
@@ -78,19 +78,12 @@ class PublishTest(unittest.TestCase):
         self.assertIn("index.html", result.stdout + result.stderr)
 
     def test_publish_rejects_the_old_name_option(self):
-        shutil.rmtree(self.output)
-
         result = self.run_publish("--name", "xy-skills", "--as", "当前")
 
         self.assertEqual(result.returncode, 2)
         self.assertIn("unrecognized arguments: --name", result.stderr)
 
     def test_publish_requires_an_explicit_as_option(self):
-        self.write_map_data({
-            "root": "root",
-            "features": {"root": {"directory_name": "xy-skills"}},
-        })
-
         result = self.run_publish()
 
         self.assertEqual(result.returncode, 2)
@@ -118,7 +111,7 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(output, "published\n")
         self.assertEqual(
             calls,
-            [(expected, {"capture_output": True, "text": True, "check": False})],
+            [(expected, {"check": False})],
         )
 
     def test_publish_uses_an_overview_name_when_feature_ids_have_paths(self):
@@ -151,43 +144,22 @@ class PublishTest(unittest.TestCase):
     def test_publish_rejects_unreadable_map_data_without_calling_the_platform(self):
         (self.output / "map-data.json").write_text("not json", encoding="utf-8")
         (self.output / "index.html").write_text("page", encoding="utf-8")
-        calls = []
-
-        def run(arguments, **options):
-            calls.append((arguments, options))
-            return subprocess.CompletedProcess(arguments, 0, "", "")
-
-        with patch("repo_map_lib.publish_command.subprocess.run", run):
+        with patch("repo_map_lib.publish_command.subprocess.run") as platform:
             with self.assertRaisesRegex(ArgumentError, "map-data.json"):
                 publish_repository(str(self.output), "当前")
-
-        self.assertEqual(calls, [])
+        platform.assert_not_called()
 
     def test_publish_requires_the_root_feature_in_map_data(self):
         self.write_map_data({"root": "root", "features": {}})
-        calls = []
-
-        def run(arguments, **options):
-            calls.append((arguments, options))
-            return subprocess.CompletedProcess(arguments, 0, "", "")
-
-        with patch("repo_map_lib.publish_command.subprocess.run", run):
+        with patch("repo_map_lib.publish_command.subprocess.run") as platform:
             with self.assertRaisesRegex(ArgumentError, "根功能"):
                 publish_repository(str(self.output), "当前")
-
-        self.assertEqual(calls, [])
+        platform.assert_not_called()
 
     def test_publish_requires_directory_name_on_the_root_feature(self):
         self.write_map_data({"root": "root", "features": {"root": {}}})
-        calls = []
-
-        def run(arguments, **options):
-            calls.append((arguments, options))
-            return subprocess.CompletedProcess(arguments, 0, "", "")
-
-        with patch("repo_map_lib.publish_command.subprocess.run", run):
+        with patch("repo_map_lib.publish_command.subprocess.run") as platform:
             with self.assertRaisesRegex(ArgumentError, "directory_name"):
                 publish_repository(str(self.output), "当前")
-
-        self.assertEqual(calls, [])
+        platform.assert_not_called()
 

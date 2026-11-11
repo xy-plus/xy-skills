@@ -2,7 +2,6 @@ from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
-import sys
 
 from .git_repository import ArgumentError
 
@@ -59,8 +58,6 @@ def publish_repository(output, as_mode):
     name = _site_name(directory / "map-data.json", as_mode)
     result = subprocess.run(
         [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "publish", name, str(directory)],
-        capture_output=True, text=True, check=False,
+        check=False,
     )
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
     return result.returncode
