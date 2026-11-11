@@ -139,3 +139,4 @@ python -m playwright install chromium
 把 `XY_REPO_MAP_CHROMIUM` 设为 Chromium 可执行文件的绝对路径后运行两个浏览器测试命令。缺少路径或浏览器不可用时测试会失败，不会跳过。
 
 改清扫的审查问题后，按 `xy-cleanup/review-misses.md` 做一次对照。
+格式检查通过不代表判断正确；改 `xy-review` 的主审、剃刀规则后，按 `xy-review/review-misses.md` 做一次对照。
