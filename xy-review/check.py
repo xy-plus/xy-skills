@@ -197,8 +197,9 @@ def check(text, filename):
         keep_old = item_list(document, "occams_razor", "keep_old")
         deleted = item_list(document, "occams_razor", "delete", "items")
         asked = item_list(document, "occams_razor", "ask_user", "items")
-        if not keep and not keep_old and not deleted and not asked:
-            problems.append("剃刀报告四张清单合计至少要有一项")
+        quote_problems = item_list(document, "occams_razor", "quote_problems", "items")
+        if not keep and not keep_old and not deleted and not asked and not quote_problems:
+            problems.append("剃刀报告的清单合计至少要有一项")
         # ask_user.items 不计入剃刀报告结论。
         if verdict == "通过" and deleted:
             problems.append("剃刀 verdict 写「通过」但 delete.items 有发现")

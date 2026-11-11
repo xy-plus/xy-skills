@@ -382,7 +382,17 @@ class CheckTest(unittest.TestCase):
 
     def test_razor_report_needs_at_least_one_list_item(self):
         document = razor_report(keep=[], keep_old=[], delete=[], ask_user=[])
-        self.assert_rejected("review-razor.json", document, "四张清单合计至少要有一项")
+        self.assert_rejected("review-razor.json", document, "清单合计至少要有一项")
+
+    def test_razor_quote_problems_alone_satisfy_nonempty_list_rule(self):
+        document = razor_report(keep=[], keep_old=[], delete=[], ask_user=[])
+        document["occams_razor"]["quote_problems"]["items"] = [{
+            "problem": "原话要求的东西没有必要",
+            "evidence": "spec.md:12",
+            "quote": {"source": "Q1", "text": "用户原话"},
+            "suggestion": "请用户决定是否保留",
+        }]
+        self.assertEqual(self.run_report("review-razor.json", document), (0, []))
 
     def test_razor_rejects_old_keep_shape(self):
         document = razor_report(keep=[{"entity": "check.py", "reason": "仍在使用"}])
@@ -472,8 +482,8 @@ class CheckTest(unittest.TestCase):
         skill = Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8")
         report_section = skill.split("## 报告", 1)[1].split("## 收到报告后", 1)[0]
         self.assertEqual(report_section.count("剃刀结论只看 `delete.items` 是否为空"), 1)
-        self.assertEqual(report_section.count("`keep`、`keep_old`、`delete.items`、`ask_user.items` 合计至少一项"), 1)
-        self.assertNotIn("报告四张清单合起来至少有一项", report_section)
+        self.assertEqual(report_section.count("`keep`、`keep_old`、`delete.items`、`ask_user.items`、`quote_problems.items` 合计至少一项"), 1)
+        self.assertNotIn("`keep`、`keep_old`、`delete.items`、`ask_user.items` 合计至少一项", report_section)
         self.assertEqual(report_section.count("依据写入 `quote`"), 1)
         self.assertNotIn("在 `problem` 里贴用户原话编号与原文", report_section)
 

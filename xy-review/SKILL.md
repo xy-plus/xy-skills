@@ -104,7 +104,7 @@ description: 对抗审查：主审加剃刀两个子代理、报告格式和格�
       "checked": "<对照了什么；没有拿不准的项时 items 为空>"
     },
     "quote_problems": {
-      "items": [{"problem": "<这条原话要的东西哪里不必要、复杂度和代价配不上，或少做一些也能达到目的；逐条>", "evidence": "<文件和行号、命令和输出，或能说明必要性、复杂度、代价与更小做法的依据>", "quote": {"source": "<被审原话的契约编号或原件路径>", "text": "<被审原话的逐字原文>"}, "suggestion": "<建议用户怎么定，理由>"}],
+      "items": [{"problem": "<这条原话要的东西哪里不必要、复杂度和代价配不上，或少做一些也能达到目的；逐条>", "evidence": "<文件和行号、命令和输出，或能说明必要性、复杂度、代价与更小做法的依据>", "quote": {"source": "<被审原话的契约编号或原件路径，或规范条款（如 `xy-iron-law 第 3 条`）>", "text": "<被审原话的逐字原文>"}, "suggestion": "<建议用户怎么定，理由>"}],
       "checked": "<审了哪些原话要的东西必不必要；本轮不审原话时写明为什么>"
     }
   },
@@ -112,7 +112,7 @@ description: 对抗审查：主审加剃刀两个子代理、报告格式和格�
 }
 ```
 
-`keep`、`keep_old` 可以为空；`keep`、`keep_old`、`delete.items`、`ask_user.items` 合计至少一项。剃刀结论只看 `delete.items` 是否为空：「通过」当且仅当它为空；另两种结论必须有删除发现。
+`keep`、`keep_old` 可以为空；`keep`、`keep_old`、`delete.items`、`ask_user.items`、`quote_problems.items` 合计至少一项。剃刀结论只看 `delete.items` 是否为空：「通过」当且仅当它为空；另两种结论必须有删除发现。
 
 ## 收到报告后
 
