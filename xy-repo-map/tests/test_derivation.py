@@ -34,6 +34,33 @@ def build_map_with_sources(repository):
 
 
 class DerivationTest(unittest.TestCase):
+    def test_file_category_matches_build_map_categories_and_line_totals(self):
+        repository = make_repo(self, {
+            "src/main.py": "value = 1\n",
+            "src/target.py": "target = 1\n",
+            "docs/guide.md": "# Guide\nA page.\n",
+            "tests/test_parser.py": "value = 2\n",
+            "assets/data.json": "{}\n",
+            "assets/link.py": "placeholder\n",
+            "assets/binary.py": "placeholder\n",
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
+        link = repository / "assets/link.py"
+        link.unlink()
+        link.symlink_to("../src/target.py")
+        (repository / "assets/binary.py").write_bytes(b"\0binary data\n")
+
+        data = map_data.build_map(repository)
+
+        self.assertEqual(map_data.file_category(repository, "src/main.py"), "code")
+        self.assertEqual(map_data.file_category(repository, "docs/guide.md"), "docs")
+        self.assertEqual(map_data.file_category(repository, "tests/test_parser.py"), "tests")
+        self.assertEqual(map_data.file_category(repository, "assets/data.json"), "other")
+        self.assertEqual(map_data.file_category(repository, "assets/link.py"), "other")
+        self.assertEqual(map_data.file_category(repository, "assets/binary.py"), "other")
+        self.assertEqual(data["features"]["root"]["lines"]["own"], {
+            "code": 2, "docs": 2, "comments": 0, "tests": 1,
+        })
+
     def test_derives_sorted_unique_external_uses_from_owned_code_and_documentation(self):
         repository = make_repo(self, {
             "src/run.py": "# Claude Code and superpowers; superpowers again.\nvalue = 1\n",

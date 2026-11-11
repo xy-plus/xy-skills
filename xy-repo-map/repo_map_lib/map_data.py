@@ -84,6 +84,11 @@ def _read_source(repository, path, category):
     return category, source
 
 
+def file_category(repository, path):
+    """Return the effective category used by the repository map for one path."""
+    return _read_source(repository, path, _file_category(path))[0]
+
+
 def _entry_files(features, order, paths):
     result = {feature_id: set() for feature_id in order}
     path_set = set(paths)
