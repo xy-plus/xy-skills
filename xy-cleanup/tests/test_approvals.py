@@ -4,6 +4,7 @@ import subprocess
 import sys
 import unittest
 import json
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,6 +46,13 @@ class ApprovalPlanTest(unittest.TestCase):
             "record", "--repo", str(self.repository), "--scope", *scope,
         )
 
+    def link_approved_to_external_file(self):
+        approved_path = self.repository / "repo-map" / "approved.json"
+        external_path = self.repository.parent / "outside-approved.json"
+        external_path.write_text("{}\n", encoding="utf-8")
+        approved_path.symlink_to(external_path)
+        return approved_path, external_path
+
     def test_scope_validation_is_public_and_keeps_current_errors(self):
         data = build_map(self, self.repository)
         invalid_scopes = (
@@ -83,6 +91,54 @@ class ApprovalPlanTest(unittest.TestCase):
             [line.split(":", 1)[0].strip(' "')
              for line in approved_path.read_text(encoding="utf-8").splitlines()[1:-1]],
             ["alpha", "beta", "root"],
+        )
+        self.assertEqual(
+            sorted(path.name for path in approved_path.parent.iterdir()),
+            ["approved.json", "features.json"],
+        )
+        plan = self.plan()
+        self.assertEqual(plan.returncode, 0, plan.stdout + plan.stderr)
+        self.assertEqual(plan.stdout, "范围内没有变过的功能（范围内 3 个）\n")
+
+    def test_plan_rejects_approved_symlink_without_reading_external_file(self):
+        approved_path, external_path = self.link_approved_to_external_file()
+        original_content = external_path.read_text(encoding="utf-8")
+
+        result = self.plan()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("认可记录", result.stdout)
+        self.assertEqual(result.stderr, "")
+        self.assertTrue(approved_path.is_symlink())
+        self.assertEqual(external_path.read_text(encoding="utf-8"), original_content)
+
+    def test_record_rejects_approved_symlink_without_writing_external_file(self):
+        approved_path, external_path = self.link_approved_to_external_file()
+        original_content = external_path.read_text(encoding="utf-8")
+
+        result = self.record()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("认可记录", result.stdout)
+        self.assertEqual(result.stderr, "")
+        self.assertTrue(approved_path.is_symlink())
+        self.assertEqual(external_path.read_text(encoding="utf-8"), original_content)
+
+    def test_record_removes_temporary_file_when_replace_fails(self):
+        data = build_map(self, self.repository)
+        values, _ = approvals.feature_values(self.repository)
+        fingerprints = approvals.feature_fingerprints(self.repository, data, values)
+        approved_directory = self.repository / "repo-map"
+
+        with mock.patch.object(approvals.os, "replace", side_effect=OSError("替换失败")):
+            with self.assertRaisesRegex(OSError, "替换失败"):
+                approvals._record(
+                    self.repository, data, values, fingerprints, {}, ["alpha"]
+                )
+
+        self.assertEqual(
+            sorted(path.name for path in approved_directory.iterdir()),
+            ["features.json"],
         )
 
     def test_plan_expands_parent_scope_and_can_review_every_feature(self):

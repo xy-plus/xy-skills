@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -66,7 +67,13 @@ def validate_scope(data, scope):
         raise ArgumentError("--scope 中有未知功能 id：" + ", ".join(unknown))
 
 
+def _reject_approval_symlink(path):
+    if path.is_symlink():
+        raise ValueError(f"认可记录不能是符号链接：{path}")
+
+
 def read_approvals(path):
+    _reject_approval_symlink(path)
     if not path.exists():
         return {}
     try:
@@ -146,6 +153,8 @@ def _plan(data, fingerprints, records, scope, review):
 
 
 def _record(repository, data, feature_values, fingerprints, records, scope):
+    approved_path = repository / APPROVED_RELATIVE_PATH
+    _reject_approval_symlink(approved_path)
     selected = _scope_features(data, scope)
     drafts = [feature_id for feature_id in selected
               if feature_values[feature_id]["why"]["source"] == "起草"]
@@ -159,11 +168,24 @@ def _record(repository, data, feature_values, fingerprints, records, scope):
         if feature_id in feature_values and feature_id not in selected_set
     }
     updated.update({feature_id: fingerprints[feature_id] for feature_id in selected})
-    approved_path = repository / APPROVED_RELATIVE_PATH
-    approved_path.write_text(
-        json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    content = json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=approved_path.parent,
+            prefix=f".{approved_path.name}.", suffix=".tmp", delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            temporary_file.write(content)
+        _reject_approval_symlink(approved_path)
+        os.replace(temporary_path, approved_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
     return f"已记录 {len(selected)} 个功能：{approved_path}"
 
 
