@@ -280,6 +280,18 @@ class CheckTest(unittest.TestCase):
         document = main_report(verdict="改了就过", deviations=[finding])
         self.assertEqual(self.run_report("review-main.json", document), (0, []))
 
+    def test_main_report_accepts_new_iron_law_rule_three_quote(self):
+        finding = {
+            "problem": "新增要求没有证据",
+            "evidence": "spec.md:12",
+            "quote": {
+                "source": "xy-iron-law 第 3 条",
+                "text": "用户原话、功能清单，或写了证据的派方需求",
+            },
+        }
+        document = main_report(verdict="改了就过", deviations=[finding])
+        self.assertEqual(self.run_report("review-main.json", document), (0, []))
+
     def test_main_report_requires_each_numbered_repository_rule(self):
         rules = {str(number): section() for number in REPO_RULE_NUMBERS}
         missing = str(REPO_RULE_NUMBERS[-1])
