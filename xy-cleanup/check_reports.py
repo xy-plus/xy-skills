@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate cleanup reviews for every smallest feature in a requested scope."""
+"""Validate cleanup reviews for every selected feature, including parent features."""
 import argparse
 import json
 import os
