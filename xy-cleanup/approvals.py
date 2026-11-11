@@ -67,8 +67,7 @@ def validate_scope(data, scope):
         raise ArgumentError("--scope 中有未知功能 id：" + ", ".join(unknown))
 
 
-def _reject_approval_symlink(path):
-    repository = Path(path).parent.parent
+def _require_approval_path_in_repository(repository, path):
     expected_path = os.path.join(
         os.path.realpath(repository), "repo-map", "approved.json"
     )
@@ -79,8 +78,8 @@ def _reject_approval_symlink(path):
         )
 
 
-def read_approvals(path):
-    _reject_approval_symlink(path)
+def read_approvals(repository, path):
+    _require_approval_path_in_repository(repository, path)
     if not path.exists():
         return {}
     try:
@@ -161,7 +160,7 @@ def _plan(data, fingerprints, records, scope, review):
 
 def _record(repository, data, feature_values, fingerprints, records, scope):
     approved_path = repository / APPROVED_RELATIVE_PATH
-    _reject_approval_symlink(approved_path)
+    _require_approval_path_in_repository(repository, approved_path)
     selected = _scope_features(data, scope)
     drafts = [feature_id for feature_id in selected
               if feature_values[feature_id]["why"]["source"] == "起草"]
@@ -184,7 +183,7 @@ def _record(repository, data, feature_values, fingerprints, records, scope):
         ) as temporary_file:
             temporary_path = Path(temporary_file.name)
             temporary_file.write(content)
-        _reject_approval_symlink(approved_path)
+        _require_approval_path_in_repository(repository, approved_path)
         os.replace(temporary_path, approved_path)
         temporary_path = None
     finally:
@@ -219,7 +218,7 @@ def main(argv):
         return 2
 
     try:
-        records = read_approvals(repository / APPROVED_RELATIVE_PATH)
+        records = read_approvals(repository, repository / APPROVED_RELATIVE_PATH)
         values, _ = feature_values(repository)
         fingerprints = feature_fingerprints(repository, data, values)
         if options.command == "plan":

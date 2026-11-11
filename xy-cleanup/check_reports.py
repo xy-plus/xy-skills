@@ -219,7 +219,7 @@ def main(argv):
         return 2
 
     try:
-        records = read_approvals(repository / APPROVED_RELATIVE_PATH)
+        records = read_approvals(repository, repository / APPROVED_RELATIVE_PATH)
         values, _ = feature_values(repository)
         fingerprints = feature_fingerprints(repository, data, values)
         expected = [
