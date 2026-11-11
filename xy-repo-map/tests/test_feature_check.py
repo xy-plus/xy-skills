@@ -50,9 +50,6 @@ class FeatureCheckTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(nested), "add", "-A"], check=True)
         subprocess.run(["git", "-C", str(nested), "commit", "-qm", "fixture"], check=True)
 
-    def make_ignored_nested_repository(self, relative):
-        self.make_nested_repository(relative)
-
     def test_rejects_a_root_without_subrepositories(self):
         root = feature("root", "", subrepositories=[])
         del root["subrepositories"]
@@ -95,10 +92,18 @@ class FeatureCheckTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(expected, output)
 
+    def test_rejects_nul_in_a_registered_subrepository_path(self):
+        self.set_features(feature("root", "", subrepositories=["sub\x00repo"]))
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("subrepositories", result.stdout + result.stderr)
+
     def test_rejects_unregistered_ignored_nested_repositories_and_lists_each_path(self):
         self.write(".gitignore", "/sub-one/\n/sub-two/\n")
-        self.make_ignored_nested_repository("sub-one")
-        self.make_ignored_nested_repository("sub-two")
+        self.make_nested_repository("sub-one")
+        self.make_nested_repository("sub-two")
 
         result = self.check()
         output = result.stdout + result.stderr
@@ -110,7 +115,7 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_accepts_registered_ignored_nested_repository_without_adding_its_files_to_map(self):
         self.write(".gitignore", "/sub/\n")
-        self.make_ignored_nested_repository("sub")
+        self.make_nested_repository("sub")
         self.set_features(feature("root", "", subrepositories=["sub"]))
 
         result = self.check()
