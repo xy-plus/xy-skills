@@ -35,7 +35,7 @@ FEATURE_KEYS = {
         "feature", "what_true", "why_holds", "structure", "todo_items", "findings",
     },
     "剃刀": {"feature", "necessity", "keep", "todo_items", "findings"},
-    "剃刀复审": {"feature", "findings"},
+    "剃刀复审": {"feature", "verdicts", "findings"},
 }
 FINDING_KEYS = {
     "kind", "target", "problem", "proposal", "changes_behavior", "decision",
@@ -44,6 +44,7 @@ FINDING_KEYS = {
 BASIS_KEYS = {"source", "text"}
 TODO_ITEM_KEYS = {"lines", "needed", "smaller", "why_holds"}
 KEEP_ITEM_KEYS = {"lines", "requirement", "achieved", "cost"}
+RECHECK_VERDICT_KEYS = {"lines", "attack", "verdict"}
 ROLES = {"主审", "剃刀"}
 REPORT_ROLES = ROLES | {"剃刀复审"}
 KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "其他"}
@@ -201,6 +202,69 @@ def _validate_finding(finding, label, tracked_todo_files, force_ask_user):
                 problems.append(f"{label}.basis.{key} 必须是非空字符串")
         if set(basis) == BASIS_KEYS and not basis_is_supported(basis):
             problems.append(f"{label}.basis 必须逐字引用有效的 xy-review 规范条款")
+    return problems
+
+
+def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
+                               feature_targets):
+    if not isinstance(verdicts, list):
+        return [f"{label}.verdicts 必须是数组"]
+
+    problems = []
+    verdict_counts = {}
+    nonstanding = []
+    for index, verdict in enumerate(verdicts):
+        verdict_label = f"{label}.verdicts[{index}]"
+        item_problems = _field_errors(verdict, RECHECK_VERDICT_KEYS, verdict_label)
+        problems.extend(item_problems)
+        if item_problems or not isinstance(verdict, dict):
+            continue
+
+        lines = verdict["lines"]
+        if not isinstance(lines, str):
+            problems.append(f"{verdict_label}.lines 必须与首轮 keep 的 lines 完全相同的字符串")
+        else:
+            verdict_counts[lines] = verdict_counts.get(lines, 0) + 1
+        if not _nonempty(verdict["attack"]):
+            problems.append(f"{verdict_label}.attack 必须是非空字符串")
+        if (not isinstance(verdict["verdict"], str)
+                or verdict["verdict"] not in {"站得住", "站不住"}):
+            problems.append(
+                f"{verdict_label}.verdict 必须是 站得住 或 站不住：{verdict['verdict']!r}"
+            )
+        elif verdict["verdict"] == "站不住" and isinstance(lines, str):
+            nonstanding.append((lines, verdict_label))
+
+    keep_counts = {}
+    for lines in keep_lines:
+        keep_counts[lines] = keep_counts.get(lines, 0) + 1
+    for lines, expected_count in keep_counts.items():
+        actual_count = verdict_counts.get(lines, 0)
+        if actual_count < expected_count:
+            problems.append(
+                f"{label}.verdicts 缺少 keep 的判定：{lines}（应有 {expected_count} 条，实有 {actual_count} 条）"
+            )
+        elif actual_count > expected_count:
+            problems.append(f"{label}.verdicts 重复判定 keep：{lines}")
+    for lines in verdict_counts:
+        if lines not in keep_counts:
+            problems.append(f"{label}.verdicts 多出不在 keep 里的判定：{lines}")
+
+    for lines, verdict_label in nonstanding:
+        verdict_range = _parse_line_range(lines)
+        overlaps_finding = False
+        if verdict_range is not None:
+            path, start_line, end_line = verdict_range
+            overlaps_finding = any(
+                path == finding_range[0]
+                and start_line <= finding_range[2]
+                and finding_range[1] <= end_line
+                for _finding, finding_range in finding_ranges
+            )
+        if not overlaps_finding and not feature_targets:
+            problems.append(
+                f"{verdict_label} 判站不住时必须有重叠的发现目标：{lines}"
+            )
     return problems
 
 
@@ -485,6 +549,8 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     recheck_counts = {}
     required_rechecks = set()
     recheck_report_seen = False
+    razor_keep_lines = {}
+    pending_recheck_verdicts = []
     tracked_todo_files = {
         path for path in tracked_files if Path(path).name == TODO_FILENAME
     }
@@ -541,6 +607,14 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 data["features"].get(feature_id)
                 if isinstance(feature_id, str) else None
             )
+            if role == "剃刀" and isinstance(feature_id, str):
+                source_keep = review.get("keep")
+                if feature_id not in razor_keep_lines:
+                    razor_keep_lines[feature_id] = [
+                        item["lines"]
+                        for item in source_keep
+                        if isinstance(item, dict) and isinstance(item.get("lines"), str)
+                    ] if isinstance(source_keep, list) else []
             if feature_data is not None:
                 direct_files = {
                     path
@@ -587,6 +661,15 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 elif target == feature_id:
                     feature_targets.append(finding)
 
+            if role == "剃刀复审":
+                pending_recheck_verdicts.append((
+                    feature_id,
+                    review.get("verdicts"),
+                    f"{feature_label} 的功能 {feature_id}",
+                    finding_ranges,
+                    feature_targets,
+                ))
+
             if role == "剃刀" and feature_data is not None:
                 keep_files = {
                     path for path in direct_files
@@ -614,6 +697,16 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 ):
                     # Zero reductions need an independent check; a numerical quota would reward made-up findings.
                     required_rechecks.add(feature_id)
+
+    # Requiring one verdict per keep prevents reviewers from skipping items and returning an empty report.
+    for feature_id, verdicts, label, finding_ranges, feature_targets in pending_recheck_verdicts:
+        problems.extend(_validate_recheck_verdicts(
+            verdicts,
+            label,
+            razor_keep_lines.get(feature_id, []),
+            finding_ranges,
+            feature_targets,
+        ))
 
     for role in sorted(ROLES):
         for feature_id in expected_features:

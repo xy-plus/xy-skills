@@ -56,8 +56,22 @@ def report(role, repository, feature_ids=("root", "alpha", "beta")):
             "features": [review_feature(feature_id, role) for feature_id in feature_ids]}
 
 
-def recheck_feature(feature_id, findings):
-    return {"feature": feature_id, "findings": findings}
+def recheck_verdict(lines, verdict="站得住", attack="逐条检查了该保留项。"):
+    return {"lines": lines, "attack": attack, "verdict": verdict}
+
+
+def recheck_feature(feature_id, findings, verdicts=None):
+    default_lines = {
+        "root": "README.md:1-1",
+        "alpha": "alpha/main.py:1-1",
+        "beta": "beta/main.py:1-1",
+    }
+    if verdicts is None:
+        verdicts = (
+            [recheck_verdict(default_lines[feature_id])]
+            if feature_id in default_lines else []
+        )
+    return {"feature": feature_id, "verdicts": verdicts, "findings": findings}
 
 
 def recheck_report(repository, feature_ids):
@@ -133,9 +147,22 @@ class CheckReportsTest(unittest.TestCase):
                 for item_finding in item["findings"]
             )
             if keep_files and not has_reduction:
-                required.append(feature_id)
+                required.append({
+                    "feature": feature_id,
+                    "verdicts": [
+                        recheck_verdict(item_keep["lines"])
+                        for item_keep in item["keep"]
+                        if isinstance(item_keep, dict)
+                        and isinstance(item_keep.get("lines"), str)
+                    ],
+                    "findings": [],
+                })
         if required:
-            self.write_recheck_report(recheck_report(self.repository, required))
+            self.write_recheck_report({
+                "role": "剃刀复审",
+                "repo": str(self.repository),
+                "features": required,
+            })
         else:
             self.recheck_path.unlink(missing_ok=True)
 
@@ -429,6 +456,87 @@ class CheckReportsTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("有多余字段 keep", result.stdout)
+
+    def test_recheck_requires_a_verdict_for_every_keep(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        self.write_reports(main, razor)
+        recheck = json.loads(self.recheck_path.read_text(encoding="utf-8"))
+        alpha = next(item for item in recheck["features"] if item["feature"] == "alpha")
+        alpha["verdicts"] = []
+        self.write_recheck_report(recheck)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/main.py:1-1", result.stdout)
+
+    def test_recheck_rejects_a_verdict_for_lines_not_in_keep(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        recheck = json.loads(self.recheck_path.read_text(encoding="utf-8"))
+        alpha = next(item for item in recheck["features"] if item["feature"] == "alpha")
+        alpha["verdicts"][0]["lines"] = "alpha/main.py:2-2"
+        self.write_recheck_report(recheck)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/main.py:2-2", result.stdout)
+
+    def test_recheck_rejects_duplicate_verdicts_for_a_keep(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        recheck = json.loads(self.recheck_path.read_text(encoding="utf-8"))
+        alpha = next(item for item in recheck["features"] if item["feature"] == "alpha")
+        alpha["verdicts"].append(dict(alpha["verdicts"][0]))
+        self.write_recheck_report(recheck)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("重复", result.stdout)
+        self.assertIn("alpha/main.py:1-1", result.stdout)
+
+    def test_recheck_rejects_empty_attack(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        recheck = json.loads(self.recheck_path.read_text(encoding="utf-8"))
+        alpha = next(item for item in recheck["features"] if item["feature"] == "alpha")
+        alpha["verdicts"][0]["attack"] = "  "
+        self.write_recheck_report(recheck)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("attack", result.stdout)
+
+    def test_recheck_rejects_unknown_verdict_value(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        recheck = json.loads(self.recheck_path.read_text(encoding="utf-8"))
+        alpha = next(item for item in recheck["features"] if item["feature"] == "alpha")
+        alpha["verdicts"][0]["verdict"] = "待定"
+        self.write_recheck_report(recheck)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("verdict 必须是 站得住 或 站不住", result.stdout)
+        self.assertIn("待定", result.stdout)
+
+    def test_nonstanding_verdict_requires_overlapping_finding(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        recheck = json.loads(self.recheck_path.read_text(encoding="utf-8"))
+        alpha = next(item for item in recheck["features"] if item["feature"] == "alpha")
+        alpha["verdicts"][0]["verdict"] = "站不住"
+        self.write_recheck_report(recheck)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/main.py:1-1", result.stdout)
+
+    def test_all_standing_verdicts_accept_empty_findings(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_nonstanding_verdict_accepts_overlapping_own_feature_finding(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        recheck = json.loads(self.recheck_path.read_text(encoding="utf-8"))
+        alpha = next(item for item in recheck["features"] if item["feature"] == "alpha")
+        alpha["verdicts"][0]["verdict"] = "站不住"
+        deletion = finding("删除", False, "问你")
+        deletion["target"] = "alpha"
+        alpha["findings"] = [deletion]
+        self.write_recheck_report(recheck)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_feature_id_delete_overlaps_any_keep(self):
         main = report("主审", self.repository)
