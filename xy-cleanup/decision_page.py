@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Ask cleanup questions in one page and save the user's answers."""
 import argparse
 from http.server import BaseHTTPRequestHandler
 import json
@@ -357,7 +355,6 @@ def run_ask(decisions, name, answers_path, platform_runner, stdout, stderr, stop
             serving_thread.join()
         if server is not None:
             server.server_close()
-        socket_path.unlink(missing_ok=True)
         if mounted:
             unmount_command = [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "unmount", name]
             try:

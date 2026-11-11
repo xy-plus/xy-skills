@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Validate cleanup reviews for every selected feature, including parent features."""
 import argparse
 import ast
 import json
@@ -13,7 +11,6 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
 sys.path.insert(0, str(REPOSITORY / "xy-review"))
 sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
-sys.path.insert(0, str(REPOSITORY / "xy-cleanup"))
 from repo_map_lib.git_repository import ArgumentError  # noqa: E402
 from repo_map_lib.git_repository import tracked_paths  # noqa: E402
 from repo_map_lib.map_data import build_map, file_category  # noqa: E402

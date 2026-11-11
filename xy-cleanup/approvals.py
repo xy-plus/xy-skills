@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Select changed features for cleanup review and store accepted fingerprints."""
 import argparse
 import hashlib
 import json

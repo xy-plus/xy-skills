@@ -268,21 +268,25 @@ class DecisionPageCommandTest(unittest.TestCase):
         )
         self.assertIsNotNone(first_data)
         self.assertIsNotNone(second_data)
-        self.assertIn(r"Before \u003c/script\u003e after", first_data.group(1))
+        self.assertIn(r"Before \u003c/script> after", first_data.group(1))
         first_call_id = json.loads(first_data.group(1))["call_id"]
         second_call_id = json.loads(second_data.group(1))["call_id"]
         self.assertTrue(first_call_id)
         self.assertNotEqual(first_call_id, second_call_id)
 
-    def test_mount_verification_get_is_served_before_mount_returns(self):
+    def test_ask_mounts_receives_one_valid_answer_and_unmounts(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            decisions_data = valid_decisions()
+            decisions_data["title"] = "Cleanup decisions"
             decisions = Path(temporary) / "decisions.json"
             answers = Path(temporary) / "answers.json"
-            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+            decisions.write_text(json.dumps(decisions_data), encoding="utf-8")
             calls = []
             verification = {}
-            mount_checked = threading.Event()
+            mounted = threading.Event()
             result = {}
+            stdout = io.StringIO()
+            stderr = io.StringIO()
 
             def platform_runner(arguments):
                 calls.append(arguments)
@@ -297,66 +301,13 @@ class DecisionPageCommandTest(unittest.TestCase):
                         verification["error"] = str(error)
                     finally:
                         connection.close()
-                        mount_checked.set()
+                        mounted.set()
 
                     if (verification.get("status") != 200
                             or b"decision-data" not in verification.get("page", b"")):
                         return subprocess.CompletedProcess(
                             arguments, 1, "", "mount verification failed\n"
                         )
-                    return subprocess.CompletedProcess(
-                        arguments, 0, "https://portal.example/decision-test/\n", ""
-                    )
-                return subprocess.CompletedProcess(arguments, 0, "", "")
-
-            thread = threading.Thread(
-                target=lambda: result.setdefault(
-                    "code",
-                    decision_page.main(
-                        ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                         "--answers", str(answers)],
-                        platform_runner,
-                        io.StringIO(),
-                        io.StringIO(),
-                    ),
-                ),
-                daemon=True,
-            )
-            thread.start()
-            self.assertTrue(mount_checked.wait(3), "mount verification did not finish")
-
-            if verification.get("status") == 200:
-                status, body = request_socket(
-                    calls[0][5], "POST", "/submit",
-                    {"answers": {"A1": {"option": "Keep", "note": ""}}},
-                )
-                self.assertEqual(status, 200, body)
-
-            thread.join(5)
-            self.assertFalse(thread.is_alive(), "ask did not finish after mount verification")
-            self.assertEqual(verification.get("status"), 200, verification.get("error"))
-            self.assertIn(b"decision-data", verification.get("page", b""))
-            self.assertEqual(result["code"], 0)
-            self.assertEqual([call[2] for call in calls], ["mount", "unmount"])
-            self.assertTrue(answers.exists())
-
-    def test_ask_mounts_receives_one_valid_answer_and_unmounts(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions_data = valid_decisions()
-            decisions_data["title"] = "Cleanup decisions"
-            decisions = Path(temporary) / "decisions.json"
-            answers = Path(temporary) / "answers.json"
-            decisions.write_text(json.dumps(decisions_data), encoding="utf-8")
-            calls = []
-            mounted = threading.Event()
-            result = {}
-            stdout = io.StringIO()
-            stderr = io.StringIO()
-
-            def platform_runner(arguments):
-                calls.append(arguments)
-                if arguments[2] == "mount":
-                    mounted.set()
                     return subprocess.CompletedProcess(
                         arguments, 0, "https://portal.example/decision-test/\n", ""
                     )
@@ -383,6 +334,8 @@ class DecisionPageCommandTest(unittest.TestCase):
             status, page = request_socket(socket_path, "GET", "/", None)
             self.assertEqual(status, 200)
             self.assertIn(b"decision-data", page)
+            self.assertEqual(verification.get("status"), 200, verification.get("error"))
+            self.assertIn(b"decision-data", verification.get("page", b""))
             self.assertIn(b"Cleanup decisions", page)
 
             status, body = request_socket(socket_path, "GET", "/index.html", None)

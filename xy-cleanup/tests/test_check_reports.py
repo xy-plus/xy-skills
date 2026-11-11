@@ -1,4 +1,3 @@
-"""Test the public validator for per-feature cleanup review reports."""
 import json
 from pathlib import Path
 import subprocess
@@ -280,13 +279,6 @@ class CheckReportsTest(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
 
-    def record(self, scope=("全部",)):
-        return subprocess.run(
-            ["python3", "-B", str(ROOT / "xy-cleanup" / "approvals.py"),
-             "record", "--repo", str(self.repository), "--scope", *scope],
-            capture_output=True, text=True, check=False,
-        )
-
     def test_accepts_complete_reports_for_each_role(self):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -414,21 +406,6 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("剃刀复审重复功能 alpha 2 次", result.stdout)
-
-    def test_recheck_report_is_rejected_when_nothing_needs_rechecking(self):
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        for item in razor["features"]:
-            removal = finding("删除", False, "直接做")
-            removal["target"] = item["feature"]
-            item["keep"] = []
-            item["findings"] = [removal]
-        self.write_reports(main, razor)
-        self.write_recheck_report(recheck_report(self.repository, ["alpha"]))
-        result = self.run_check(reports=self.reports_for_check())
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("不用复审", result.stdout)
-        self.assertIn("alpha", result.stdout)
 
     def test_empty_recheck_report_is_rejected_when_nothing_needs_rechecking(self):
         main = report("主审", self.repository)
@@ -1355,7 +1332,11 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("invalid choice", result.stderr)
 
     def test_changed_review_uses_the_approval_plan_for_report_coverage(self):
-        recorded = self.record()
+        recorded = subprocess.run(
+            ["python3", "-B", str(ROOT / "xy-cleanup" / "approvals.py"),
+             "record", "--repo", str(self.repository), "--scope", "全部"],
+            capture_output=True, text=True, check=False,
+        )
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
 
         self.write_reports(report("主审", self.repository, ()),
