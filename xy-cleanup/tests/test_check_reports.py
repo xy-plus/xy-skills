@@ -589,6 +589,25 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_nonstanding_verdict_rejects_refactor_targeting_own_feature(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        rechecks = self.read_recheck_reports()
+        recheck = next(
+            document for document in rechecks
+            if document["features"][0]["feature"] == "alpha"
+        )
+        alpha = next(item for item in recheck["features"] if item["feature"] == "alpha")
+        alpha["verdicts"][0]["verdict"] = "站不住"
+        refactor = finding("重构", False, "问你")
+        refactor["target"] = "alpha"
+        alpha["findings"] = [refactor]
+        self.write_recheck_reports(rechecks)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/main.py:1-1", result.stdout)
+
     def test_recheck_verdict_requires_attempt(self):
         self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
         rechecks = self.read_recheck_reports()
@@ -1575,6 +1594,3 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("--scope 中有未知功能 id：missing", result.stderr)
 
-
-if __name__ == "__main__":
-    unittest.main()

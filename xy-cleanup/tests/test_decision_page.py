@@ -1,4 +1,5 @@
 """Test the decision-page command and its request handling."""
+from contextlib import nullcontext
 import copy
 import http.client
 import io
@@ -236,6 +237,47 @@ class DecisionPageCommandTest(unittest.TestCase):
 
             self.assertEqual(code, 2)
             self.assertEqual(calls, [])
+
+    def test_answer_save_preflight_rejects_unavailable_directory_and_hard_links(self):
+        failures = ("missing-directory", "unwritable", "hard-links")
+        for failure in failures:
+            with self.subTest(failure=failure):
+                with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+                    directory = Path(temporary)
+                    decisions = directory / "decisions.json"
+                    answers_parent = directory / "missing" if failure == "missing-directory" else directory
+                    answers = answers_parent / "answers.json"
+                    decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+                    calls = []
+
+                    def platform_runner(arguments):
+                        calls.append(arguments)
+                        return subprocess.CompletedProcess(arguments, 1, "", "mount failed")
+
+                    if failure == "unwritable":
+                        patcher = patch(
+                            "decision_page.tempfile.NamedTemporaryFile",
+                            side_effect=PermissionError("directory is not writable"),
+                        )
+                    elif failure == "hard-links":
+                        patcher = patch(
+                            "decision_page.os.link",
+                            side_effect=OSError("hard links are unsupported"),
+                        )
+                    else:
+                        patcher = nullcontext()
+                    with patcher:
+                        code = decision_page.main(
+                            ["ask", "--decisions", str(decisions), "--name", "decision-test",
+                             "--answers", str(answers)],
+                            platform_runner,
+                            io.StringIO(),
+                            io.StringIO(),
+                        )
+
+                    self.assertEqual(code, 2)
+                    self.assertEqual(calls, [])
+                    self.assertEqual(list(directory.glob(".answers.json.*")), [])
 
     def test_page_escapes_script_text_and_embeds_each_call_id(self):
         decisions = valid_decisions()
@@ -729,6 +771,3 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                     decision_page.validate_decisions(decisions)
                 self.assertIn(expected, str(context.exception))
 
-
-if __name__ == "__main__":
-    unittest.main()

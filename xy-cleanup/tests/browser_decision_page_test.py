@@ -263,6 +263,3 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 receiver_thread.join(2)
                 bridge_thread.join(2)
 
-
-if __name__ == "__main__":
-    unittest.main()

@@ -152,35 +152,38 @@ def validate_answers(payload, decisions):
 def _write_answer_document(answers_path, document):
     """Write a complete answer file and publish it without overwriting."""
     temporary_path = None
-    published = False
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=answers_path.parent,
-            prefix=f".{answers_path.name}.",
-            suffix=".tmp",
-            delete=False,
+            mode="w", encoding="utf-8", dir=answers_path.parent,
+            prefix=f".{answers_path.name}.", suffix=".tmp", delete=False,
         ) as output:
             temporary_path = Path(output.name)
             json.dump(document, output, ensure_ascii=False, indent=2)
             output.write("\n")
         os.link(temporary_path, answers_path)
-        published = True
-        temporary_path.unlink()
-        temporary_path = None
-    except OSError:
-        if published:
-            try:
-                answers_path.unlink()
-            except OSError:
-                pass
+    finally:
         if temporary_path is not None:
             try:
                 temporary_path.unlink()
             except OSError:
                 pass
-        raise
+
+
+def _preflight_answer_path(answers_path):
+    """Check that the answer directory supports temporary writes and hard links."""
+    with tempfile.NamedTemporaryFile(
+        dir=answers_path.parent,
+        prefix=f".{answers_path.name}.",
+        suffix=".probe",
+    ) as output:
+        probe_path = Path(output.name)
+    try:
+        _write_answer_document(probe_path, {})
+    finally:
+        try:
+            probe_path.unlink()
+        except OSError:
+            pass
 
 
 class DecisionHTTPServer(socketserver.UnixStreamServer):
@@ -403,6 +406,11 @@ def main(argv, platform_runner, stdout, stderr):
         stderr.write(f"错误：回答文件已经存在：{requested_answers_path}\n")
         return 2
     answers_path = requested_answers_path.resolve()
+    try:
+        _preflight_answer_path(answers_path)
+    except OSError as error:
+        stderr.write(f"错误：回答文件路径无法保存：{error}\n")
+        return 2
 
     stop_event = threading.Event()
     previous_handlers = _install_stop_handlers(stop_event)

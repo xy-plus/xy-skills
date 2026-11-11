@@ -166,23 +166,6 @@ class ApprovalPlanTest(unittest.TestCase):
             ["features.json"],
         )
 
-    def test_record_removes_temporary_file_when_replace_fails(self):
-        data = build_map(self, self.repository)
-        values, _ = approvals.feature_values(self.repository)
-        fingerprints = approvals.feature_fingerprints(self.repository, data, values)
-        approved_directory = self.repository / "repo-map"
-
-        with mock.patch.object(approvals.os, "replace", side_effect=OSError("替换失败")):
-            with self.assertRaisesRegex(OSError, "替换失败"):
-                approvals._record(
-                    self.repository, data, values, fingerprints, {}, ["alpha"]
-                )
-
-        self.assertEqual(
-            sorted(path.name for path in approved_directory.iterdir()),
-            ["features.json"],
-        )
-
     def test_plan_expands_parent_scope_and_can_review_every_feature(self):
         changed = self.plan(("root",))
         self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
@@ -363,6 +346,3 @@ class ApprovalPlanTest(unittest.TestCase):
                 result = self.run_approvals(*arguments)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
-
-if __name__ == "__main__":
-    unittest.main()

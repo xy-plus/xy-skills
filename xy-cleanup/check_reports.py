@@ -304,6 +304,10 @@ def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
     for lines, verdict_label in nonstanding:
         verdict_range = _parse_line_range(lines)
         overlaps_finding = False
+        feature_reduction = any(
+            finding.get("kind") in {"删除", "合并"}
+            for finding in feature_targets
+        )
         if verdict_range is not None:
             path, start_line, end_line = verdict_range
             overlaps_finding = any(
@@ -312,7 +316,7 @@ def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
                 and finding_range[1] <= end_line
                 for _finding, finding_range in finding_ranges
             )
-        if not overlaps_finding and not feature_targets:
+        if not overlaps_finding and not feature_reduction:
             problems.append(
                 f"{verdict_label} 判站不住时必须有重叠的发现目标：{lines}"
             )
