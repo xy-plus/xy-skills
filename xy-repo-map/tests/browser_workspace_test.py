@@ -46,6 +46,8 @@ class BrowserWorkspaceTest(unittest.TestCase):
 
                 sub_a = row_for_repository("sub-a")
                 sub_b = row_for_repository("sub-b")
+                sub_a_section = sub_a.locator("xpath=ancestor::section[1]")
+                sub_b_section = sub_b.locator("xpath=ancestor::section[1]")
                 self.assertEqual(sub_a.locator(".feature-title .title").text_content(), "Root")
                 self.assertEqual(sub_b.locator(".feature-title .title").text_content(), "Root")
                 self.assertEqual(
@@ -57,11 +59,26 @@ class BrowserWorkspaceTest(unittest.TestCase):
                     ["Root（sub-a）提及"],
                 )
 
+                page.locator("#depth-minus").click()
+                self.assertFalse(sub_a_section.locator(".feature-children").is_visible())
+                self.assertFalse(sub_b_section.locator(".feature-children").is_visible())
                 sub_a.locator(".caret").click()
+                sub_b.locator(".caret").click()
+                self.assertTrue(sub_a_section.locator(".feature-children").is_visible())
+                self.assertTrue(sub_b_section.locator(".feature-children").is_visible())
                 visible_titles = page.locator(
                     ".feature-row:visible .feature-title .title"
                 ).all_text_contents()
-                self.assertEqual(visible_titles.count("Part"), 1)
+                self.assertEqual(visible_titles.count("Part"), 2)
+
+                sub_a_part = sub_a_section.locator(".feature-children .feature-row")
+                sub_a_part.locator(".feature-title").click()
+                detail = page.locator(".detail-panel")
+                self.assertTrue(detail.is_visible())
+                self.assertEqual(detail.locator("h2").text_content(), "Part（lib）")
+                self.assertIn("Root（sub-a）", detail.inner_text())
+                detail.locator(".close-detail").click()
+
                 sub_a.locator(".uses .use-link").click()
                 detail = page.locator(".detail-panel")
                 self.assertTrue(detail.is_visible())
