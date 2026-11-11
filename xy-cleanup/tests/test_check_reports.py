@@ -45,7 +45,7 @@ def review_feature(feature_id, role):
                 "why_holds": "理由仍成立。", "structure": "现有结构合适。"}
     default_features = {"root", "alpha", "beta"}
     keep = [razor_keep_item(feature_id)] if feature_id in default_features else []
-    return {**common, "keep": keep}
+    return {**common, "necessity": "功能必要。", "keep": keep}
 
 
 def report(role, repository, feature_ids=("root", "alpha", "beta")):
@@ -135,6 +135,35 @@ class CheckReportsTest(unittest.TestCase):
     def test_accepts_complete_reports_for_each_role(self):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_razor_requires_necessity(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        del alpha["necessity"]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("缺少字段 necessity", result.stdout)
+
+    def test_razor_necessity_must_be_nonempty(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["necessity"] = "  "
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("features[1].necessity 必须是非空字符串", result.stdout)
+
+    def test_main_role_rejects_necessity(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        main["features"][0]["necessity"] = "功能必要。"
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("有多余字段 necessity", result.stdout)
 
     def test_razor_keep_must_cover_each_nonempty_line_and_may_skip_blank_lines(self):
         self.add_tracked_file("alpha/guide.md", "开头。\n\n结尾。\n")

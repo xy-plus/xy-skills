@@ -34,7 +34,7 @@ FEATURE_KEYS = {
     "主审": {
         "feature", "what_true", "why_holds", "structure", "todo_items", "findings",
     },
-    "剃刀": {"feature", "keep", "todo_items", "findings"},
+    "剃刀": {"feature", "necessity", "keep", "todo_items", "findings"},
 }
 FINDING_KEYS = {
     "kind", "target", "problem", "proposal", "changes_behavior", "decision",
@@ -473,6 +473,8 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 for key in ("what_true", "why_holds", "structure"):
                     if not _nonempty(review.get(key)):
                         problems.append(f"{feature_label}.{key} 必须是非空字符串")
+            elif role == "剃刀" and not _nonempty(review.get("necessity")):
+                problems.append(f"{feature_label}.necessity 必须是非空字符串")
 
             feature_data = (
                 data["features"].get(feature_id)
