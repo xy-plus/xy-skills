@@ -44,7 +44,8 @@ REVIEW_MAIN = {
 }
 REVIEW_RAZOR = {
     "occams_razor": {
-        "keep": [{"entity": str, "reason": str}],
+        "keep": [{"entity": str, "requirement": str, "achieved": str, "cost": str}],
+        "keep_old": [{"entity": str, "reason": str}],
         "delete": {"items": [{"entity": str, "loss": str}], "checked": str},
         "ask_user": {
             "items": [{"entity": str, "now": str, "change_to": str, "saving": str}],
@@ -182,10 +183,11 @@ def check(text, filename):
         if isinstance(verdict, str) and verdict not in VERDICTS:
             problems.append("报告.verdict 只能是「通过」「改了就过」或「不通过」")
         keep = item_list(document, "occams_razor", "keep")
+        keep_old = item_list(document, "occams_razor", "keep_old")
         deleted = item_list(document, "occams_razor", "delete", "items")
         asked = item_list(document, "occams_razor", "ask_user", "items")
-        if not keep and not deleted and not asked:
-            problems.append("剃刀报告三张清单合计至少要有一项")
+        if not keep and not keep_old and not deleted and not asked:
+            problems.append("剃刀报告四张清单合计至少要有一项")
         # ask_user.items 不计入剃刀报告结论。
         if verdict == "通过" and deleted:
             problems.append("剃刀 verdict 写「通过」但 delete.items 有发现")

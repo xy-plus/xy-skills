@@ -32,10 +32,16 @@ def main_report(verdict="通过", deviations=None, hard_to_misuse=None, repo_rul
     }
 
 
-def razor_report(verdict="通过", keep=None, delete=None, ask_user=None):
+def razor_report(verdict="通过", keep=None, keep_old=None, delete=None, ask_user=None):
     return {
         "occams_razor": {
-            "keep": [{"entity": "check.py", "reason": "xy-review 的在用入口"}] if keep is None else keep,
+            "keep": [{
+                "entity": "check.py",
+                "requirement": "用户原话 1「检查改动」",
+                "achieved": "检查改动是否符合要求",
+                "cost": "实现简单，代价配得上收益",
+            }] if keep is None else keep,
+            "keep_old": [] if keep_old is None else keep_old,
             "delete": {"items": [] if delete is None else delete, "checked": "核对了依赖与调用方"},
             "ask_user": {"items": [] if ask_user is None else ask_user, "checked": "核对了行为变化"},
         },
@@ -302,8 +308,13 @@ class CheckTest(unittest.TestCase):
         cases.append((document, "occams_razor.delete 多余字段：extra"))
 
         document = razor_report()
-        document["occams_razor"]["keep"] = [{"entity": "check.py", "reason": " "}]
-        cases.append((document, "报告.occams_razor.keep[0].reason 不能为空"))
+        document["occams_razor"]["keep"] = [{
+            "entity": "check.py",
+            "requirement": " ",
+            "achieved": "检查改动",
+            "cost": "代价合适",
+        }]
+        cases.append((document, "报告.occams_razor.keep[0].requirement 不能为空"))
 
         document = razor_report()
         document["occams_razor"]["ask_user"]["items"] = [{"entity": "文件"}]
@@ -318,8 +329,30 @@ class CheckTest(unittest.TestCase):
                 self.assert_rejected("review-razor.json", document, message)
 
     def test_razor_report_needs_at_least_one_list_item(self):
-        document = razor_report(keep=[], delete=[], ask_user=[])
-        self.assert_rejected("review-razor.json", document, "三张清单合计至少要有一项")
+        document = razor_report(keep=[], keep_old=[], delete=[], ask_user=[])
+        self.assert_rejected("review-razor.json", document, "四张清单合计至少要有一项")
+
+    def test_razor_rejects_old_keep_shape(self):
+        document = razor_report(keep=[{"entity": "check.py", "reason": "仍在使用"}])
+        self.assert_rejected(
+            "review-razor.json", document,
+            "缺少字段：报告.occams_razor.keep[0].requirement",
+            "多余字段：reason",
+        )
+
+    def test_razor_rejects_keep_old_with_wrong_keys(self):
+        document = razor_report(keep=[], keep_old=[{"entity": "check.py", "why": "入口"}])
+        self.assert_rejected(
+            "review-razor.json", document,
+            "缺少字段：报告.occams_razor.keep_old[0].reason",
+            "多余字段：why",
+        )
+
+    def test_razor_keep_old_alone_satisfies_the_nonempty_list_rule(self):
+        document = razor_report(
+            keep=[], keep_old=[{"entity": "check.py", "reason": "从当前入口可达"}],
+        )
+        self.assertEqual(self.run_report("review-razor.json", document), (0, []))
 
     def test_razor_keep_may_be_empty_when_delete_has_an_item(self):
         deletion = [{"entity": "unused.py", "loss": "失去过时脚本"}]
@@ -387,17 +420,20 @@ class CheckTest(unittest.TestCase):
         skill = Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8")
         report_section = skill.split("## 报告", 1)[1].split("## 收到报告后", 1)[0]
         self.assertEqual(report_section.count("剃刀结论只看 `delete.items` 是否为空"), 1)
-        self.assertEqual(report_section.count("`keep`、`delete.items`、`ask_user.items` 至少一项"), 1)
-        self.assertNotIn("报告三张清单合起来至少有一项", report_section)
+        self.assertEqual(report_section.count("`keep`、`keep_old`、`delete.items`、`ask_user.items` 合计至少一项"), 1)
+        self.assertNotIn("报告四张清单合起来至少有一项", report_section)
         self.assertEqual(report_section.count("依据写入 `quote`"), 1)
         self.assertNotIn("在 `problem` 里贴用户原话编号与原文", report_section)
 
         templates = [json.loads(block) for block in re.findall(r"```json\s*\n(.*?)```", report_section, re.S)]
         razor_template = next(template for template in templates if "occams_razor" in template)
-        reason = razor_template["occams_razor"]["keep"][0]["reason"]
-        self.assertNotIn("实体：", reason)
-        self.assertIn("同一文件里和这次改动不相干的旧东西可以合成一项", reason)
-        self.assertIn("entity 写各样的名字", reason)
+        keep = razor_template["occams_razor"]["keep"][0]
+        keep_old = razor_template["occams_razor"]["keep_old"][0]
+        self.assertEqual(set(keep), {"entity", "requirement", "achieved", "cost"})
+        self.assertIn("用户定了的要求", keep["requirement"])
+        self.assertEqual(set(keep_old), {"entity", "reason"})
+        self.assertIn("同一文件里和这次改动不相干的旧东西可以合成一项", keep_old["reason"])
+        self.assertIn("entity 写各样的名字", keep_old["reason"])
 
     def test_duplicate_json_keys_are_rejected(self):
         text = '{"verdict":"通过","verdict":"不通过"}'
