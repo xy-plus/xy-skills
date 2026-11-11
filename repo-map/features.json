@@ -457,6 +457,24 @@
               "children": []
             },
             {
+              "id": "workspace-map",
+              "title": "工作区总图",
+              "what": "把主仓和它登记的子仓各自的图接成一张总图；仓与仓之间提到的外部依赖变成能点的关系。",
+              "why": {
+                "text": "在工作区要能看到完整的图，点进每个仓，看到仓与仓之间的关联。",
+                "source": "原话",
+                "quote": "比如我现在在 quant workspace 下，可以看到一个完整的图，也能看到单独每个仓库（比如 quant data 或 quant engine）自己的图。",
+                "from": "20261111-044910-xy-skills-cleanup-incremental 原话 47"
+              },
+              "directory": null,
+              "entries": [
+                "xy-repo-map/repo_map_lib/workspace_map.py",
+                "xy-repo-map/tests/test_workspace.py",
+                "xy-repo-map/tests/browser_workspace_test.py"
+              ],
+              "children": []
+            },
+            {
               "id": "publish-to-platform",
               "title": "发布到平台",
               "what": "把页面发到我自己的网页平台上，给我一个能打开的链接。",
