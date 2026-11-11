@@ -211,7 +211,8 @@ def _tracked_location_patterns(tracked_files):
             path,
             re.compile(
                 rf"(?<![A-Za-z0-9_./-]){re.escape(path)}:"
-                r"(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?(?![A-Za-z0-9_./-])"
+                r"(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?"
+                r"(?![A-Za-z0-9_/-])(?!\.[0-9])"
             ),
         )
         for path in sorted(tracked_files, key=lambda value: (-len(value), value))
@@ -439,6 +440,22 @@ def _python_definition_lines(path, file_lines):
     return definition_lines
 
 
+def _strip_markdown_container_prefixes(text):
+    remaining = text
+    while True:
+        quote = re.match(r"^ {0,3}>[ \t]?", remaining)
+        if quote is not None:
+            remaining = remaining[quote.end():]
+            continue
+        list_item = re.match(
+            r"^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)", remaining,
+        )
+        if list_item is not None:
+            remaining = remaining[list_item.end():]
+            continue
+        return remaining
+
+
 def _markdown_heading_lines(file_lines):
     headings = set()
     texts = [
@@ -446,19 +463,25 @@ def _markdown_heading_lines(file_lines):
         for line in file_lines
     ]
     hidden_lines = set()
-    in_yaml_header = bool(texts and texts[0].strip() == "---")
+    yaml_header_end = None
+    if texts and texts[0].strip() == "---":
+        yaml_header_end = next(
+            (index for index in range(1, len(texts)) if texts[index].strip() == "---"),
+            None,
+        )
     fence_character = None
     fence_length = 0
     for index, text in enumerate(texts):
-        if in_yaml_header:
+        if yaml_header_end is not None and index <= yaml_header_end:
             hidden_lines.add(index)
-            if index > 0 and text.strip() == "---":
-                in_yaml_header = False
             continue
-        fence = re.match(r"^ {0,3}(`{3,}|~{3,})", text)
+        container_text = _strip_markdown_container_prefixes(text)
+        fence = re.match(r"^ {0,3}(`{3,}|~{3,})", container_text)
         if fence_character is not None:
             hidden_lines.add(index)
-            closing = re.match(r"^ {0,3}(`{3,}|~{3,})[ \t]*$", text)
+            closing = re.match(
+                r"^ {0,3}(`{3,}|~{3,})[ \t]*$", container_text,
+            )
             if (closing is not None and closing.group(1)[0] == fence_character
                     and len(closing.group(1)) >= fence_length):
                 fence_character = None
@@ -469,7 +492,7 @@ def _markdown_heading_lines(file_lines):
             fence_character = fence.group(1)[0]
             fence_length = len(fence.group(1))
             continue
-        if MARKDOWN_HEADING.match(text):
+        if MARKDOWN_HEADING.match(container_text):
             headings.add(index + 1)
 
     for index, text in enumerate(texts):
@@ -483,7 +506,7 @@ def _markdown_heading_lines(file_lines):
         if not paragraph.strip() or MARKDOWN_HEADING.match(paragraph):
             continue
         # List items, table rows, and indented code are block content, not Setext text.
-        if (paragraph.startswith(("    ", "\t")) or "|" in paragraph
+        if (paragraph.startswith(("    ", "\t"))
                 or re.match(r"^ {0,3}(?:[-+*]|\d+[.)])(?:[ \t]+|$)", paragraph)
                 or re.match(r"^ {0,3}>", paragraph)
                 or SETEXT_UNDERLINE.match(paragraph)):
@@ -577,7 +600,11 @@ def _validate_keep_items(items, label, repository, feature, keep_files,
     covered_ranges = {
         path: list(ranges) for path, ranges in keep_ranges_by_file.items()
     }
-    if feature_targets:
+    feature_reduction_targets = [
+        feature_finding for feature_finding in feature_targets
+        if feature_finding.get("kind") in {"删除", "合并"}
+    ]
+    if feature_reduction_targets:
         # A finding on this feature id covers every direct file; read each file so unreadable files still fail.
         for path in keep_files:
             if path not in lines_by_file:
@@ -681,9 +708,18 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 direct_todo_files = {
                     path for path in direct_files if Path(path).name == TODO_FILENAME
                 }
+                keep_files = (
+                    {
+                        path for path in direct_files
+                        if Path(path).name != TODO_FILENAME
+                        and file_category(repository, path) in {"code", "tests", "docs"}
+                    }
+                    if role in ("剃刀", "剃刀复审") else set()
+                )
             else:
                 direct_files = set()
                 direct_todo_files = set()
+                keep_files = set()
             if isinstance(role, str) and role in ROLES and "todo_items" in review:
                 problems.extend(_validate_todo_items(
                     review["todo_items"],
@@ -713,12 +749,23 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     )
                     continue
                 target_range = _parse_line_range(target, allow_single_line=True)
+                if (
+                    role == "剃刀复审"
+                    and feature_data is not None
+                    and target != feature_id
+                    and (target_range is None or target_range[0] not in keep_files)
+                ):
+                    problems.append(
+                        f"{finding_label}.target 复审发现目标必须在本功能要逐行覆盖的文件里或是本功能 id：{target}"
+                    )
+                    continue
                 if target_range is not None:
                     finding_ranges.append((finding, target_range))
                 elif target == feature_id:
                     feature_targets.append(finding)
 
-            if role == "剃刀复审":
+            if (role == "剃刀复审" and isinstance(feature_id, str)
+                    and feature_data is not None):
                 pending_recheck_verdicts.append((
                     feature_id,
                     review.get("verdicts"),
@@ -728,11 +775,6 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 ))
 
             if role == "剃刀" and feature_data is not None:
-                keep_files = {
-                    path for path in direct_files
-                    if Path(path).name != TODO_FILENAME
-                    and file_category(repository, path) in {"code", "tests", "docs"}
-                }
                 problems.extend(_validate_keep_items(
                     review.get("keep"),
                     f"报告 {label} 的功能 {feature_id}.keep",
@@ -742,15 +784,23 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     finding_ranges,
                     feature_targets,
                 ))
+                valid_reduction_targets = {
+                    id(finding)
+                    for finding, target_range in finding_ranges
+                    if target_range[0] in keep_files
+                }
+                valid_reduction_targets.update(id(finding) for finding in feature_targets)
+                has_reduction = any(
+                    isinstance(finding, dict)
+                    and finding.get("kind") in {"删除", "合并"}
+                    and id(finding) in valid_reduction_targets
+                    for finding in findings
+                )
                 if (
                     feature_id in expected_features
                     and feature_data["why"]["source"] != "起草"
                     and keep_files
-                    and not any(
-                        isinstance(finding, dict)
-                        and finding.get("kind") in {"删除", "合并"}
-                        for finding in findings
-                    )
+                    and not has_reduction
                 ):
                     # Zero reductions need an independent check; a numerical quota would reward made-up findings.
                     required_rechecks.add(feature_id)

@@ -5,7 +5,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -164,6 +163,15 @@ class CheckReportsTest(unittest.TestCase):
             has_reduction = any(
                 isinstance(item_finding, dict)
                 and item_finding.get("kind") in {"删除", "合并"}
+                and (
+                    item_finding.get("target") == feature_id
+                    or (
+                        (target_range := check_reports_module._parse_line_range(
+                            item_finding.get("target"), allow_single_line=True,
+                        )) is not None
+                        and target_range[0] in keep_files
+                    )
+                )
                 for item_finding in item["findings"]
             )
             if keep_files and not has_reduction:
@@ -775,21 +783,87 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("未覆盖功能文件", result.stdout)
         self.assertIn("alpha/main.py:1", result.stdout)
 
-    def test_main_report_does_not_classify_keep_files(self):
-        data = check_reports_module.build_map(self.repository)
-        tracked_files = check_reports_module.tracked_paths(self.repository)
-        with patch.object(
-            check_reports_module,
-            "file_category",
-            side_effect=AssertionError("主审不需要分类 keep 文件"),
-        ):
-            check_reports_module.validate_reports(
-                data,
-                self.repository,
-                set(data["features"]),
-                (self.main_path,),
-                tracked_files,
-            )
+    def test_feature_id_refactor_does_not_cover_all_keep_files(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = []
+        change = finding("重构", True, "问你")
+        change["target"] = "alpha"
+        alpha["findings"] = [change]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("未覆盖功能文件", result.stdout)
+        self.assertIn("alpha/main.py:1", result.stdout)
+
+    def test_out_of_scope_deletion_does_not_suppress_zero_reduction_recheck(self):
+        for target in ("beta/main.py:1", "beta"):
+            with self.subTest(target=target):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["keep"] = []
+                deletion = finding("删除", False, "直接做")
+                deletion["target"] = target
+                alpha["findings"] = [deletion]
+                self.write_reports(main, razor)
+                self.clear_recheck_reports()
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("缺剃刀复审：alpha", result.stdout)
+
+    def test_recheck_finding_rejects_out_of_scope_file_target(self):
+        main, razor = self.recheck_scenario()
+        self.write_reports(main, razor)
+        recheck = self.read_recheck_for_feature("alpha")
+        item = finding("重构", True, "问你")
+        item["target"] = "beta/main.py:1"
+        recheck["features"][0]["findings"] = [item]
+        self.write_recheck_report(recheck)
+        result = self.run_check(reports=self.reports_for_check())
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("复审发现目标必须在本功能", result.stdout)
+
+    def test_recheck_finding_rejects_other_feature_id_target(self):
+        main, razor = self.recheck_scenario()
+        self.write_reports(main, razor)
+        recheck = self.read_recheck_for_feature("alpha")
+        item = finding("重构", True, "问你")
+        item["target"] = "beta"
+        recheck["features"][0]["findings"] = [item]
+        self.write_recheck_report(recheck)
+        result = self.run_check(reports=self.reports_for_check())
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("复审发现目标必须在本功能", result.stdout)
+
+    def test_recheck_rejects_non_string_feature_id_without_crashing(self):
+        main, razor = self.recheck_scenario()
+        self.write_reports(main, razor)
+        recheck = self.read_recheck_for_feature("alpha")
+        recheck["features"][0]["feature"] = ["alpha"]
+        self.write_recheck_report(recheck)
+        result = self.run_check(reports=self.reports_for_check())
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("不在功能清单中", result.stdout)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_evidence_accepts_sentence_punctuation_but_not_decimal_suffix(self):
+        main, razor = self.recheck_scenario()
+        self.write_reports(main, razor)
+        recheck = self.read_recheck_for_feature("alpha")
+        alpha = recheck["features"][0]
+        alpha["verdicts"][0]["evidence"] = "结果见 README.md:1."
+        self.write_recheck_report(recheck)
+        result = self.run_check(reports=self.reports_for_check())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        recheck = self.read_recheck_for_feature("alpha")
+        recheck["features"][0]["verdicts"][0]["evidence"] = "小数 README.md:1.5 不作为行号。"
+        self.write_recheck_report(recheck)
+        result = self.run_check(reports=self.reports_for_check())
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("evidence 必须引至少一处有效位置", result.stdout)
 
     def test_one_python_keep_cannot_cover_two_definitions(self):
         self.add_tracked_file(
@@ -875,6 +949,22 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("alpha/indented-headings.md:1-3", result.stdout)
         self.assertIn("一个实体", result.stdout)
 
+    def test_keep_cannot_cross_blockquote_or_list_item_atx_headings(self):
+        self.add_tracked_file("alpha/blockquote-headings.md", "> # A\n> # B\n")
+        self.add_tracked_file("alpha/list-headings.md", "- # A\n- # B\n")
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"].extend([
+            razor_keep_item("alpha", "alpha/blockquote-headings.md:1-2"),
+            razor_keep_item("alpha", "alpha/list-headings.md:1-2"),
+        ])
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/blockquote-headings.md:1-2", result.stdout)
+        self.assertIn("alpha/list-headings.md:1-2", result.stdout)
+
     def test_keep_cannot_cross_setext_equal_and_hyphen_headings(self):
         self.add_tracked_file(
             "alpha/setext-headings.md",
@@ -890,6 +980,15 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("alpha/setext-headings.md:1-5", result.stdout)
         self.assertIn("一个实体", result.stdout)
 
+    def test_setext_titles_may_contain_pipes_but_table_separators_are_not_titles(self):
+        headings = check_reports_module._markdown_heading_lines([
+            "A | B",
+            "---",
+            "| left | right |",
+            "| --- | --- |",
+        ])
+        self.assertEqual({1}, headings)
+
     def test_yaml_front_matter_is_not_counted_as_markdown_headings(self):
         self.add_tracked_file(
             "alpha/front-matter.md",
@@ -902,6 +1001,23 @@ class CheckReportsTest(unittest.TestCase):
         self.write_reports(main, razor)
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unclosed_yaml_delimiter_does_not_hide_later_headings(self):
+        self.add_tracked_file(
+            "alpha/unclosed-front-matter.md",
+            "---\n# First\n## Second\n",
+        )
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"].append(
+            razor_keep_item("alpha", "alpha/unclosed-front-matter.md:1-3")
+        )
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/unclosed-front-matter.md:1-3", result.stdout)
+        self.assertIn("一个实体", result.stdout)
 
     def test_code_blocks_list_items_and_table_separators_are_not_headings(self):
         self.add_tracked_file(
