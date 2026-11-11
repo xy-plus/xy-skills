@@ -206,6 +206,55 @@ class BrowserTreeTest(unittest.TestCase):
                 self.assertNotIn("来源：", panel.inner_text())
                 browser.close()
 
+    def test_long_external_name_does_not_overflow_a_phone_viewport(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        external_name = "external-" + "x" * 51
+        self.assertEqual(len(external_name), 60)
+        repository = make_repo(self, {
+            "area/subarea/guide.md": f"Uses {external_name}.\n",
+        }, feature("root", "", subrepositories=[], external_dependencies=[external_name], children=[
+            feature("area", "area", children=[
+                feature("subarea", "area/subarea", children=[
+                    feature("guide", None, entries=["area/subarea/guide.md"]),
+                ]),
+            ]),
+        ]))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "rendered"
+            rendered = subprocess.run(
+                ["python3", "-B", str(COMMAND), "render", "--repo", str(repository),
+                 "--out", str(output)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
+
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(executable_path=executable, headless=True)
+                try:
+                    page = browser.new_page(viewport={"width": 390, "height": 844})
+                    page.goto((output / "index.html").as_uri())
+
+                    subarea_row = next(
+                        row for row in page.locator(".feature-row").all()
+                        if row.locator(".feature-title .title").text_content() == "Subarea"
+                    )
+                    subarea_row.locator(".caret").click()
+                    guide_row = next(
+                        row for row in page.locator(".feature-row").all()
+                        if row.locator(".feature-title .title").text_content() == "Guide"
+                    )
+                    guide_row.locator(".feature-title").click()
+
+                    self.assertTrue(page.locator(".detail-panel").is_visible())
+                    self.assertLessEqual(
+                        page.evaluate("document.documentElement.scrollWidth"),
+                        page.evaluate("window.innerWidth"),
+                    )
+                finally:
+                    browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()
