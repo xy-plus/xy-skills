@@ -257,6 +257,3 @@ class BrowserTreeTest(unittest.TestCase):
                 finally:
                     browser.close()
 
-
-if __name__ == "__main__":
-    unittest.main()

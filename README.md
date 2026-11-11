@@ -58,7 +58,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 @~/xy-skills/xy-repo-rules/SKILL.md
 ```
 
-`xy-workflow` 依赖 Claude Code 插件 `superpowers` 不低于 6.4.1，以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 与定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见它的 README；`xy-review/check.py` 复用同仓 `xy-handoff` 的 JSON 校验函数。`xy-handoff` 单向依赖 `xy-runs`，以及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
+`xy-workflow` 依赖 Claude Code 插件 `superpowers` 不低于 6.4.1，以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 与定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见它的 README；`xy-review/check.py` 和 `xy-repo-map` 复用同仓 `xy-handoff` 的 JSON 校验函数。`xy-handoff` 单向依赖 `xy-runs`，以及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
 
 按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并按其中说明配置 runs 的清理范围。
 
@@ -66,51 +66,9 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 ## 仓库功能清单
 
-有功能图的仓库把唯一由人维护的功能清单放在根目录 `repo-map/features.json`。清单只写功能、目的、理由出处、入口、根功能的独立子仓登记和外部依赖名字；外部依赖名字由人在根功能声明，谁用到从代码和文档推导。文件归属、行数、依赖、标记与页面由 `xy-repo-map` 从 Git 跟踪文件推导。
+有功能图的仓库在根目录放 `repo-map/features.json`；清单格式、命令和推导规则见 [`xy-repo-map/SKILL.md`](xy-repo-map/SKILL.md)。
 
-清扫收尾时由 `xy-cleanup` 写 `repo-map/approved.json`（每个功能被认可时的指纹），下次清扫据此只审变过的功能。
-
-最小清单示例：
-
-```json
-{
-  "id": "sample",
-  "title": "示例仓库",
-  "what": "说明仓库提供什么。",
-  "why": {
-    "text": "需要一个可校验的功能清单。",
-    "source": "起草",
-    "quote": "",
-    "from": ""
-  },
-  "directory": "",
-  "subrepositories": [],
-  "external_dependencies": [],
-  "entries": [],
-  "children": []
-}
-```
-
-在仓库中使用 `xy-repo-map/repo_map.py`，并给出仓库根目录的绝对路径：
-
-```bash
-python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py check \
-  --repo /absolute/path/to/repository
-
-python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py render \
-  --repo /absolute/path/to/repository \
-  --out /absolute/path/to/new-output-directory
-
-python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py render-workspace \
-  --repo /absolute/path/to/workspace-repository \
-  --out /absolute/path/to/new-output-directory
-
-python3 /absolute/path/to/xy-skills/xy-repo-map/repo_map.py publish \
-  --out /absolute/path/to/render-output-directory \
-  --as 当前
-```
-
-`check` 校验清单并推导文件归属。`render` 先执行同样的检查，再生成可离线打开的 `index.html` 与 `map-data.json`。`render-workspace` 要求主仓根功能登记至少一个子仓，并要求每个登记的子仓都在当前检出中、是 Git 仓根且有自己的有效功能清单；它把各子仓的图接到主仓根下，并按外部依赖名字连接唯一匹配的跨仓目录功能。组合图中的子仓功能 id 和文件路径带有登记路径前缀。`publish` 使用必填参数 `--as`，取值为 `当前`、`清扫前` 或 `清扫后`。它从 `map-data.json` 自动生成站点名，单仓使用 `<目录名>-map`，组合图使用 `<目录名>-overview-map`，清扫前后快照带发布当天的本地日期。
+清扫收尾时，`xy-cleanup` 将认可的功能指纹写入 `repo-map/approved.json`，供下次只审查有变化的功能。
 
 ## 测试
 

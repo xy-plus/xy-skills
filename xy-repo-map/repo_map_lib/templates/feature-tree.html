@@ -240,16 +240,11 @@ function usesList(featureId) {
   return line;
 }
 
-function incomingCounts(featureId) {
+function appendIncoming(parent, featureId) {
   const counts = { import: 0, mention: 0 };
   for (const use of incomingUses.get(featureId)) {
     counts[use.by]++;
   }
-  return counts;
-}
-
-function appendIncoming(parent, featureId) {
-  const counts = incomingCounts(featureId);
   if (!counts.import && !counts.mention) return;
   const line = make("div", "incoming");
   if (counts.import) line.append(make("span", "", `被用 ${counts.import}`));

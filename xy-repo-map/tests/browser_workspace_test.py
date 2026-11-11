@@ -77,6 +77,3 @@ class BrowserWorkspaceTest(unittest.TestCase):
                 self.assertEqual(detail.locator("h2").text_content(), "Root（sub-b）")
                 browser.close()
 
-
-if __name__ == "__main__":
-    unittest.main()

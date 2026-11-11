@@ -78,6 +78,3 @@ class RenderTest(unittest.TestCase):
                 self.assertIn("--out 必须不存在或为空", result.stdout + result.stderr)
                 self.assertEqual(keep_file.read_text(encoding="utf-8"), "keep")
 
-
-if __name__ == "__main__":
-    unittest.main()

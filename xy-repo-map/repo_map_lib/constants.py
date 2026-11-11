@@ -10,7 +10,7 @@ CODE_SUFFIXES = {
 
 UNSUPPORTED_CODE_SUFFIXES = {
     ".go", ".java", ".kt", ".swift", ".cpp", ".cc", ".hpp", ".cs",
-    ".rb", ".php", ".scala", ".lua",
+    ".rb", ".php", ".scala", ".lua", ".css",
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
 }
 

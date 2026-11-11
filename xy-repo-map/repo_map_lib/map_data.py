@@ -27,7 +27,7 @@ from .metrics import count_file
 from .ownership import assign_files
 
 
-SOURCE_SUFFIXES = set(CODE_SUFFIXES) | {".html", ".css"}
+SOURCE_SUFFIXES = set(CODE_SUFFIXES) | {".html"}
 CODE_CANDIDATE_SUFFIXES = SOURCE_SUFFIXES | UNSUPPORTED_CODE_SUFFIXES
 TEST_FILE_ENDINGS = ("_test.py", "_test.rs")
 

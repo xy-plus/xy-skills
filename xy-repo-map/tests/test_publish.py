@@ -16,8 +16,8 @@ from map_fixture import COMMAND
 REPOSITORY_MAP = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_MAP))
 
-from repo_map_lib.git_repository import ArgumentError  # noqa: E402
-from repo_map_lib.publish_command import (  # noqa: E402
+from repo_map_lib.git_repository import ArgumentError
+from repo_map_lib.publish_command import (
     PLATFORM_PYTHON,
     PORTAL_SCRIPT,
     publish_repository,
@@ -191,6 +191,3 @@ class PublishTest(unittest.TestCase):
 
         self.assertEqual(calls, [])
 
-
-if __name__ == "__main__":
-    unittest.main()

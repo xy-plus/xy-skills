@@ -16,8 +16,6 @@ class LineCounts:
     tests: int
 
 
-ZERO_COUNTS = LineCounts(0, 0, 0, 0)
-
 
 def _python_doc_lines(source):
     try:
@@ -194,8 +192,6 @@ def _lexed_counts(source, language):
 def code_counts(path, source):
     """Classify non-empty source lines; inline comments stay code."""
     suffix = Path(path).suffix.lower()
-    if suffix == ".css":
-        return _lexed_counts(source, "C")
     if suffix == ".html":
         return _html_counts(source)
     if suffix not in CODE_SUFFIXES:
@@ -257,5 +253,5 @@ def count_file(path, category, content):
     if category == "tests":
         return LineCounts(0, 0, 0, sum(bool(line.strip()) for line in content.splitlines()))
     if category == "other":
-        return ZERO_COUNTS
+        return LineCounts(0, 0, 0, 0)
     raise ValueError(f"未知文件类别：{category}")

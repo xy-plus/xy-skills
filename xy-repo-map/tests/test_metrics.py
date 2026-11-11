@@ -118,7 +118,6 @@ let answer = 42; // inline
     def test_unsupported_code_suffix_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "不支持"):
             code_counts("source.go", "package main\n")
+        with self.assertRaisesRegex(ValueError, "不支持"):
+            code_counts("source.css", "body { color: red; }\n")
 
-
-if __name__ == "__main__":
-    unittest.main()

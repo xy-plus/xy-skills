@@ -226,6 +226,21 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("legacy", result.stdout + result.stderr)
 
+    def test_rejects_duplicate_json_keys_in_feature_list(self):
+        self.write(
+            "repo-map/features.json",
+            '{"id":"root","id":"other","title":"示例","what":"说明",'
+            '"why":{"text":"理由","source":"起草","quote":"","from":""},'
+            '"directory":"","subrepositories":[],"external_dependencies":[],'
+            '"entries":[],"children":[]}',
+        )
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("无法读取 repo-map/features.json", result.stdout + result.stderr)
+        self.assertIn("重复键：id", result.stdout + result.stderr)
+
     def test_rejects_a_missing_feature_key(self):
         root = feature("root", "", subrepositories=[], external_dependencies=[])
         del root["what"]
@@ -358,7 +373,7 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_rejects_a_known_but_unsupported_code_suffix(self):
         suffixes = (".go", ".java", ".kt", ".swift", ".cpp", ".cc", ".hpp",
-                    ".cs", ".rb", ".php", ".scala", ".lua", ".ts")
+                    ".cs", ".rb", ".php", ".scala", ".lua", ".ts", ".css")
         for suffix in suffixes:
             self.write(f"src/legacy{suffix}", "unsupported source\n")
         subprocess.run(["git", "-C", str(self.repo), "add", "src"], check=True)
@@ -403,6 +418,3 @@ class FeatureCheckTest(unittest.TestCase):
             "--repo 必须是仓根",
         )
 
-
-if __name__ == "__main__":
-    unittest.main()

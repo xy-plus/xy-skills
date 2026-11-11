@@ -2,6 +2,12 @@
 import json
 from pathlib import Path
 import re
+import sys
+
+
+REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
+from check_handoff import object_without_duplicate_keys  # noqa: E402
 
 
 FEATURE_KEYS = {"id", "title", "what", "why", "directory", "entries", "children"}
@@ -214,8 +220,11 @@ def load_features(repository, tracked_paths):
     if not path.is_file():
         return {}, [], ["缺少 repo-map/features.json"]
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        document = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
         return {}, [], [f"无法读取 repo-map/features.json：{error}"]
 
     features, order, errors = {}, [], []

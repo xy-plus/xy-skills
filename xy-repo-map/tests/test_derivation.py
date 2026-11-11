@@ -98,7 +98,6 @@ class DerivationTest(unittest.TestCase):
         repository = make_repo(self, {
             "src/code.py": '"""module docs"""\n# comment\nvalue = 1\n',
             "src/view.html": "<!-- page note -->\n<p>hello</p>\n<div><!-- inline --></div>\n",
-            "src/style.css": "/* style note */\nbody { color: red; }\ncolor: blue; /* inline */\n",
             "docs/guide.md": "# Guide\nA page.\n",
             "tests/example.py": '"""test docs"""\n# test comment\n',
             "vendor/lib.py": "value = 2\n",
@@ -106,7 +105,15 @@ class DerivationTest(unittest.TestCase):
         }, feature("root", "", subrepositories=[], external_dependencies=[]))
         data = build_map(self, repository)
         counts = data["features"]["root"]["lines"]["own"]
-        self.assertEqual(counts, {"code": 5, "docs": 3, "comments": 3, "tests": 2})
+        self.assertEqual(counts, {"code": 3, "docs": 3, "comments": 2, "tests": 2})
+
+    def test_css_files_are_rejected_as_unsupported_code(self):
+        repository = make_repo(self, {
+            "src/style.css": "/* style note */\nbody { color: red; }\n",
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
+
+        with self.assertRaisesRegex(ValueError, "已知是代码但不支持统计的文件：src/style.css"):
+            map_data.build_map(repository)
 
     def test_files_classified_as_other_are_not_read(self):
         repository = make_repo(self, {
@@ -481,6 +488,3 @@ class DerivationTest(unittest.TestCase):
         self.assertIn("没归到功能的代码或测试", data["features"]["package"]["markers"])
         self.assertEqual(data["markers"], {"等你拍板": 2, "还没实现": 2, "没归到功能的代码或测试": 1})
 
-
-if __name__ == "__main__":
-    unittest.main()
