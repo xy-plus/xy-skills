@@ -170,7 +170,7 @@ def write_files(changes, removals):
 
 def encode_links(links, dismissed):
     rows = list(links)
-    # 挂接意味着要跟进；在唯一编码处作废不必跟进，读入仍可按挂接解释旧并存行。
+    # 挂接意味着要跟进；在唯一编码处作废不必跟进。
     linked = {number for number, _ in links}
     rows.extend((number, "不必跟进 " + reason) for number, reason in dismissed.items()
                 if number not in linked)
@@ -180,8 +180,8 @@ def encode_links(links, dismissed):
 
 def parse_links(text, quotes, tasks):
     """逐行检查，返回合格映射、不必跟进及不合格的原行与原因。"""
-    links, dismissed, invalid = set(), {}, []
-    for line in text.splitlines():
+    links, dismissed, dismissed_lines, invalid = set(), {}, {}, []
+    for line_number, line in enumerate(text.splitlines()):
         try:
             match = re.fullmatch(r"([1-9][0-9]*) (T[1-9][0-9]*|不必跟进 .+)", line)
             if match is None:
@@ -193,6 +193,7 @@ def parse_links(text, quotes, tasks):
                 if number in dismissed or not landing[5:].strip():
                     raise GoalError("不必跟进原因为空或重复")
                 dismissed[number] = landing[5:]
+                dismissed_lines[number] = (line_number, line)
             else:
                 if landing not in tasks:
                     raise GoalError(f"事项 {landing} 不存在")
@@ -200,8 +201,17 @@ def parse_links(text, quotes, tasks):
                     raise GoalError(f"关系重复：{line}")
                 links.add((number, landing))
         except GoalError as error:
-            invalid.append((line, str(error)))
-    return links, dismissed, invalid
+            invalid.append((line_number, line, str(error)))
+    linked_numbers = {number for number, _ in links}
+    for number in linked_numbers & dismissed.keys():
+        line_number, line = dismissed_lines[number]
+        invalid.append((
+            line_number, line,
+            f"原话 {number} 已挂事项，不能同时不必跟进",
+        ))
+        del dismissed[number]
+    invalid.sort(key=lambda item: item[0])
+    return links, dismissed, [(line, reason) for _, line, reason in invalid]
 
 
 class Contract:

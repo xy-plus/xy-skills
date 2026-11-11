@@ -424,14 +424,30 @@ class GoalTests(unittest.TestCase):
         self.succeeds("cancel", "T1", "--quote", "2")
         self.rejects("dismiss", "2", "--reason", "已答", message="原话 2 已挂事项 T1")
 
-    def test_existing_dismissal_for_linked_quote_is_ignored_and_next_write_cleans_it(self):
+    def test_existing_dismissal_for_linked_quote_is_rejected_and_relink_cleans_it(self):
         contract = self.open_goal("release")
         self.quote(contract, 1, "发布要求")
         self.add_task(1)
         (contract / "links.md").write_text("1 T1\n1 不必跟进 旧并存行\n", encoding="utf-8")
-        self.succeeds("check")
-        self.succeeds("update", "T1", "--title", "更新后")
+
+        self.rejects("check", message="原话 1 已挂事项，不能同时不必跟进")
+        output = self.succeeds("relink")
+
+        self.assertIn("丢弃：1 不必跟进 旧并存行", output)
         self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
+        self.succeeds("check")
+
+    def test_update_source_removes_existing_dismissal_without_read_error(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 1, "发布要求")
+        self.quote(contract, 2, "再加一个发布要求")
+        self.add_task(1)
+        self.succeeds("dismiss", "2", "--reason", "暂不跟进")
+
+        self.succeeds("update", "T1", "--source", "2")
+
+        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"),
+                         "1 T1\n2 T1\n")
         self.succeeds("check")
 
     def test_reopen_accepted_task_discards_old_verdict_and_allows_new_acceptance(self):
@@ -1772,7 +1788,8 @@ class GoalTests(unittest.TestCase):
              "--root", str(self.root), "show"],
             env=environment, text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("CLAUDE_CODE_SESSION_ID", result.stderr)
+        self.assertIn("CLAUDE_CODE_SESSION_ID不能为空", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def cli_command(self, *arguments):
         environment = os.environ.copy()
