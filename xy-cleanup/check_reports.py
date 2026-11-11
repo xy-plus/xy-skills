@@ -287,7 +287,7 @@ def _validate_requirement(requirement, label, feature):
             f"{label}.source 必须是 要什么、为什么，或逐字引用有效的用户规范条款"
         )
         return problems
-    if text != expected_text:
+    if text not in expected_text:
         problems.append(f"{label}.text 必须逐字引用来源中的原文：{source}")
     return problems
 

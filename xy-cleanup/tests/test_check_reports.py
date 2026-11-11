@@ -272,6 +272,29 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("requirement.text", result.stdout)
 
+    def test_keep_requirement_accepts_a_continuous_substring(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [razor_keep_item(
+            "alpha", source="要什么", text="alpha 功能",
+        )]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_keep_requirement_rejects_text_joined_from_noncontiguous_parts(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [razor_keep_item(
+            "alpha", source="要什么", text="提供 功能",
+        )]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("requirement.text", result.stdout)
+
     def test_keep_achieved_and_cost_must_be_nonempty(self):
         for key in ("achieved", "cost"):
             with self.subTest(key=key):
