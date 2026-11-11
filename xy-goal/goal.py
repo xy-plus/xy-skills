@@ -828,7 +828,7 @@ def execute(options, *, root, session_id, claude_pid, now):
                 changes[path / "links.md"] = encode_links(contract.links, contract.dismissed)
                 with consume_inputs([inbox] if inbox.exists() else []):
                     write_files(changes, [])
-        print(path.resolve())
+        print(path)
         return 0
     if path is None:
         raise GoalError("本会话没有契约")

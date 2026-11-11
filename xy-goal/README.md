@@ -57,7 +57,7 @@ Stop hook 显式设 `timeout` 为 10 秒：它要等与其他命令共用的根�
 
 hook 不能调用 `CronCreate`、`CronDelete`，挂和删仍由 agent 执行。以 API 错误结束的轮次走 `StopFailure`，不会触发 `Stop`，因此那一轮不核对；例如定时器 7 天到期后的最后一次触发若以 API 错误结束，要等下一次正常结束时才会要求重挂。收件套接字虽然能发消息，但消息可在 agent 正做事时到达并打断当前轮次，还需要常驻发送进程；`asyncRewake` 会把 hook 反馈包装成待处理原话通知，而现有分类规则不能自动标掉它。两者都会增加状态或改变原话处理规则，所以定时器状态由 Stop hook 核对、agent 照做。
 
-全局 settings.json 可能已有 ntfy 手机通知、claude-switch 备份和 chinese-output-reminder 等 Stop hook。`hook-stop` 与 chinese-output-reminder 一样用 `additionalContext` 让 agent 续跑，并在 `stop_hook_active` 为真时跳过。续跑会再触发 Stop；ntfy-notify 以最后一条 `stop_hook_summary` 为本轮边界，续跑部分没有用户输入标记，仍由它自己的分类器决定是否推送。`hook-stop` 只在定时器状态不符时续跑，频率很低，接受这次分类判定，不改 ntfy-notify。
+全局 settings.json 可能已有 ntfy 手机通知、claude-switch 备份和 chinese-output-reminder 等 Stop hook。`hook-stop` 与 chinese-output-reminder 一样用 `additionalContext` 让 agent 续跑。续跑会再触发 Stop；ntfy-notify 以最后一条 `stop_hook_summary` 为本轮边界，续跑部分没有用户输入标记，仍由它自己的分类器决定是否推送。`hook-stop` 只在定时器状态不符时续跑，频率很低，接受这次分类判定，不改 ntfy-notify。
 
 ## 合入前的隔离会话实测
 
