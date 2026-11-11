@@ -123,7 +123,7 @@ class GoalTests(unittest.TestCase):
         self.assertRegex(output, r"T[1-9][0-9]*", "add 必须创建并返回事项编号")
         return output
 
-    def test_open_creates_directory_and_outputs_contract_absolute_path(self):
+    def test_open_creates_directory_and_outputs_exact_timer_prompt(self):
         output = self.succeeds("open", "release", "交付新版本")
         contract = self.project / "20261024-093000-release" / "xy-goal"
         self.assertTrue((contract / "goal.md").is_file(), "契约必须写入项目下的 xy-goal 子目录")
@@ -134,7 +134,7 @@ class GoalTests(unittest.TestCase):
         self.assertIn("交付新版本", metadata)
         self.assertIn("session-main", metadata)
         self.assertIn(str(self.pid), metadata)
-        self.assertEqual(output, f"{contract.resolve()}\n")
+        self.assertEqual(output, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做\n")
 
     def test_add_and_relink_source_supersede_dismissal(self):
         original_root = self.root
@@ -1090,47 +1090,6 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(code, 0, errors)
         self.assertEqual(output + errors, "", "成功 hook 不向会话注入正文")
 
-    def stop_hook(self, payload=None, *, raw=None):
-        if raw is None:
-            raw = json.dumps(payload, ensure_ascii=False)
-        before = self.files()
-        result = self.run_goal("hook-stop", session=None, pid=None, stdin=raw)
-        self.assertEqual(self.files(), before, "hook-stop 只读，不能改契约文件")
-        return result
-
-    def stop_context(self, result):
-        code, output, errors = result
-        self.assertEqual(code, 0, output + errors)
-        self.assertEqual(errors, "")
-        self.assertEqual(output.count("\n"), 1, "Stop hook 决策只输出一行 JSON")
-        payload = json.loads(output)
-        self.assertEqual(set(payload), {"hookSpecificOutput"})
-        hook = payload["hookSpecificOutput"]
-        self.assertEqual(hook["hookEventName"], "Stop")
-        return hook["additionalContext"]
-
-    def stop_error(self, result, message):
-        context = self.stop_context(result)
-        prefix = ("请优先修复本会话契约或 hook 问题，再做别的。"
-                  "这一轮结束时没有核对定时器。原始错误：")
-        self.assertTrue(context.startswith(prefix), context)
-        self.assertIn(message, context[len(prefix):])
-        self.assertNotIn("Traceback", context)
-        return context
-
-    @staticmethod
-    def cron(timer_id, prompt, schedule="*/30 * * * *", recurring=True):
-        return {"id": timer_id, "schedule": schedule, "prompt": prompt, "recurring": recurring}
-
-    @staticmethod
-    def stop_payload(session_id, session_crons, stop_hook_active=False):
-        return {"session_id": session_id, "stop_hook_active": stop_hook_active,
-                "session_crons": session_crons}
-
-    @staticmethod
-    def timer_text(contract):
-        return f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做"
-
     def test_hook_prompt_writes_exact_bytes_and_keeps_repeated_prompt_ids(self):
         contract = self.open_goal("release")
         for text in ("逐字\r\n\n（原话 1 → T9）不要转义。\n", "中途插话"):
@@ -1160,162 +1119,6 @@ class GoalTests(unittest.TestCase):
         self.hook("hook-answer", {"session_id": self.session, "agent_id": "worker-1",
                                   "tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": {}})
         self.assertEqual(self.files(), before)
-
-    def test_hook_stop_without_contract_or_timers_is_silent(self):
-        result = self.stop_hook(self.stop_payload(self.session, []))
-        self.assertEqual(result, (0, "", ""))
-
-    def test_hook_stop_without_contract_deletes_only_xy_goal_timer(self):
-        timers = [
-            self.cron("old-goal", self.timer_text("/old/xy-goal")),
-            self.cron("unrelated", "喝水提醒"),
-        ]
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, timers)))
-        self.assertEqual(context.splitlines(), [
-            "本会话没有契约",
-            "调用 CronDelete 删掉 old-goal（本会话没有契约）",
-        ])
-
-    def test_hook_stop_creates_timer_for_open_contract(self):
-        contract = self.open_goal("release")
-        self.quote(contract, 1, "继续交付")
-        self.add_task(1)
-        prompt = self.timer_text(contract)
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, [])))
-        self.assertEqual(context.splitlines(), [
-            f"本会话契约：{contract}",
-            '调用 CronCreate(cron="*/30 * * * *", recurring=true, '
-            f'prompt="{prompt}")',
-        ])
-
-    def test_hook_stop_keeps_one_fully_matching_timer_silently(self):
-        contract = self.open_goal("release")
-        timers = [self.cron("current", self.timer_text(contract))]
-        self.assertEqual(self.stop_hook(self.stop_payload(self.session, timers)), (0, "", ""))
-
-    def test_hook_stop_deletes_duplicate_and_keeps_first_matching_timer(self):
-        contract = self.open_goal("release")
-        timers = [self.cron("first", self.timer_text(contract)),
-                  self.cron("second", self.timer_text(contract))]
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, timers)))
-        self.assertEqual(context.splitlines(), [
-            f"本会话契约：{contract}",
-            "调用 CronDelete 删掉 second（重复）",
-        ])
-
-    def test_hook_stop_replaces_wrong_schedule_recurring_and_contract_timers(self):
-        contract = self.open_goal("release")
-        timers = [
-            self.cron("wrong-schedule", self.timer_text(contract), schedule="0 * * * *"),
-            self.cron("one-shot", self.timer_text(contract), recurring=False),
-            self.cron("other-contract", self.timer_text("/other/xy-goal")),
-        ]
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, timers)))
-        self.assertEqual(context.splitlines(), [
-            f"本会话契约：{contract}",
-            "调用 CronDelete 删掉 wrong-schedule（不是本契约现在要的定时器）",
-            "调用 CronDelete 删掉 one-shot（不是本契约现在要的定时器）",
-            "调用 CronDelete 删掉 other-contract（不是本契约现在要的定时器）",
-            '调用 CronCreate(cron="*/30 * * * *", recurring=true, '
-            f'prompt="{self.timer_text(contract)}")',
-        ])
-
-    def paused_contract(self, slug):
-        contract = self.open_goal(slug)
-        self.quote(contract, 1, "需要用户确认")
-        output = self.succeeds("add", "--title", "确认方案", "--criteria", "收到确认",
-                               "--source", "1", "--state", "等用户：确认方案", "--pointer", "无")
-        self.assertIn("T1", output)
-        return contract
-
-    def test_hook_stop_paused_contract_reports_then_deletes_timer(self):
-        contract = self.paused_contract("paused")
-        timers = [self.cron("paused-timer", self.timer_text(contract))]
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, timers)))
-        self.assertEqual(context.splitlines(), [
-            f"本会话契约：{contract}；只剩等用户的事项、没有未处理原话：先向用户汇报还剩哪几项、各在等用户什么，再删下面的定时器",
-            "调用 CronDelete 删掉 paused-timer（暂停）",
-        ])
-
-    def test_hook_stop_paused_contract_without_timer_is_silent(self):
-        self.paused_contract("paused")
-        self.assertEqual(self.stop_hook(self.stop_payload(self.session, [])), (0, "", ""))
-
-    def test_hook_stop_waiting_contract_with_unhandled_quote_still_needs_timer(self):
-        contract = self.paused_contract("waiting-with-new-quote")
-        self.quote(contract, 2, "还有一条新要求")
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, [])))
-        self.assertIn(f'prompt="{self.timer_text(contract)}"', context)
-        self.assertIn("调用 CronCreate", context)
-
-    def test_hook_stop_unclosed_contract_without_tasks_or_pending_quotes_needs_timer(self):
-        contract = self.open_goal("completed-but-not-closed")
-        self.quote(contract, 1, "完成交付")
-        self.add_task(1)
-        self.succeeds("accept", "T1", "--verdict", "符合判据")
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, [])))
-        self.assertIn(f'prompt="{self.timer_text(contract)}"', context)
-        self.assertIn("调用 CronCreate", context)
-
-    def test_hook_stop_unreadable_contract_is_treated_as_needing_timer(self):
-        contract = self.open_goal("missing-tasks")
-        (contract / "tasks").rmdir()
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, [])))
-        self.assertEqual(context.splitlines(), [
-            f"本会话契约：{contract}",
-            '调用 CronCreate(cron="*/30 * * * *", recurring=true, '
-            f'prompt="{self.timer_text(contract)}")',
-        ])
-
-    def test_hook_stop_active_skips_checks_before_reading_session_crons(self):
-        result = self.stop_hook({"session_id": self.session, "stop_hook_active": True})
-        self.assertEqual(result, (0, "", ""))
-
-    def test_hook_stop_reports_malformed_input_as_stop_context_without_writes(self):
-        valid_session = self.session
-        cases = (
-            ("not JSON", "不是 JSON", "hook 输入必须是 JSON 对象"),
-            ("not an object", "[]", "hook 输入必须是 JSON 对象"),
-            ("unsafe session id", json.dumps({"session_id": "../escape", "stop_hook_active": False,
-                                               "session_crons": []}), "hook session_id 必须是单个目录名"),
-            ("missing stop_hook_active", json.dumps({"session_id": valid_session, "session_crons": []}),
-             "stop_hook_active"),
-            ("invalid stop_hook_active", json.dumps({"session_id": valid_session, "stop_hook_active": 1,
-                                                       "session_crons": []}), "stop_hook_active"),
-            ("missing session_crons", json.dumps({"session_id": valid_session, "stop_hook_active": False}),
-             "session_crons"),
-            ("invalid session_crons", json.dumps({"session_id": valid_session, "stop_hook_active": False,
-                                                   "session_crons": {}}), "session_crons"),
-            ("cron is not an object", json.dumps(self.stop_payload(valid_session, [1])), "第 1 项"),
-            ("cron id has wrong type", json.dumps(self.stop_payload(valid_session,
-                 [{"id": 1, "schedule": "*/30 * * * *", "prompt": "x", "recurring": True}])), "id"),
-            ("cron schedule has wrong type", json.dumps(self.stop_payload(valid_session,
-                 [{"id": "x", "schedule": 1, "prompt": "x", "recurring": True}])), "schedule"),
-            ("cron prompt has wrong type", json.dumps(self.stop_payload(valid_session,
-                 [{"id": "x", "schedule": "*/30 * * * *", "prompt": 1, "recurring": True}])), "prompt"),
-            ("cron recurring has wrong type", json.dumps(self.stop_payload(valid_session,
-                 [{"id": "x", "schedule": "*/30 * * * *", "prompt": "x", "recurring": 1}])), "recurring"),
-        )
-        for name, raw, reason in cases:
-            with self.subTest(case=name):
-                self.stop_error(self.stop_hook(raw=raw), reason)
-
-    def test_hook_stop_rejects_duplicate_contract_ownership_as_stop_error(self):
-        contract = self.open_goal("release")
-        duplicate = self.project / "duplicate" / "xy-goal"
-        shutil.copytree(contract, duplicate)
-        result = self.stop_hook(self.stop_payload(self.session, []))
-        self.stop_error(result, "对应多份契约")
-
-    def test_hook_stop_json_encodes_timer_prompt_when_slug_contains_a_quote(self):
-        contract = self.open_goal('quote"inside')
-        context = self.stop_context(self.stop_hook(self.stop_payload(self.session, [])))
-        create_line = context.splitlines()[-1]
-        prefix = '调用 CronCreate(cron="*/30 * * * *", recurring=true, prompt='
-        self.assertTrue(create_line.startswith(prefix), create_line)
-        self.assertTrue(create_line.endswith(")"), create_line)
-        prompt = json.loads(create_line[len(prefix):-1])
-        self.assertEqual(prompt, self.timer_text(contract))
 
     def test_open_claims_all_inbox_quotes_in_order_and_removes_inbox(self):
         for text in ("先讨论", "用 xy-goal 开契约"):
@@ -1810,14 +1613,15 @@ class GoalTests(unittest.TestCase):
         contract = self.open_goal("release")
         self.quote(contract, 5, "旧会话要求")
         self.session = "new-session"
-        self.rejects("adopt", str(contract), message="原会话进程还在：先结束原会话")
+        self.rejects("adopt", str(contract), message="原会话进程还在")
         child = subprocess.Popen([sys.executable, "-c", "pass"])
         dead_pid = child.pid
         child.wait()
         metadata = (contract / "goal.md").read_text()
         (contract / "goal.md").write_text(metadata.replace(f'"{self.pid}"', f'"{dead_pid}"'))
         self.hook("hook-prompt", {"session_id": self.session, "prompt": "接管前的话"})
-        self.assertEqual(self.succeeds("adopt", str(contract)), f"{contract.resolve()}\n")
+        self.assertEqual(self.succeeds("adopt", str(contract)),
+                         f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做\n")
         self.assertIn("new-session", (contract / "goal.md").read_text())
         self.assertIn(str(self.pid), (contract / "goal.md").read_text())
         self.assertEqual((contract / "quotes" / "6.md").read_text(), "接管前的话")
@@ -1840,7 +1644,7 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f'claude_pid: "{os.getpid()}"', metadata.read_text())
         self.session = "takeover-session"
-        self.rejects("adopt", str(contract), message="原会话进程还在：先结束原会话")
+        self.rejects("adopt", str(contract), message="原会话进程还在")
         self.session = "session-main"
         self.succeeds("check")
 
@@ -1914,7 +1718,7 @@ class GoalTests(unittest.TestCase):
                 with self.readonly_directory(inbox):
                     code, output, errors = self.command(*arguments)
                     self.assertEqual(code, 0, errors)
-                    self.assertEqual(output, f"{contract.resolve()}\n")
+                    self.assertEqual(output, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做\n")
                     self.assertIn("警告", errors)
                     self.assertFalse(inbox.exists(), "已领原话不能继续留在可被再次领取的位置")
                     self.assertEqual(len(list((contract / "quotes").iterdir())), 1)
