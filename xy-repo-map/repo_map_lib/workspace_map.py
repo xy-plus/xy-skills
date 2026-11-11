@@ -79,9 +79,7 @@ def _compose_maps(main_map, child_maps):
             continue
         repository_path = feature_repositories[feature_id]
         if feature_id == repository_roots[repository_path]:
-            if not repository_path:
-                continue
-            name = Path(repository_path).name
+            name = Path(repository_path).name if repository_path else feature["directory_name"]
         else:
             name = feature["directory_name"]
         directory_names.setdefault(name, []).append((repository_path, feature_id))

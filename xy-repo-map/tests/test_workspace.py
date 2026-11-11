@@ -67,7 +67,7 @@ class WorkspaceRenderTest(unittest.TestCase):
             "没归到功能的代码或测试": 0,
         })
 
-    def test_external_use_named_after_workspace_checkout_stays_external(self):
+    def test_external_use_named_after_workspace_checkout_is_removed_without_root_relation(self):
         manifest_path = self.workspace / "sub-a" / "repo-map" / "features.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["external_dependencies"].append("workspace")
@@ -80,10 +80,9 @@ class WorkspaceRenderTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         data = json.loads((self.output / "map-data.json").read_text(encoding="utf-8"))
-        self.assertEqual(
-            data["features"]["sub-a/root"]["external_uses"],
-            ["missing-tool", "workspace"],
-        )
+        feature = data["features"]["sub-a/root"]
+        self.assertEqual(feature["external_uses"], ["missing-tool"])
+        self.assertFalse(any(use["feature"] == "root" for use in feature["uses"]))
 
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")
