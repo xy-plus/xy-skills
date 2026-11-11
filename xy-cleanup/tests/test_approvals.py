@@ -285,6 +285,41 @@ class ApprovalPlanTest(unittest.TestCase):
             "beta\t认可后变过\n要审 1 个功能（范围内 1 个）\n",
         )
 
+    def test_subrepository_registration_changes_only_root_fingerprint_and_plan(self):
+        original_map = build_map(self, self.repository)
+        original_values, _ = approvals.feature_values(self.repository)
+        original_fingerprints = approvals.feature_fingerprints(
+            self.repository, original_map, original_values
+        )
+        approved_path = self.repository / "repo-map" / "approved.json"
+        approved_path.write_text(
+            json.dumps(original_fingerprints, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        manifest_path = self.repository / "repo-map" / "features.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["subrepositories"] = ["quant-deep"]
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        changed_map = build_map(self, self.repository)
+        changed_values, _ = approvals.feature_values(self.repository)
+        changed_fingerprints = approvals.feature_fingerprints(
+            self.repository, changed_map, changed_values
+        )
+
+        self.assertNotEqual(original_fingerprints["root"], changed_fingerprints["root"])
+        self.assertEqual(original_fingerprints["alpha"], changed_fingerprints["alpha"])
+        self.assertEqual(original_fingerprints["beta"], changed_fingerprints["beta"])
+
+        result = self.plan()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stdout,
+            "root\t认可后变过\n要审 1 个功能（范围内 3 个）\n",
+        )
+
     def test_plan_ignores_approved_file_formatting_changes(self):
         recorded = self.record()
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
