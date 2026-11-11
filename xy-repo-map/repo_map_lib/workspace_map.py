@@ -1,7 +1,7 @@
 """Join maps from a repository and its registered child repositories."""
 from pathlib import Path
 
-from .features import load_features
+from .features import is_feature_ancestor, load_features
 from .git_repository import ArgumentError, tracked_paths
 from .map_data import build_map
 
@@ -22,15 +22,6 @@ def _build_child_map(repository, relative_path):
         return build_map(child_path)
     except (ArgumentError, OSError, ValueError) as error:
         raise ValueError(f"子仓 {relative_path} 的功能图检查失败：{error}") from error
-
-
-def _is_ancestor(ancestor, feature_id, features):
-    current = features[feature_id]["parent"]
-    while current is not None:
-        if current == ancestor:
-            return True
-        current = features[current]["parent"]
-    return False
 
 
 def _compose_maps(main_map, child_maps):
@@ -110,8 +101,8 @@ def _compose_maps(main_map, child_maps):
                 continue
 
             target_id = targets[0]
-            if (_is_ancestor(feature_id, target_id, features)
-                    or _is_ancestor(target_id, feature_id, features)):
+            if (is_feature_ancestor(feature_id, target_id, features)
+                    or is_feature_ancestor(target_id, feature_id, features)):
                 continue
             uses.setdefault(target_id, {"feature": target_id, "by": "mention"})
 
