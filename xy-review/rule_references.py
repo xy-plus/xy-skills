@@ -75,13 +75,6 @@ def rule_quote_problem(source, text):
     return None
 
 
-def basis_rule(basis):
-    """Return the complete local rule named by a cleanup finding's basis."""
-    if not isinstance(basis, dict):
-        return ""
-    return rule_text(basis.get("source"))
-
-
 def basis_is_supported(basis):
     """Check a cleanup basis has an exact rule source and a continuous quote."""
     if not isinstance(basis, dict) or set(basis) != {"source", "text"}:

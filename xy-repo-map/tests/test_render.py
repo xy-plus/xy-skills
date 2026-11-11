@@ -49,7 +49,6 @@ class RenderTest(unittest.TestCase):
         for item in expected["features"].values():
             del item["files"]
         self.assertEqual(page_data, expected)
-        self.assertNotIn("files", page_data["features"]["root"])
         self.assertNotIn("<script src=", page)
         self.assertNotIn("<link rel=\"stylesheet\" href=", page)
 
