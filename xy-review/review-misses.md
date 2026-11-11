@@ -1,8 +1,8 @@
 # 审查判断对照
 
-改审查规则后，重跑这两个固定案例。一个检查原话里的问句不会替实现免掉必要性审查；另一个检查有明确失效机制、用户也已确认的修复不会被误删。
+改审查规则后，重跑这两个固定案例。给审查者的原话截到审查对象送审时为止。一个检查原话里的问句不会替实现免掉必要性审查；另一个检查有明确失效机制、用户也已确认的修复不会被误删。
 
 | 审查对象 | 上游原话 | 期望结果 |
 |---|---|---|
-| `xy-goal` Stop hook（`90ec910..0dd8503`） | A13：「定时自查，每一次是不是都是 AI 手动把它挂到什么地方？是不是可以自动来啊？会不会更方便一点」 | 不得列入 `keep`。这句话是问能否自动化；Stop hook 仍要 agent 手动调用 `CronCreate`、`CronDelete`，还会在所有会话每次 Stop 时运行。收益是否配得上代价时，应交用户定。 |
+| `xy-goal` Stop hook（`90ec910..0dd8503`） | 本次原话 1：「请先读交接说明 /data/user/xy/runs/-home-xy-xy-skills/20261111-092946-goal-cron-automation/handoff.json，然后照做。这件事由你全权负责，结论按交接说明里的回复方式汇报。」（`/data/user/xy/runs/-home-xy-xy-skills/20261111-093140-xy-skills-goal-cron-auto/xy-goal/quotes/1.md`）；A13：「定时自查，每一次是不是都是 AI 手动把它挂到什么地方？是不是可以自动来啊？会不会更方便一点」（`/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json` A13）；R5 用户选「另开一件事：调查并尽量做成自动」，备注「你先判断是否应该这么做 如果应该的话 就开」（`/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer-2.json` R5；题面 `/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-site-2/decisions.json` R5）；Q6 题面「定时器靠 AI 手动挂、7 天过期要手动重挂，漏一次就停」，用户选「合入后另开一件事」（`/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/decisions.json`、同目录 `answers.json` Q6）；交接说明要求给出调查结论（能做到哪一步、依据）、实现能做的部分并说明做不到的原因（`/data/user/xy/runs/-home-xy-xy-skills/20261111-092946-goal-cron-automation/handoff.json` 的 `task.done_when`）。 | 期望方向：不得把 Stop hook 主体列入 `keep`，应交用户定；R5 是带条件的选择，Q6 确认另开任务，交接说明要求调查并实现能做的部分，但 hook 仍要 agent 手动调用 `CronCreate`、`CronDelete`，实际只给出操作提示。综合必要性、收益与全局每次 Stop 的代价，应交用户定。用户后来判它是过度设计并撤回；重跑只提供 `/data/user/xy/runs/-home-xy-xy-skills/20261111-132215-xy-skills-quote-workflow-audit/contrast/stophook-try3/contract` 的送审快照（原话 1–6），不让审查者看到后来的撤回。这个案例处在判断边界，单次结果会翻：同样条件下，合入前后的两套措辞都出现过主体留在 `keep` 的结果；应多跑几次比较结果，不凭一次下结论。 |
 | D3 拒绝重复 JSON 键（`d063120`「校验清扫报告与决定输入」） | 「主审发现：清扫报告校验和决定页面读 JSON 时，同一个键写两遍不会报错，后一个值悄悄盖掉前一个，之后的格式检查看不出来。」（D3 用户选择「做」） | `check_reports.py` 和 `decision_page.py` 拒绝重复键应列入 `keep`：它阻止前值被静默覆盖，且可复用已有的 `object_without_duplicate_keys`。 |
