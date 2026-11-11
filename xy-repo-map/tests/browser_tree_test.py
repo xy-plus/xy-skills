@@ -97,11 +97,14 @@ class BrowserTreeTest(unittest.TestCase):
                 self.assertEqual(external_chip.evaluate("element => element.tagName"), "SPAN")
                 self.assertFalse(external_chip.evaluate("element => Boolean(element.closest('button'))"))
                 mention_chips = row_for_title("Alpha").locator(".uses .use-link")
-                self.assertEqual(mention_chips.all_text_contents(), ["Group提及", "Ready提及"])
+                self.assertEqual(
+                    mention_chips.all_text_contents(),
+                    ["Group（group）提及", "Ready提及"],
+                )
                 for chip in mention_chips.all():
                     self.assertEqual(chip.locator(".mention").text_content(), "提及")
                 consumer_uses = row_for_title("Consumer").locator(".uses .use-link").all_text_contents()
-                self.assertEqual(consumer_uses, ["Ready", "Alpha"])
+                self.assertEqual(consumer_uses, ["Ready", "Alpha（alpha）"])
                 consumer_row = row_for_title("Consumer")
                 why_row = consumer_row.locator(".why")
                 self.assertEqual(why_row.evaluate("element => element.tagName"), "P")

@@ -223,7 +223,7 @@ function usesList(featureId) {
   for (const use of ordered) {
     const target = features[use.feature];
     const sameParent = target.parent === feature.parent ? " same-parent" : "";
-    const button = make("button", `use-link${sameParent}`, target.title);
+    const button = make("button", `use-link${sameParent}`, featureName(target));
     button.type = "button";
     button.addEventListener("click", () => {
       revealFeature(use.feature);
