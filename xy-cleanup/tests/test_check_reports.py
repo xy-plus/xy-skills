@@ -21,7 +21,7 @@ RULE_TEXT = "如无必要，勿增实体（奥卡姆剃刀）。"
 def review_feature(feature_id):
     return {"feature": feature_id, "what_true": "实现与说明相符。",
             "needed": "需要。", "smaller": "不能更少。",
-            "why_holds": "理由仍成立。", "findings": []}
+            "why_holds": "理由仍成立。", "todo_items": [], "findings": []}
 
 
 def report(role, repository, feature_ids=("root", "alpha", "beta")):
@@ -42,6 +42,11 @@ def finding(kind="重构", changes_behavior=True, decision="问你", basis=None)
         "benefit": "减少重复代码。",
         "cost": "需要调整调用。",
     }
+
+
+def todo_item(lines):
+    return {"lines": lines, "needed": "继续处理。", "smaller": "可以保持简短。",
+            "why_holds": "理由仍成立。"}
 
 
 class CheckReportsTest(unittest.TestCase):
@@ -65,6 +70,25 @@ class CheckReportsTest(unittest.TestCase):
         self.main_path.write_text(json.dumps(main, ensure_ascii=False), encoding="utf-8")
         self.razor_path.write_text(json.dumps(razor, ensure_ascii=False), encoding="utf-8")
 
+    def add_tracked_file(self, relative_path, content):
+        path = self.repository / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repository), "add", relative_path], check=True)
+
+    def write_todo_reports(self, items_by_feature, findings_by_feature=None):
+        findings_by_feature = findings_by_feature or {}
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        for document in (main, razor):
+            for review in document["features"]:
+                feature_id = review["feature"]
+                if feature_id in items_by_feature:
+                    review["todo_items"] = items_by_feature[feature_id]
+                if feature_id in findings_by_feature:
+                    review["findings"] = findings_by_feature[feature_id]
+        self.write_reports(main, razor)
+
     def run_check(self, scope=("全部",), reports=None, review="全部"):
         paths = reports or (str(self.main_path), str(self.razor_path))
         arguments = ["python3", "-B", str(COMMAND), "--repo", str(self.repository),
@@ -85,6 +109,135 @@ class CheckReportsTest(unittest.TestCase):
         )
 
     def test_accepts_complete_reports_for_each_role(self):
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_todo_items_are_required_arrays(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        for document in (main, razor):
+            for review in document["features"]:
+                del review["todo_items"]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("todo_items", result.stdout)
+
+        main = report("主审", self.repository)
+        main["features"][0]["todo_items"] = None
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("todo_items", result.stdout)
+
+    def test_rejects_todo_items_without_a_direct_todo_file(self):
+        self.write_todo_reports({"alpha": [todo_item("alpha/TODO.md:1-1")]})
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/TODO.md", result.stdout)
+
+    def test_todo_items_cover_each_nonempty_line_without_covering_blank_lines(self):
+        self.add_tracked_file(
+            "alpha/TODO.md", "开头约定。\n第一条待办。\n\n第二条待办。\n"
+        )
+        self.write_todo_reports({
+            "alpha": [todo_item("alpha/TODO.md:1-2"), todo_item("alpha/TODO.md:4-4")]
+        })
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.write_todo_reports({
+            "alpha": [todo_item("alpha/TODO.md:1-1"), todo_item("alpha/TODO.md:4-4")]
+        })
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/TODO.md", result.stdout)
+        self.assertIn("2", result.stdout)
+
+    def test_rejects_overlapping_todo_item_lines(self):
+        self.add_tracked_file("alpha/TODO.md", "约定。\n待办一。\n待办二。\n")
+        self.write_todo_reports({
+            "alpha": [todo_item("alpha/TODO.md:1-2"), todo_item("alpha/TODO.md:2-3")]
+        })
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/TODO.md", result.stdout)
+
+    def test_todo_item_lines_must_name_a_valid_direct_todo_range(self):
+        self.add_tracked_file("alpha/TODO.md", "约定。\n待办。\n")
+        self.add_tracked_file("beta/TODO.md", "Beta 约定。\n")
+        invalid_lines = (
+            "alpha/TODO.md",
+            "alpha/TODO.md:2",
+            "alpha/TODO.md:2-1",
+            "alpha/TODO.md:0-1",
+            "alpha/TODO.md:1-3",
+            "alpha/TODO.md:one-two",
+            "alpha/main.py:1-1",
+            "beta/TODO.md:1-1",
+        )
+        for lines in invalid_lines:
+            with self.subTest(lines=lines):
+                self.write_todo_reports({
+                    "alpha": [todo_item(lines)],
+                    "beta": [todo_item("beta/TODO.md:1-1")],
+                })
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("alpha", result.stdout)
+                self.assertIn(lines, result.stdout)
+
+    def test_todo_item_requires_exact_keys_and_nonempty_answers(self):
+        self.add_tracked_file("alpha/TODO.md", "约定。\n")
+        invalid_items = [
+            {"lines": "alpha/TODO.md:1-1", "needed": "要做。", "smaller": "简短。"},
+            {**todo_item("alpha/TODO.md:1-1"), "extra": "不允许。"},
+            {**todo_item("alpha/TODO.md:1-1"), "why_holds": "  "},
+        ]
+        for item in invalid_items:
+            with self.subTest(item=item):
+                self.write_todo_reports({"alpha": [item]})
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("todo_items", result.stdout)
+
+    def test_root_todo_is_owned_by_root_and_not_alpha(self):
+        self.add_tracked_file("TODO.md", "仓库约定。\n")
+        self.add_tracked_file("alpha/TODO.md", "Alpha 约定。\n")
+        self.write_todo_reports({
+            "root": [todo_item("TODO.md:1-1")],
+            "alpha": [todo_item("alpha/TODO.md:1-1")],
+        })
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_todo_delete_must_be_asked_while_other_nonbehavioral_delete_is_direct(self):
+        self.add_tracked_file("alpha/TODO.md", "约定。\n过时事项。\n")
+        asked_todo_delete = finding("删除", False, "问你")
+        asked_todo_delete["target"] = "alpha/TODO.md:2"
+        self.write_todo_reports(
+            {"alpha": [todo_item("alpha/TODO.md:1-2")]},
+            {"root": [asked_todo_delete]},
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        direct_todo_delete = finding("删除", False, "直接做")
+        direct_todo_delete["target"] = "alpha/TODO.md:2"
+        self.write_todo_reports(
+            {"alpha": [todo_item("alpha/TODO.md:1-2")]},
+            {"root": [direct_todo_delete]},
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/TODO.md:2", result.stdout)
+
+        direct_file_delete = finding("删除", False, "直接做")
+        direct_file_delete["target"] = "alpha/main.py:1"
+        self.write_todo_reports(
+            {"alpha": [todo_item("alpha/TODO.md:1-2")]},
+            {"root": [direct_file_delete]},
+        )
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

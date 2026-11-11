@@ -28,15 +28,19 @@ from rule_references import basis_is_supported  # noqa: E402
 
 
 REPORT_KEYS = {"role", "repo", "features"}
-FEATURE_KEYS = {"feature", "what_true", "needed", "smaller", "why_holds", "findings"}
+FEATURE_KEYS = {
+    "feature", "what_true", "needed", "smaller", "why_holds", "todo_items", "findings",
+}
 FINDING_KEYS = {
     "kind", "target", "problem", "proposal", "changes_behavior", "decision",
     "basis", "evidence", "benefit", "cost",
 }
 BASIS_KEYS = {"source", "text"}
+TODO_ITEM_KEYS = {"lines", "needed", "smaller", "why_holds"}
 ROLES = {"主审", "剃刀"}
 KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "其他"}
 DECISIONS = {"直接做", "问你"}
+TODO_FILENAME = "TODO.md"  # 用户各仓的 TODO 都叫 TODO.md。
 
 
 def parser():
@@ -63,7 +67,7 @@ def _nonempty(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def _validate_finding(finding, label):
+def _validate_finding(finding, label, tracked_todo_files):
     problems = _field_errors(finding, FINDING_KEYS, label)
     if problems:
         return problems
@@ -82,9 +86,21 @@ def _validate_finding(finding, label):
 
     if (isinstance(changes_behavior, bool) and isinstance(decision, str)
             and decision in DECISIONS and isinstance(kind, str) and kind in KINDS):
-        must_do_directly = kind in {"删除", "合并"} and not changes_behavior
-        if (decision == "直接做") != must_do_directly:
-            problems.append(f"{label}.decision 只有行为不变的删除或合并才能是 直接做")
+        target = finding["target"]
+        target_path, separator, _line = (
+            target.rpartition(":") if isinstance(target, str) else ("", "", "")
+        )
+        target_is_todo = separator and target_path in tracked_todo_files
+        if target_is_todo:
+            # TODO 文件的改动一律由用户决定，即使删除或合并不改变行为。
+            if decision != "问你":
+                problems.append(
+                    f"{label}.decision 目标在 TODO 文件 {finding['target']} 时必须是 问你"
+                )
+        else:
+            must_do_directly = kind in {"删除", "合并"} and not changes_behavior
+            if (decision == "直接做") != must_do_directly:
+                problems.append(f"{label}.decision 行为不变的删除或合并必须是 直接做；其余必须是 问你")
 
     basis = finding["basis"]
     problems.extend(_field_errors(basis, BASIS_KEYS, f"{label}.basis"))
@@ -95,6 +111,16 @@ def _validate_finding(finding, label):
         if set(basis) == BASIS_KEYS and not basis_is_supported(basis):
             problems.append(f"{label}.basis 必须逐字引用有效的 xy-review 规范条款")
     return problems
+
+
+def _read_file_lines(file_path):
+    """Read lines using the same byte and symlink rules as file:line targets."""
+    try:
+        if file_path.is_symlink():
+            return os.readlink(file_path).splitlines()
+        return file_path.read_bytes().splitlines()
+    except OSError:
+        return None
 
 
 def _valid_target(target, data, repository, tracked_files):
@@ -111,20 +137,112 @@ def _valid_target(target, data, repository, tracked_files):
     if line_number < 1:
         return False
     file_path = Path(repository) / path
-    try:
-        if file_path.is_symlink():
-            line_count = len(os.readlink(file_path).splitlines())
-        else:
-            line_count = len(file_path.read_bytes().splitlines())
-    except OSError:
+    lines = _read_file_lines(file_path)
+    if lines is None:
         return False
-    return line_number <= line_count
+    return line_number <= len(lines)
+
+
+def _line_is_nonempty(line):
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    return bool(line.strip())
+
+
+def _validate_todo_items(items, label, repository, direct_todo_files):
+    problems = []
+    if not isinstance(items, list):
+        return [f"{label} 必须是数组"]
+
+    lines_by_file = {}
+    occupied_by_file = {}
+    for item_index, item in enumerate(items):
+        item_label = f"{label}[{item_index}]"
+        item_problems = _field_errors(item, TODO_ITEM_KEYS, item_label)
+        problems.extend(item_problems)
+        if item_problems or not isinstance(item, dict):
+            continue
+        for key in TODO_ITEM_KEYS:
+            if not _nonempty(item[key]):
+                problems.append(f"{item_label}.{key} 必须是非空字符串")
+        line_spec = item["lines"]
+        if not _nonempty(line_spec):
+            continue
+
+        path, separator, range_text = line_spec.rpartition(":")
+        range_parts = range_text.split("-") if separator else []
+        if (not separator or len(range_parts) != 2
+                or any(not part.isascii() or not part.isdecimal() for part in range_parts)):
+            problems.append(
+                f"{item_label}.lines 必须写成 路径:起始行-结束行：{line_spec}"
+            )
+            continue
+        try:
+            start_line, end_line = (int(part) for part in range_parts)
+        except ValueError:
+            problems.append(
+                f"{item_label}.lines 行号无法解析：{line_spec}"
+            )
+            continue
+        if path not in direct_todo_files:
+            problems.append(
+                f"{item_label}.lines 文件不是本功能直属的 TODO 文件：{path}:{start_line}-{end_line}"
+            )
+            continue
+
+        if path not in lines_by_file:
+            lines_by_file[path] = _read_file_lines(Path(repository) / path)
+        file_lines = lines_by_file[path]
+        if file_lines is None:
+            problems.append(
+                f"{item_label}.lines 无法读取 TODO 文件：{path}:{start_line}-{end_line}"
+            )
+            continue
+        if start_line < 1 or start_line > end_line or end_line > len(file_lines):
+            problems.append(
+                f"{item_label}.lines 行范围无效：{path}:{start_line}-{end_line}（文件共 {len(file_lines)} 行）"
+            )
+            continue
+
+        previous_ranges = occupied_by_file.setdefault(path, [])
+        overlapping = next(
+            ((previous_start, previous_end) for previous_start, previous_end in previous_ranges
+             if start_line <= previous_end and previous_start <= end_line),
+            None,
+        )
+        if overlapping is not None:
+            problems.append(
+                f"{item_label}.lines 与同一文件的行范围重叠：{path}:{start_line}-{end_line}"
+            )
+        previous_ranges.append((start_line, end_line))
+
+    for path in sorted(direct_todo_files):
+        if path not in lines_by_file:
+            lines_by_file[path] = _read_file_lines(Path(repository) / path)
+        file_lines = lines_by_file[path]
+        if file_lines is None:
+            problems.append(f"{label} 无法读取直属 TODO 文件：{path}")
+            continue
+        covered_lines = {
+            line_number
+            for start_line, end_line in occupied_by_file.get(path, [])
+            for line_number in range(start_line, end_line + 1)
+        }
+        for line_number, line in enumerate(file_lines, start=1):
+            if _line_is_nonempty(line) and line_number not in covered_lines:
+                problems.append(
+                    f"{label} 未覆盖直属 TODO 的非空行：{path}:{line_number}"
+                )
+    return problems
 
 
 def validate_reports(data, repository, expected_features, report_paths, tracked_files):
     """Return all structural, coverage, decision, and rule-quote problems."""
     problems = []
     counts = {role: {} for role in ROLES}
+    tracked_todo_files = {
+        path for path in tracked_files if Path(path).name == TODO_FILENAME
+    }
     for report_path in report_paths:
         try:
             document = json.loads(
@@ -163,13 +281,28 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             for key in ("what_true", "needed", "smaller", "why_holds"):
                 if not _nonempty(review.get(key)):
                     problems.append(f"{feature_label}.{key} 必须是非空字符串")
+            if feature_id in data["features"] and "todo_items" in review:
+                direct_todo_files = {
+                    path
+                    for group_paths in data["features"][feature_id]["files"].values()
+                    for path in group_paths
+                    if Path(path).name == TODO_FILENAME
+                }
+                problems.extend(_validate_todo_items(
+                    review["todo_items"],
+                    f"报告 {label} 的功能 {feature_id}.todo_items",
+                    repository,
+                    direct_todo_files,
+                ))
+            elif "todo_items" in review and not isinstance(review["todo_items"], list):
+                problems.append(f"{feature_label}.todo_items 必须是数组")
             findings = review.get("findings")
             if not isinstance(findings, list):
                 problems.append(f"{feature_label}.findings 必须是数组")
                 continue
             for finding_index, finding in enumerate(findings):
                 finding_label = f"{feature_label}.findings[{finding_index}]"
-                problems.extend(_validate_finding(finding, finding_label))
+                problems.extend(_validate_finding(finding, finding_label, tracked_todo_files))
                 if (isinstance(finding, dict) and _nonempty(finding.get("target"))
                         and not _valid_target(
                             finding["target"], data, repository, tracked_files
