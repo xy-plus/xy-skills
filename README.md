@@ -26,6 +26,23 @@ for d in ~/xy-skills/*/; do
 done
 ```
 
+安装并固定 superpowers 7.0.2：
+
+```bash
+claude plugin marketplace add obra/superpowers#v7.0.2
+claude plugin install superpowers@superpowers-dev --scope user
+```
+
+官方市场版会跟着更新，所以这里钉住标签版本。装过官方市场版的，按安装范围停用：
+
+```bash
+claude plugin disable superpowers@claude-plugins-official --scope user
+claude plugin disable superpowers@claude-plugins-official --scope project
+claude plugin list
+```
+
+最后核对启用的只有 `superpowers@superpowers-dev` 7.0.2；没装在项目范围时，不运行带 `--scope project` 的停用命令。
+
 在全局 `~/.claude/settings.json` 的 `env` 里显式设置 runs 的绝对路径，保留已有配置，例如：
 
 ```json
@@ -58,7 +75,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 @~/xy-skills/xy-repo-rules/SKILL.md
 ```
 
-`xy-workflow` 依赖 Claude Code 插件 `superpowers` 不低于 6.4.1，以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 与定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见它的 README；`xy-review/check.py` 和 `xy-repo-map` 复用同仓 `xy-handoff` 的 JSON 校验函数。`xy-handoff` 单向依赖 `xy-runs`，以及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
+`xy-workflow` 依赖 Claude Code 插件 `superpowers`，必须是 7.0.2，以及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 与定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见它的 README；`xy-review/check.py` 和 `xy-repo-map` 复用同仓 `xy-handoff` 的 JSON 校验函数。`xy-handoff` 单向依赖 `xy-runs`，以及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
 
 按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并按其中说明配置 runs 的清理范围。
 
