@@ -1,8 +1,9 @@
 """Join maps from a repository and its registered child repositories."""
 from pathlib import Path
 
-from .git_repository import ArgumentError
-from .map_data import build_map, build_map_with_root_feature
+from .features import load_features
+from .git_repository import ArgumentError, tracked_paths
+from .map_data import build_map
 
 
 def _build_child_map(repository, relative_path):
@@ -122,9 +123,14 @@ def _compose_maps(main_map, child_maps):
 
 def build_workspace_map(repository):
     """Build each repository map independently, then join their existing results."""
-    main_map, main_root_feature = build_map_with_root_feature(repository)
+    main_map = build_map(repository)
     repository_root = Path(repository).expanduser().resolve()
-    registered = main_root_feature["subrepositories"]
+    features, order, errors = load_features(
+        repository_root, tracked_paths(repository_root)
+    )
+    if errors:
+        raise ValueError("\n".join(errors))
+    registered = features[order[0]]["subrepositories"]
     if not registered:
         raise ValueError("没有登记子仓，用 render 出本仓的图")
 

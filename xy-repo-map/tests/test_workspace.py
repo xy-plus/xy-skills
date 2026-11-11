@@ -3,15 +3,9 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import unittest
-from unittest.mock import patch
 
-from map_fixture import COMMAND, LIBRARY, feature, make_workspace
-
-sys.path.insert(0, str(LIBRARY))
-
-from repo_map_lib.workspace_map import build_workspace_map  # noqa: E402
+from map_fixture import COMMAND, feature, make_workspace
 
 
 class WorkspaceRenderTest(unittest.TestCase):
@@ -90,22 +84,6 @@ class WorkspaceRenderTest(unittest.TestCase):
             data["features"]["sub-a/root"]["external_uses"],
             ["missing-tool", "workspace"],
         )
-
-    def test_workspace_reuses_the_parsed_main_manifest(self):
-        manifest_path = self.workspace / "repo-map" / "features.json"
-        manifest_text = manifest_path.read_text(encoding="utf-8")
-        parse_json = json.loads
-        main_manifest_parses = []
-
-        def parse_and_record(text):
-            if text == manifest_text:
-                main_manifest_parses.append(text)
-            return parse_json(text)
-
-        with patch("repo_map_lib.features.json.loads", side_effect=parse_and_record):
-            build_workspace_map(self.workspace)
-
-        self.assertEqual(main_manifest_parses, [manifest_text])
 
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")
