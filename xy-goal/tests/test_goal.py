@@ -275,80 +275,98 @@ class GoalTests(unittest.TestCase):
 
     def test_author_initiated_add_stores_evidence_and_show_displays_it(self):
         contract = self.open_goal("release")
+        self.quote(contract, 1, "用户要求按期发布。")
         evidence = "不做会延误交付；做了能按期发布；代价是两小时"
 
         output = self.succeeds("add", "--title", "整理发布流程", "--criteria", "流程验收通过",
-                               "--evidence", evidence, "--state", "在办", "--pointer", "无")
+                               "--source", "1", "--evidence", evidence,
+                               "--state", "在办", "--pointer", "无")
 
         self.assertIn("T1", output)
-        saved = goal.Contract(contract, (contract / "goal.md").read_bytes())
-        self.assertEqual(saved.tasks["T1"]["evidence"], evidence)
-        self.assertEqual(saved.links, set())
-        self.assertIn(f"出处：作者发起：{evidence}", self.succeeds("show"))
-        self.succeeds("check")
-
-    def test_add_requires_exactly_one_of_source_and_evidence(self):
-        contract = self.open_goal("release")
-        self.quote(contract, 1, "发布要求")
-        fields = ("--title", "发布", "--criteria", "测试通过", "--state", "在办",
-                  "--pointer", "无")
-
-        self.rejects("add", *fields, message="one of the arguments --source --evidence is required")
-        self.rejects("add", *fields, "--source", "1", "--evidence",
-                     "不做会延误；做了能发布；代价两小时",
-                     message="not allowed with argument --source")
-
-    def test_add_rejects_empty_author_evidence(self):
-        self.open_goal("release")
-        for evidence, message in (("", "证据不能为空"), ("无", "作者发起证据不能写「无」")):
-            with self.subTest(evidence=evidence):
-                self.rejects("add", "--title", "整理流程", "--criteria", "验收通过",
-                             "--evidence", evidence, "--state", "在办", "--pointer", "无",
-                             message=message)
-
-    def test_author_initiated_item_can_later_receive_a_quote_source(self):
-        contract = self.open_goal("release")
-        evidence = "不做会延误交付；做了能按期发布；代价是两小时"
-        self.succeeds("add", "--title", "整理发布流程", "--criteria", "流程验收通过",
-                      "--evidence", evidence, "--state", "在办", "--pointer", "无")
-        self.quote(contract, 1, "用户要求按期发布。")
-
-        self.succeeds("update", "T1", "--source", "1")
-
         saved = goal.Contract(contract, (contract / "goal.md").read_bytes())
         self.assertEqual(saved.tasks["T1"]["evidence"], evidence)
         self.assertEqual(saved.links, {(1, "T1")})
         self.assertIn(f"出处：原话 1；作者发起：{evidence}", self.succeeds("show"))
         self.succeeds("check")
 
-    def test_evidence_only_item_can_be_cancelled_and_reopened_with_a_reason(self):
+    def test_add_requires_a_quote_source_even_with_evidence(self):
+        self.open_goal("release")
+
+        self.rejects(
+            "add", "--title", "整理发布流程", "--criteria", "流程验收通过",
+            "--evidence", "不做会延误；做了能发布；代价两小时",
+            "--state", "在办", "--pointer", "无",
+            message="--source",
+        )
+
+    def test_add_rejects_empty_author_evidence(self):
         contract = self.open_goal("release")
+        self.quote(contract, 1, "用户要求按期发布。")
+        for evidence, message in (("", "证据不能为空"), ("无", "作者发起证据不能写「无」")):
+            with self.subTest(evidence=evidence):
+                self.rejects("add", "--title", "整理流程", "--criteria", "验收通过",
+                             "--source", "1", "--evidence", evidence,
+                             "--state", "在办", "--pointer", "无",
+                             message=message)
+
+    def test_evidence_item_can_receive_an_additional_quote_source(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 1, "用户要求按期发布。")
         evidence = "不做会延误交付；做了能按期发布；代价是两小时"
         self.succeeds("add", "--title", "整理发布流程", "--criteria", "流程验收通过",
-                      "--evidence", evidence, "--state", "在办", "--pointer", "无")
-        reason = "决定暂缓，等待发布计划确认"
+                      "--source", "1", "--evidence", evidence,
+                      "--state", "在办", "--pointer", "无")
+        self.quote(contract, 2, "用户要求验收后发布。")
 
-        self.succeeds("cancel", "T1", "--reason", reason)
+        self.succeeds("update", "T1", "--source", "2")
 
-        closed = goal.Contract(contract, (contract / "goal.md").read_bytes()).done["T1"]
-        self.assertEqual(closed["cancel_reason"], reason)
-        self.assertNotIn("cancel_quote", closed)
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "")
-        self.succeeds("reopen", "T1")
-        self.assertEqual(goal.Contract(contract, (contract / "goal.md").read_bytes()).tasks["T1"]["evidence"], evidence)
+        saved = goal.Contract(contract, (contract / "goal.md").read_bytes())
+        self.assertEqual(saved.tasks["T1"]["evidence"], evidence)
+        self.assertEqual(saved.links, {(1, "T1"), (2, "T1")})
+        self.assertIn(f"出处：原话 1、2；作者发起：{evidence}", self.succeeds("show"))
         self.succeeds("check")
 
-    def test_author_item_with_a_quote_source_still_requires_quote_to_cancel(self):
+    def test_evidence_and_quote_item_can_be_cancelled_with_a_reason(self):
         contract = self.open_goal("release")
-        evidence = "不做会延误交付；做了能按期发布；代价是两小时"
-        self.succeeds("add", "--title", "整理发布流程", "--criteria", "流程验收通过",
-                      "--evidence", evidence, "--state", "在办", "--pointer", "无")
+        self.quote(contract, 1, "用户要求按期发布。")
+        evidence = "从原话延伸：不做会延误；做了能按期发布；代价两小时"
+        self.succeeds(
+            "add", "--title", "整理发布流程", "--criteria", "流程验收通过",
+            "--source", "1", "--evidence", evidence,
+            "--state", "在办", "--pointer", "无",
+        )
+
+        reason = "决定暂缓，等待发布计划确认"
+        self.succeeds("cancel", "T1", "--reason", reason)
+
+        saved = goal.Contract(contract, (contract / "goal.md").read_bytes())
+        self.assertEqual(saved.done["T1"]["cancel_reason"], reason)
+        self.assertNotIn("cancel_quote", saved.done["T1"])
+        self.assertEqual(saved.links, {(1, "T1")})
+        self.succeeds("reopen", "T1")
+        reopened = goal.Contract(contract, (contract / "goal.md").read_bytes())
+        self.assertEqual(reopened.tasks["T1"]["evidence"], evidence)
+        self.assertEqual(reopened.links, {(1, "T1")})
+        self.succeeds("check")
+
+    def test_open_task_without_quote_source_is_rejected_when_loaded(self):
+        contract = self.open_goal("release")
+        (contract / "tasks" / "T1.md").write_text(
+            'title: "整理发布流程"\ncriteria: "流程验收通过"\nstate: "在办"\n'
+            'pointer: "无"\nevidence: "从原话延伸出的作者证据"\n',
+            encoding="utf-8",
+        )
+
+        self.rejects("show", message="开放事项 T1 没有原话出处")
+
+    def test_task_without_evidence_still_requires_a_quote_to_cancel(self):
+        contract = self.open_goal("release")
         self.quote(contract, 1, "用户要求按期发布。")
         self.quote(contract, 2, "用户要求取消发布。")
-        self.succeeds("update", "T1", "--source", "1")
+        self.add_task(1)
 
         self.rejects("cancel", "T1", "--reason", "决定暂缓",
-                     message="挂了用户原话的事项必须用 --quote")
+                     message="没有作者发起证据的事项必须用 --quote")
         self.succeeds("cancel", "T1", "--quote", "2")
 
         closed = goal.Contract(contract, (contract / "goal.md").read_bytes()).done["T1"]
@@ -1008,7 +1026,7 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(code, 1, output + errors)
         self.assertIn("9 T2", output)
         self.assertIn("10 T3", output)
-        self.assertIn(f"{contract / 'tasks' / 'T3.md'}: 开放事项没有出处", errors)
+        self.assertIn(f"{contract / 'tasks' / 'T3.md'}: 开放事项 T3 没有原话出处", errors)
         self.assertNotIn("修复完成", output)
         before[str((contract / "links.md").relative_to(self.root))] = b"1 T1\n1 T2\n"
         self.assertEqual(self.files(), before, "返回 1 仍保留本次修复，才能逐项收敛")
@@ -1131,7 +1149,7 @@ class GoalTests(unittest.TestCase):
         self.add_task(1)
         hint = "；用 relink [<事项> --source <编号>…] 修复，编号看 quotes/\n"
         cases = (("坏映射\n", "关系格式错误", None),
-                 ("1 不必跟进 已答\n", "开放事项没有出处", "T1"))
+                 ("1 不必跟进 已答\n", "开放事项 T1 没有原话出处", "T1"))
         for links, message, task in cases:
             with self.subTest(message=message, links=links):
                 (contract / "links.md").write_text(links)
@@ -1671,7 +1689,7 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(self.files(), before)
 
     def test_parse_errors_hint_hooks_without_treating_root_values_as_commands(self):
-        missing_fields = "the following arguments are required: --title, --criteria, --state, --pointer\n"
+        missing_fields = "the following arguments are required: --title, --criteria, --state, --pointer, --source\n"
         cases = [(["show"], None, "the following arguments are required: --root\n")]
         for command in ("hook-prompt", "hook-answer"):
             cases.extend((
@@ -1706,7 +1724,7 @@ class GoalTests(unittest.TestCase):
         with self.assertRaises(goal.GoalError) as parse_error:
             goal.parser().parse_args(["--root", str(self.root), "unknown"])
         cases = ((("show",), "本会话没有契约\n"),
-                 (("add",), "the following arguments are required: --title, --criteria, --state, --pointer\n"),
+                 (("add",), "the following arguments are required: --title, --criteria, --state, --pointer, --source\n"),
                  (("unknown",), str(parse_error.exception) + "\n"),
                  (("update", "hook-prompt", "--source", "1"), "本会话没有契约\n"),
                  (("open", "release", ""), "目标不能为空\n"))
@@ -2003,6 +2021,3 @@ class GoalTests(unittest.TestCase):
         self.session = "new-session"
         self.rejects("adopt", str(contract), message="多份契约")
 
-
-if __name__ == "__main__":
-    unittest.main()

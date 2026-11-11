@@ -230,17 +230,19 @@ class Contract:
                 # 机器输入挂上后，完好的契约里没有摘除映射的命令，因此只能在挂接时挡住。
                 raise GoalError(f"原话 {number} 是机器输入（{reason}），不能作为出处{RELINK_USAGE}")
         linked_tasks = {task for _, task in self.links}
-        for task, values in self.tasks.items():
-            if task not in linked_tasks and "evidence" not in values:
-                raise GoalError(f"{path / 'tasks' / (task + '.md')}: 开放事项没有出处{RELINK_USAGE}")
+        for task in self.tasks:
+            if task not in linked_tasks:
+                raise GoalError(
+                    f"{path / 'tasks' / (task + '.md')}: 开放事项 {task} 没有原话出处{RELINK_USAGE}"
+                )
         for task, values in self.done.items():
             if "cancel_quote" in values:
                 number = int(values["cancel_quote"])
                 if number not in self.quotes or (number, task) not in self.links:
                     raise GoalError(f"{path / 'done' / (task + '.md')}: 取消原话不存在或缺少映射")
             if "cancel_reason" in values:
-                if "evidence" not in values or self.sources(task):
-                    raise GoalError(f"{path / 'done' / (task + '.md')}: 取消原因只用于没有原话出处的作者发起事项")
+                if "evidence" not in values:
+                    raise GoalError(f"{path / 'done' / (task + '.md')}: 取消原因只用于带证据的事项")
 
     def read_tasks(self, directory):
         tasks = {}
@@ -316,7 +318,7 @@ class Contract:
         changes, removals = {}, []
         if command == "add":
             values = {name: getattr(options, name) for name in TASK_FIELDS.values()}
-            if options.source is None:
+            if options.evidence is not None:
                 require_text(options.evidence, "证据")
                 if options.evidence == "无":
                     raise GoalError("作者发起证据不能写「无」")
@@ -324,12 +326,10 @@ class Contract:
             for label, name in TASK_FIELDS.items():
                 require_text(values[name], label)
             require_state(values["state"])
-            if options.source is not None:
-                require_source_quotes(options.source, self.quotes, self.path)
+            require_source_quotes(options.source, self.quotes, self.path)
             number = max([int(task[1:]) for task in self.tasks.keys() | self.done.keys()], default=0) + 1
             task = f"T{number}"
-            if options.source is not None:
-                self.links.update((number, task) for number in options.source)
+            self.links.update((number, task) for number in options.source)
             changes[self.path / "tasks" / f"{task}.md"] = encode_fields(values)
         elif command == "update":
             task = options.task
@@ -371,7 +371,7 @@ class Contract:
             sources = self.sources(task)
             if cancel_quote is not None:
                 sources = [number for number in sources if number != int(cancel_quote)]
-            if not sources and "evidence" not in self.done[task]:
+            if not sources:
                 detail = "除取消依据外没有出处" if cancel_quote is not None else "没有出处"
                 raise GoalError(f"已关闭事项 {task} {detail}，不能重开")
             # 只恢复事项字段并丢弃旧结论；若取消依据是原话，它的映射仍保留在 links.md。
@@ -389,15 +389,13 @@ class Contract:
             else:
                 sources = self.sources(task)
                 if options.reason is not None:
-                    if sources:
-                        raise GoalError("挂了用户原话的事项必须用 --quote")
                     if "evidence" not in self.tasks[task]:
-                        raise GoalError("只有写了证据、又没挂原话的事项才能用 --reason")
+                        raise GoalError("没有作者发起证据的事项必须用 --quote")
                     require_text(options.reason, "取消原因")
                     conclusion = {"cancel_reason": options.reason}
                 else:
                     if not sources:
-                        raise GoalError("只挂证据的事项必须用 --reason")
+                        raise GoalError("开放事项没有原话出处，不能用 --quote")
                     require_source_quotes([options.quote], self.quotes, self.path)
                     conclusion = {"cancel_quote": str(options.quote)}
                     self.links.add((options.quote, task))
@@ -430,9 +428,8 @@ def parser():
     adding = commands.add_parser("add")
     for name in TASK_FIELDS.values():
         adding.add_argument(f"--{name}", required=True)
-    provenance = adding.add_mutually_exclusive_group(required=True)
-    provenance.add_argument("--source", type=int, nargs="+")
-    provenance.add_argument("--evidence")
+    adding.add_argument("--source", type=int, nargs="+", required=True)
+    adding.add_argument("--evidence")
     updating = commands.add_parser("update")
     updating.add_argument("task")
     for name in TASK_FIELDS.values():
