@@ -766,4 +766,3 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                 with self.assertRaises(decision_page.DecisionFormatError) as context:
                     decision_page.validate_decisions(decisions)
                 self.assertIn(expected, str(context.exception))
-

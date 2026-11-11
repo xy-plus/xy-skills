@@ -262,4 +262,3 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 bridge.server_close()
                 receiver_thread.join(2)
                 bridge_thread.join(2)
-

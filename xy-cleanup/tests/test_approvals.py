@@ -376,4 +376,3 @@ class ApprovalPlanTest(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 result = self.run_approvals(*arguments)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-

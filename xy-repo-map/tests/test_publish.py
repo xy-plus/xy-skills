@@ -162,4 +162,3 @@ class PublishTest(unittest.TestCase):
             with self.assertRaisesRegex(ArgumentError, "directory_name"):
                 publish_repository(str(self.output), "当前")
         platform.assert_not_called()
-

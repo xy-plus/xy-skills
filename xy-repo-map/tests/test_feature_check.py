@@ -405,4 +405,3 @@ class FeatureCheckTest(unittest.TestCase):
             self.repo / "repo-map",
             "--repo 必须是仓根",
         )
-

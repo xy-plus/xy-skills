@@ -90,4 +90,3 @@ class AuditTest(unittest.TestCase):
                 invalid_path_code = main(["audit.py", os.path.join(root, "missing")])
             self.assertEqual(invalid_path_code, 2)
             self.assertIn("用法：audit.py <目录路径>", output.getvalue())
-

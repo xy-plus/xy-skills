@@ -2037,4 +2037,3 @@ class GoalTests(unittest.TestCase):
         shutil.copytree(contract, self.project / "duplicate-old-owner" / "xy-goal")
         self.session = "new-session"
         self.rejects("adopt", str(contract), message="多份契约")
-

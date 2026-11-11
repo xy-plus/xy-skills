@@ -854,4 +854,3 @@ class ProcessBoundaryTests(CleanerTestCase):
         except UnicodeError as error:
             self.fail(f"reading the UID must not decode the process name: {error}")
         self.assertTrue(item.exists())
-

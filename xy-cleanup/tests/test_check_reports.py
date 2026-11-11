@@ -1570,4 +1570,3 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check(("missing",))
         self.assertEqual(result.returncode, 2)
         self.assertIn("--scope 中有未知功能 id：missing", result.stderr)
-

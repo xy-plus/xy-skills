@@ -469,4 +469,3 @@ class DerivationTest(unittest.TestCase):
         self.assertIn("还没实现", data["features"]["future"]["markers"])
         self.assertIn("没归到功能的代码或测试", data["features"]["package"]["markers"])
         self.assertEqual(data["markers"], {"等你拍板": 2, "还没实现": 2, "没归到功能的代码或测试": 1})
-

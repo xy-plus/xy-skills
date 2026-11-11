@@ -57,4 +57,3 @@ class RuleReferencesTest(unittest.TestCase):
                 numbered_text(skill_path, 1)
                 numbered_text(skill_path, 2)
             self.assertEqual(reads, [skill_path])
-

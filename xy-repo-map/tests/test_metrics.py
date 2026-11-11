@@ -120,4 +120,3 @@ let answer = 42; // inline
             code_counts("source.go", "package main\n")
         with self.assertRaisesRegex(ValueError, "不支持"):
             code_counts("source.css", "body { color: red; }\n")
-

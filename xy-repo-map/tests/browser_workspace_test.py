@@ -76,4 +76,3 @@ class BrowserWorkspaceTest(unittest.TestCase):
                 self.assertTrue(detail.is_visible())
                 self.assertEqual(detail.locator("h2").text_content(), "Root（sub-b）")
                 browser.close()
-

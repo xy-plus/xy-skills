@@ -629,4 +629,3 @@ class CheckTest(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(main(["check.py"]), 2)
-

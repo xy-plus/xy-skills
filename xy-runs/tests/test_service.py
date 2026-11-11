@@ -132,4 +132,3 @@ class ServiceTests(unittest.TestCase):
         roots = clean.expand_roots(patterns, errors)
         self.assertEqual(set(roots), {runs, project, inbox})
         self.assertEqual(errors.getvalue(), "")
-

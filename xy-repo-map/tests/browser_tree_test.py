@@ -256,4 +256,3 @@ class BrowserTreeTest(unittest.TestCase):
                     )
                 finally:
                     browser.close()
-

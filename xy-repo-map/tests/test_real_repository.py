@@ -62,4 +62,3 @@ class RealRepositoryTest(unittest.TestCase):
                 expected_lines[name] += getattr(counts, name)
         root_lines = map_data["features"][map_data["root"]]["lines"]["total"]
         self.assertEqual({name: root_lines[name] for name in LINE_NAMES}, expected_lines)
-

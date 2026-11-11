@@ -156,4 +156,3 @@ class CheckHandoffTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(str(self.path), result.stdout)
         self.assertEqual(result.stderr, "")
-
