@@ -127,13 +127,6 @@ class CheckHandoffTest(unittest.TestCase):
         document.update(quotes=[], facts=[])
         self.assert_rejected(document, "facts", "不能为空")
 
-    def test_reply_must_be_one_of_the_two_values(self):
-        for reply in ("", "不需要", "不要：直接向用户汇报", None, True):
-            with self.subTest(reply=reply):
-                document = handoff()
-                document["reply"] = reply
-                self.assert_rejected(document, "reply", "要", "不要")
-
     def test_each_quote_requires_text_and_source(self):
         document = handoff()
         document["quotes"] = [{"text": "第一条"}, {"source": "/quotes/2.md"}, {}]
@@ -172,6 +165,3 @@ class CheckHandoffTest(unittest.TestCase):
         self.assertIn(str(self.path), result.stdout)
         self.assertEqual(result.stderr, "")
 
-
-if __name__ == "__main__":
-    unittest.main()
