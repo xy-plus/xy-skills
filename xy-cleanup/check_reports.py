@@ -44,7 +44,7 @@ FINDING_KEYS = {
 BASIS_KEYS = {"source", "text"}
 TODO_ITEM_KEYS = {"lines", "needed", "smaller", "why_holds"}
 KEEP_ITEM_KEYS = {"lines", "requirement", "achieved", "cost"}
-RECHECK_VERDICT_KEYS = {"lines", "attack", "verdict"}
+RECHECK_VERDICT_KEYS = {"lines", "attempt", "evidence", "verdict"}
 ROLES = {"主审", "剃刀"}
 REPORT_ROLES = ROLES | {"剃刀复审"}
 KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "其他"}
@@ -205,8 +205,44 @@ def _validate_finding(finding, label, tracked_todo_files, force_ask_user):
     return problems
 
 
+def _tracked_location_patterns(tracked_files):
+    return [
+        (
+            path,
+            re.compile(
+                rf"(?<![A-Za-z0-9_./-]){re.escape(path)}:"
+                r"(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?(?![A-Za-z0-9_./-])"
+            ),
+        )
+        for path in sorted(tracked_files, key=lambda value: (-len(value), value))
+    ]
+
+
+def _has_external_evidence_location(evidence, verdict_range, label, repository,
+                                    tracked_files, lines_by_file, location_patterns):
+    own_path, own_start, own_end = verdict_range
+    for _path, pattern in location_patterns:
+        for match in pattern.finditer(evidence):
+            location, errors = _checked_line_range(
+                match.group(0), label, "evidence", repository, tracked_files,
+                lines_by_file, allow_single_line=True,
+            )
+            if errors or location is None:
+                continue
+            path, start_line, end_line = location
+            overlaps_own_lines = (
+                path == own_path
+                and start_line <= own_end
+                and own_start <= end_line
+            )
+            if not overlaps_own_lines:
+                return True
+    return False
+
+
 def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
-                               feature_targets):
+                               feature_targets, repository, tracked_files,
+                               lines_by_file, location_patterns):
     if not isinstance(verdicts, list):
         return [f"{label}.verdicts 必须是数组"]
 
@@ -225,8 +261,25 @@ def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
             problems.append(f"{verdict_label}.lines 必须与首轮 keep 的 lines 完全相同的字符串")
         else:
             verdict_counts[lines] = verdict_counts.get(lines, 0) + 1
-        if not _nonempty(verdict["attack"]):
-            problems.append(f"{verdict_label}.attack 必须是非空字符串")
+        if not _nonempty(verdict["attempt"]):
+            problems.append(f"{verdict_label}.attempt 必须是非空字符串")
+        evidence = verdict["evidence"]
+        if not _nonempty(evidence):
+            problems.append(f"{verdict_label}.evidence 必须是非空字符串")
+        elif isinstance(lines, str):
+            line_range = _parse_line_range(lines)
+            if line_range is not None and not _has_external_evidence_location(
+                evidence,
+                line_range,
+                verdict_label,
+                repository,
+                tracked_files,
+                lines_by_file,
+                location_patterns,
+            ):
+                problems.append(
+                    f"{verdict_label}.evidence 必须引至少一处有效位置（本实体行范围以外）：{lines}"
+                )
         if (not isinstance(verdict["verdict"], str)
                 or verdict["verdict"] not in {"站得住", "站不住"}):
             problems.append(
@@ -551,6 +604,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     recheck_report_seen = False
     razor_keep_lines = {}
     pending_recheck_verdicts = []
+    evidence_lines_by_file = {}
     tracked_todo_files = {
         path for path in tracked_files if Path(path).name == TODO_FILENAME
     }
@@ -579,6 +633,9 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
         if not isinstance(review_features, list):
             problems.append(f"报告 {label} 的 features 必须是数组")
             continue
+        if role == "剃刀复审" and len(review_features) != 1:
+            # Large batches produced formulaic reviews, so split by feature and require checkable positions.
+            problems.append(f"报告 {label} 的剃刀复审 features 必须恰有一个功能对象，实际 {len(review_features)} 个")
         for feature_index, review in enumerate(review_features):
             feature_label = f"报告 {label} 的 features[{feature_index}]"
             if not isinstance(review, dict):
@@ -699,6 +756,9 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     required_rechecks.add(feature_id)
 
     # Requiring one verdict per keep prevents reviewers from skipping items and returning an empty report.
+    location_patterns = (
+        _tracked_location_patterns(tracked_files) if pending_recheck_verdicts else []
+    )
     for feature_id, verdicts, label, finding_ranges, feature_targets in pending_recheck_verdicts:
         problems.extend(_validate_recheck_verdicts(
             verdicts,
@@ -706,6 +766,10 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             razor_keep_lines.get(feature_id, []),
             finding_ranges,
             feature_targets,
+            repository,
+            tracked_files,
+            evidence_lines_by_file,
+            location_patterns,
         ))
 
     for role in sorted(ROLES):
