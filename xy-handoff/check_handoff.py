@@ -51,8 +51,9 @@ def check(document):
     """返回问题列表，为空即合格。"""
     problems = check_value("交接说明", document, FIELDS)
     if isinstance(document, dict):
-        if document.get("quotes") == []:
-            problems.append("交接说明.quotes 不能为空")
+        if document.get("quotes") == [] and document.get("facts") == []:
+            # 没有用户原话作出处时，facts 至少要留下这件事的证据。
+            problems.append("交接说明.facts 没有用户原话时不能为空")
         if "reply" in document and document["reply"] not in ("要", "不要"):
             problems.append("reply 只能是「要」或「不要」")
     return problems
