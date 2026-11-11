@@ -196,6 +196,14 @@ class CheckReportsTest(unittest.TestCase):
                 self.assertIn("alpha", result.stdout)
                 self.assertIn(lines, result.stdout)
 
+    def test_todo_item_lines_must_be_nonempty_strings(self):
+        for lines in ("", "  ", 5):
+            with self.subTest(lines=lines):
+                self.write_todo_reports({"alpha": [todo_item(lines)]})
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("lines", result.stdout)
+
     def test_todo_item_requires_exact_keys_and_nonempty_answers(self):
         self.add_tracked_file("alpha/TODO.md", "约定。\n")
         invalid_items = [

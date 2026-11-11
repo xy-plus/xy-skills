@@ -162,7 +162,7 @@ def _validate_todo_items(items, label, repository, direct_todo_files):
         problems.extend(item_problems)
         if item_problems or not isinstance(item, dict):
             continue
-        for key in ("needed", "smaller", "why_holds"):
+        for key in ("lines", "needed", "smaller", "why_holds"):
             if not _nonempty(item[key]):
                 problems.append(f"{item_label}.{key} 必须是非空字符串")
         line_spec = item["lines"]
