@@ -84,6 +84,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
     "from": ""
   },
   "directory": "",
+  "subrepositories": [],
   "entries": [],
   "children": []
 }
