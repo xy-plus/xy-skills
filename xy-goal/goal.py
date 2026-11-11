@@ -221,6 +221,11 @@ class Contract:
             read_text(links_path), self.quotes, self.tasks.keys() | self.done.keys())
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
+        for number, _ in self.links:
+            reason = automatic_reason(self.quotes[number], path)
+            if reason is not None:
+                # 机器输入挂上后，完好的契约里没有摘除映射的命令，因此只能在挂接时挡住。
+                raise GoalError(f"原话 {number} 是机器输入（{reason}），不能作为出处")
         linked_tasks = {task for _, task in self.links}
         for task in self.tasks:
             if task not in linked_tasks:
@@ -258,9 +263,7 @@ class Contract:
         return sorted(self.quotes.keys() - handled)
 
     def require_sources(self, sources):
-        for number in sources:
-            if number not in self.quotes:
-                raise GoalError(f"原话 {number} 不存在：{self.path / 'quotes'}")
+        require_source_quotes(sources, self.quotes, self.path)
 
     def require_task(self, task):
         if task not in self.tasks:
@@ -439,6 +442,15 @@ def automatic_reason(text, contract):
                     for tag in ("task-id", "status", "summary"))):
         return "自动：完整后台任务通知"
     return None
+
+
+def require_source_quotes(sources, quotes, contract):
+    for number in sources:
+        if number not in quotes:
+            raise GoalError(f"原话 {number} 不存在：{contract / 'quotes'}")
+        reason = automatic_reason(quotes[number], contract)
+        if reason is not None:
+            raise GoalError(f"原话 {number} 是机器输入（{reason}），不能作为出处")
 
 
 def require_project_name(name):
@@ -663,12 +675,19 @@ def relink(path, goal_content, task, sources):
     if task is not None:
         if re.fullmatch(r"T[1-9][0-9]*", task) is None or task not in tasks:
             raise GoalError(f"开放事项 {task} 不存在")
-        for number in sources:
-            if number not in quotes:
-                raise GoalError(f"原话 {number} 不存在：{path / 'quotes'}")
+        require_source_quotes(sources, quotes, path)
     links, dismissed, invalid = parse_links(text, quotes, tasks | done)
     for line, reason in invalid:
         print(f"丢弃：{line}；{reason}")
+    kept_links = set()
+    for number, landing in links:
+        reason = automatic_reason(quotes[number], path)
+        if reason is None:
+            kept_links.add((number, landing))
+        else:
+            print(f"丢弃：{number} {landing}；原话 {number} 是机器输入（{reason}），不能作为出处")
+            dismissed[number] = reason
+    links = kept_links
     if task is not None:
         links.update((number, task) for number in sources)
     write_files({links_path: encode_links(links, dismissed)}, [])

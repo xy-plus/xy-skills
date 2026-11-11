@@ -156,6 +156,58 @@ class GoalTests(unittest.TestCase):
                 self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
                 self.succeeds("check")
 
+    def test_add_refuses_both_known_machine_input_shapes_as_sources(self):
+        original_root = self.root
+        cases = (
+            ("timer", lambda contract: f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做",
+             "自动：本契约定时提示"),
+            ("notification",
+             lambda contract: "<task-notification><task-id>13</task-id><status>completed</status>"
+                              "<summary>运行测试</summary></task-notification>",
+             "自动：完整后台任务通知"),
+        )
+        for name, text_for, reason in cases:
+            with self.subTest(name=name):
+                self.root = original_root / name
+                self.root.mkdir()
+                contract = self.open_goal("release")
+                self.quote(contract, 1, text_for(contract))
+                self.rejects("add", "--title", "发布", "--criteria", "测试通过",
+                             "--source", "1", "--state", "在办", "--pointer", "无",
+                             message=f"原话 1 是机器输入（{reason}）")
+
+    def test_update_source_refuses_machine_input_without_writing(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 1, "发布要求")
+        self.add_task(1)
+        machine_text = f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做"
+        self.quote(contract, 2, machine_text)
+        self.rejects("update", "T1", "--source", "2",
+                     message="原话 2 是机器输入（自动：本契约定时提示）")
+        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
+
+    def test_check_reports_machine_input_already_linked_to_a_task(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 1, "发布要求")
+        self.add_task(1)
+        self.quote(contract, 2, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做")
+        (contract / "links.md").write_text("1 T1\n2 T1\n", encoding="utf-8")
+        self.rejects("check", message="原话 2 是机器输入（自动：本契约定时提示）")
+
+    def test_relink_drops_machine_mapping_and_records_automatic_reason(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 1, "发布要求")
+        self.add_task(1)
+        self.quote(contract, 2, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做")
+        (contract / "links.md").write_text("1 T1\n2 T1\n", encoding="utf-8")
+
+        output = self.succeeds("relink")
+
+        self.assertIn("丢弃：2 T1；原话 2 是机器输入（自动：本契约定时提示）", output)
+        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"),
+                         "1 T1\n2 不必跟进 自动：本契约定时提示\n")
+        self.succeeds("check")
+
     def test_dismiss_rejects_quote_linked_to_closed_task(self):
         contract = self.open_goal("release")
         self.quote(contract, 1, "发布要求")
