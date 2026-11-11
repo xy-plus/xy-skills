@@ -130,6 +130,15 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("todo_items", result.stdout)
 
+    def test_non_string_feature_id_is_rejected_without_crashing(self):
+        main = report("主审", self.repository, ("alpha",))
+        main["features"][0]["feature"] = []
+        self.write_reports(main, report("剃刀", self.repository, ("alpha",)))
+        result = self.run_check(scope=("alpha",))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr, result.stderr)
+        self.assertIn("不在功能清单中", result.stdout)
+
     def test_rejects_todo_items_without_a_direct_todo_file(self):
         self.write_todo_reports({"alpha": [todo_item("alpha/TODO.md:1-1")]})
         result = self.run_check()
@@ -152,7 +161,7 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("alpha/TODO.md", result.stdout)
-        self.assertIn("2", result.stdout)
+        self.assertIn("alpha/TODO.md:2", result.stdout)
 
     def test_rejects_overlapping_todo_item_lines(self):
         self.add_tracked_file("alpha/TODO.md", "约定。\n待办一。\n待办二。\n")

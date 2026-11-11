@@ -162,7 +162,7 @@ def _validate_todo_items(items, label, repository, direct_todo_files):
         problems.extend(item_problems)
         if item_problems or not isinstance(item, dict):
             continue
-        for key in TODO_ITEM_KEYS:
+        for key in ("needed", "smaller", "why_holds"):
             if not _nonempty(item[key]):
                 problems.append(f"{item_label}.{key} 必须是非空字符串")
         line_spec = item["lines"]
@@ -281,21 +281,22 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             for key in ("what_true", "needed", "smaller", "why_holds"):
                 if not _nonempty(review.get(key)):
                     problems.append(f"{feature_label}.{key} 必须是非空字符串")
-            if feature_id in data["features"] and "todo_items" in review:
+            if isinstance(feature_id, str) and feature_id in data["features"]:
                 direct_todo_files = {
                     path
                     for group_paths in data["features"][feature_id]["files"].values()
                     for path in group_paths
                     if Path(path).name == TODO_FILENAME
                 }
+            else:
+                direct_todo_files = set()
+            if "todo_items" in review:
                 problems.extend(_validate_todo_items(
                     review["todo_items"],
                     f"报告 {label} 的功能 {feature_id}.todo_items",
                     repository,
                     direct_todo_files,
                 ))
-            elif "todo_items" in review and not isinstance(review["todo_items"], list):
-                problems.append(f"{feature_label}.todo_items 必须是数组")
             findings = review.get("findings")
             if not isinstance(findings, list):
                 problems.append(f"{feature_label}.findings 必须是数组")
