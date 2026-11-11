@@ -53,6 +53,18 @@ class ApprovalPlanTest(unittest.TestCase):
         approved_path.symlink_to(external_path)
         return approved_path, external_path
 
+    def link_repo_map_to_external_directory(self):
+        repo_map_path = self.repository / "repo-map"
+        external_directory = self.repository.parent / "outside-repo-map"
+        external_directory.mkdir()
+        (external_directory / "features.json").write_bytes(
+            (repo_map_path / "features.json").read_bytes()
+        )
+        (repo_map_path / "features.json").unlink()
+        repo_map_path.rmdir()
+        repo_map_path.symlink_to(external_directory, target_is_directory=True)
+        return external_directory
+
     def test_scope_validation_is_public_and_keeps_current_errors(self):
         data = build_map(self, self.repository)
         invalid_scopes = (
@@ -123,6 +135,32 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertTrue(approved_path.is_symlink())
         self.assertEqual(external_path.read_text(encoding="utf-8"), original_content)
+
+    def test_plan_rejects_repo_map_directory_symlink_without_creating_files(self):
+        external_directory = self.link_repo_map_to_external_directory()
+
+        result = self.plan()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("认可记录", result.stdout)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(
+            sorted(path.name for path in external_directory.iterdir()),
+            ["features.json"],
+        )
+
+    def test_record_rejects_repo_map_directory_symlink_without_creating_files(self):
+        external_directory = self.link_repo_map_to_external_directory()
+
+        result = self.record()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("认可记录", result.stdout)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(
+            sorted(path.name for path in external_directory.iterdir()),
+            ["features.json"],
+        )
 
     def test_record_removes_temporary_file_when_replace_fails(self):
         data = build_map(self, self.repository)

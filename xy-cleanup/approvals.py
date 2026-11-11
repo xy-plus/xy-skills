@@ -68,8 +68,15 @@ def validate_scope(data, scope):
 
 
 def _reject_approval_symlink(path):
-    if path.is_symlink():
-        raise ValueError(f"认可记录不能是符号链接：{path}")
+    repository = Path(path).parent.parent
+    expected_path = os.path.join(
+        os.path.realpath(repository), "repo-map", "approved.json"
+    )
+    if os.path.realpath(path) != expected_path:
+        raise ValueError(
+            "认可记录必须是仓库内的 repo-map/approved.json，"
+            f"路径上不能有符号链接：{path}"
+        )
 
 
 def read_approvals(path):
