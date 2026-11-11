@@ -35,6 +35,7 @@ FEATURE_KEYS = {
         "feature", "what_true", "why_holds", "structure", "todo_items", "findings",
     },
     "剃刀": {"feature", "necessity", "keep", "todo_items", "findings"},
+    "剃刀复审": {"feature", "findings"},
 }
 FINDING_KEYS = {
     "kind", "target", "problem", "proposal", "changes_behavior", "decision",
@@ -44,6 +45,7 @@ BASIS_KEYS = {"source", "text"}
 TODO_ITEM_KEYS = {"lines", "needed", "smaller", "why_holds"}
 KEEP_ITEM_KEYS = {"lines", "requirement", "achieved", "cost"}
 ROLES = {"主审", "剃刀"}
+REPORT_ROLES = ROLES | {"剃刀复审"}
 KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "其他"}
 DECISIONS = {"直接做", "问你"}
 TODO_FILENAME = "TODO.md"  # 用户各仓的 TODO 都叫 TODO.md。
@@ -155,7 +157,7 @@ def _uncovered_nonempty_lines(paths, ranges_by_file, label, description,
     return problems
 
 
-def _validate_finding(finding, label, tracked_todo_files):
+def _validate_finding(finding, label, tracked_todo_files, force_ask_user):
     problems = _field_errors(finding, FINDING_KEYS, label)
     if problems:
         return problems
@@ -172,7 +174,11 @@ def _validate_finding(finding, label, tracked_todo_files):
     if not isinstance(decision, str) or decision not in DECISIONS:
         problems.append(f"{label}.decision 只能是 直接做 或 问你")
 
-    if (isinstance(changes_behavior, bool) and isinstance(decision, str)
+    if force_ask_user:
+        # A recheck challenges the first Razor's keep decision, so both conclusions go to the user.
+        if decision != "问你":
+            problems.append(f"{label}.decision 剃刀复审的决定必须是 问你")
+    elif (isinstance(changes_behavior, bool) and isinstance(decision, str)
             and decision in DECISIONS and isinstance(kind, str) and kind in KINDS):
         target_range = _parse_line_range(finding["target"], allow_single_line=True)
         target_is_todo = target_range is not None and target_range[0] in tracked_todo_files
@@ -476,6 +482,9 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     """Return all structural, coverage, decision, and rule-quote problems."""
     problems = []
     counts = {role: {} for role in ROLES}
+    recheck_counts = {}
+    required_rechecks = set()
+    recheck_report_seen = False
     tracked_todo_files = {
         path for path in tracked_files if Path(path).name == TODO_FILENAME
     }
@@ -493,8 +502,10 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
         if not isinstance(document, dict):
             continue
         role = document.get("role")
-        if not isinstance(role, str) or role not in ROLES:
-            problems.append(f"报告 {label} 的 role 必须是 主审 或 剃刀")
+        if not isinstance(role, str) or role not in REPORT_ROLES:
+            problems.append(f"报告 {label} 的 role 必须是 主审、剃刀 或 剃刀复审")
+        elif role == "剃刀复审":
+            recheck_report_seen = True
         expected_repository = str(Path(repository).resolve())
         if document.get("repo") != expected_repository:
             problems.append(f"报告 {label} 的 repo 必须等于 {expected_repository}")
@@ -513,10 +524,12 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             feature_id = review.get("feature")
             if not isinstance(feature_id, str) or feature_id not in data["features"]:
                 problems.append(f"{feature_label}.feature 不在功能清单中：{feature_id!r}")
-            elif feature_id not in expected_features:
+            elif isinstance(role, str) and role in ROLES and feature_id not in expected_features:
                 problems.append(f"报告功能不在本次审查名单里：{feature_id}")
-            elif isinstance(role, str) and role in counts:
+            elif isinstance(role, str) and role in ROLES:
                 counts[role][feature_id] = counts[role].get(feature_id, 0) + 1
+            elif role == "剃刀复审":
+                recheck_counts[feature_id] = recheck_counts.get(feature_id, 0) + 1
             if role == "主审":
                 for key in ("what_true", "why_holds", "structure"):
                     if not _nonempty(review.get(key)):
@@ -540,7 +553,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             else:
                 direct_files = set()
                 direct_todo_files = set()
-            if "todo_items" in review:
+            if isinstance(role, str) and role in ROLES and "todo_items" in review:
                 problems.extend(_validate_todo_items(
                     review["todo_items"],
                     f"报告 {label} 的功能 {feature_id}.todo_items",
@@ -555,7 +568,10 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             feature_targets = []
             for finding_index, finding in enumerate(findings):
                 finding_label = f"{feature_label}.findings[{finding_index}]"
-                problems.extend(_validate_finding(finding, finding_label, tracked_todo_files))
+                problems.extend(_validate_finding(
+                    finding, finding_label, tracked_todo_files,
+                    force_ask_user=role == "剃刀复审",
+                ))
                 if not isinstance(finding, dict) or not _nonempty(finding.get("target")):
                     continue
                 target = finding["target"]
@@ -586,6 +602,18 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     finding_ranges,
                     feature_targets,
                 ))
+                if (
+                    feature_id in expected_features
+                    and feature_data["why"]["source"] != "起草"
+                    and keep_files
+                    and not any(
+                        isinstance(finding, dict)
+                        and finding.get("kind") in {"删除", "合并"}
+                        for finding in findings
+                    )
+                ):
+                    # Zero reductions need an independent check; a numerical quota would reward made-up findings.
+                    required_rechecks.add(feature_id)
 
     for role in sorted(ROLES):
         for feature_id in expected_features:
@@ -594,6 +622,17 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 problems.append(f"{role}报告缺少功能 {feature_id}")
             elif count > 1:
                 problems.append(f"{role}报告重复功能 {feature_id} {count} 次")
+    for feature_id in sorted(required_rechecks):
+        count = recheck_counts.get(feature_id, 0)
+        if count == 0:
+            problems.append(f"缺剃刀复审：{feature_id}")
+        elif count > 1:
+            problems.append(f"剃刀复审重复功能 {feature_id} {count} 次")
+    for feature_id in sorted(recheck_counts):
+        if feature_id not in required_rechecks:
+            problems.append(f"不用复审：{feature_id}")
+    if recheck_report_seen and not required_rechecks and not recheck_counts:
+        problems.append("不用复审：没有需要复审的功能")
     return problems
 
 

@@ -56,6 +56,18 @@ def report(role, repository, feature_ids=("root", "alpha", "beta")):
             "features": [review_feature(feature_id, role) for feature_id in feature_ids]}
 
 
+def recheck_feature(feature_id, findings):
+    return {"feature": feature_id, "findings": findings}
+
+
+def recheck_report(repository, feature_ids):
+    return {
+        "role": "剃刀复审",
+        "repo": str(repository),
+        "features": [recheck_feature(feature_id, []) for feature_id in feature_ids],
+    }
+
+
 def finding(kind="重构", changes_behavior=True, decision="问你", basis=None):
     return {
         "kind": kind,
@@ -91,11 +103,67 @@ class CheckReportsTest(unittest.TestCase):
         self.directory = Path(self.temporary.name)
         self.main_path = self.directory / "main.json"
         self.razor_path = self.directory / "razor.json"
+        self.recheck_path = self.directory / "recheck.json"
         self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
 
     def write_reports(self, main, razor):
         self.main_path.write_text(json.dumps(main, ensure_ascii=False), encoding="utf-8")
         self.razor_path.write_text(json.dumps(razor, ensure_ascii=False), encoding="utf-8")
+        data = check_reports_module.build_map(self.repository)
+        required = []
+        for item in razor["features"]:
+            feature_id = item["feature"]
+            feature_data = data["features"].get(feature_id)
+            if feature_data is None or feature_data["why"]["source"] == "起草":
+                continue
+            direct_files = {
+                path
+                for group_paths in feature_data["files"].values()
+                for path in group_paths
+            }
+            keep_files = {
+                path for path in direct_files
+                if Path(path).name != "TODO.md"
+                and check_reports_module.file_category(self.repository, path)
+                in {"code", "tests", "docs"}
+            }
+            has_reduction = any(
+                isinstance(item_finding, dict)
+                and item_finding.get("kind") in {"删除", "合并"}
+                for item_finding in item["findings"]
+            )
+            if keep_files and not has_reduction:
+                required.append(feature_id)
+        if required:
+            self.write_recheck_report(recheck_report(self.repository, required))
+        else:
+            self.recheck_path.unlink(missing_ok=True)
+
+    def write_recheck_report(self, recheck):
+        self.recheck_path.write_text(
+            json.dumps(recheck, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def recheck_scenario(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        for feature_id, kind in (("root", "删除"), ("beta", "合并")):
+            item = next(entry for entry in razor["features"] if entry["feature"] == feature_id)
+            item["keep"] = []
+            removal = finding(kind, False, "直接做")
+            removal["target"] = feature_id
+            item["findings"] = [removal]
+        alpha = next(entry for entry in razor["features"] if entry["feature"] == "alpha")
+        alpha["findings"] = [finding("重构", True, "问你")]
+        return main, razor
+
+    def add_empty_feature(self):
+        map_path = self.repository / "repo-map" / "features.json"
+        feature_map = json.loads(map_path.read_text(encoding="utf-8"))
+        feature_map["children"].append(feature("empty", None))
+        self.add_tracked_file(
+            "repo-map/features.json", json.dumps(feature_map, ensure_ascii=False)
+        )
 
     def add_tracked_file(self, relative_path, content):
         path = self.repository / relative_path
@@ -117,7 +185,11 @@ class CheckReportsTest(unittest.TestCase):
         self.write_reports(main, razor)
 
     def run_check(self, scope=("全部",), reports=None, review="全部"):
-        paths = reports or (str(self.main_path), str(self.razor_path))
+        paths = reports
+        if paths is None:
+            paths = (str(self.main_path), str(self.razor_path))
+            if self.recheck_path.exists():
+                paths += (str(self.recheck_path),)
         arguments = ["python3", "-B", str(COMMAND), "--repo", str(self.repository),
                      "--scope", *scope]
         if review is not None:
@@ -221,6 +293,142 @@ class CheckReportsTest(unittest.TestCase):
         self.write_reports(main, razor)
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_missing_recheck_report_lists_each_required_feature(self):
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        self.recheck_path.unlink()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("缺剃刀复审", result.stdout)
+        for feature_id in ("root", "alpha", "beta"):
+            self.assertIn(feature_id, result.stdout)
+
+    def test_exact_recheck_coverage_accepts_only_zero_reduction_with_refactor(self):
+        main, razor = self.recheck_scenario()
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck_report(self.repository, ["alpha"]))
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_recheck_rejects_an_extra_feature_that_needs_no_recheck(self):
+        main, razor = self.recheck_scenario()
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck_report(self.repository, ["alpha", "beta"]))
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("不用复审", result.stdout)
+        self.assertIn("beta", result.stdout)
+
+    def test_recheck_rejects_duplicate_required_feature(self):
+        main, razor = self.recheck_scenario()
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck_report(self.repository, ["alpha", "alpha"]))
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("剃刀复审重复功能 alpha 2 次", result.stdout)
+
+    def test_recheck_report_is_rejected_when_nothing_needs_rechecking(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        for item in razor["features"]:
+            removal = finding("删除", False, "直接做")
+            removal["target"] = item["feature"]
+            item["keep"] = []
+            item["findings"] = [removal]
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck_report(self.repository, ["alpha"]))
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("不用复审", result.stdout)
+        self.assertIn("alpha", result.stdout)
+
+    def test_empty_recheck_report_is_rejected_when_nothing_needs_rechecking(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        for item in razor["features"]:
+            removal = finding("删除", False, "直接做")
+            removal["target"] = item["feature"]
+            item["keep"] = []
+            item["findings"] = [removal]
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck_report(self.repository, []))
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("不用复审", result.stdout)
+
+    def test_draft_reason_does_not_require_or_allow_recheck(self):
+        map_path = self.repository / "repo-map" / "features.json"
+        feature_map = json.loads(map_path.read_text(encoding="utf-8"))
+        alpha = feature_map["children"][0]
+        alpha["why"] = {"text": "理由待确认。", "source": "起草", "quote": "", "from": ""}
+        self.add_tracked_file(
+            "repo-map/features.json", json.dumps(feature_map, ensure_ascii=False)
+        )
+        main, razor = self.recheck_scenario()
+        for item in razor["features"]:
+            if item["feature"] == "alpha":
+                item["keep"] = []
+                item["findings"] = []
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck_report(self.repository, ["alpha"]))
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("不用复审", result.stdout)
+        self.assertIn("alpha", result.stdout)
+
+    def test_feature_with_no_keep_files_does_not_require_recheck(self):
+        self.add_empty_feature()
+        main = report("主审", self.repository, ("root", "alpha", "beta", "empty"))
+        razor = report("剃刀", self.repository, ("root", "alpha", "beta", "empty"))
+        recheck = recheck_report(self.repository, ["root", "alpha", "beta", "empty"])
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck)
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("不用复审", result.stdout)
+        self.assertIn("empty", result.stdout)
+
+    def test_recheck_deletion_must_be_asked_even_when_behavior_does_not_change(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        item = finding("删除", False, "直接做")
+        item["target"] = "alpha/main.py:1"
+        recheck = recheck_report(self.repository, ["alpha"])
+        recheck["features"][0]["findings"] = [item]
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck)
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("剃刀复审的决定必须是 问你", result.stdout)
+
+    def test_recheck_feature_rejects_razor_only_fields(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        recheck = recheck_report(self.repository, ["alpha"])
+        recheck["features"][0]["keep"] = []
+        self.write_reports(main, razor)
+        self.write_recheck_report(recheck)
+        result = self.run_check(
+            reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("有多余字段 keep", result.stdout)
 
     def test_feature_id_delete_overlaps_any_keep(self):
         main = report("主审", self.repository)
@@ -771,7 +979,10 @@ class CheckReportsTest(unittest.TestCase):
                                           ensure_ascii=False), encoding="utf-8")
         self.main_path.write_text(json.dumps(report("主审", self.repository, ("root", "alpha")),
                                              ensure_ascii=False), encoding="utf-8")
-        result = self.run_check(reports=(str(self.main_path), str(second_main), str(self.razor_path)))
+        result = self.run_check(reports=(
+            str(self.main_path), str(second_main), str(self.razor_path),
+            str(self.recheck_path),
+        ))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_rejects_a_non_boolean_behavior_value_and_an_out_of_scope_feature(self):
@@ -926,6 +1137,16 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("repo", result.stdout)
+
+    def test_non_string_role_is_rejected_without_crashing(self):
+        main = report("主审", self.repository)
+        main["role"] = []
+        self.write_reports(main, report("剃刀", self.repository))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        output = result.stdout + result.stderr
+        self.assertIn("role 必须是", output)
+        self.assertNotIn("Traceback", output)
 
     def test_bad_scope_arguments_exit_with_two(self):
         result = self.run_check(("全部", "alpha"))
