@@ -48,7 +48,8 @@ KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根�
 DECISIONS = {"直接做", "问你"}
 TODO_FILENAME = "TODO.md"  # 用户各仓的 TODO 都叫 TODO.md。
 CODE_DEFINITION_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-MARKDOWN_HEADING = re.compile(r"^#{1,6} +")
+MARKDOWN_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]+|$)")
+SETEXT_UNDERLINE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 
 
 def parser():
@@ -317,12 +318,23 @@ def _python_definition_lines(path, file_lines):
 
 def _markdown_heading_lines(file_lines):
     headings = set()
+    texts = [
+        line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+        for line in file_lines
+    ]
+    hidden_lines = set()
+    in_yaml_header = bool(texts and texts[0].strip() == "---")
     fence_character = None
     fence_length = 0
-    for line_number, line in enumerate(file_lines, start=1):
-        text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+    for index, text in enumerate(texts):
+        if in_yaml_header:
+            hidden_lines.add(index)
+            if index > 0 and text.strip() == "---":
+                in_yaml_header = False
+            continue
         fence = re.match(r"^ {0,3}(`{3,}|~{3,})", text)
         if fence_character is not None:
+            hidden_lines.add(index)
             closing = re.match(r"^ {0,3}(`{3,}|~{3,})[ \t]*$", text)
             if (closing is not None and closing.group(1)[0] == fence_character
                     and len(closing.group(1)) >= fence_length):
@@ -330,11 +342,30 @@ def _markdown_heading_lines(file_lines):
                 fence_length = 0
             continue
         if fence is not None:
+            hidden_lines.add(index)
             fence_character = fence.group(1)[0]
             fence_length = len(fence.group(1))
             continue
         if MARKDOWN_HEADING.match(text):
-            headings.add(line_number)
+            headings.add(index + 1)
+
+    for index, text in enumerate(texts):
+        if index in hidden_lines or not SETEXT_UNDERLINE.match(text):
+            continue
+        if re.match(r"^ {0,3}-(?:[ \t]+|$)", text):
+            continue
+        if index == 0 or index - 1 in hidden_lines:
+            continue
+        paragraph = texts[index - 1]
+        if not paragraph.strip() or MARKDOWN_HEADING.match(paragraph):
+            continue
+        # List items, table rows, and indented code are block content, not Setext text.
+        if (paragraph.startswith(("    ", "\t")) or "|" in paragraph
+                or re.match(r"^ {0,3}(?:[-+*]|\d+[.)])(?:[ \t]+|$)", paragraph)
+                or re.match(r"^ {0,3}>", paragraph)
+                or SETEXT_UNDERLINE.match(paragraph)):
+            continue
+        headings.add(index)
     return headings
 
 
@@ -346,14 +377,17 @@ def _entity_range_problem(path, start_line, end_line, file_lines, label):
         entity_lines = _markdown_heading_lines(file_lines)
     else:
         return None
-    if entity_lines is not None and sum(
+    if entity_lines is None:
+        return f"{label}.lines 无法检查一条 keep 是否只覆盖一个实体：{path}"
+    if sum(
         start_line <= line_number <= end_line for line_number in entity_lines
     ) > 1:
         return f"{label}.lines 一条 keep 只能覆盖一个实体：{path}:{start_line}-{end_line}"
     return None
 
 
-def _validate_keep_items(items, label, repository, feature, keep_files, finding_ranges):
+def _validate_keep_items(items, label, repository, feature, keep_files,
+                         finding_ranges, feature_targets):
     problems = []
     if not isinstance(items, list):
         return [f"{label} 必须是数组"]
@@ -394,6 +428,12 @@ def _validate_keep_items(items, label, repository, feature, keep_files, finding_
         if entity_problem is not None:
             problems.append(entity_problem)
 
+    for finding in feature_targets:
+        if finding.get("kind") == "删除" and keep_ranges_by_file:
+            problems.append(
+                f"{label} 的删除目标和 keep 行范围重叠：{finding['target']}"
+            )
+
     # 留下依据只认功能清单的「要什么」「为什么」或已支持的规范；原话可能是问句或带条件的回答。
     # 起草的理由还未确认，不能给实体作为定了的要求。
     if feature["why"]["source"] == "起草":
@@ -414,6 +454,14 @@ def _validate_keep_items(items, label, repository, feature, keep_files, finding_
     covered_ranges = {
         path: list(ranges) for path, ranges in keep_ranges_by_file.items()
     }
+    if feature_targets:
+        # A finding on this feature id covers every direct file; read each file so unreadable files still fail.
+        for path in keep_files:
+            if path not in lines_by_file:
+                lines_by_file[path] = _read_file_lines(Path(repository) / path)
+            file_lines = lines_by_file[path]
+            if file_lines is not None:
+                covered_ranges[path] = [(1, len(file_lines))]
     for _finding, target_range in finding_ranges:
         path, start_line, end_line = target_range
         if path in keep_files:
@@ -489,14 +537,9 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 direct_todo_files = {
                     path for path in direct_files if Path(path).name == TODO_FILENAME
                 }
-                keep_files = {
-                    path for path in direct_files
-                    if Path(path).name != TODO_FILENAME
-                    and file_category(repository, path) in {"code", "tests", "docs"}
-                }
             else:
+                direct_files = set()
                 direct_todo_files = set()
-                keep_files = set()
             if "todo_items" in review:
                 problems.extend(_validate_todo_items(
                     review["todo_items"],
@@ -509,6 +552,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 problems.append(f"{feature_label}.findings 必须是数组")
                 findings = []
             finding_ranges = []
+            feature_targets = []
             for finding_index, finding in enumerate(findings):
                 finding_label = f"{feature_label}.findings[{finding_index}]"
                 problems.extend(_validate_finding(finding, finding_label, tracked_todo_files))
@@ -524,8 +568,15 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 target_range = _parse_line_range(target, allow_single_line=True)
                 if target_range is not None:
                     finding_ranges.append((finding, target_range))
+                elif target == feature_id:
+                    feature_targets.append(finding)
 
             if role == "剃刀" and feature_data is not None:
+                keep_files = {
+                    path for path in direct_files
+                    if Path(path).name != TODO_FILENAME
+                    and file_category(repository, path) in {"code", "tests", "docs"}
+                }
                 problems.extend(_validate_keep_items(
                     review.get("keep"),
                     f"报告 {label} 的功能 {feature_id}.keep",
@@ -533,6 +584,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     feature_data,
                     keep_files,
                     finding_ranges,
+                    feature_targets,
                 ))
 
     for role in sorted(ROLES):
