@@ -1,5 +1,6 @@
 """Test approval records used to select features for cleanup review."""
 from pathlib import Path
+import os
 import subprocess
 import sys
 import unittest
@@ -29,10 +30,10 @@ class ApprovalPlanTest(unittest.TestCase):
             feature("beta", "beta"),
         ]))
 
-    def run_approvals(self, *arguments):
+    def run_approvals(self, *arguments, timeout=None):
         return subprocess.run(
             ["python3", "-B", str(COMMAND), *arguments],
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, check=False, timeout=timeout,
         )
 
     def plan(self, scope=("全部",), review="变过的"):
@@ -135,6 +136,62 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertTrue(approved_path.is_symlink())
         self.assertEqual(external_path.read_text(encoding="utf-8"), original_content)
+
+    def test_plan_rejects_self_referential_approved_symlink(self):
+        approved_path = self.repository / "repo-map" / "approved.json"
+        approved_path.symlink_to("approved.json")
+        original_target = os.readlink(approved_path)
+
+        result = self.plan()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("认可记录必须是仓库 repo-map 目录下的普通文件", result.stdout)
+        self.assertEqual(result.stderr, "")
+        self.assertTrue(approved_path.is_symlink())
+        self.assertEqual(os.readlink(approved_path), original_target)
+
+    def test_record_rejects_self_referential_approved_symlink(self):
+        approved_path = self.repository / "repo-map" / "approved.json"
+        approved_path.symlink_to("approved.json")
+        original_target = os.readlink(approved_path)
+
+        result = self.record()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("认可记录必须是仓库 repo-map 目录下的普通文件", result.stdout)
+        self.assertEqual(result.stderr, "")
+        self.assertTrue(approved_path.is_symlink())
+        self.assertEqual(os.readlink(approved_path), original_target)
+
+    def test_plan_rejects_approved_fifo_without_blocking(self):
+        approved_path = self.repository / "repo-map" / "approved.json"
+        os.mkfifo(approved_path)
+
+        try:
+            result = self.run_approvals(
+                "plan", "--repo", str(self.repository), "--scope", "全部",
+                "--review", "变过的", timeout=5,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail("plan 读取 FIFO 时 5 秒内未退出")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("认可记录必须是仓库 repo-map 目录下的普通文件", result.stdout)
+        self.assertEqual(result.stderr, "")
+
+    def test_plan_and_record_reject_approved_directory(self):
+        approved_path = self.repository / "repo-map" / "approved.json"
+        approved_path.mkdir()
+
+        for command in ("plan", "record"):
+            with self.subTest(command=command):
+                result = self.plan() if command == "plan" else self.record()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(
+                    "认可记录必须是仓库 repo-map 目录下的普通文件", result.stdout
+                )
+                self.assertEqual(result.stderr, "")
+                self.assertTrue(approved_path.is_dir())
 
     def test_plan_rejects_repo_map_directory_symlink_without_creating_files(self):
         external_directory = self.link_repo_map_to_external_directory()

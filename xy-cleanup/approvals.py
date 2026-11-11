@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 
@@ -68,19 +69,23 @@ def validate_scope(data, scope):
 
 
 def _require_approval_path_in_repository(repository, path):
-    expected_path = os.path.join(
-        os.path.realpath(repository), "repo-map", "approved.json"
-    )
-    if os.path.realpath(path) != expected_path:
-        raise ValueError(
-            "认可记录必须是仓库内的 repo-map/approved.json，"
-            f"路径上不能有符号链接：{path}"
-        )
+    message = f"认可记录必须是仓库 repo-map 目录下的普通文件：{path}"
+    expected_directory = os.path.join(os.path.realpath(repository), "repo-map")
+    if os.path.realpath(path.parent) != expected_directory:
+        raise ValueError(message)
+    try:
+        path_stat = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise ValueError(message) from error
+    if not stat.S_ISREG(path_stat.st_mode):
+        raise ValueError(message)
+    return True
 
 
 def read_approvals(repository, path):
-    _require_approval_path_in_repository(repository, path)
-    if not path.exists():
+    if not _require_approval_path_in_repository(repository, path):
         return {}
     try:
         records = json.loads(
