@@ -132,12 +132,6 @@ def _discover_subrepository_types(repository):
     return unsupported, ignored_repositories
 
 
-def discover_subrepositories(repository):
-    """Find all gitlinks and nested repositories, without classifying their errors."""
-    unsupported, ignored = _discover_subrepository_types(repository)
-    return sorted(unsupported | ignored)
-
-
 def subrepository_errors(repository, registered_subrepositories):
     """Return check errors for unsupported or incorrectly registered subrepositories."""
     root = Path(repository).resolve()
@@ -155,7 +149,7 @@ def subrepository_errors(repository, registered_subrepositories):
             + "；另有功能图的独立子仓写进根功能的 subrepositories"
         )
 
-    # linked worktree 和新克隆里没有这些被忽略的目录，所以缺失路径不算错误。
+    # A linked worktree or fresh clone may omit the ignored directories, so missing paths are valid.
     mismatched = {
         path for path in registered
         if os.path.lexists(root / path) and path not in ignored

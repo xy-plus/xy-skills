@@ -22,7 +22,6 @@ from repo_map_lib.map_data import build_map  # noqa: E402
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 
 
-ENTRY_KEYS = ("id", "title", "what", "why", "directory", "entries")
 EXCLUDED_PATHS = {"repo-map/features.json", APPROVED_RELATIVE_PATH}
 
 
@@ -116,7 +115,10 @@ def feature_fingerprints(repository, data, values_by_id):
     result = {}
     for feature_id in values_by_id:
         feature = values_by_id[feature_id]
-        entry = {key: feature[key] for key in ENTRY_KEYS}
+        entry = {
+            key: value for key, value in feature.items()
+            if key not in ("children", "parent")
+        }
         entry["children"] = data["features"][feature_id]["children"]
         file_hashes = []
         for group_paths in data["features"][feature_id]["files"].values():
