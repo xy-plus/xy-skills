@@ -23,6 +23,7 @@ p{margin:6px 0;color:var(--ink2);overflow-wrap:anywhere}
 .head{font-weight:650;overflow-wrap:anywhere}
 .head .no{margin-right:7px;color:var(--muted);font:700 13px var(--mono)}
 .line{margin:4px 0 0;color:var(--ink2);font-size:14px}
+.storage-warning{padding:9px 11px;border:1px solid var(--mark);border-radius:8px;color:var(--ink)}
 .choices{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .choices label{position:relative;display:flex;flex:1 1 130px;min-width:110px;align-items:center;justify-content:center;gap:5px;padding:9px 10px;border:1px solid var(--hair);border-radius:9px;background:var(--surface);font-size:14px;text-align:center;overflow-wrap:anywhere;cursor:pointer;user-select:none}
 .choices label.picked{border-color:var(--pick);background:var(--pick-wash);color:var(--pick);font-weight:650}
@@ -47,6 +48,7 @@ textarea:disabled,.choices input:disabled+span{opacity:.72}
 <main class="wrap">
   <h1 id="page-title"></h1>
   <div class="intro" id="intro"></div>
+  <p id="storage-warning" class="storage-warning" role="status" aria-live="polite" hidden></p>
   <div id="groups"></div>
   <div id="footnotes"></div>
 </main>
@@ -68,6 +70,12 @@ const notes = new Map(items.map((item) => [item.id, ""]));
 const cards = new Map();
 const feedback = document.querySelector("#feedback");
 const submitButton = document.querySelector("#submit");
+const storageWarning = document.querySelector("#storage-warning");
+
+function warnStorageUnavailable() {
+  storageWarning.textContent = "草稿没能保存，刷新页面会丢。";
+  storageWarning.hidden = false;
+}
 
 function make(tag, className, text) {
   const element = document.createElement(tag);
@@ -86,7 +94,7 @@ function loadSaved() {
       if (typeof answer.note === "string") notes.set(item.id, answer.note);
     }
   } catch (error) {
-    // The page still works when browser storage is unavailable.
+    warnStorageUnavailable();
   }
 }
 
@@ -98,7 +106,7 @@ function save() {
     }
     localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(saved)));
   } catch (error) {
-    // Keep the current edits in the page when browser storage is unavailable.
+    warnStorageUnavailable();
   }
 }
 

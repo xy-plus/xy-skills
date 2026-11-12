@@ -22,7 +22,7 @@ from approvals import (  # noqa: E402
     validate_scope,
 )
 from check_handoff import object_without_duplicate_keys  # noqa: E402
-from duplicate_blocks import find_duplicate_windows, other_ranges_for_keep  # noqa: E402
+from duplicate_blocks import TODO_FILENAME, find_duplicate_windows, other_ranges_for_keep  # noqa: E402
 from rule_references import basis_is_supported  # noqa: E402
 
 
@@ -46,7 +46,6 @@ ROLES = {"主审", "剃刀"}
 REPORT_ROLES = ROLES | {"剃刀复审"}
 KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "其他"}
 DECISIONS = {"直接做", "问你"}
-TODO_FILENAME = "TODO.md"  # 用户各仓的 TODO 都叫 TODO.md。
 CODE_DEFINITION_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 MARKDOWN_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]+|$)")
 SETEXT_UNDERLINE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
@@ -149,7 +148,7 @@ def _record_razor_keep_reasons(keep_items, label, feature_id, seen_reasons):
     return problems
 
 
-def _parse_line_range(value, allow_single_line=False):
+def _parse_line_range(value, allow_single_line):
     if not isinstance(value, str):
         return None
     path, separator, numbers = value.rpartition(":")
@@ -169,7 +168,7 @@ def _parse_line_range(value, allow_single_line=False):
 
 
 def _checked_line_range(value, label, field, repository, allowed_files,
-                        lines_by_file, allow_single_line=False):
+                        lines_by_file, allow_single_line):
     parsed = _parse_line_range(value, allow_single_line=allow_single_line)
     format_text = "文件:行号或 文件:起始行-结束行" if allow_single_line else "路径:起始行-结束行"
     if parsed is None:
@@ -338,7 +337,7 @@ def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
         if not _nonempty(evidence):
             problems.append(f"{verdict_label}.evidence 必须是非空字符串")
         elif isinstance(lines, str):
-            line_range = _parse_line_range(lines)
+            line_range = _parse_line_range(lines, allow_single_line=False)
             if line_range is not None and not _has_external_evidence_location(
                 evidence,
                 line_range,
@@ -375,7 +374,7 @@ def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
             problems.append(f"{label}.verdicts 多出不在 keep 里的判定：{lines}")
 
     for lines, verdict_label in nonstanding:
-        verdict_range = _parse_line_range(lines)
+        verdict_range = _parse_line_range(lines, allow_single_line=False)
         overlaps_finding = False
         feature_reduction = any(
             finding.get("kind") in {"删除", "合并"}
@@ -443,7 +442,7 @@ def _validate_todo_items(items, label, repository, direct_todo_files):
             continue
         line_range, range_problems = _checked_line_range(
             line_spec, item_label, "lines", repository, direct_todo_files,
-            lines_by_file,
+            lines_by_file, allow_single_line=False,
         )
         problems.extend(range_problems)
         if line_range is None:
@@ -503,14 +502,20 @@ def _python_definition_lines(path, file_lines):
 
     definition_lines = set()
 
-    def inspect_class_body(nodes):
-        for node in nodes:
-            if isinstance(node, CODE_DEFINITION_TYPES):
-                definition_lines.add(node.lineno)
-                if isinstance(node, ast.ClassDef):
-                    inspect_class_body(node.body)
+    def inspect_node(node):
+        if isinstance(node, CODE_DEFINITION_TYPES):
+            definition_lines.add(node.lineno)
+            if isinstance(node, ast.ClassDef):
+                inspect_nodes(node.body)
+            return
+        for child in ast.iter_child_nodes(node):
+            inspect_node(child)
 
-    inspect_class_body(tree.body)
+    def inspect_nodes(nodes):
+        for node in nodes:
+            inspect_node(node)
+
+    inspect_nodes(tree.body)
     return definition_lines
 
 
@@ -570,20 +575,17 @@ def _markdown_heading_lines(file_lines):
             headings.add(index + 1)
 
     for index, text in enumerate(texts):
-        if index in hidden_lines or not SETEXT_UNDERLINE.match(text):
+        container_text = _strip_markdown_container_prefixes(text)
+        if index in hidden_lines or not SETEXT_UNDERLINE.match(container_text):
             continue
         if re.match(r"^ {0,3}-(?:[ \t]+|$)", text):
             continue
         if index == 0 or index - 1 in hidden_lines:
             continue
-        paragraph = texts[index - 1]
+        paragraph = _strip_markdown_container_prefixes(texts[index - 1])
         if not paragraph.strip() or MARKDOWN_HEADING.match(paragraph):
             continue
-        # List items, table rows, and indented code are block content, not Setext text.
-        if (paragraph.startswith(("    ", "\t"))
-                or re.match(r"^ {0,3}(?:[-+*]|\d+[.)])(?:[ \t]+|$)", paragraph)
-                or re.match(r"^ {0,3}>", paragraph)
-                or SETEXT_UNDERLINE.match(paragraph)):
+        if paragraph.startswith(("    ", "\t")) or SETEXT_UNDERLINE.match(paragraph):
             continue
         headings.add(index)
     return headings
@@ -632,7 +634,7 @@ def _validate_keep_items(items, label, repository, feature, keep_files,
             continue
         line_range, range_problems = _checked_line_range(
             line_spec, item_label, "lines", repository, keep_files,
-            lines_by_file,
+            lines_by_file, allow_single_line=False,
         )
         problems.extend(range_problems)
         if line_range is None:

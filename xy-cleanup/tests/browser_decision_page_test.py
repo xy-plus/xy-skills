@@ -262,3 +262,72 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 bridge.server_close()
                 receiver_thread.join(2)
                 bridge_thread.join(2)
+
+    def test_storage_errors_stay_visible_without_blocking_answers_or_submission(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        decisions = browser_decisions()
+        page_html = decision_page.render_decision_page(decisions)
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            socket_path = Path(temporary) / "s"
+            answers_path = Path(temporary) / "answers.json"
+            receiver = decision_page.DecisionHTTPServer(
+                socket_path, page_html, decisions, answers_path
+            )
+            stop_event = threading.Event()
+            receiver_thread = threading.Thread(
+                target=receiver.serve_until_complete,
+                args=(stop_event,),
+                daemon=True,
+            )
+            bridge = DecisionPageBridge(page_html, str(socket_path))
+            bridge.fail_next_post = False
+            bridge_thread = threading.Thread(target=bridge.serve_forever, daemon=True)
+            receiver_thread.start()
+            bridge_thread.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(executable_path=executable, headless=True)
+                    context = browser.new_context()
+                    context.add_init_script("""
+                        Object.defineProperty(Storage.prototype, "getItem", {
+                            configurable: true,
+                            value() { throw new Error("storage read blocked"); }
+                        });
+                        Object.defineProperty(Storage.prototype, "setItem", {
+                            configurable: true,
+                            value() { throw new Error("storage write blocked"); }
+                        });
+                    """)
+                    page = context.new_page()
+                    page.goto(f"http://127.0.0.1:{bridge.server_port}/")
+
+                    warning = page.locator("#storage-warning")
+                    self.assertTrue(warning.is_visible())
+                    self.assertIn("草稿没能保存", warning.text_content())
+                    item = page.locator('[data-item-id="A1"]')
+                    item.locator('input[value="Remove"]').check()
+                    item.locator("textarea").fill("Still available for submission.")
+                    self.assertTrue(warning.is_visible())
+                    self.assertFalse(item.locator("textarea").is_disabled())
+
+                    page.locator("#submit").click()
+                    page.locator("#status").get_by_text("已收到").wait_for()
+                    self.assertTrue(warning.is_visible())
+                    self.assertTrue(item.locator("textarea").is_disabled())
+                    browser.close()
+
+                receiver_thread.join(5)
+                self.assertFalse(receiver_thread.is_alive())
+                self.assertEqual(
+                    json.loads(answers_path.read_text(encoding="utf-8"))["answers"]["A1"],
+                    {"option": "Remove", "note": "Still available for submission."},
+                )
+            finally:
+                stop_event.set()
+                receiver.server_close()
+                socket_path.unlink(missing_ok=True)
+                bridge.shutdown()
+                bridge.server_close()
+                receiver_thread.join(2)
+                bridge_thread.join(2)

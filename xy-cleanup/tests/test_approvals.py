@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "xy-cleanup"))
 sys.path.insert(0, str(ROOT / "xy-repo-map" / "tests"))
 
 import approvals  # noqa: E402
-from map_fixture import build_map, feature, make_repo  # noqa: E402
+from map_fixture import build_map, feature, make_cleanup_repo, make_repo  # noqa: E402
 
 
 COMMAND = ROOT / "xy-cleanup" / "approvals.py"
@@ -22,14 +22,7 @@ COMMAND = ROOT / "xy-cleanup" / "approvals.py"
 
 class ApprovalPlanTest(unittest.TestCase):
     def setUp(self):
-        self.repository = make_repo(self, {
-            "README.md": "Demo.\n",
-            "alpha/main.py": "value = 1\n",
-            "beta/main.py": "value = 2\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("alpha", "alpha"),
-            feature("beta", "beta"),
-        ]))
+        self.repository = make_cleanup_repo(self)
 
     def run_approvals(self, *arguments, timeout=None):
         return subprocess.run(
@@ -130,29 +123,29 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(plan.returncode, 0, plan.stdout + plan.stderr)
         self.assertEqual(plan.stdout, "范围内没有变过的功能（范围内 3 个）\n")
 
-    def test_plan_rejects_approved_symlink_without_reading_external_file(self):
-        approved_path, external_path = self.link_approved_to_external_file()
-        original_content = external_path.read_text(encoding="utf-8")
-
-        result = self.plan()
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("认可记录", result.stdout)
-        self.assertEqual(result.stderr, "")
-        self.assertTrue(approved_path.is_symlink())
-        self.assertEqual(external_path.read_text(encoding="utf-8"), original_content)
-
-    def test_record_rejects_approved_symlink_without_writing_external_file(self):
-        approved_path, external_path = self.link_approved_to_external_file()
-        original_content = external_path.read_text(encoding="utf-8")
-
-        result = self.record()
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("认可记录", result.stdout)
-        self.assertEqual(result.stderr, "")
-        self.assertTrue(approved_path.is_symlink())
-        self.assertEqual(external_path.read_text(encoding="utf-8"), original_content)
+    def test_plan_rejects_approved_paths_that_are_not_regular_files(self):
+        approved_path = self.repository / "repo-map" / "approved.json"
+        cases = ("symlink", "directory")
+        for kind in cases:
+            with self.subTest(kind=kind):
+                if kind == "symlink":
+                    approved_path, external_path = self.link_approved_to_external_file()
+                    original_content = external_path.read_text(encoding="utf-8")
+                else:
+                    approved_path.mkdir()
+                    external_path = None
+                result = self.plan()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("认可记录", result.stdout)
+                self.assertEqual(result.stderr, "")
+                self.assertTrue(approved_path.is_symlink() if kind == "symlink"
+                                else approved_path.is_dir())
+                if external_path is not None:
+                    self.assertEqual(external_path.read_text(encoding="utf-8"), original_content)
+                if kind == "directory":
+                    approved_path.rmdir()
+                else:
+                    approved_path.unlink()
 
     def test_plan_rejects_approved_fifo_without_blocking(self):
         approved_path = self.repository / "repo-map" / "approved.json"
@@ -169,20 +162,6 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("认可记录必须是仓库 repo-map 目录下的普通文件", result.stdout)
         self.assertEqual(result.stderr, "")
-
-    def test_plan_and_record_reject_approved_directory(self):
-        approved_path = self.repository / "repo-map" / "approved.json"
-        approved_path.mkdir()
-
-        for command in ("plan", "record"):
-            with self.subTest(command=command):
-                result = self.plan() if command == "plan" else self.record()
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn(
-                    "认可记录必须是仓库 repo-map 目录下的普通文件", result.stdout
-                )
-                self.assertEqual(result.stderr, "")
-                self.assertTrue(approved_path.is_dir())
 
     def test_record_rejects_repo_map_directory_symlink_without_creating_files(self):
         external_directory = self.link_repo_map_to_external_directory()

@@ -1,5 +1,5 @@
 """Test the decision-page command and its request handling."""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import copy
 import http.client
 import io
@@ -67,35 +67,17 @@ def request_socket(socket_path, method, path, data):
     return result
 
 
-def request_content_length(socket_path, content_length):
+def request_raw_socket(socket_path, raw_body=None, content_length=None):
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.connect(socket_path)
+    body = b"" if raw_body is None else raw_body.encode("utf-8")
+    length = len(body) if content_length is None else content_length
     headers = (
         b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
         b"Content-Type: application/json\r\nContent-Length: "
-        + str(content_length).encode("ascii") + b"\r\n\r\n"
+        + str(length).encode("ascii") + b"\r\n\r\n"
     )
-    client.sendall(headers)
-    try:
-        response = http.client.HTTPResponse(client)
-        response.begin()
-        result = response.status, response.read()
-    except http.client.HTTPException:
-        result = None, b""
-    finally:
-        client.close()
-    return result
-
-
-def request_raw_socket(socket_path, raw_body):
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.connect(socket_path)
-    body = raw_body.encode("utf-8")
-    client.sendall(
-        b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
-        b"Content-Type: application/json\r\nContent-Length: "
-        + str(len(body)).encode("ascii") + b"\r\n\r\n" + body
-    )
+    client.sendall(headers + body)
     try:
         response = http.client.HTTPResponse(client)
         response.begin()
@@ -107,26 +89,29 @@ def request_raw_socket(socket_path, raw_body):
     return result
 
 
+@contextmanager
+def decision_receiver(directory, decisions, answers):
+    socket_path = directory / "s"
+    server = decision_page.DecisionHTTPServer(
+        socket_path, decision_page.render_decision_page(decisions), decisions, answers,
+    )
+    stop_event = threading.Event()
+    serving = threading.Thread(
+        target=server.serve_until_complete,
+        args=(stop_event,),
+        daemon=True,
+    )
+    serving.start()
+    try:
+        yield str(socket_path), serving
+    finally:
+        stop_event.set()
+        server.server_close()
+        socket_path.unlink(missing_ok=True)
+        serving.join(2)
+
+
 class DecisionPageCommandTest(unittest.TestCase):
-    def test_invalid_decisions_exit_two_and_name_the_missing_field(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions = Path(temporary) / "decisions.json"
-            answers = Path(temporary) / "answers.json"
-            missing_title = valid_decisions()
-            del missing_title["title"]
-            decisions.write_text(json.dumps(missing_title), encoding="utf-8")
-            stderr = io.StringIO()
-            code = decision_page.main(
-                ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                 "--answers", str(answers)],
-                lambda arguments: self.fail(f"不应启动平台：{arguments}"),
-                io.StringIO(),
-                stderr,
-            )
-
-        self.assertEqual(code, 2, stderr.getvalue())
-        self.assertIn("title", stderr.getvalue())
-
     def test_decision_list_with_duplicate_json_key_exits_two(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             decisions = Path(temporary) / "decisions.json"
@@ -169,6 +154,7 @@ class DecisionPageCommandTest(unittest.TestCase):
         invalid_recommendation["groups"][0]["items"][0]["recommended"] = "Maybe"
         cases = [
             (extra_top_level, "legacy"),
+            ({key: value for key, value in valid_decisions().items() if key != "title"}, "title"),
             (extra_group_field, "groups[0]"),
             (empty_group, "groups[0].items"),
             (extra_item_field, "groups[0].items[0]"),
@@ -399,11 +385,11 @@ class DecisionPageCommandTest(unittest.TestCase):
                     self.assertEqual(status, 400, body)
                     self.assertFalse(answers.exists())
 
-            status, body = request_content_length(socket_path, 204801)
+            status, body = request_raw_socket(socket_path, content_length=204801)
             self.assertEqual(status, 400, body)
             self.assertFalse(answers.exists())
 
-            status, body = request_content_length(socket_path, "9" * 5000)
+            status, body = request_raw_socket(socket_path, content_length="9" * 5000)
             self.assertEqual(status, 400, body)
             self.assertFalse(answers.exists())
 
@@ -426,29 +412,16 @@ class DecisionPageCommandTest(unittest.TestCase):
 
     def test_failed_answer_write_leaves_no_file_and_service_accepts_retry(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            socket_path = Path(temporary) / "s"
+            directory = Path(temporary)
             answers_path = Path(temporary) / "answers.json"
             decisions = valid_decisions()
-            server = decision_page.DecisionHTTPServer(
-                socket_path,
-                decision_page.render_decision_page(decisions),
-                decisions,
-                answers_path,
-            )
-            stop_event = threading.Event()
-            serving = threading.Thread(
-                target=server.serve_until_complete,
-                args=(stop_event,),
-                daemon=True,
-            )
-            serving.start()
-            valid_payload = {"answers": {"A1": {"option": "Keep", "note": ""}}}
+            with decision_receiver(directory, decisions, answers_path) as (socket_path, serving):
+                valid_payload = {"answers": {"A1": {"option": "Keep", "note": ""}}}
 
-            def fail_after_partial_write(document, output, ensure_ascii, indent):
-                output.write("{")
-                raise OSError("simulated full disk")
+                def fail_after_partial_write(document, output, ensure_ascii, indent):
+                    output.write("{")
+                    raise OSError("simulated full disk")
 
-            try:
                 with patch.object(decision_page.json, "dump", side_effect=fail_after_partial_write):
                     status, body = request_socket(
                         str(socket_path), "POST", "/submit", valid_payload
@@ -467,46 +440,22 @@ class DecisionPageCommandTest(unittest.TestCase):
                     json.loads(answers_path.read_text(encoding="utf-8")),
                     {"title": decisions["title"], "answers": valid_payload["answers"]},
                 )
-            finally:
-                stop_event.set()
-                server.server_close()
-                socket_path.unlink(missing_ok=True)
-                serving.join(2)
 
     def test_answer_with_duplicate_json_key_returns_400_without_writing(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            socket_path = Path(temporary) / "s"
+            directory = Path(temporary)
             answers_path = Path(temporary) / "answers.json"
             decisions = valid_decisions()
-            server = decision_page.DecisionHTTPServer(
-                socket_path,
-                decision_page.render_decision_page(decisions),
-                decisions,
-                answers_path,
-            )
-            stop_event = threading.Event()
-            serving = threading.Thread(
-                target=server.serve_until_complete,
-                args=(stop_event,),
-                daemon=True,
-            )
-            serving.start()
-            raw_answer = (
-                '{"answers":{"A1":{"option":"Keep","option":"Remove",'
-                '"note":""}}}'
-            )
-
-            try:
+            with decision_receiver(directory, decisions, answers_path) as (socket_path, serving):
+                raw_answer = (
+                    '{"answers":{"A1":{"option":"Keep","option":"Remove",'
+                    '"note":""}}}'
+                )
                 with patch.object(decision_page.DecisionHTTPServer, "handle_error"):
                     status, body = request_raw_socket(str(socket_path), raw_answer)
                 self.assertEqual(status, 400, body)
                 self.assertIn("重复键：option", body.decode("utf-8"))
                 self.assertFalse(answers_path.exists())
-            finally:
-                stop_event.set()
-                server.server_close()
-                socket_path.unlink(missing_ok=True)
-                serving.join(2)
 
     def test_incomplete_request_line_times_out_before_next_submission(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -702,7 +651,7 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
 
         for decisions, expected in cases:
             with self.subTest(expected=expected):
-                with self.assertRaises(decision_page.DecisionFormatError) as context:
+                with self.assertRaises(ValueError) as context:
                     decision_page.validate_decisions(decisions)
                 self.assertIn(expected, str(context.exception))
 
@@ -738,7 +687,7 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
 
         for decisions, expected in cases:
             with self.subTest(expected=expected):
-                with self.assertRaises(decision_page.DecisionFormatError) as context:
+                with self.assertRaises(ValueError) as context:
                     decision_page.validate_decisions(decisions)
                 self.assertIn(expected, str(context.exception))
 
@@ -763,6 +712,6 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
 
         for decisions, expected in cases:
             with self.subTest(expected=expected):
-                with self.assertRaises(decision_page.DecisionFormatError) as context:
+                with self.assertRaises(ValueError) as context:
                     decision_page.validate_decisions(decisions)
                 self.assertIn(expected, str(context.exception))

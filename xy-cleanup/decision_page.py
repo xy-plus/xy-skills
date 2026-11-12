@@ -28,31 +28,27 @@ from repo_map_lib.publish_command import PLATFORM_PYTHON, PORTAL_SCRIPT  # noqa:
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 
 
-class DecisionFormatError(ValueError):
-    """A decision list does not match the page's input format."""
-
-
 def _require_object(value, expected_keys, label):
     if not isinstance(value, dict):
-        raise DecisionFormatError(f"{label} 必须是对象")
+        raise ValueError(f"{label} 必须是对象")
     missing = expected_keys - value.keys()
     extra = value.keys() - expected_keys
     if missing:
         field = sorted(missing)[0]
-        raise DecisionFormatError(f"{label} 缺少字段 {field}")
+        raise ValueError(f"{label} 缺少字段 {field}")
     if extra:
         field = sorted(extra, key=str)[0]
-        raise DecisionFormatError(f"{label} 有多余字段 {field}")
+        raise ValueError(f"{label} 有多余字段 {field}")
 
 
 def _require_text(value, label):
     if not isinstance(value, str) or not value.strip():
-        raise DecisionFormatError(f"{label} 必须是非空字符串")
+        raise ValueError(f"{label} 必须是非空字符串")
 
 
 def _require_text_list(value, label):
     if not isinstance(value, list):
-        raise DecisionFormatError(f"{label} 必须是字符串数组")
+        raise ValueError(f"{label} 必须是字符串数组")
     for index, text in enumerate(value):
         _require_text(text, f"{label}[{index}]")
 
@@ -64,7 +60,7 @@ def validate_decisions(value):
     _require_text_list(value["intro"], "intro")
     groups = value["groups"]
     if not isinstance(groups, list) or not groups:
-        raise DecisionFormatError("groups 必须至少包含一组")
+        raise ValueError("groups 必须至少包含一组")
 
     item_ids = set()
     for group_index, group in enumerate(groups):
@@ -74,7 +70,7 @@ def validate_decisions(value):
         _require_text_list(group["notes"], f"{group_label}.notes")
         items = group["items"]
         if not isinstance(items, list) or not items:
-            raise DecisionFormatError(f"{group_label}.items 必须至少包含一条")
+            raise ValueError(f"{group_label}.items 必须至少包含一条")
 
         for item_index, item in enumerate(items):
             item_label = f"{group_label}.items[{item_index}]"
@@ -83,22 +79,22 @@ def validate_decisions(value):
                 _require_text(item[field], f"{item_label}.{field}")
             item_id = item["id"]
             if item_id in item_ids:
-                raise DecisionFormatError(f"{item_label}.id 重复：{item_id}")
+                raise ValueError(f"{item_label}.id 重复：{item_id}")
             item_ids.add(item_id)
             _require_text_list(item["lines"], f"{item_label}.lines")
             options = item["options"]
             if not isinstance(options, list) or len(options) < 2:
-                raise DecisionFormatError(f"{item_label}.options 至少需要两个选项")
+                raise ValueError(f"{item_label}.options 至少需要两个选项")
             _require_text_list(options, f"{item_label}.options")
             if len(set(options)) != len(options):
-                raise DecisionFormatError(f"{item_label}.options 不能重复")
+                raise ValueError(f"{item_label}.options 不能重复")
             _require_text(item["recommended"], f"{item_label}.recommended")
             if item["recommended"] not in options:
-                raise DecisionFormatError(f"{item_label}.recommended 必须是 options 中的选项")
+                raise ValueError(f"{item_label}.recommended 必须是 options 中的选项")
 
     footnotes = value["footnotes"]
     if not isinstance(footnotes, list):
-        raise DecisionFormatError("footnotes 必须是数组")
+        raise ValueError("footnotes 必须是数组")
     for footnote_index, footnote in enumerate(footnotes):
         footnote_label = f"footnotes[{footnote_index}]"
         _require_object(footnote, FOOTNOTE_KEYS, footnote_label)
@@ -118,7 +114,7 @@ def render_decision_page(decisions):
 def validate_answers(payload, decisions):
     """Validate a complete response and return only its documented fields."""
     if not isinstance(payload, dict) or not isinstance(payload.get("answers"), dict):
-        raise DecisionFormatError("answers 必须是对象")
+        raise ValueError("answers 必须是对象")
     items = {
         item["id"]: item
         for group in decisions["groups"]
@@ -129,22 +125,22 @@ def validate_answers(payload, decisions):
     extra = answers.keys() - items.keys()
     if missing:
         item_id = sorted(missing)[0]
-        raise DecisionFormatError(f"缺少回答：{item_id}")
+        raise ValueError(f"缺少回答：{item_id}")
     if extra:
         item_id = sorted(extra, key=str)[0]
-        raise DecisionFormatError(f"有未知回答：{item_id}")
+        raise ValueError(f"有未知回答：{item_id}")
 
     checked = {}
     for item_id, item in items.items():
         answer = answers[item_id]
         if not isinstance(answer, dict):
-            raise DecisionFormatError(f"{item_id} 的回答必须是对象")
+            raise ValueError(f"{item_id} 的回答必须是对象")
         option = answer.get("option")
         if not isinstance(option, str) or option not in item["options"]:
-            raise DecisionFormatError(f"{item_id} 的 option 不属于本条选项")
+            raise ValueError(f"{item_id} 的 option 不属于本条选项")
         note = answer.get("note")
         if not isinstance(note, str):
-            raise DecisionFormatError(f"{item_id} 的 note 必须是字符串")
+            raise ValueError(f"{item_id} 的 note 必须是字符串")
         checked[item_id] = {"option": option, "note": note}
     return checked
 
@@ -257,7 +253,7 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             answers = validate_answers(payload, self.server.decisions)
-        except DecisionFormatError as error:
+        except ValueError as error:
             self._send_json(400, {"error": str(error)})
             return
 
@@ -300,7 +296,7 @@ def _load_decisions(path):
             object_pairs_hook=object_without_duplicate_keys,
         )
     except (OSError, UnicodeError, ValueError) as error:
-        raise DecisionFormatError(f"无法读取决定清单：{error}") from error
+        raise ValueError(f"无法读取决定清单：{error}") from error
     return validate_decisions(value)
 
 
@@ -394,7 +390,7 @@ def main(argv, platform_runner, stdout, stderr):
     requested_answers_path = Path(args.answers).expanduser()
     try:
         decisions = _load_decisions(args.decisions)
-    except DecisionFormatError as error:
+    except ValueError as error:
         stderr.write(f"错误：{error}\n")
         return 2
     if os.path.lexists(requested_answers_path):
