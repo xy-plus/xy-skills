@@ -1,5 +1,4 @@
 ---
-name: xy-goal
 description: 仅在用户或文档明确要求使用 xy-goal 时调用；只提到它不算要求。
 ---
 
@@ -56,8 +55,8 @@ hook 成功时 stdout、stderr 都为空；运行起来后的失败输出一行 
 所有参数都显式给出；状态只认 `在办` 或 `等用户：<待定的事>`，还没有指针就写 `无`。脚本分配 T 号，不复用已关闭编号。
 
 ```bash
-python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> <M> --state '在办' --pointer '无'
-python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> --evidence '<原话如何延伸；不做的后果；做了的收益；代价>' --state '在办' --pointer '无'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> <M> --source-kind '原话直提' --state '在办' --pointer '无'
+python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" add --title '<标题>' --criteria '<可核实的完成条件>' --source <N> --source-kind '作者发起' --evidence '<原话如何延伸；不做的后果；做了的收益；代价>' --state '在办' --pointer '无'
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --title '<新标题>'
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --criteria '<新判据>' --source <N>
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" update <T> --state '等用户：<待定的事>'
@@ -71,7 +70,7 @@ python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" cancel <T> --reason '<取
 python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" reopen <T>
 ```
 
-`add` 必须给 `--source`；`--evidence` 可选。作者发起或从原话延伸的事项要写证据，说明怎么从原话得出、不做会怎样、做了得到什么、代价多少。证据保存在事项的 `evidence` 字段，不写进 `links.md`。`show` 的出处行同时显示原话和「作者发起：<证据>」。`update --source` 只追加原话出处；证据不能替代原话。
+`add` 必须给 `--source` 和 `--source-kind`；`--source-kind` 只能是「原话直提」或「作者发起」，没有缺省值。原话直提不写 `--evidence`；作者发起必须给非空 `--evidence`，说明怎么从原话得出、不做会怎样、做了得到什么、代价多少。证据保存在事项的 `evidence` 字段，不写进 `links.md`。`show` 的出处行同时显示原话和「作者发起：<证据>」。`update --source` 只追加原话出处；证据不能替代原话。
 
 `update` 至少要改一个字段或追加出处；改判据必须同时带原话；`--source` 只追加出处。原话出处和 `cancel --quote` 都必须引用已存在的原话。有作者发起证据的事项可以用 `cancel --reason` 写明取消原因，即使它也挂了原话；没有证据的事项必须用 `cancel --quote`。未完成事项不得删除；判据按最新原话改，不能自行降要求。不带可跟踪要求的询问，答过后用 `dismiss` 标明一行原因，不必硬建事项；已挂事项的原话不能 `dismiss`，命令会报出事项并拒绝；原因含 Unicode 分行符也会写前拒绝。已关闭事项的结论站不住就用 `reopen` 重开：只收已关闭事项，事项字段回到开放清单，旧结论丢掉，出处不变，之后照常推进。
 

@@ -328,11 +328,15 @@ class Contract:
         changes, removals = {}, []
         if command == "add":
             values = {name: getattr(options, name) for name in TASK_FIELDS.values()}
-            if options.evidence is not None:
+            if options.source_kind == "作者发起":
+                if options.evidence is None:
+                    raise GoalError("作者发起事项必须给 --evidence")
                 require_text(options.evidence, "证据")
                 if options.evidence == "无":
                     raise GoalError("作者发起证据不能写「无」")
                 values["evidence"] = options.evidence
+            elif options.evidence is not None:
+                raise GoalError("原话直提事项不能给 --evidence")
             for label, name in TASK_FIELDS.items():
                 require_text(values[name], label)
             require_state(values["state"])
@@ -439,6 +443,7 @@ def parser():
     for name in TASK_FIELDS.values():
         adding.add_argument(f"--{name}", required=True)
     adding.add_argument("--source", type=int, nargs="+", required=True)
+    adding.add_argument("--source-kind", choices=("原话直提", "作者发起"), required=True)
     adding.add_argument("--evidence")
     updating = commands.add_parser("update")
     updating.add_argument("task")
