@@ -97,7 +97,7 @@ class CheckTest(unittest.TestCase):
             code, output = self.run_report(name, report, (group, "round3"))
             self.assertEqual(code, 0, output)
 
-    def create_complete_formal_group(self, failed=False, group="group1"):
+    def create_complete_formal_group(self, failed, group):
         self.create_formal_round3(failed=failed, group=group)
         group_path = Path(self.root) / group
         for number in (1, 2):
@@ -465,7 +465,7 @@ class CheckTest(unittest.TestCase):
         self.assert_rejected("review-razor.json", razor_report(verdict="不通过"), "但 delete.items 为空")
 
     def test_diagnosis_report_validates_structure_and_actions(self):
-        self.create_complete_formal_group(failed=True)
+        self.create_complete_formal_group(failed=True, group="group1")
         self.assertEqual(self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",)), (0, []))
         self.assert_rejected("diagnosis.json", diagnosis_report(actions=[]), "actions 不能为空", folders=("group1",))
         self.assert_rejected("diagnosis.json", diagnosis_report(actions=["拆分", "拆分"]), "actions 不能重复",
@@ -553,7 +553,7 @@ class CheckTest(unittest.TestCase):
                 self.assertTrue(any(expected in problem for problem in problems), problems)
 
     def test_formal_diagnosis_location_is_a_hard_error(self):
-        self.create_complete_formal_group(failed=True)
+        self.create_complete_formal_group(failed=True, group="group1")
         report = diagnosis_report()
         self.assertEqual(self.run_report("diagnosis.json", report, ("group1",)), (0, []))
 
@@ -569,10 +569,25 @@ class CheckTest(unittest.TestCase):
         self.assertTrue(any("必须已有 round3" in problem for problem in problems), problems)
 
     def test_formal_diagnosis_rejects_third_round_when_all_reports_pass(self):
-        self.create_complete_formal_group()
+        self.create_complete_formal_group(failed=False, group="group1")
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
         self.assertEqual(code, 1, problems)
         self.assertTrue(any("至少要有一份结论为「不通过」" in problem for problem in problems), problems)
+
+    def test_formal_diagnosis_rejects_an_invalid_required_report(self):
+        self.create_complete_formal_group(failed=True, group="group1")
+        report_path = Path(self.root) / "group1" / "round1" / "review-main.json"
+        report_path.write_text("{invalid", encoding="utf-8")
+
+        code, problems = self.run_report(
+            "diagnosis.json", diagnosis_report(), folders=("group1",),
+        )
+
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(
+            any("review-main.json" in problem and "JSON 无效" in problem for problem in problems),
+            problems,
+        )
 
     def test_formal_diagnosis_requires_reports_submissions_and_handling_for_all_rounds(self):
         self.create_formal_round3(failed=True)
@@ -633,7 +648,7 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(any("一组要复审到第 3 轮" in problem for problem in problems), problems)
 
-        self.create_complete_formal_group(failed=True)
+        self.create_complete_formal_group(failed=True, group="group1")
         with open(os.path.join(self.root, "group1", "diagnosis.json"), "w", encoding="utf-8") as stream:
             stream.write(json_text(diagnosis_report(actions=["无效动作"])))
         code, problems = self.run_report("review-main.json", main_report(), folders)

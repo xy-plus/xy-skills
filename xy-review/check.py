@@ -246,16 +246,19 @@ def _formal_diagnosis_group_problems(group_path):
                 continue
             try:
                 text = report_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            if check(text, name):
-                continue
-            document = read_document(text)
-            if document.get("verdict") == "不通过":
-                if number == 3:
-                    has_failure = True
-                if not (round_path / "handling.md").is_file():
-                    problems.append(f"{round_path}：{name} 结论为「不通过」，缺少 handling.md")
+            except (OSError, UnicodeDecodeError) as error:
+                problems.append(f"{report_path}：无法读取必需报告：{error}")
+            else:
+                report_problems = check(text, name)
+                if report_problems:
+                    problems.extend(f"{report_path}：{problem}" for problem in report_problems)
+                else:
+                    document = read_document(text)
+                    if document.get("verdict") == "不通过":
+                        if number == 3:
+                            has_failure = True
+                        if not (round_path / "handling.md").is_file():
+                            problems.append(f"{round_path}：{name} 结论为「不通过」，缺少 handling.md")
 
         if not any(
             path.is_file() and path.stat().st_size > 0
