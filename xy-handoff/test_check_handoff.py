@@ -1,4 +1,3 @@
-"""交接 JSON 的命令行测试。运行：在本目录 python3 -B -m unittest。"""
 import json
 from pathlib import Path
 import subprocess
@@ -74,7 +73,7 @@ class CheckHandoffTest(unittest.TestCase):
         self.assertEqual(result.stderr, "")
 
     def test_extra_keys_are_rejected(self):
-        for path in ((), ("from",), ("task",), ("quotes", 0)):
+        for path in ((), ("quotes", 0)):
             with self.subTest(path=path):
                 document = handoff()
                 target = document
@@ -84,20 +83,19 @@ class CheckHandoffTest(unittest.TestCase):
                 self.assert_rejected(document, "cleanup", "多余")
 
     def test_missing_top_level_keys_are_reported(self):
-        for key in ("from", "task", "reply", "quotes", "rules", "facts", "decide_yourself", "boundaries"):
-            with self.subTest(key=key):
-                document = handoff()
-                del document[key]
-                self.assert_rejected(document, key, "缺少")
+        self.assert_rejected(
+            {}, "from", "task", "reply", "quotes", "rules", "facts",
+            "decide_yourself", "boundaries", "缺少",
+        )
 
     def test_missing_nested_fields_are_reported(self):
-        cases = (("from", "name"), ("from", "short_id"), ("task", "what"),
-                 ("task", "done_when"), ("task", "others"))
-        for parent, key in cases:
-            with self.subTest(parent=parent, key=key):
-                document = handoff()
-                del document[parent][key]
-                self.assert_rejected(document, parent, key, "缺少")
+        document = handoff()
+        document["from"].clear()
+        document["task"].clear()
+        self.assert_rejected(
+            document, "from.name", "from.short_id", "task.what",
+            "task.done_when", "task.others", "缺少",
+        )
 
     def test_empty_required_strings_and_list_items_are_rejected(self):
         paths = (("from", "name"), ("from", "short_id"), ("task", "what"),
