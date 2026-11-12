@@ -11,6 +11,16 @@ from map_fixture import COMMAND, feature, make_repo
 
 
 class BrowserTreeTest(unittest.TestCase):
+    def render(self, repository, temporary):
+        output = Path(temporary) / "rendered"
+        rendered = subprocess.run(
+            ["python3", "-B", str(COMMAND), "render", "--repo", str(repository),
+             "--out", str(output)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
+        return output
+
     def test_tree_filters_decisions_and_fits_a_phone_viewport(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
@@ -35,13 +45,7 @@ class BrowserTreeTest(unittest.TestCase):
             feature("guide", None, entries=["README.md"]),
         ]))
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "rendered"
-            rendered = subprocess.run(
-                ["python3", "-B", str(COMMAND), "render", "--repo", str(repository),
-                 "--out", str(output)],
-                capture_output=True, text=True, check=False,
-            )
-            self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
+            output = self.render(repository, temporary)
             expected = json.loads((output / "map-data.json").read_text(encoding="utf-8"))
 
             with sync_playwright() as playwright:
@@ -214,7 +218,6 @@ class BrowserTreeTest(unittest.TestCase):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
         external_name = "external-" + "x" * 51
-        self.assertEqual(len(external_name), 60)
         repository = make_repo(self, {
             "area/subarea/guide.md": f"Uses {external_name}.\n",
         }, feature("root", "", subrepositories=[], external_dependencies=[external_name], children=[
@@ -226,13 +229,7 @@ class BrowserTreeTest(unittest.TestCase):
         ]))
 
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "rendered"
-            rendered = subprocess.run(
-                ["python3", "-B", str(COMMAND), "render", "--repo", str(repository),
-                 "--out", str(output)],
-                capture_output=True, text=True, check=False,
-            )
-            self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
+            output = self.render(repository, temporary)
 
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(executable_path=executable, headless=True)

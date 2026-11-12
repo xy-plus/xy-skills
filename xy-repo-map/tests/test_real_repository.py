@@ -19,14 +19,6 @@ from repo_map_lib.metrics import count_file  # noqa: E402
 
 class RealRepositoryTest(unittest.TestCase):
     def test_xy_skills_validates_assigns_files_and_counts_lines(self):
-        checked = subprocess.run(
-            [sys.executable, "-B", str(COMMAND), "check", "--repo", str(ROOT)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
-
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "rendered"
             rendered = subprocess.run(

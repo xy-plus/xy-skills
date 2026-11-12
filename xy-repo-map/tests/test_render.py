@@ -44,10 +44,9 @@ class RenderTest(unittest.TestCase):
                              page, re.DOTALL)
         self.assertIsNotNone(embedded)
         page_data = json.loads(embedded.group(1))
-        expected = json.loads(json.dumps(data))
-        for item in expected["features"].values():
+        for item in data["features"].values():
             del item["files"]
-        self.assertEqual(page_data, expected)
+        self.assertEqual(page_data, data)
         self.assertNotIn("<script src=", page)
         self.assertNotIn("<link rel=\"stylesheet\" href=", page)
 

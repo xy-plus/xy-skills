@@ -144,11 +144,13 @@ class PublishTest(unittest.TestCase):
         platform.assert_not_called()
 
     def test_publish_requires_the_root_feature_in_map_data(self):
-        self.write_map_data({"root": "root", "features": {}})
-        with patch("repo_map_lib.publish_command.subprocess.run") as platform:
-            with self.assertRaisesRegex(ArgumentError, "根功能"):
-                publish_repository(str(self.output), "当前")
-        platform.assert_not_called()
+        for data in ({"root": "root", "features": {}}, []):
+            with self.subTest(data=data):
+                self.write_map_data(data)
+                with patch("repo_map_lib.publish_command.subprocess.run") as platform:
+                    with self.assertRaisesRegex(ArgumentError, "缺少根功能"):
+                        publish_repository(str(self.output), "当前")
+                    platform.assert_not_called()
 
     def test_publish_requires_directory_name_on_the_root_feature(self):
         self.write_map_data({"root": "root", "features": {"root": {}}})

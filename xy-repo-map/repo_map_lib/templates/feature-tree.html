@@ -397,7 +397,6 @@ function renderHeader() {
     const text = share >= 12 ? `${lineTitles[key]} ${Math.round(share)}%` : "";
     const segment = make("span", key, text);
     segment.style.flex = `0 0 ${share}%`;
-    segment.style.width = `${share}%`;
     segment.title = `${lineTitles[key]} ${formatNumber(totalLines[key])}`;
     summary.append(segment);
   }

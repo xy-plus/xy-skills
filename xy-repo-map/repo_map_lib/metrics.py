@@ -1,5 +1,4 @@
-"""Count code, documentation, comment, and test lines for tracked files."""
-from dataclasses import dataclass
+from collections import namedtuple
 import ast
 import io
 import tokenize
@@ -8,12 +7,7 @@ from pathlib import Path
 from .constants import CODE_SUFFIXES
 
 
-@dataclass(frozen=True)
-class LineCounts:
-    code: int
-    docs: int
-    comments: int
-    tests: int
+LineCounts = namedtuple("LineCounts", "code docs comments tests")
 
 
 
@@ -23,21 +17,10 @@ def _python_doc_lines(source):
     except SyntaxError:
         return set()
     result = set()
-
-    def add_docstring(body):
-        if body and isinstance(body[0], ast.Expr):
-            value = body[0].value
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                result.update(range(body[0].lineno, body[0].end_lineno + 1))
-
-    def visit_definitions(node):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            add_docstring(node.body)
-        for child in ast.iter_child_nodes(node):
-            visit_definitions(child)
-
-    add_docstring(tree.body)
-    visit_definitions(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and ast.get_docstring(node, clean=False) is not None:
+            doc = node.body[0]
+            result.update(range(doc.lineno, doc.end_lineno + 1))
     return result
 
 
@@ -75,14 +58,14 @@ def _python_counts(source):
     return LineCounts(code, doc_count, comment_count, 0)
 
 
-def _quoted_end(source, start, quote):
+def _quoted_end(source, start, quote, allow_newlines=False):
     index = start + 1
     while index < len(source):
         if source[index] == "\\":
             index += 2
         elif source[index] == quote:
             return index + 1
-        elif source[index] == "\n":
+        elif source[index] == "\n" and not allow_newlines:
             return None
         else:
             index += 1
@@ -128,7 +111,7 @@ def _comment_spans(source, language):
                     index = end
                     continue
             else:
-                end = _quoted_end(source, index, char)
+                end = _quoted_end(source, index, char, allow_newlines=language == "Rust")
                 if end is not None:
                     index = end
                     continue
@@ -168,8 +151,7 @@ def _comment_spans(source, language):
     return spans
 
 
-def _lexed_counts(source, language):
-    spans = _comment_spans(source, language)
+def _span_counts(source, spans):
     line_counts = {"code": 0, "docs": 0, "comments": 0}
     offset = 0
     for line in source.splitlines(keepends=True):
@@ -189,13 +171,14 @@ def _lexed_counts(source, language):
     return LineCounts(line_counts["code"], line_counts["docs"], line_counts["comments"], 0)
 
 
+def _lexed_counts(source, language):
+    return _span_counts(source, _comment_spans(source, language))
+
+
 def code_counts(path, source):
-    """Classify non-empty source lines; inline comments stay code."""
     suffix = Path(path).suffix.lower()
     if suffix == ".html":
         return _html_counts(source)
-    if suffix not in CODE_SUFFIXES:
-        raise ValueError(f"code 文件后缀不支持：{suffix or '<无后缀>'}")
     language = CODE_SUFFIXES[suffix]
     if language == "Python":
         return _python_counts(source)
@@ -223,29 +206,14 @@ def _html_counts(source):
             break
         end = source.find("-->", start + 4)
         if end < 0:
-            spans.append((start, len(source)))
+            spans.append((start, len(source), False))
             break
-        spans.append((start, end + 3))
+        spans.append((start, end + 3, False))
         start = end + 3
-
-    counts = {"code": 0, "comments": 0}
-    offset = 0
-    for line in source.splitlines(keepends=True):
-        content = line.rstrip("\r\n")
-        visible = [offset + index for index, char in enumerate(content) if not char.isspace()]
-        if visible:
-            if all(any(begin <= position < end for begin, end in spans) for position in visible):
-                counts["comments"] += 1
-            else:
-                counts["code"] += 1
-        offset += len(line)
-    return LineCounts(counts["code"], 0, counts["comments"], 0)
+    return _span_counts(source, spans)
 
 
 def count_file(path, category, content):
-    """Count one file from decoded text and its file category."""
-    if not isinstance(content, str):
-        raise TypeError("文件内容必须是文本")
     if category == "code":
         return code_counts(path, content)
     if category == "docs":
@@ -254,4 +222,3 @@ def count_file(path, category, content):
         return LineCounts(0, 0, 0, sum(bool(line.strip()) for line in content.splitlines()))
     if category == "other":
         return LineCounts(0, 0, 0, 0)
-    raise ValueError(f"未知文件类别：{category}")

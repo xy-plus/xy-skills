@@ -28,20 +28,18 @@ def _site_name(map_path, as_mode):
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ArgumentError(f"无法读取 map-data.json：{error}") from error
 
-    if not isinstance(data, dict):
-        raise ArgumentError("map-data.json 必须是对象")
-    root_id = data.get("root")
-    features = data.get("features")
-    if not isinstance(root_id, str) or not isinstance(features, dict) or root_id not in features:
-        raise ArgumentError("map-data.json 缺少根功能")
-    root = features[root_id]
-    if not isinstance(root, dict) or not isinstance(root.get("directory_name"), str):
-        raise ArgumentError("map-data.json 根功能缺少 directory_name")
-    directory_name = root["directory_name"]
-    if not directory_name.strip():
+    try:
+        root = data["features"][data["root"]]
+    except (KeyError, TypeError):
+        raise ArgumentError("map-data.json 缺少根功能") from None
+    try:
+        directory_name = root["directory_name"]
+    except (KeyError, TypeError):
+        raise ArgumentError("map-data.json 根功能缺少 directory_name") from None
+    if not isinstance(directory_name, str) or not directory_name.strip():
         raise ArgumentError("map-data.json 根功能缺少 directory_name")
 
-    is_workspace = any("/" in feature_id for feature_id in features)
+    is_workspace = any("/" in feature_id for feature_id in data["features"])
     suffix = "-overview-map" if is_workspace else "-map"
     base_name = directory_name + suffix
     if as_mode == "当前":

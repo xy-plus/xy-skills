@@ -1,4 +1,3 @@
-"""Test code, documentation, comment, and test line counts."""
 from pathlib import Path
 import sys
 import unittest
@@ -77,10 +76,11 @@ let answer = 42; // inline
         counts = code_counts("lib.rs", source)
         self.assertEqual((counts.code, counts.docs, counts.comments), (3, 2, 3))
 
-    def test_rust_raw_string_bodies_do_not_turn_slashes_into_comments(self):
+    def test_rust_string_bodies_do_not_turn_slashes_into_comments(self):
         samples = (
             'let value = r"first line\n// still raw text\n";\n',
             'let value = r#"an " quote\n// still raw text\n"#;\n',
+            'let value = "first line\n// still string text\n";\n',
         )
 
         for source in samples:
@@ -102,17 +102,3 @@ let answer = 42; // inline
         self.assertEqual((docs.code, docs.docs, docs.comments, docs.tests), (0, 2, 0, 0))
         self.assertEqual((tests.code, tests.docs, tests.comments, tests.tests), (0, 0, 0, 2))
         self.assertEqual((other.code, other.docs, other.comments, other.tests), (0, 0, 0, 0))
-
-    def test_count_file_requires_text_content(self):
-        with self.assertRaisesRegex(TypeError, "文本"):
-            count_file("guide.md", "docs", b"text\n")
-
-    def test_count_file_rejects_an_unknown_category(self):
-        with self.assertRaisesRegex(ValueError, "文件类别"):
-            count_file("file.bin", "unknown", "text\n")
-
-    def test_unsupported_code_suffix_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "不支持"):
-            code_counts("source.go", "package main\n")
-        with self.assertRaisesRegex(ValueError, "不支持"):
-            code_counts("source.css", "body { color: red; }\n")
