@@ -38,6 +38,13 @@ class OwnershipTest(unittest.TestCase):
         self.assertIn("tests/test_consumer.py", owned_files)
         self.assertIn("tests/test_owned.py", owned_files)
 
+    def test_plural_rust_test_name_matches_source_but_tests_rs_does_not(self):
+        self.assertEqual(
+            _test_code_match("pkg/foo_tests.rs", {"src/foo.rs"}),
+            "src/foo.rs",
+        )
+        self.assertIsNone(_test_code_match("tests.rs", {"src/tests.rs"}))
+
     def test_test_file_without_imports_marks_its_parent_as_whole(self):
         repository = make_repo(self, {
             "README.md": "A package test fixture.\n",

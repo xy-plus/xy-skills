@@ -107,6 +107,20 @@ class DerivationTest(unittest.TestCase):
         counts = data["features"]["root"]["lines"]["own"]
         self.assertEqual(counts, {"code": 3, "docs": 3, "comments": 2, "tests": 2})
 
+    def test_classifies_rust_files_with_plural_test_names_as_tests(self):
+        repository = make_repo(self, {
+            "README.md": "Rust test file names are classified here.\n",
+            "src/core.rs": "fn core() {}\n",
+            "src/helper_tests.rs": "#[test]\nfn helper() {}\n",
+            "src/tests.rs": "#[test]\nfn integration() {}\n",
+        }, feature("root", "", subrepositories=[], external_dependencies=[]))
+
+        data = map_data.build_map(repository)
+
+        self.assertEqual(map_data.file_category(repository, "src/helper_tests.rs"), "tests")
+        self.assertEqual(map_data.file_category(repository, "src/tests.rs"), "tests")
+        self.assertEqual(data["features"]["root"]["lines"]["own"]["tests"], 4)
+
     def test_css_files_are_rejected_as_unsupported_code(self):
         repository = make_repo(self, {
             "src/style.css": "/* style note */\nbody { color: red; }\n",

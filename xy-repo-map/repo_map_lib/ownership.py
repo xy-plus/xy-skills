@@ -32,6 +32,8 @@ def _test_code_match(test_path, code_paths):
         candidate = name[5:]
     elif name.endswith("_test.py"):
         candidate = name[:-8] + ".py"
+    elif name.endswith("_tests.rs"):
+        candidate = name[:-9] + ".rs"
     elif name.endswith("_test.rs"):
         candidate = name[:-8] + ".rs"
     if candidate is None:

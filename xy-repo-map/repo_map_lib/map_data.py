@@ -29,7 +29,7 @@ from .ownership import assign_files
 
 SOURCE_SUFFIXES = set(CODE_SUFFIXES) | {".html"}
 CODE_CANDIDATE_SUFFIXES = SOURCE_SUFFIXES | UNSUPPORTED_CODE_SUFFIXES
-TEST_FILE_ENDINGS = ("_test.py", "_test.rs")
+TEST_FILE_ENDINGS = ("_test.py", "_test.rs", "_tests.rs")
 
 
 def _is_test_file(path):
@@ -40,6 +40,7 @@ def _is_test_file(path):
     named_test = (
         (name.startswith("test_") and suffix == ".py")
         or name == "conftest.py"
+        or name == "tests.rs"
         or name.endswith(TEST_FILE_ENDINGS)
     )
     return has_code_suffix and (in_test_directory or named_test)
