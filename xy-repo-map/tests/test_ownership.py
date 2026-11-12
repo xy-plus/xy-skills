@@ -15,6 +15,7 @@ class OwnershipTest(unittest.TestCase):
         repository = make_repo(self, {
             "pkg/owned.py": "value = 1\n",
             "tests/test_consumer.py": "import pkg.owned\n",
+            "tests/test_owned.py": "import pkg.owned\n",
         }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
             feature("package", "pkg", children=[
                 feature("owned", None, entries=["pkg/owned.py"]),
@@ -29,6 +30,7 @@ class OwnershipTest(unittest.TestCase):
             for path in paths
         ]
         self.assertIn("tests/test_consumer.py", owned_files)
+        self.assertIn("tests/test_owned.py", owned_files)
 
     def test_plural_rust_test_name_matches_source_but_tests_rs_does_not(self):
         self.assertEqual(

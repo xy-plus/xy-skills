@@ -58,7 +58,7 @@ def _python_counts(source):
     return LineCounts(code, doc_count, comment_count, 0)
 
 
-def _quoted_end(source, start, quote, allow_newlines=False):
+def _quoted_end(source, start, quote, allow_newlines):
     index = start + 1
     while index < len(source):
         if source[index] == "\\":
@@ -106,7 +106,7 @@ def _comment_spans(source, language):
         if char in ('"', "'"):
             if language == "Rust" and char == "'":
                 # Rust lifetimes are not quoted strings; only skip character literals.
-                end = _quoted_end(source, index, char)
+                end = _quoted_end(source, index, char, allow_newlines=False)
                 if end is not None and end - index <= 6:
                     index = end
                     continue
