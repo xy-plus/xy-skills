@@ -1,7 +1,7 @@
 {
   "id": "xy-skills",
   "title": "让 AI 按我的规矩干活",
-  "what": "一组 Claude Code skill：定规矩、管流程、记账、协作、管文件、收拾仓库。",
+  "what": "一组 Claude Code skill：定规矩、管流程、记账、协作、管文件、收拾仓库；读完 README 就能装好用起来。",
   "why": {
     "text": "AI 能干活，但不守规矩、不记事、不收拾；我不想每次都盯着。",
     "source": "确认",
@@ -14,7 +14,9 @@
     "Claude Code",
     "superpowers",
     "web-portal",
-    "systemd"
+    "systemd",
+    "playwright",
+    "Chromium"
   ],
   "entries": [],
   "children": [
@@ -120,7 +122,7 @@
             {
               "id": "review-report-check",
               "title": "检查审查报告的格式",
-              "what": "审查报告是不是按模板写的、结论和问题清单对不对得上，用脚本查。",
+              "what": "审查报告是不是按模板写的、结论和问题清单对不对得上，用脚本查。拒绝含重复键的 JSON。",
               "why": {
                 "text": "格式靠审查者自觉会走样，报告就没法机器核对。",
                 "source": "确认",
@@ -170,7 +172,7 @@
         {
           "id": "xy-goal",
           "title": "长目标契约",
-          "what": "自动记下我的原话，事情挂到原话上按判据验收；在办的事定时推进，换会话也能接着办。",
+          "what": "自动记下我的原话，事情挂到原话上按判据验收；在办的事定时推进，换会话也能接着办，关闭前新开子代理整体复核。",
           "why": {
             "text": "长任务里 AI 会忘掉或悄悄放宽我的要求，所以以我的原话为准。",
             "source": "确认",
@@ -309,7 +311,7 @@
             "text": "去处说不清，文件就会被放错地方。",
             "source": "确认",
             "quote": "",
-            "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json P3"
+            "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A17"
           },
           "directory": null,
           "entries": [
@@ -320,12 +322,12 @@
         {
           "id": "scheduled-cleanup",
           "title": "定期清理运行目录",
-          "what": "满 30 天没动、也没有我的进程在用的运行目录（含 Codex 子代理的会话目录），每天自动删掉，关机错过的那次开机后补跑；删前先在锁内挪进回收区，防止并发和删到一半出错。",
+          "what": "满 30 天没动、也没有我的进程在用（按读得到的进程引用和命令行判断）的运行目录（含 Codex 子代理的会话目录），每天自动删掉，关机错过的那次开机后补跑；删前先在锁内挪进回收区，防止并发和删到一半出错。",
           "why": {
             "text": "没人会记得回头手动删。",
             "source": "确认",
             "quote": "",
-            "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json P2"
+            "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A18"
           },
           "directory": null,
           "entries": [
@@ -353,7 +355,7 @@
         {
           "id": "xy-repo-map",
           "title": "仓库功能图",
-          "what": "把仓库的功能画成一棵树：每个功能做什么、为什么要、各多少行、用到谁，一眼看清，发到网上给我看；文件归属在 map-data.json 里。",
+          "what": "把仓库的功能画成一棵树：每个功能做什么、为什么要、各多少行、用到谁；依赖关系只识别 Python 导入，以及代码、文档里写出的路径和目录功能名提及；发到网上给我看；文件归属在 map-data.json 里。",
           "why": {
             "text": "以后审核，就是看仓库实际情况和图的情况，功能多了应该删掉或更新图。",
             "source": "原话",
@@ -422,7 +424,7 @@
             {
               "id": "find-dependencies",
               "title": "看出功能之间谁用到谁",
-              "what": "功能之间谁用到谁、谁只是提到谁。",
+              "what": "识别 Python 导入，以及代码、文档里写出的路径和目录功能名提及关系。",
               "why": {
                 "text": "功能之间的依赖要不用点就看得出来。",
                 "source": "原话",
@@ -438,7 +440,7 @@
             {
               "id": "render-feature-tree",
               "title": "出图",
-              "what": "把功能清单画成手机上能看的一页。",
+              "what": "把功能清单画成手机上能看的一页，显示各功能被用到的数量和来源详情，并提供全部展开工具条。",
               "why": {
                 "text": "用户主要用手机看功能图。",
                 "source": "原话",
@@ -529,7 +531,7 @@
             {
               "id": "decision-page",
               "title": "用网页问要我定的事",
-              "what": "清扫里要我定的事放在一个网页上，每条有自己的选项和一个可以自己写的框，我点完提交就行；没提交的选择和填写存在浏览器里，刷新或重开页面能恢复。",
+              "what": "清扫里要我定的事放在一个网页上，每条有自己的选项和一个可以自己写的框，我点完提交就行；没提交的选择和填写存在浏览器里，在浏览器能存时，刷新或重开页面能恢复。拒绝含重复键的 JSON。",
               "why": {
                 "text": "一次要答几十条，来回反馈很麻烦。",
                 "source": "原话",
