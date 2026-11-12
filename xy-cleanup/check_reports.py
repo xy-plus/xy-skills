@@ -535,6 +535,17 @@ def _strip_markdown_container_prefixes(text):
         return remaining
 
 
+def _strip_markdown_quote_prefixes(text):
+    prefixes = []
+    remaining = text
+    while True:
+        quote = re.match(r"^ {0,3}>[ \t]?", remaining)
+        if quote is None:
+            return tuple(prefixes), remaining
+        prefixes.append(">")
+        remaining = remaining[quote.end():]
+
+
 def _markdown_heading_lines(file_lines):
     headings = set()
     texts = [
@@ -575,14 +586,29 @@ def _markdown_heading_lines(file_lines):
             headings.add(index + 1)
 
     for index, text in enumerate(texts):
-        container_text = _strip_markdown_container_prefixes(text)
-        if index in hidden_lines or not SETEXT_UNDERLINE.match(container_text):
+        if index in hidden_lines or index == 0 or index - 1 in hidden_lines:
             continue
-        if re.match(r"^ {0,3}-(?:[ \t]+|$)", text):
+        quote_prefixes, underline = _strip_markdown_quote_prefixes(text)
+        paragraph_quotes, paragraph = _strip_markdown_quote_prefixes(texts[index - 1])
+        if quote_prefixes != paragraph_quotes:
             continue
-        if index == 0 or index - 1 in hidden_lines:
+        paragraph_list = re.match(
+            r"^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)", paragraph,
+        )
+        underline_list = re.match(
+            r"^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)", underline,
+        )
+        if paragraph_list is not None:
+            list_indent = paragraph_list.end()
+            indentation = len(underline) - len(underline.lstrip(" "))
+            if indentation < list_indent:
+                continue
+            paragraph = paragraph[list_indent:]
+            underline = underline[list_indent:]
+        elif underline_list is not None:
             continue
-        paragraph = _strip_markdown_container_prefixes(texts[index - 1])
+        if not SETEXT_UNDERLINE.match(underline):
+            continue
         if not paragraph.strip() or MARKDOWN_HEADING.match(paragraph):
             continue
         if paragraph.startswith(("    ", "\t")) or SETEXT_UNDERLINE.match(paragraph):

@@ -67,7 +67,7 @@ def request_socket(socket_path, method, path, data):
     return result
 
 
-def request_raw_socket(socket_path, raw_body=None, content_length=None):
+def request_raw_socket(socket_path, raw_body, content_length):
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.connect(socket_path)
     body = b"" if raw_body is None else raw_body.encode("utf-8")
@@ -385,11 +385,15 @@ class DecisionPageCommandTest(unittest.TestCase):
                     self.assertEqual(status, 400, body)
                     self.assertFalse(answers.exists())
 
-            status, body = request_raw_socket(socket_path, content_length=204801)
+            status, body = request_raw_socket(
+                socket_path, raw_body=None, content_length=204801,
+            )
             self.assertEqual(status, 400, body)
             self.assertFalse(answers.exists())
 
-            status, body = request_raw_socket(socket_path, content_length="9" * 5000)
+            status, body = request_raw_socket(
+                socket_path, raw_body=None, content_length="9" * 5000,
+            )
             self.assertEqual(status, 400, body)
             self.assertFalse(answers.exists())
 
@@ -452,7 +456,9 @@ class DecisionPageCommandTest(unittest.TestCase):
                     '"note":""}}}'
                 )
                 with patch.object(decision_page.DecisionHTTPServer, "handle_error"):
-                    status, body = request_raw_socket(str(socket_path), raw_answer)
+                    status, body = request_raw_socket(
+                        str(socket_path), raw_answer, content_length=None,
+                    )
                 self.assertEqual(status, 400, body)
                 self.assertIn("重复键：option", body.decode("utf-8"))
                 self.assertFalse(answers_path.exists())

@@ -1302,6 +1302,17 @@ class CheckReportsTest(unittest.TestCase):
             "| --- | --- |",
         ])
         self.assertEqual({1}, headings)
+        headings = check_reports_module._markdown_heading_lines([
+            "- list item",
+            "---",
+            "> quote text",
+            "---",
+            "> Quoted title",
+            "> ===",
+            "- List title",
+            "  ---",
+        ])
+        self.assertEqual({5, 7}, headings)
         self.add_tracked_file(
             "alpha/markdown-non-headings.md",
             "    # Four spaces\n````md\n# Code One\n## Code Two\n````\n"
