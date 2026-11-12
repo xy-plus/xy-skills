@@ -903,17 +903,19 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 ))
 
             if role == "剃刀" and feature_data is not None:
-                if duplicate_windows is None:
+                keep_items = review.get("keep")
+                has_keep_items = isinstance(keep_items, list) and bool(keep_items)
+                if has_keep_items and duplicate_windows is None:
                     duplicate_windows = find_duplicate_windows(repository, tracked_files)
                 problems.extend(_validate_keep_items(
-                    review.get("keep"),
+                    keep_items,
                     f"报告 {label} 的功能 {feature_id}.keep",
                     repository,
                     feature_data,
                     keep_files,
                     finding_ranges,
                     feature_targets,
-                    duplicate_windows,
+                    duplicate_windows if duplicate_windows is not None else {},
                     tracked_files,
                 ))
                 valid_reduction_targets = {

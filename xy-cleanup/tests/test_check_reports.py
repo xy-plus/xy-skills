@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -708,6 +709,26 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_empty_razor_keep_does_not_scan_duplicate_windows(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        for review in razor["features"]:
+            review["keep"] = []
+        self.write_reports(main, razor)
+        data = check_reports_module.build_map(self.repository)
+        tracked_files = check_reports_module.tracked_paths(self.repository)
+
+        with patch.object(check_reports_module, "find_duplicate_windows", return_value={}) as scan:
+            check_reports_module.validate_reports(
+                data,
+                self.repository,
+                set(data["features"]),
+                self.reports_for_check(),
+                tracked_files,
+            )
+
+        scan.assert_not_called()
 
     def test_razor_keep_reasons_cannot_repeat_across_features_or_reports(self):
         for field in ("achieved", "cost"):
