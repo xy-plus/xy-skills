@@ -39,19 +39,38 @@ def razor_keep_item(feature_id, lines=None, source="要什么", text=None):
     }
 
 
-def review_feature(feature_id, role):
+def review_feature(feature_id, role, own_lines=None):
     common = {"feature": feature_id, "todo_items": [], "findings": []}
     if role == "主审":
         return {**common, "what_true": "实现与说明相符。",
                 "why_holds": "理由仍成立。", "structure": "现有结构合适。"}
     default_features = {"root", "alpha", "beta"}
     keep = [razor_keep_item(feature_id)] if feature_id in default_features else []
-    return {**common, "necessity": "功能必要。", "keep": keep}
+    return {
+        **common,
+        "necessity": "功能必要。",
+        "smallest": {
+            "design": "按当前做法实现。",
+            "lines": own_lines or {"code": 0, "docs": 0, "comments": 0, "tests": 0},
+        },
+        "keep": keep,
+    }
 
 
 def report(role, repository, feature_ids=("root", "alpha", "beta")):
+    own_lines = {}
+    if role == "剃刀":
+        feature_data = check_reports_module.build_map(repository)["features"]
+        own_lines = {
+            feature_id: feature_data[feature_id]["lines"]["own"]
+            for feature_id in feature_ids
+        }
     return {"role": role, "repo": str(repository),
-            "features": [review_feature(feature_id, role) for feature_id in feature_ids]}
+            "features": [
+                review_feature(feature_id, role, own_lines[feature_id])
+                if role == "剃刀" else review_feature(feature_id, role)
+                for feature_id in feature_ids
+            ]}
 
 
 def recheck_verdict(lines, verdict="站得住", attempt="试着移除实体并核对结果。",
@@ -302,6 +321,114 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("features[1].necessity 必须是非空字符串", result.stdout)
+
+    def test_razor_requires_smallest(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        del alpha["smallest"]
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("缺少字段 smallest", result.stdout)
+
+    def test_razor_smallest_requires_exact_fields_and_nonempty_design(self):
+        cases = [
+            ({"lines": {"code": 1, "docs": 0, "comments": 0, "tests": 0}},
+             "smallest缺少字段 design"),
+            ({"design": "  ", "lines": {"code": 1, "docs": 0, "comments": 0, "tests": 0}},
+             "smallest.design 必须是非空字符串"),
+            ({"design": "当前做法。", "lines": {"docs": 0, "comments": 0, "tests": 0}},
+             "smallest.lines缺少字段 code"),
+            ({"design": "当前做法。", "lines": {"code": 1, "docs": 0, "comments": 0, "tests": 0, "extra": 0}},
+             "smallest.lines有多余字段 extra"),
+            ({"design": "当前做法。", "lines": {"code": -1, "docs": 0, "comments": 0, "tests": 0}},
+             "smallest.lines.code 必须是非负整数"),
+            ({"design": "当前做法。", "lines": {"code": True, "docs": 0, "comments": 0, "tests": 0}},
+             "smallest.lines.code 必须是非负整数"),
+            ({"design": "当前做法。", "lines": {"code": 1.5, "docs": 0, "comments": 0, "tests": 0}},
+             "smallest.lines.code 必须是非负整数"),
+            ({"design": "当前做法。", "lines": {"code": 1, "docs": 0, "comments": 0, "tests": 0}, "extra": "多余"},
+             "smallest有多余字段 extra"),
+        ]
+        for smallest, expected_error in cases:
+            with self.subTest(expected_error=expected_error):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["smallest"] = smallest
+                self.write_reports(main, razor)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(expected_error, result.stdout)
+
+    def test_smaller_estimate_requires_a_reduction_finding_on_the_feature(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["smallest"]["lines"]["code"] = 0
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("smallest 估算少于当前行数", result.stdout)
+        self.assertIn("当前 code=1, docs=0, comments=0, tests=0", result.stdout)
+        self.assertIn("估计 code=0, docs=0, comments=0, tests=0", result.stdout)
+
+        for kind in ("删除", "合并", "重构"):
+            with self.subTest(kind=kind):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["smallest"]["lines"]["code"] = 0
+                proposal = finding(
+                    kind,
+                    changes_behavior=False,
+                    decision="直接做" if kind in {"删除", "合并"} else "问你",
+                )
+                proposal["target"] = "alpha"
+                alpha["findings"] = [proposal]
+                if kind == "删除":
+                    alpha["keep"] = []
+                self.write_reports(main, razor)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_smallest_estimate_at_or_above_current_total_needs_no_finding(self):
+        for code_lines in (1, 2):
+            with self.subTest(code_lines=code_lines):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["smallest"]["lines"]["code"] = code_lines
+                self.write_reports(main, razor)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_smaller_estimate_rejects_line_findings_other_feature_and_other_kind(self):
+        cases = [
+            ("alpha/main.py:1", "删除"),
+            ("beta", "重构"),
+            ("alpha", "改名"),
+        ]
+        for target, kind in cases:
+            with self.subTest(target=target, kind=kind):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["smallest"]["lines"]["code"] = 0
+                proposal = finding(
+                    kind,
+                    changes_behavior=False,
+                    decision="直接做" if kind == "删除" else "问你",
+                )
+                proposal["target"] = target
+                alpha["findings"] = [proposal]
+                if target == "alpha/main.py:1":
+                    alpha["keep"] = []
+                self.write_reports(main, razor)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("smallest 估算少于当前行数", result.stdout)
 
     def test_razor_keep_must_cover_each_nonempty_line_and_may_skip_blank_lines(self):
         self.add_tracked_file("alpha/guide.md", "开头。\n\n结尾。\n")

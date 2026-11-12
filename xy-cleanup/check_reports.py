@@ -30,7 +30,7 @@ FEATURE_KEYS = {
     "主审": {
         "feature", "what_true", "why_holds", "structure", "todo_items", "findings",
     },
-    "剃刀": {"feature", "necessity", "keep", "todo_items", "findings"},
+    "剃刀": {"feature", "necessity", "smallest", "keep", "todo_items", "findings"},
     "剃刀复审": {"feature", "verdicts", "findings"},
 }
 FINDING_KEYS = {
@@ -73,6 +73,54 @@ def _field_errors(value, expected, label):
 
 def _nonempty(value):
     return isinstance(value, str) and bool(value.strip())
+
+
+SMALLEST_LINE_KEYS = {"code", "docs", "comments", "tests"}
+
+
+def _validate_smallest(review, label, feature_id, feature_data, findings):
+    problems = _field_errors(
+        review.get("smallest"), {"design", "lines"}, f"{label}.smallest",
+    )
+    smallest = review.get("smallest")
+    if not isinstance(smallest, dict):
+        return problems
+    if not _nonempty(smallest.get("design")):
+        problems.append(f"{label}.smallest.design 必须是非空字符串")
+    lines = smallest.get("lines")
+    problems.extend(_field_errors(lines, SMALLEST_LINE_KEYS, f"{label}.smallest.lines"))
+    if not isinstance(lines, dict):
+        return problems
+    for key in sorted(SMALLEST_LINE_KEYS & lines.keys()):
+        value = lines[key]
+        if type(value) is not int or value < 0:
+            problems.append(
+                f"{label}.smallest.lines.{key} 必须是非负整数"
+            )
+    if not SMALLEST_LINE_KEYS <= lines.keys() or any(
+        type(lines[key]) is not int or lines[key] < 0
+        for key in SMALLEST_LINE_KEYS & lines.keys()
+    ):
+        return problems
+
+    current = feature_data["lines"]["own"]
+    estimate_total = sum(lines[key] for key in SMALLEST_LINE_KEYS)
+    current_total = sum(current[key] for key in SMALLEST_LINE_KEYS)
+    has_feature_reduction = any(
+        isinstance(finding, dict)
+        and finding.get("target") == feature_id
+        and finding.get("kind") in {"删除", "合并", "重构"}
+        for finding in findings
+    )
+    if estimate_total < current_total and not has_feature_reduction:
+        line_keys = ("code", "docs", "comments", "tests")
+        current_lines = ", ".join(f"{key}={current[key]}" for key in line_keys)
+        estimated_lines = ", ".join(f"{key}={lines[key]}" for key in line_keys)
+        problems.append(
+            f"{label}.smallest 估算少于当前行数，却没有目标为本功能 id、kind 为删除、合并或重构的发现；"
+            f"当前 {current_lines}，估计 {estimated_lines}"
+        )
+    return problems
 
 
 def _parse_line_range(value, allow_single_line=False):
@@ -763,6 +811,15 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     finding_ranges.append((finding, target_range))
                 elif target == feature_id:
                     feature_targets.append(finding)
+
+            if role == "剃刀" and feature_data is not None:
+                problems.extend(_validate_smallest(
+                    review,
+                    feature_label,
+                    feature_id,
+                    feature_data,
+                    findings,
+                ))
 
             if (role == "剃刀复审" and isinstance(feature_id, str)
                     and feature_data is not None):
