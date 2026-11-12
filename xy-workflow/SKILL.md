@@ -1,5 +1,4 @@
 ---
-name: xy-workflow
 description: 讨论问题并可能改代码时的标准工作流程；要用它时先单独加载，加载完再做别的；按 superpowers:brainstorming 定的规模走。
 ---
 

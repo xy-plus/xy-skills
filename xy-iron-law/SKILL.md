@@ -1,5 +1,4 @@
 ---
-name: xy-iron-law
 description: 三条铁律；任何情况下都要遵守。
 ---
 

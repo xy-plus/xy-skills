@@ -1,5 +1,4 @@
 ---
-name: sync-think
 description: 把只有用户能定的事做成带建议的选择题，用提问工具（AskUserQuestion）一次问一道；只在用户或文档点名时用，不自动触发。
 ---
 

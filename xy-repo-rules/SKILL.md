@@ -1,5 +1,4 @@
 ---
-name: xy-repo-rules
 description: 仓库规范七条；写代码、文档或审查时遵守。
 ---
 
