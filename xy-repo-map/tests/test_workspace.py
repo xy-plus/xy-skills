@@ -19,6 +19,12 @@ class WorkspaceRenderTest(unittest.TestCase):
         )
 
     def test_render_workspace_combines_maps_and_resolves_external_names(self):
+        root_manifest = self.workspace / "repo-map" / "features.json"
+        root_feature = json.loads(root_manifest.read_text(encoding="utf-8"))
+        root_feature["external_dependencies"] = ["lib"]
+        root_manifest.write_text(json.dumps(root_feature, ensure_ascii=False), encoding="utf-8")
+        (self.workspace / "README.md").write_text("Workspace uses lib.\n", encoding="utf-8")
+
         result = self.render()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         data = json.loads((self.output / "map-data.json").read_text(encoding="utf-8"))
@@ -51,6 +57,11 @@ class WorkspaceRenderTest(unittest.TestCase):
         )
         self.assertEqual(data["features"]["sub-a/root"]["external_uses"], ["missing-tool"])
         self.assertEqual(data["features"]["sub-a/part"]["external_uses"], [])
+        self.assertEqual(data["features"]["root"]["external_uses"], ["lib"])
+        self.assertFalse(any(
+            use["feature"] in {"sub-a/part", "sub-b/part"}
+            for use in data["features"]["root"]["uses"]
+        ))
         self.assertEqual(data["markers"], {
             "等你拍板": 0,
             "还没实现": 0,

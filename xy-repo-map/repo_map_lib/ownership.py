@@ -1,4 +1,3 @@
-"""Assign tracked files to the features that register or import them."""
 from pathlib import Path
 
 from .features import (

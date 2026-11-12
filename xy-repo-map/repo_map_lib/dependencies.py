@@ -6,10 +6,8 @@ import re
 def _module_path(path):
     if not path.endswith(".py"):
         return None
-    value = path[:-3]
-    if value.endswith("/__init__"):
-        value = value[:-9]
-    return value
+    module = path[:-3]
+    return module[:-9] if module.endswith("/__init__") else module
 
 
 def _match_module(name, python_paths):
@@ -24,14 +22,9 @@ def _match_module(name, python_paths):
 
 def _relative_module(path, level, module):
     parts = Path(path).parent.parts
-    climb = level - 1
-    if climb > len(parts):
+    if level > len(parts) + 1:
         return None
-    base = parts[:len(parts) - climb] if climb else parts
-    pieces = [*base]
-    if module:
-        pieces.extend(module.split("."))
-    return ".".join(pieces)
+    return ".".join((*parts[:len(parts) + 1 - level], *(module.split(".") if module else ())))
 
 
 def _import_targets(path, source, python_paths):

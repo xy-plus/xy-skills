@@ -45,6 +45,17 @@ def make_repo(test_case, files, root_feature):
     return _make_repository(repository, files, root_feature)
 
 
+def make_cleanup_repo(test_case):
+    return make_repo(test_case, {
+        "README.md": "Demo.\n",
+        "alpha/main.py": "value = 1\n",
+        "beta/main.py": "value = 2\n",
+    }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
+        feature("alpha", "alpha"),
+        feature("beta", "beta"),
+    ]))
+
+
 def _make_repository(repository, files, root_feature):
     repository.mkdir(parents=True, exist_ok=True)
     for relative, content in files.items():

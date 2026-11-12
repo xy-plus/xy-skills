@@ -33,7 +33,7 @@ class BrowserTreeTest(unittest.TestCase):
                 feature("future", None, source="起草"),
             ]),
             feature("guide", None, entries=["README.md"]),
-        ], source="起草"))
+        ]))
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "rendered"
             rendered = subprocess.run(
@@ -80,8 +80,10 @@ class BrowserTreeTest(unittest.TestCase):
                         self.assertIn(root_feature["why"]["text"], root_why.text_content())
                         self.assertEqual(
                             root_why.locator(".source-label").text_content(),
-                            "AI 起草 · 等你拍板",
+                            "你的原话",
                         )
+                        self.assertIn("用户说过的话。", root_why.text_content())
+                        self.assertIn("测试契约", root_why.text_content())
                 by_title = {
                     feature_data["title"]: feature_id
                     for feature_id, feature_data in expected["features"].items()

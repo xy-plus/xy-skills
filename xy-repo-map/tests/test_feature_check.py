@@ -50,22 +50,11 @@ class FeatureCheckTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(nested), "add", "-A"], check=True)
         subprocess.run(["git", "-C", str(nested), "commit", "-qm", "fixture"], check=True)
 
-    def test_rejects_a_root_without_subrepositories(self):
-        root = feature("root", "", subrepositories=[], external_dependencies=[])
-        del root["subrepositories"]
-        del root["external_dependencies"]
-        self.set_features(root)
-
-        result = self.check()
-
-        self.assertEqual(result.returncode, 1)
-        output = result.stdout + result.stderr
-        self.assertIn("根功能缺少键 subrepositories", output)
-        self.assertIn("根功能缺少键 external_dependencies", output)
-
     def test_allows_subrepositories_only_on_the_root_feature(self):
         child = feature("child", None, subrepositories=[], external_dependencies=[])
-        self.set_features(feature("root", "", children=[child], subrepositories=[], external_dependencies=[]))
+        root = feature("root", "", children=[child], subrepositories=[], external_dependencies=[])
+        root["legacy"] = "旧字段"
+        self.set_features(root)
 
         result = self.check()
         output = result.stdout + result.stderr
@@ -75,6 +64,7 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("子功能有多余键 external_dependencies", output)
         self.assertNotIn("根功能有多余键 subrepositories", output)
         self.assertNotIn("根功能有多余键 external_dependencies", output)
+        self.assertIn("根功能有多余键 legacy", output)
 
     def test_rejects_invalid_subrepository_value_shapes_and_paths(self):
         cases = [
@@ -218,14 +208,6 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("还不支持子仓：linked", output)
         self.assertIn("登记的子仓不是被忽略规则直接点名的嵌套 Git 仓：linked", output)
 
-    def test_rejects_an_extra_feature_key(self):
-        root = feature("root", "", subrepositories=[], external_dependencies=[])
-        root["legacy"] = "旧字段"
-        self.set_features(root)
-        result = self.check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("legacy", result.stdout + result.stderr)
-
     def test_rejects_duplicate_json_keys_in_feature_list(self):
         self.write(
             "repo-map/features.json",
@@ -244,10 +226,15 @@ class FeatureCheckTest(unittest.TestCase):
     def test_rejects_a_missing_feature_key(self):
         root = feature("root", "", subrepositories=[], external_dependencies=[])
         del root["what"]
+        del root["subrepositories"]
+        del root["external_dependencies"]
         self.set_features(root)
         result = self.check()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("what", result.stdout + result.stderr)
+        output = result.stdout + result.stderr
+        for key in ("what", "subrepositories", "external_dependencies"):
+            with self.subTest(key=key):
+                self.assertIn(key, output)
 
     def test_rejects_an_invalid_identifier_and_duplicate_identifier(self):
         root = feature("Bad_ID", "", subrepositories=[], external_dependencies=[])

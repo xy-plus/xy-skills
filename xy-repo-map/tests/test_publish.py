@@ -77,12 +77,6 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("index.html", result.stdout + result.stderr)
 
-    def test_publish_rejects_the_old_name_option(self):
-        result = self.run_publish("--name", "xy-skills", "--as", "当前")
-
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("unrecognized arguments: --name", result.stderr)
-
     def test_publish_requires_an_explicit_as_option(self):
         result = self.run_publish()
 

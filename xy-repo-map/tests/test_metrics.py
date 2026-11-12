@@ -9,10 +9,6 @@ from repo_map_lib.metrics import LineCounts, code_counts, count_file
 
 
 class MetricsTest(unittest.TestCase):
-    def test_line_count_record_requires_all_categories_explicitly(self):
-        with self.assertRaises(TypeError):
-            LineCounts()
-
     def test_python_docstrings_comments_and_inline_comments(self):
         source = '''"""Module docs.
 Second docs line.

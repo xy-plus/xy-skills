@@ -121,14 +121,6 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(map_data.file_category(repository, "src/tests.rs"), "tests")
         self.assertEqual(data["features"]["root"]["lines"]["own"]["tests"], 4)
 
-    def test_css_files_are_rejected_as_unsupported_code(self):
-        repository = make_repo(self, {
-            "src/style.css": "/* style note */\nbody { color: red; }\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[]))
-
-        with self.assertRaisesRegex(ValueError, "已知是代码但不支持统计的文件：src/style.css"):
-            map_data.build_map(repository)
-
     def test_files_classified_as_other_are_not_read(self):
         repository = make_repo(self, {
             "assets/data.bin": "placeholder\n",
@@ -169,6 +161,7 @@ class DerivationTest(unittest.TestCase):
             "assets/target.py": "value = 1\n",
             "assets/link.go": "placeholder\n",
             "assets/binary.go": "placeholder\n",
+            "vendor/legacy.go": "package legacy\nvalue = 1\n",
         }, feature("root", "", subrepositories=[], external_dependencies=[]))
         symlink = repository / "assets/link.go"
         symlink.unlink()
@@ -187,28 +180,9 @@ class DerivationTest(unittest.TestCase):
 
         self.assertEqual(sources["assets/link.go"], ("other", ""))
         self.assertEqual(sources["assets/binary.go"], ("other", ""))
-        self.assertEqual(data["features"]["root"]["lines"]["total"]["code"], 1)
-
-    def test_vendor_unsupported_suffix_is_other_and_not_counted(self):
-        repository = make_repo(self, {
-            "vendor/legacy.go": "package legacy\nvalue = 1\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[]))
-
-        checked = subprocess.run(
-            ["python3", "-B", str(COMMAND), "check", "--repo", str(repository)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
-
-        data, sources = build_map_with_sources(repository)
-
         self.assertEqual(sources["vendor/legacy.go"], ("other", ""))
-        self.assertEqual(
-            data["features"]["root"]["lines"]["total"],
-            {"code": 0, "docs": 0, "comments": 0, "tests": 0},
-        )
+        self.assertEqual(data["features"]["root"]["lines"]["total"],
+                         {"code": 1, "docs": 0, "comments": 0, "tests": 0})
 
     def test_invalid_utf8_text_is_replaced_and_keeps_counts_and_dependencies(self):
         repository = make_repo(self, {

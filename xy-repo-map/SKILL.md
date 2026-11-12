@@ -1,5 +1,4 @@
 ---
-name: xy-repo-map
 description: 从仓库功能清单推导文件归属、行数和依赖，并生成离线功能树页面。
 ---
 

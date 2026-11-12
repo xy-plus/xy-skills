@@ -6,14 +6,13 @@
 <title>仓库功能树</title>
 <link rel="icon" href="data:,">
 <style>
-:root{color-scheme:light dark;--page:#f3f5f7;--surface:#fff;--ink:#10151b;--ink2:#4d5966;--muted:#8792a0;--hair:#dde3e9;--track:#e8ecf0;--code:#2a78d6;--tests:#eb6834;--docs:#1baf7a;--comments:#eda100;--uses:#2a78d6;--uses-wash:#e8f1fc;--sans:system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
-@media(prefers-color-scheme:dark){:root{--page:#0d1013;--surface:#161a1f;--ink:#eef1f4;--ink2:#b9c2cc;--muted:#7f8a97;--hair:#2a3038;--track:#232a32;--code:#3987e5;--tests:#d95926;--docs:#199e70;--comments:#c98500;--uses:#3987e5;--uses-wash:#17263a}}
+:root{color-scheme:light dark;--page:#f3f5f7;--surface:#fff;--ink:#10151b;--ink2:#4d5966;--muted:#8792a0;--hair:#dde3e9;--track:#e8ecf0;--code:#2a78d6;--tests:#eb6834;--docs:#1baf7a;--comments:#eda100;--uses:#2a78d6;--sans:system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--page:#0d1013;--surface:#161a1f;--ink:#eef1f4;--ink2:#b9c2cc;--muted:#7f8a97;--hair:#2a3038;--track:#232a32;--code:#3987e5;--tests:#d95926;--docs:#199e70;--comments:#c98500;--uses:#3987e5}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 var(--sans)}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
 .wrap{max-width:980px;margin:0 auto;padding-left:14px;padding-right:14px}
-.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .hero{padding:18px 0 12px}
 h1{margin:0;font:700 22px/1.2 var(--mono);letter-spacing:-.01em;overflow-wrap:anywhere}
 .hero p{margin:6px 0 0;color:var(--ink2);font-size:14px;overflow-wrap:anywhere}
@@ -28,9 +27,9 @@ h1{margin:0;font:700 22px/1.2 var(--mono);letter-spacing:-.01em;overflow-wrap:an
 .legend span:before,.metric i{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:var(--color)}
 .signals{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
 .chip{display:inline-block;font-size:12px;border:1px solid var(--hair);background:var(--surface);border-radius:99px;padding:4px 10px;color:var(--ink2);white-space:nowrap}
-button.chip{cursor:pointer}.chip b{color:var(--ink);font-weight:650;margin-left:4px}
+button.chip{cursor:pointer}
 .chip.decision{background:#fab219;border-color:#fab219;color:#0b0b0b;font-weight:650}
-.chip.decision b{color:#0b0b0b}.chip[aria-pressed=true]{box-shadow:0 0 0 2px var(--ink)}
+.chip[aria-pressed=true]{box-shadow:0 0 0 2px var(--ink)}
 .sticky{position:sticky;top:0;z-index:4;background:color-mix(in srgb,var(--page) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--hair)}
 .sticky .wrap{display:flex;align-items:center;justify-content:flex-end;height:48px}
 .toolbar{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px}
@@ -171,6 +170,15 @@ function featureLevel(featureId) {
 function appendSourceLabel(parent, source) {
   const modifier = source === "原话" ? " quote" : source === "起草" ? " draft" : "";
   parent.append(make("span", `source-label${modifier}`, sourceLabels[source]));
+}
+
+function appendRootCitation(parent, why) {
+  if (why.quote) {
+    parent.append(document.createElement("br"), document.createTextNode(`原话：「${why.quote}」`));
+  }
+  if (why.from) {
+    parent.append(document.createElement("br"), document.createTextNode(`出处：${why.from}`));
+  }
 }
 
 function appendMetrics(parent, lines) {
@@ -372,6 +380,7 @@ function renderHeader() {
   const why = document.querySelector("#page-why");
   why.append(make("strong", "", "为什么："), document.createTextNode(rootFeature.why.text));
   appendSourceLabel(why, rootFeature.why.source);
+  appendRootCitation(why, rootFeature.why);
 
   const totalLines = rootFeature.lines.total;
   const total = sumLines(totalLines);
