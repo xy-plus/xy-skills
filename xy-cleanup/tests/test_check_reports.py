@@ -39,11 +39,12 @@ def razor_keep_item(feature_id, lines=None, source="要什么", text=None):
             "为什么": "让功能容易使用。",
             RULE_SOURCE: RULE_TEXT,
         }.get(source, "")
+    line_spec = default_lines[feature_id] if lines is None else lines
     return {
-        "lines": default_lines[feature_id] if lines is None else lines,
+        "lines": line_spec,
         "requirement": {"source": source, "text": text},
-        "achieved": "实现了这项要求。",
-        "cost": "没有更小的做法，复杂度和代价配得上收益。",
+        "achieved": f"{line_spec} 实现了这项要求。",
+        "cost": f"{line_spec} 没有更小的做法，复杂度和代价配得上收益。",
     }
 
 
@@ -294,6 +295,26 @@ class CheckReportsTest(unittest.TestCase):
         alpha["keep"] = [razor_keep_item("alpha"), first_keep, second_keep]
         self.write_reports(main, razor)
         return self.run_check()
+
+    def write_split_razor_reports(self, razor_documents):
+        main = report("主审", self.repository)
+        self.main_path.write_text(json.dumps(main, ensure_ascii=False), encoding="utf-8")
+        razor_paths = []
+        rechecks = []
+        for index, document in enumerate(razor_documents):
+            path = self.razor_path if index == 0 else self.directory / f"razor-{index}.json"
+            path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+            razor_paths.append(path)
+            for item in document["features"]:
+                rechecks.append(recheck_report(
+                    self.repository,
+                    [item["feature"]],
+                    keep_lines=[keep["lines"] for keep in item["keep"]],
+                ))
+        self.write_recheck_reports(rechecks)
+        return [str(self.main_path), *(str(path) for path in razor_paths)] + [
+            str(path) for path in self.recheck_paths
+        ]
 
     def write_todo_reports(self, items_by_feature, findings_by_feature=None):
         findings_by_feature = findings_by_feature or {}
@@ -687,6 +708,24 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_razor_keep_reasons_cannot_repeat_across_features_or_reports(self):
+        for field in ("achieved", "cost"):
+            with self.subTest(field=field):
+                documents = []
+                for feature_id in ("alpha", "beta", "root"):
+                    document = report("剃刀", self.repository, (feature_id,))
+                    keep = document["features"][0]["keep"][0]
+                    keep[field] = "  同一句理由  " if feature_id == "alpha" else "同一句理由"
+                    documents.append(document)
+                reports = self.write_split_razor_reports(documents)
+
+                result = self.run_check(reports=reports)
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"keep.{field} 逐字相同", result.stdout)
+                self.assertIn("alpha/main.py:1-1", result.stdout)
+                self.assertIn("beta/main.py:1-1", result.stdout)
 
     def test_razor_keep_must_cover_each_nonempty_line_and_may_skip_blank_lines(self):
         self.add_tracked_file("alpha/guide.md", "开头。\n\n结尾。\n")

@@ -124,6 +124,31 @@ def _validate_smallest(review, label, feature_id, feature_data, findings):
     return problems
 
 
+def _record_razor_keep_reasons(keep_items, label, feature_id, seen_reasons):
+    problems = []
+    if not isinstance(keep_items, list):
+        return problems
+    for item in keep_items:
+        if not isinstance(item, dict):
+            continue
+        lines = item.get("lines")
+        for field in ("achieved", "cost"):
+            answer = item.get(field)
+            if not isinstance(answer, str) or not answer.strip():
+                continue
+            key = (field, answer.strip())
+            previous = seen_reasons.get(key)
+            if previous is None:
+                seen_reasons[key] = (label, feature_id, lines)
+                continue
+            previous_label, previous_feature, previous_lines = previous
+            problems.append(
+                f"剃刀 keep.{field} 逐字相同：报告 {previous_label} 的功能 {previous_feature} "
+                f"lines={previous_lines}；报告 {label} 的功能 {feature_id} lines={lines}"
+            )
+    return problems
+
+
 def _parse_line_range(value, allow_single_line=False):
     if not isinstance(value, str):
         return None
@@ -718,6 +743,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     required_rechecks = set()
     recheck_report_seen = False
     razor_keep_lines = {}
+    razor_keep_reasons = {}
     duplicate_windows = None
     pending_recheck_verdicts = []
     evidence_lines_by_file = {}
@@ -769,6 +795,10 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 counts[role][feature_id] = counts[role].get(feature_id, 0) + 1
             elif role == "剃刀复审":
                 recheck_counts[feature_id] = recheck_counts.get(feature_id, 0) + 1
+            if role == "剃刀" and isinstance(feature_id, str):
+                problems.extend(_record_razor_keep_reasons(
+                    review.get("keep"), label, feature_id, razor_keep_reasons,
+                ))
             if role == "主审":
                 for key in ("what_true", "why_holds", "structure"):
                     if not _nonempty(review.get(key)):
