@@ -17,6 +17,14 @@ import check_reports as check_reports_module  # noqa: E402
 COMMAND = ROOT / "xy-cleanup" / "check_reports.py"
 RULE_SOURCE = "xy-iron-law 第 3 条"
 RULE_TEXT = "如无必要，勿增实体（奥卡姆剃刀）。"
+DUPLICATE_BLOCK_LINES = [
+    "This shared paragraph explains the first concrete behavior clearly.",
+    "This shared paragraph explains the second concrete behavior clearly.",
+    "This shared paragraph explains the third concrete behavior clearly.",
+    "This shared paragraph explains the fourth concrete behavior clearly.",
+    "This shared paragraph explains the fifth concrete behavior clearly.",
+    "This shared paragraph explains the sixth concrete behavior clearly.",
+]
 
 
 def razor_keep_item(feature_id, lines=None, source="要什么", text=None):
@@ -270,6 +278,23 @@ class CheckReportsTest(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         subprocess.run(["git", "-C", str(self.repository), "add", relative_path], check=True)
 
+    def check_duplicate_documents(self, first_lines, second_lines,
+                                  first_cost=None, second_cost=None):
+        self.add_tracked_file("alpha/first.md", "\n".join(first_lines) + "\n")
+        self.add_tracked_file("alpha/second.md", "\n".join(second_lines) + "\n")
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        first_keep = razor_keep_item("alpha", f"alpha/first.md:1-{len(first_lines)}")
+        second_keep = razor_keep_item("alpha", f"alpha/second.md:1-{len(second_lines)}")
+        if first_cost is not None:
+            first_keep["cost"] = first_cost
+        if second_cost is not None:
+            second_keep["cost"] = second_cost
+        alpha["keep"] = [razor_keep_item("alpha"), first_keep, second_keep]
+        self.write_reports(main, razor)
+        return self.run_check()
+
     def write_todo_reports(self, items_by_feature, findings_by_feature=None):
         findings_by_feature = findings_by_feature or {}
         main = report("主审", self.repository)
@@ -429,6 +454,239 @@ class CheckReportsTest(unittest.TestCase):
                 result = self.run_check()
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("smallest 估算少于当前行数", result.stdout)
+
+    def test_repeated_block_requires_cost_to_name_another_copy(self):
+        result = self.check_duplicate_documents(
+            DUPLICATE_BLOCK_LINES,
+            [f"  {line}" for line in DUPLICATE_BLOCK_LINES],
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/second.md:1-6", result.stdout)
+        self.assertIn("另一份", result.stdout)
+
+    def test_duplicate_cost_location_must_be_valid_and_overlap_another_copy(self):
+        first_lines = DUPLICATE_BLOCK_LINES + ["A unique final line follows the repeated block."]
+        second_lines = [f"  {line}" for line in DUPLICATE_BLOCK_LINES] + [
+            "A different unique final line follows the repeated block."
+        ]
+        invalid_costs = (
+            ("alpha/second.md:7", "alpha/first.md:7"),
+            ("alpha/second.md:99", "alpha/first.md:99"),
+            ("missing.md:1", "missing.md:1"),
+        )
+        for first_cost, second_cost in invalid_costs:
+            with self.subTest(first_cost=first_cost):
+                result = self.check_duplicate_documents(
+                    first_lines, second_lines,
+                    f"另一份在 {first_cost}。",
+                    f"另一份在 {second_cost}。",
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("alpha/second.md:1-6", result.stdout)
+
+        result = self.check_duplicate_documents(
+            first_lines,
+            second_lines,
+            "另一份在 alpha/second.md:1-6。",
+            "另一份在 alpha/first.md:1-6。",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_duplicate_windows_ignore_blank_and_punctuation_lines_but_apply_both_cutoffs(self):
+        first_lines = [
+            DUPLICATE_BLOCK_LINES[0], "", DUPLICATE_BLOCK_LINES[1], "}",
+            DUPLICATE_BLOCK_LINES[2], ")", DUPLICATE_BLOCK_LINES[3],
+            "|---|---|", DUPLICATE_BLOCK_LINES[4], DUPLICATE_BLOCK_LINES[5],
+        ]
+        second_lines = [f"  {line}" if line else "   " for line in first_lines]
+        result = self.check_duplicate_documents(first_lines, second_lines)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/second.md:1-10", result.stdout)
+
+        result = self.check_duplicate_documents(
+            DUPLICATE_BLOCK_LINES[:5], DUPLICATE_BLOCK_LINES[:5],
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        low_information_lines = ["x", "y", "z", "a", "b", "c"]
+        result = self.check_duplicate_documents(
+            low_information_lines, low_information_lines,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_repeated_windows_in_one_file_name_the_other_range(self):
+        content_lines = (
+            DUPLICATE_BLOCK_LINES
+            + [""]
+            + DUPLICATE_BLOCK_LINES
+        )
+        self.add_tracked_file("alpha/repeated.md", "\n".join(content_lines) + "\n")
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha"),
+            razor_keep_item("alpha", "alpha/repeated.md:1-6"),
+            razor_keep_item("alpha", "alpha/repeated.md:8-13"),
+        ]
+        self.write_reports(main, razor)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/repeated.md:8-13", result.stdout)
+        self.assertIn("alpha/repeated.md:1-6", result.stdout)
+
+        repeated = next(item for item in razor["features"] if item["feature"] == "alpha")
+        repeated["keep"][1]["cost"] = "另一份在 alpha/repeated.md:8-13。"
+        repeated["keep"][2]["cost"] = "另一份在 alpha/repeated.md:1-6。"
+        periodic_lines = [
+            "A separate periodic passage documents a distinct useful rule.",
+            "Another periodic passage documents another distinct useful rule.",
+            "Further periodic passage documents one more distinct useful rule.",
+        ]
+        periodic_lines = periodic_lines * 3
+        self.add_tracked_file("alpha/periodic.md", "\n".join(periodic_lines) + "\n")
+        repeated["keep"].append(razor_keep_item("alpha", "alpha/periodic.md:1-9"))
+        repeated["smallest"]["lines"] = (
+            check_reports_module.build_map(self.repository)["features"]["alpha"]["lines"]["own"]
+        )
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_adjacent_duplicate_locations_are_merged_in_the_error(self):
+        seven_shared_lines = DUPLICATE_BLOCK_LINES + [
+            "This shared paragraph extends the same concrete behavior further.",
+        ]
+        result = self.check_duplicate_documents(
+            seven_shared_lines,
+            seven_shared_lines,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("alpha/second.md:1-7", result.stdout)
+
+    def test_todo_file_is_not_a_duplicate_copy_for_keep(self):
+        content = "\n".join(DUPLICATE_BLOCK_LINES) + "\n"
+        self.add_tracked_file("alpha/guide.md", content)
+        self.add_tracked_file("alpha/TODO.md", content)
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha"),
+            razor_keep_item("alpha", "alpha/guide.md:1-6"),
+        ]
+        todo = [todo_item("alpha/TODO.md:1-6")]
+        alpha["todo_items"] = todo
+        main_alpha = next(item for item in main["features"] if item["feature"] == "alpha")
+        main_alpha["todo_items"] = todo
+        self.write_reports(main, razor)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_untracked_copy_is_not_scanned(self):
+        result = self.check_duplicate_documents(
+            DUPLICATE_BLOCK_LINES,
+            DUPLICATE_BLOCK_LINES,
+        )
+        self.assertEqual(result.returncode, 1)
+        subprocess.run(
+            ["git", "-C", str(self.repository), "rm", "--cached", "--quiet", "alpha/second.md"],
+            check=True,
+        )
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha"),
+            razor_keep_item("alpha", "alpha/first.md:1-6"),
+        ]
+        self.write_reports(main, razor)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_feature_deletion_does_not_require_a_keep_duplicate_reference(self):
+        self.add_tracked_file(
+            "alpha/first.md", "\n".join(DUPLICATE_BLOCK_LINES) + "\n",
+        )
+        self.add_tracked_file(
+            "alpha/second.md", "\n".join(DUPLICATE_BLOCK_LINES) + "\n",
+        )
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = []
+        removal = finding("删除", changes_behavior=False, decision="直接做")
+        removal["target"] = "alpha"
+        alpha["findings"] = [removal]
+        self.write_reports(main, razor)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_razor_recheck_findings_do_not_need_duplicate_keep_locations(self):
+        self.check_duplicate_documents(
+            DUPLICATE_BLOCK_LINES,
+            [f"  {line}" for line in DUPLICATE_BLOCK_LINES],
+            "另一份在 alpha/second.md:1-6。",
+            "另一份在 alpha/first.md:1-6。",
+        )
+        keep_lines = [
+            "alpha/main.py:1-1",
+            "alpha/first.md:1-6",
+            "alpha/second.md:1-6",
+        ]
+        recheck = recheck_report(self.repository, ["alpha"], keep_lines=keep_lines)
+        review = recheck["features"][0]
+        for verdict in review["verdicts"]:
+            if verdict["lines"] == "alpha/first.md:1-6":
+                verdict["verdict"] = "站不住"
+        challenge = finding("删除", changes_behavior=False, decision="问你")
+        challenge["target"] = "alpha/first.md:1-6"
+        review["findings"] = [challenge]
+        for path in self.recheck_paths:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if existing["features"][0]["feature"] == "alpha":
+                path.write_text(json.dumps(recheck, ensure_ascii=False), encoding="utf-8")
+                break
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_draft_feature_with_no_keep_skips_duplicate_location_rule(self):
+        feature_path = self.repository / "repo-map" / "features.json"
+        features = json.loads(feature_path.read_text(encoding="utf-8"))
+        alpha_feature = features["children"][0]
+        alpha_feature["why"] = {
+            "text": "待用户确认的功能理由。",
+            "source": "起草",
+            "quote": "",
+            "from": "",
+        }
+        self.add_tracked_file(
+            "repo-map/features.json", json.dumps(features, ensure_ascii=False),
+        )
+        for relative in ("alpha/first.md", "alpha/second.md"):
+            self.add_tracked_file(
+                relative, "\n".join(DUPLICATE_BLOCK_LINES) + "\n",
+            )
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = []
+        self.write_reports(main, razor)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_razor_keep_must_cover_each_nonempty_line_and_may_skip_blank_lines(self):
         self.add_tracked_file("alpha/guide.md", "开头。\n\n结尾。\n")

@@ -22,6 +22,7 @@ from approvals import (  # noqa: E402
     validate_scope,
 )
 from check_handoff import object_without_duplicate_keys  # noqa: E402
+from duplicate_blocks import find_duplicate_windows, other_ranges_for_keep  # noqa: E402
 from rule_references import basis_is_supported  # noqa: E402
 
 
@@ -581,7 +582,8 @@ def _entity_range_problem(path, start_line, end_line, file_lines, label):
 
 
 def _validate_keep_items(items, label, repository, feature, keep_files,
-                         finding_ranges, feature_targets):
+                         finding_ranges, feature_targets, duplicate_windows,
+                         tracked_files):
     problems = []
     if not isinstance(items, list):
         return [f"{label} 必须是数组"]
@@ -610,6 +612,18 @@ def _validate_keep_items(items, label, repository, feature, keep_files,
         problems.extend(range_problems)
         if line_range is None:
             continue
+        duplicate_ranges = other_ranges_for_keep(line_range, duplicate_windows)
+        if duplicate_ranges and not _cost_mentions_duplicate_location(
+            item["cost"], duplicate_ranges, item_label, repository, tracked_files,
+        ):
+            locations = ", ".join(
+                f"{path}:{start}-{end}"
+                for path, start, end in duplicate_ranges
+            )
+            problems.append(
+                f"{item_label}.cost 要写出另一份并说明为什么两份都要留；能并的提「合并」。"
+                f"本条碰到的另一份在：{locations}"
+            )
         overlapping = _record_line_range(
             keep_ranges_by_file, line_range, item_label, "lines",
         )
@@ -670,6 +684,32 @@ def _validate_keep_items(items, label, repository, feature, keep_files,
     return problems
 
 
+def _cost_mentions_duplicate_location(cost, duplicate_ranges, label,
+                                      repository, tracked_files):
+    if not isinstance(cost, str):
+        return False
+    lines_by_file = {}
+    tracked_set = set(tracked_files)
+    candidate_paths = {path for path, _start, _end in duplicate_ranges}
+    for _path, pattern in _tracked_location_patterns(candidate_paths):
+        for match in pattern.finditer(cost):
+            location, errors = _checked_line_range(
+                match.group(0), label, "cost", repository, tracked_set,
+                lines_by_file, allow_single_line=True,
+            )
+            if errors or location is None:
+                continue
+            path, start_line, end_line = location
+            if any(
+                path == other_path
+                and start_line <= other_end
+                and other_start <= end_line
+                for other_path, other_start, other_end in duplicate_ranges
+            ):
+                return True
+    return False
+
+
 def validate_reports(data, repository, expected_features, report_paths, tracked_files):
     """Return all structural, coverage, decision, and rule-quote problems."""
     problems = []
@@ -678,6 +718,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     required_rechecks = set()
     recheck_report_seen = False
     razor_keep_lines = {}
+    duplicate_windows = None
     pending_recheck_verdicts = []
     evidence_lines_by_file = {}
     tracked_todo_files = {
@@ -832,6 +873,8 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 ))
 
             if role == "剃刀" and feature_data is not None:
+                if duplicate_windows is None:
+                    duplicate_windows = find_duplicate_windows(repository, tracked_files)
                 problems.extend(_validate_keep_items(
                     review.get("keep"),
                     f"报告 {label} 的功能 {feature_id}.keep",
@@ -840,6 +883,8 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     keep_files,
                     finding_ranges,
                     feature_targets,
+                    duplicate_windows,
+                    tracked_files,
                 ))
                 valid_reduction_targets = {
                     id(finding)
