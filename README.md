@@ -83,7 +83,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 ## 仓库功能清单
 
-有功能图的仓库在根目录放 `repo-map/features.json`；清单格式、命令和推导规则见 [`xy-repo-map/SKILL.md`](xy-repo-map/SKILL.md)。
+有功能图的仓库在根目录放 `repo-map/features.json`，放了它，每次改动都按 `xy-workflow` 维护清单；清单格式、命令和推导规则见 [`xy-repo-map/SKILL.md`](xy-repo-map/SKILL.md)。
 
 清扫收尾时，`xy-cleanup` 将认可的功能指纹写入 `repo-map/approved.json`，供下次只审查有变化的功能。
 
