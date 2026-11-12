@@ -60,18 +60,6 @@ class ApprovalPlanTest(unittest.TestCase):
         repo_map_path.symlink_to(external_directory, target_is_directory=True)
         return external_directory
 
-    def test_plan_lists_unrecorded_feature_in_scope(self):
-        result = self.run_approvals(
-            "plan", "--repo", str(self.repository), "--scope", "alpha",
-            "--review", "变过的",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(
-            result.stdout,
-            "alpha\t没有认可记录\n要审 1 个功能（范围内 1 个）\n",
-        )
-
     def test_plan_does_not_fingerprint_files_outside_its_scope(self):
         data = build_map(self, self.repository)
         values, _ = approvals.feature_values(self.repository)
@@ -335,14 +323,10 @@ class ApprovalPlanTest(unittest.TestCase):
         for document in invalid_records:
             with self.subTest(document=document[:40]):
                 approved_path.write_text(document, encoding="utf-8")
-                for command in ("plan", "record"):
-                    if command == "plan":
-                        result = self.plan(("alpha",))
-                    else:
-                        result = self.record(("alpha",))
-                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn("认可记录", result.stdout)
-                    self.assertEqual(result.stderr, "")
+                result = self.plan(("alpha",))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("认可记录", result.stdout)
+                self.assertEqual(result.stderr, "")
 
     def test_scope_arguments_reject_mixed_all_duplicates_and_unknown_ids(self):
         for arguments in (

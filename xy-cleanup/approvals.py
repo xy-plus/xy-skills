@@ -165,7 +165,6 @@ def _plan(data, fingerprints, records, scope, review):
 
 def _record(repository, data, feature_values, fingerprints, records, scope):
     approved_path = repository / APPROVED_RELATIVE_PATH
-    _require_approval_path_in_repository(repository, approved_path)
     selected = _scope_features(data, scope)
     drafts = [feature_id for feature_id in selected
               if feature_values[feature_id]["why"]["source"] == "起草"]

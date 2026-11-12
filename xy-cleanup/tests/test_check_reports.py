@@ -1237,78 +1237,32 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_keep_cannot_cross_indented_atx_headings(self):
-        self.add_tracked_file(
-            "alpha/indented-headings.md",
-            " # One\n  # Two\n   # Three\n",
+    def test_keep_cannot_cross_markdown_headings(self):
+        cases = (
+            ("indented-headings.md", " # One\n  # Two\n   # Three\n", "1-3"),
+            ("blockquote-headings.md", "> # A\n> # B\n", "1-2"),
+            ("list-headings.md", "- # A\n- # B\n", "1-2"),
+            ("setext-headings.md", "First\n===\nMiddle\nSecond\n---\n", "1-5"),
+            ("quoted-setext.md", "> First\n> ===\n> Second\n> ---\n", "1-4"),
+            ("list-setext.md", "- First\n  ===\n- Second\n  ---\n", "1-4"),
         )
         main = report("主审", self.repository)
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"].append(razor_keep_item("alpha", "alpha/indented-headings.md:1-3"))
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("alpha/indented-headings.md:1-3", result.stdout)
-        self.assertIn("一个实体", result.stdout)
-
-    def test_keep_cannot_cross_blockquote_or_list_item_atx_headings(self):
-        self.add_tracked_file("alpha/blockquote-headings.md", "> # A\n> # B\n")
-        self.add_tracked_file("alpha/list-headings.md", "- # A\n- # B\n")
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"].extend([
-            razor_keep_item("alpha", "alpha/blockquote-headings.md:1-2"),
-            razor_keep_item("alpha", "alpha/list-headings.md:1-2"),
-        ])
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("alpha/blockquote-headings.md:1-2", result.stdout)
-        self.assertIn("alpha/list-headings.md:1-2", result.stdout)
-
-    def test_keep_cannot_cross_setext_equal_and_hyphen_headings(self):
-        self.add_tracked_file(
-            "alpha/setext-headings.md",
-            "First\n===\nMiddle\nSecond\n---\n",
-        )
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"].append(razor_keep_item("alpha", "alpha/setext-headings.md:1-5"))
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("alpha/setext-headings.md:1-5", result.stdout)
-        self.assertIn("一个实体", result.stdout)
-
-    def test_keep_cannot_cross_setext_headings_inside_blockquotes_or_lists(self):
-        self.add_tracked_file("alpha/quoted-setext.md", "> First\n> ===\n> Second\n> ---\n")
-        self.add_tracked_file("alpha/list-setext.md", "- First\n  ===\n- Second\n  ---\n")
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"].extend([
-            razor_keep_item("alpha", "alpha/quoted-setext.md:1-4"),
-            razor_keep_item("alpha", "alpha/list-setext.md:1-4"),
-        ])
+        for filename, content, lines in cases:
+            relative_path = f"alpha/{filename}"
+            self.add_tracked_file(relative_path, content)
+            alpha["keep"].append(
+                razor_keep_item("alpha", f"{relative_path}:{lines}")
+            )
         self.write_reports(main, razor)
 
         result = self.run_check()
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("alpha/quoted-setext.md:1-4", result.stdout)
-        self.assertIn("alpha/list-setext.md:1-4", result.stdout)
-
-    def test_setext_titles_may_contain_pipes_but_table_separators_are_not_titles(self):
-        headings = check_reports_module._markdown_heading_lines([
-            "A | B",
-            "---",
-            "| left | right |",
-            "| --- | --- |",
-        ])
-        self.assertEqual({1}, headings)
+        for filename, _, lines in cases:
+            self.assertIn(f"alpha/{filename}:{lines}", result.stdout)
+        self.assertIn("一个实体", result.stdout)
 
     def test_yaml_front_matter_is_not_counted_as_markdown_headings(self):
         self.add_tracked_file(
@@ -1341,6 +1295,13 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("一个实体", result.stdout)
 
     def test_code_blocks_list_items_and_table_separators_are_not_headings(self):
+        headings = check_reports_module._markdown_heading_lines([
+            "A | B",
+            "---",
+            "| left | right |",
+            "| --- | --- |",
+        ])
+        self.assertEqual({1}, headings)
         self.add_tracked_file(
             "alpha/markdown-non-headings.md",
             "    # Four spaces\n````md\n# Code One\n## Code Two\n````\n"
