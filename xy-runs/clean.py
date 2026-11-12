@@ -131,14 +131,6 @@ def checked_directory(root, expected):
         os.close(descriptor)
 
 
-@contextmanager
-def root_lock(root, expected):
-    """Writers and cleaners flock the root directory itself, never a lock file."""
-    with checked_directory(root, expected) as descriptor:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield descriptor
-
-
 def remove_item(path):
     if stat.S_ISDIR(path.lstat().st_mode):
         shutil.rmtree(path)
@@ -194,8 +186,10 @@ def clean_roots(patterns, mode, cutoff, output, errors):
                         # Keep the trash handle alive until recursive removal has
                         # finished outside the lock. No parent path is re-resolved.
                         with ExitStack() as handles:
-                            with root_lock(outer, roots[outer]) as outer_descriptor, \
+                            # Writers and cleaners flock the root directory itself, never a lock file.
+                            with checked_directory(outer, roots[outer]) as outer_descriptor, \
                                     checked_directory(root, roots[root]) as checked_descriptor:
+                                fcntl.flock(outer_descriptor, fcntl.LOCK_EX)
                                 entry = Path(f"/proc/self/fd/{checked_descriptor}") / name
                                 if not is_expired(entry, cutoff) or is_in_use(item):
                                     continue
