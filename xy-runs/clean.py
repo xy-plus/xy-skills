@@ -187,24 +187,24 @@ def clean_roots(patterns, mode, cutoff, output, errors):
                         # finished outside the lock. No parent path is re-resolved.
                         with ExitStack() as handles:
                             # Writers and cleaners flock the root directory itself, never a lock file.
-                            with checked_directory(outer, roots[outer]) as outer_descriptor, \
-                                    checked_directory(root, roots[root]) as checked_descriptor:
+                            with checked_directory(outer, roots[outer]) as outer_descriptor:
                                 fcntl.flock(outer_descriptor, fcntl.LOCK_EX)
-                                entry = Path(f"/proc/self/fd/{checked_descriptor}") / name
-                                if not is_expired(entry, cutoff) or is_in_use(item):
-                                    continue
-                                try:
-                                    os.mkdir(TRASH_NAME, dir_fd=outer_descriptor)
-                                except FileExistsError:
-                                    pass
-                                trash_descriptor = os.open(TRASH_NAME, DIRECTORY_OPEN_FLAGS,
-                                                           dir_fd=outer_descriptor)
-                                handles.callback(os.close, trash_descriptor)
-                                destination = Path(f"/proc/self/fd/{trash_descriptor}") / uuid.uuid4().hex
-                                while os.path.lexists(destination):
-                                    destination = destination.parent / uuid.uuid4().hex
-                                os.rename(name, destination.name, src_dir_fd=checked_descriptor,
-                                          dst_dir_fd=trash_descriptor)
+                                with checked_directory(root, roots[root]) as checked_descriptor:
+                                    entry = Path(f"/proc/self/fd/{checked_descriptor}") / name
+                                    if not is_expired(entry, cutoff) or is_in_use(item):
+                                        continue
+                                    try:
+                                        os.mkdir(TRASH_NAME, dir_fd=outer_descriptor)
+                                    except FileExistsError:
+                                        pass
+                                    trash_descriptor = os.open(TRASH_NAME, DIRECTORY_OPEN_FLAGS,
+                                                               dir_fd=outer_descriptor)
+                                    handles.callback(os.close, trash_descriptor)
+                                    destination = Path(f"/proc/self/fd/{trash_descriptor}") / uuid.uuid4().hex
+                                    while os.path.lexists(destination):
+                                        destination = destination.parent / uuid.uuid4().hex
+                                    os.rename(name, destination.name, src_dir_fd=checked_descriptor,
+                                              dst_dir_fd=trash_descriptor)
                             remove_item(destination)
                             print(json.dumps(str(item), ensure_ascii=True), file=output)
                     except OSError as error:
