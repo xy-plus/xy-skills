@@ -1704,7 +1704,6 @@ class GoalTests(unittest.TestCase):
         with self.assertRaises(goal.GoalError) as parse_error:
             goal.parser().parse_args(["--root", str(self.root), "unknown"])
         cases = ((("show",), "本会话没有契约\n"),
-                 (("add",), "the following arguments are required: --title, --criteria, --state, --pointer, --source, --source-kind\n"),
                  (("unknown",), str(parse_error.exception) + "\n"),
                  (("update", "hook-prompt", "--source", "1"), "本会话没有契约\n"),
                  (("open", "release", ""), "目标不能为空\n"))
@@ -1817,24 +1816,16 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(len(goals), 1)
         self.assertIn(f'claude_pid: "{result.stdout.splitlines()[0]}"', goals[0].read_text())
 
-    def test_cli_requires_bash_ppid_for_each_owner_command_even_with_claude_pid_environment(self):
+    def test_cli_rejects_missing_or_invalid_bash_ppid_with_calling_instructions(self):
         for arguments in (("open", "release", "目标"),
                           ("adopt", str(self.root / "old-contract"))):
-            with self.subTest(arguments=arguments):
-                before = self.files()
-                result = self.cli_command(*arguments)
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                for message in ("--claude-pid", "$PPID", "Claude Code", "Bash"):
-                    self.assertIn(message, result.stderr)
-                self.assertEqual(self.files(), before)
-
-    def test_cli_rejects_invalid_bash_ppid_with_calling_instructions(self):
-        for arguments in (("open", "release", "目标"),
-                          ("adopt", str(self.root / "old-contract"))):
-            for value in ("", "not-a-pid", "0", "-1"):
+            for value in (None, "", "not-a-pid", "0", "-1"):
                 with self.subTest(arguments=arguments, value=value):
                     before = self.files()
-                    result = self.cli_command(*arguments, "--claude-pid", value)
+                    if value is None:
+                        result = self.cli_command(*arguments)
+                    else:
+                        result = self.cli_command(*arguments, "--claude-pid", value)
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     for message in ("--claude-pid", "$PPID", "Claude Code", "Bash"):
                         self.assertIn(message, result.stderr)

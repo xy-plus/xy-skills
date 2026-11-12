@@ -19,7 +19,6 @@ import sys
 import tempfile
 
 
-# 用户要求的，保留：show 只提示压短，不阻止写入或 check。
 ITEM_LIMIT = 300
 TOTAL_LIMIT = 5000
 TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
