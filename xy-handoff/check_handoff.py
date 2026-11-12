@@ -59,6 +59,9 @@ def check(document):
 
 
 def main(argv):
+    if len(argv) != 2:
+        print("用法：check_handoff.py <交接 JSON 路径>")
+        return 2
     try:
         with open(argv[1], encoding="utf-8") as stream:
             document = json.load(stream, object_pairs_hook=object_without_duplicate_keys)
