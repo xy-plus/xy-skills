@@ -7,7 +7,6 @@ REPORT_ROUND_RE = re.compile(r"report-round([1-9]\d*)\.md")
 
 
 def audit(directory):
-    """返回非正式循环中达到三轮上限、但尚无判因记录的问题。"""
     root = pathlib.Path(directory)
     reports_by_directory = {}
     for report_path in root.rglob("report-round*.md"):

@@ -7,12 +7,10 @@ import unittest
 from audit import main
 
 
-def write_file(directory, name, content=""):
+def write_file(directory, name, content):
     os.makedirs(directory, exist_ok=True)
-    path = os.path.join(directory, name)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(os.path.join(directory, name), "w", encoding="utf-8") as f:
         f.write(content)
-    return path
 
 
 class AuditTest(unittest.TestCase):
@@ -25,18 +23,22 @@ class AuditTest(unittest.TestCase):
     def test_informal_loop_uses_maximum_round_number(self):
         with tempfile.TemporaryDirectory() as root:
             first_loop = os.path.join(root, "impl")
-            write_file(first_loop, "report-round1.md")
-            write_file(first_loop, "report-round3.md")
+            write_file(first_loop, "report-round1.md", "")
+            write_file(first_loop, "report-round3.md", "")
 
             second_loop = os.path.join(root, "followup-keep-list", "impl")
-            write_file(second_loop, "report-round7.md")
+            write_file(second_loop, "report-round7.md", "")
 
             short_loop = os.path.join(root, "short-loop")
-            write_file(short_loop, "report-round2.md")
+            write_file(short_loop, "report-round2.md", "")
 
             completed_loop = os.path.join(root, "completed-loop")
-            write_file(completed_loop, "report-round4.md")
+            write_file(completed_loop, "report-round4.md", "")
             write_file(completed_loop, "diagnosis.json", '{"diagnosis":"已复核","actions":["重想"]}')
+
+            invalid_loop = os.path.join(root, "invalid-diagnosis")
+            write_file(invalid_loop, "report-round3.md", "")
+            write_file(invalid_loop, "diagnosis.json", '{"diagnosis":"已复核","actions":["无效动作"]}')
 
             code, problems = self.run_audit(root)
 
@@ -49,9 +51,9 @@ class AuditTest(unittest.TestCase):
     def test_formal_round_structure_is_not_audited(self):
         with tempfile.TemporaryDirectory() as root:
             object_path = os.path.join(root, "spec", "object-a")
-            write_file(os.path.join(object_path, "group1", "round1"), "submitted.json")
-            write_file(os.path.join(object_path, "group1", "round3"), "submitted-razor.json")
-            write_file(os.path.join(object_path, "group2", "round4"), "submitted.json")
+            write_file(os.path.join(object_path, "group1", "round1"), "submitted.json", "")
+            write_file(os.path.join(object_path, "group1", "round3"), "submitted-razor.json", "")
+            write_file(os.path.join(object_path, "group2", "round4"), "submitted.json", "")
 
             code, problems = self.run_audit(root)
 

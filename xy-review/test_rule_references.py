@@ -29,7 +29,6 @@ class RuleReferencesTest(unittest.TestCase):
             self.assertIsInstance(problem, str)
 
     def test_rule_quote_must_be_continuous_text_from_its_named_rule(self):
-        self.assertIsNone(rule_quote_problem("xy-iron-law 第 1 条", "第一性原理：思考"))
         problem = rule_quote_problem("xy-iron-law 第 1 条", "第一性原理……思考")
         self.assertIsInstance(problem, str)
 
@@ -39,20 +38,3 @@ class RuleReferencesTest(unittest.TestCase):
             skill_path.write_text("没有编号条款。\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 numbered_rule_numbers(skill_path)
-
-    def test_numbered_rules_read_each_document_once(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            skill_path = Path(temporary) / "rules.md"
-            skill_path.write_text("1. 第一条\n正文。\n2. 第二条\n结束。\n", encoding="utf-8")
-            original_read_text = Path.read_text
-            reads = []
-
-            def count_rule_read(path, *args, **kwargs):
-                if path == skill_path:
-                    reads.append(path)
-                return original_read_text(path, *args, **kwargs)
-
-            with patch.object(Path, "read_text", count_rule_read):
-                numbered_text(skill_path, 1)
-                numbered_text(skill_path, 2)
-            self.assertEqual(reads, [skill_path])

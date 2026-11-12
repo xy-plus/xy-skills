@@ -1,4 +1,3 @@
-from functools import lru_cache
 from pathlib import Path
 import re
 
@@ -9,10 +8,6 @@ RULE_FILES = {
     "xy-repo-rules": REPOSITORY_ROOT / "xy-repo-rules" / "SKILL.md",
 }
 RULE_SOURCE = re.compile(r"(xy-iron-law|xy-repo-rules) 第 ([1-9][0-9]*) 条")
-RULE_NAMES = tuple(RULE_FILES)
-
-
-@lru_cache(maxsize=None)
 def _numbered_rules(skill_path):
     """Read and index all numbered rules in one local skill document once."""
     try:
@@ -48,25 +43,15 @@ def numbered_rule_numbers(skill_path):
 
 def is_rule_source(source):
     """Return whether a source claims to cite one of the two rule documents."""
-    return isinstance(source, str) and any(name in source for name in RULE_NAMES)
-
-
-def rule_text(source):
-    """Return the complete local rule named by a canonical source string."""
-    if not isinstance(source, str):
-        return ""
-    match = RULE_SOURCE.fullmatch(source)
-    if match is None:
-        return ""
-    name, number = match.groups()
-    return numbered_text(RULE_FILES[name], int(number))
+    return isinstance(source, str) and any(name in source for name in RULE_FILES)
 
 
 def rule_quote_problem(source, text):
     """Return a problem for an invalid rule quote, or None for other sources."""
     if not is_rule_source(source):
         return None
-    rule = rule_text(source)
+    match = RULE_SOURCE.fullmatch(source)
+    rule = numbered_text(RULE_FILES[match.group(1)], int(match.group(2))) if match else ""
     if not rule:
         return f"规范条款来源格式错误或条号不存在：{source}"
     if not isinstance(text, str) or not text.strip() or text not in rule:

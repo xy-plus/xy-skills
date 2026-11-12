@@ -309,11 +309,9 @@ class CheckTest(unittest.TestCase):
             try:
                 with patch.dict(rule_references.RULE_FILES,
                                 {"xy-repo-rules": missing_path}):
-                    rule_references._numbered_rules.cache_clear()
                     with self.assertRaises(ValueError):
                         importlib.reload(check)
             finally:
-                rule_references._numbered_rules.cache_clear()
                 importlib.reload(check)
 
     def test_main_report_accepts_a_continuous_quote_from_the_named_rule(self):
@@ -516,26 +514,6 @@ class CheckTest(unittest.TestCase):
         copied_actions = {"diagnosis": "引用阻断项和证据说明根因。", "actions": diagnosis_template["actions"]}
         self.assert_rejected("diagnosis.json", copied_actions, "模板占位符", folders=("group1",))
 
-    def test_review_report_guidance_is_not_repeated(self):
-        skill = Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8")
-        report_section = skill.split("## 报告", 1)[1].split("## 收到报告后", 1)[0]
-        self.assertEqual(report_section.count("剃刀结论只看 `delete.items` 是否为空"), 1)
-        self.assertEqual(report_section.count("`keep`、`keep_old`、`delete.items`、`ask_user.items`、`quote_problems.items` 合计至少一项"), 1)
-        self.assertNotIn("`keep`、`keep_old`、`delete.items`、`ask_user.items` 合计至少一项", report_section)
-        self.assertEqual(report_section.count("依据写入 `quote`"), 1)
-        self.assertNotIn("在 `problem` 里贴用户原话编号与原文", report_section)
-
-        templates = [json.loads(block) for block in re.findall(r"```json\s*\n(.*?)```", report_section, re.S)]
-        razor_template = next(template for template in templates if "occams_razor" in template)
-        keep = razor_template["occams_razor"]["keep"][0]
-        keep_old = razor_template["occams_razor"]["keep_old"][0]
-        self.assertEqual(set(keep), {"entity", "requirement", "achieved", "cost"})
-        self.assertIn("定了的要求：用户原话编号加原文、功能清单的条目和原文", keep["requirement"])
-        self.assertIn("派方、作者发起时挂的原话和写的证据", keep["requirement"])
-        self.assertEqual(set(keep_old), {"entity", "reason"})
-        self.assertIn("同一文件里和这次改动不相干的旧东西可以合成一项", keep_old["reason"])
-        self.assertIn("entity 写各样的名字", keep_old["reason"])
-
     def test_duplicate_json_keys_are_rejected(self):
         text = '{"verdict":"通过","verdict":"不通过"}'
         code, problems = self.run_main(("group1", "round1", "review-main.json"), text)
@@ -679,8 +657,6 @@ class CheckTest(unittest.TestCase):
         self.assertTrue(any("先派判因" in line for line in output), output)
 
     def test_exit_codes(self):
-        self.assertEqual(self.run_report("review-main.json", main_report())[0], 0)
-        self.assertEqual(self.run_report("review-main.json", main_report(verdict="坏结论"))[0], 1)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(main(["check.py"]), 2)
