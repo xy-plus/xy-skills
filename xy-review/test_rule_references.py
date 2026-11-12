@@ -1,4 +1,3 @@
-"""Tests for exact citations to numbered repository rules."""
 from pathlib import Path
 import tempfile
 import unittest

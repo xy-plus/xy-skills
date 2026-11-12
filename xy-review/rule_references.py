@@ -1,4 +1,3 @@
-"""Read numbered rule text and check continuous citations to local rule files."""
 from functools import lru_cache
 from pathlib import Path
 import re

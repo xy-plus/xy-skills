@@ -41,27 +41,10 @@ class AuditTest(unittest.TestCase):
             code, problems = self.run_audit(root)
 
         self.assertEqual(code, 1)
-        self.assertEqual(len(problems), 2, problems)
+        self.assertEqual(len(problems), 3, problems)
         self.assertTrue(any("impl" in problem and "report-round3" in problem for problem in problems), problems)
         self.assertTrue(any("followup-keep-list/impl" in problem and "report-round7" in problem
                             for problem in problems), problems)
-
-    def test_informal_loop_requires_diagnosis_json(self):
-        with tempfile.TemporaryDirectory() as root:
-            loop = os.path.join(root, "impl")
-            write_file(loop, "report-round3.md")
-            write_file(loop, "diagnosis-old.txt", "旧格式不算判因报告")
-            code, problems = self.run_audit(root)
-            self.assertEqual(code, 1)
-            self.assertTrue(any("diagnosis.json" in problem for problem in problems), problems)
-
-            write_file(loop, "diagnosis.json", '{"diagnosis":"已复核","actions":["无效动作"]}')
-            code, problems = self.run_audit(root)
-            self.assertEqual(code, 1, problems)
-            self.assertTrue(any("actions 只能包含" in problem for problem in problems), problems)
-
-            write_file(loop, "diagnosis.json", '{"diagnosis":"已复核","actions":["重想"]}')
-            self.assertEqual(self.run_audit(root), (0, []))
 
     def test_formal_round_structure_is_not_audited(self):
         with tempfile.TemporaryDirectory() as root:

@@ -1,5 +1,4 @@
 ---
-name: xy-review
 description: 对抗审查：主审加剃刀两个子代理、报告格式和格式检查脚本、怎么处理结果；xy-workflow 的所有审查都用它。
 ---
 
@@ -54,7 +53,7 @@ description: 对抗审查：主审加剃刀两个子代理、报告格式和格�
 
 一份报告一个文件，内容是符合模板的 JSON；键用英文，值用中文。主审每项问题写 `problem` 和 `evidence`，证据是文件和行号，或命令和输出；依据写入 `quote`：`source` 写契约原话编号、原件路径、spec 里派方或作者发起的证据（spec 路径和条目），或 `xy-iron-law`/`xy-repo-rules` 的条号，`text` 写该来源的逐字原文。没有发现时 `items` 为空，`checked` 写对照了什么。涉及增量的项以「增量」开头：主审写在 `problem`，剃刀写在 `entity`。主审 `verdict` 只能是「通过」「改了就过」「不通过」；「通过」当且仅当所有问题清单都空，另两种必须有发现。下文 `<本 skill 目录>` 是这份 SKILL.md 所在的目录：用 Skill 工具加载时就是 Claude Code 给出的 Base directory，经 CLAUDE.md 引入时就是引入路径所在的目录。写完跑 `python3 <本 skill 目录>/check.py <报告路径>`，报错就改到不报；最后一条回复只写 `verdict` 的值。
 
-规范条款引用格式：主审的偏离、难误用、仓库规范问题，以及剃刀 `quote_problems` 中引用规范条款时，`source` 写 `xy-iron-law 第 N 条` 或 `xy-repo-rules 第 N 条`；`text` 从所标条款逐字复制一段连续原文，标点照抄。检查器会按来源中的条号读取对应规范并核对原文，避免把规范说成不支持该结论的意思。
+规范条款引用格式：主审的偏离、`quote_problems`、难误用、仓库规范问题，以及剃刀 `quote_problems` 中引用规范条款时，`source` 写 `xy-iron-law 第 N 条` 或 `xy-repo-rules 第 N 条`；`text` 从所标条款逐字复制一段连续原文，标点照抄。检查器会按来源中的条号读取对应规范并核对原文，避免把规范说成不支持该结论的意思。
 
 主审报告模板：
 

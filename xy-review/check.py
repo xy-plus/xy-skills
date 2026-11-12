@@ -1,4 +1,3 @@
-"""只读检查 xy-review 的 JSON 报告结构、结论和正式轮次位置。"""
 import json
 import pathlib
 import re
@@ -74,18 +73,13 @@ TEMPLATE_PLACEHOLDERS = [
 ]
 
 
-def has_placeholder(value):
-    """报告值含模板占位符或它的片段时返回 True。"""
-    return any(
-        len(piece) >= 2 and any(piece in template for template in TEMPLATE_PLACEHOLDERS)
-        for piece in re.findall(r"<([^<>]+)>", value)
-    )
-
-
 def find_placeholders(where, value):
     """递归检查所有值，不复制 SKILL.md 中的占位符。"""
     if isinstance(value, str):
-        if has_placeholder(value):
+        if any(
+            len(piece) >= 2 and any(piece in template for template in TEMPLATE_PLACEHOLDERS)
+            for piece in re.findall(r"<([^<>]+)>", value)
+        ):
             return [f"{where} 还留着模板占位符"]
         return []
     if isinstance(value, dict):
@@ -118,6 +112,9 @@ def check_rule_quotes(document, report_kind):
         sections = [
             ("first_principles.deviations", item_list(
                 document, "first_principles", "deviations", "items"
+            )),
+            ("first_principles.quote_problems", item_list(
+                document, "first_principles", "quote_problems", "items"
             )),
             ("hard_to_misuse", item_list(document, "hard_to_misuse", "items")),
         ]
@@ -238,24 +235,37 @@ def _formal_diagnosis_group_problems(group_path):
     if not round3_path.is_dir():
         return [f"{group_path}：判因报告所在组必须已有 round3"]
 
+    problems = []
     has_failure = False
-    for name in ("review-main.json", "review-razor.json"):
-        report_path = round3_path / name
-        if not report_path.is_file():
-            continue
-        try:
-            text = report_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if check(text, name):
-            continue
-        document = read_document(text)
-        if document.get("verdict") == "不通过":
-            has_failure = True
-            break
+    for number in (1, 2, 3):
+        round_path = group_path / f"round{number}"
+        for name in ("review-main.json", "review-razor.json"):
+            report_path = round_path / name
+            if not report_path.is_file():
+                problems.append(f"{round_path}：缺少 {name}")
+                continue
+            try:
+                text = report_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if check(text, name):
+                continue
+            document = read_document(text)
+            if document.get("verdict") == "不通过":
+                if number == 3:
+                    has_failure = True
+                if not (round_path / "handling.md").is_file():
+                    problems.append(f"{round_path}：{name} 结论为「不通过」，缺少 handling.md")
+
+        if not any(
+            path.is_file() and path.stat().st_size > 0
+            for path in round_path.glob("submitted*")
+        ):
+            problems.append(f"{round_path}：至少需要一个非空 submitted 文件")
+
     if not has_failure:
-        return [f"{group_path}：round3 至少要有一份结论为「不通过」的审查报告"]
-    return []
+        problems.append(f"{group_path}：round3 至少要有一份结论为「不通过」的审查报告")
+    return problems
 
 
 def main(argv):

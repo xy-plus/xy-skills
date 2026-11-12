@@ -1,4 +1,3 @@
-"""xy-review JSON 报告的结构、内容和正式位置测试。"""
 import contextlib
 import importlib
 import io
@@ -97,6 +96,26 @@ class CheckTest(unittest.TestCase):
         for name, report in reports:
             code, output = self.run_report(name, report, (group, "round3"))
             self.assertEqual(code, 0, output)
+
+    def create_complete_formal_group(self, failed=False, group="group1"):
+        self.create_formal_round3(failed=failed, group=group)
+        group_path = Path(self.root) / group
+        for number in (1, 2):
+            round_path = group_path / f"round{number}"
+            (round_path / "review-main.json").write_text(
+                json_text(main_report()), encoding="utf-8",
+            )
+            (round_path / "review-razor.json").write_text(
+                json_text(razor_report()), encoding="utf-8",
+            )
+        for number in (1, 2, 3):
+            (group_path / f"round{number}" / "submitted-review.md").write_text(
+                "本轮审查版本。\n", encoding="utf-8",
+            )
+        if failed:
+            (group_path / "round3" / "handling.md").write_text(
+                "逐项处理了不通过意见。\n", encoding="utf-8",
+            )
 
     def assert_rejected(self, name, document, *needles, folders=("group1", "round1")):
         code, problems = self.run_report(name, document, folders)
@@ -238,17 +257,24 @@ class CheckTest(unittest.TestCase):
         document = main_report(verdict="改了就过", deviations=[finding])
         self.assert_rejected("review-main.json", document, "quote.text", "xy-iron-law 第 1 条")
 
-    def test_main_report_rejects_malformed_rule_source_with_wrong_quote(self):
-        finding = {
-            "problem": "发现一项阻断",
+    def test_main_report_checks_rule_quotes_in_quote_problems(self):
+        document = main_report(verdict="改了就过")
+        document["first_principles"]["quote_problems"]["items"] = [{
+            "problem": "规范引文不准确",
             "evidence": "check.py:25",
-            "quote": {"source": "xy-iron-law第 1 条", "text": "错误引文"},
-        }
-        document = main_report(verdict="改了就过", deviations=[finding])
-        self.assert_rejected("review-main.json", document, "格式错误或条号不存在")
+            "quote": {"source": "xy-repo-rules 第 7 条", "text": "不是第七条原文"},
+            "suggestion": "逐字核对",
+        }]
+
+        self.assert_rejected(
+            "review-main.json", document,
+            "first_principles.quote_problems.items[0].quote.text",
+            "xy-repo-rules 第 7 条",
+        )
 
     def test_main_report_rejects_rule_name_anywhere_in_source(self):
         sources = (
+            "xy-iron-law第 1 条",
             " xy-iron-law 第 1 条",
             "见 xy-iron-law 第 1 条",
             str(rule_references.RULE_FILES["xy-iron-law"]),
@@ -291,25 +317,19 @@ class CheckTest(unittest.TestCase):
                 importlib.reload(check)
 
     def test_main_report_accepts_a_continuous_quote_from_the_named_rule(self):
-        finding = {
-            "problem": "发现一项阻断",
-            "evidence": "check.py:25",
-            "quote": {"source": "xy-iron-law 第 1 条", "text": "第一性原理：思考"},
-        }
-        document = main_report(verdict="改了就过", deviations=[finding])
-        self.assertEqual(self.run_report("review-main.json", document), (0, []))
-
-    def test_main_report_accepts_new_iron_law_rule_three_quote(self):
-        finding = {
-            "problem": "新增要求没有证据",
-            "evidence": "spec.md:12",
-            "quote": {
-                "source": "xy-iron-law 第 3 条",
-                "text": "用户原话、功能清单，或写了证据的派方需求",
-            },
-        }
-        document = main_report(verdict="改了就过", deviations=[finding])
-        self.assertEqual(self.run_report("review-main.json", document), (0, []))
+        quotes = (
+            ("xy-iron-law 第 1 条", "第一性原理：思考"),
+            ("xy-iron-law 第 3 条", "用户原话、功能清单，或写了证据的派方需求"),
+        )
+        for source, text in quotes:
+            with self.subTest(source=source):
+                finding = {
+                    "problem": "发现一项阻断",
+                    "evidence": "check.py:25",
+                    "quote": {"source": source, "text": text},
+                }
+                document = main_report(verdict="改了就过", deviations=[finding])
+                self.assertEqual(self.run_report("review-main.json", document), (0, []))
 
     def test_main_report_requires_each_numbered_repository_rule(self):
         rules = {str(number): section() for number in REPO_RULE_NUMBERS}
@@ -447,7 +467,7 @@ class CheckTest(unittest.TestCase):
         self.assert_rejected("review-razor.json", razor_report(verdict="不通过"), "但 delete.items 为空")
 
     def test_diagnosis_report_validates_structure_and_actions(self):
-        self.create_formal_round3(failed=True)
+        self.create_complete_formal_group(failed=True)
         self.assertEqual(self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",)), (0, []))
         self.assert_rejected("diagnosis.json", diagnosis_report(actions=[]), "actions 不能为空", folders=("group1",))
         self.assert_rejected("diagnosis.json", diagnosis_report(actions=["拆分", "拆分"]), "actions 不能重复",
@@ -555,7 +575,7 @@ class CheckTest(unittest.TestCase):
                 self.assertTrue(any(expected in problem for problem in problems), problems)
 
     def test_formal_diagnosis_location_is_a_hard_error(self):
-        self.create_formal_round3(failed=True)
+        self.create_complete_formal_group(failed=True)
         report = diagnosis_report()
         self.assertEqual(self.run_report("diagnosis.json", report, ("group1",)), (0, []))
 
@@ -571,10 +591,45 @@ class CheckTest(unittest.TestCase):
         self.assertTrue(any("必须已有 round3" in problem for problem in problems), problems)
 
     def test_formal_diagnosis_rejects_third_round_when_all_reports_pass(self):
-        self.create_formal_round3()
+        self.create_complete_formal_group()
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
         self.assertEqual(code, 1, problems)
         self.assertTrue(any("至少要有一份结论为「不通过」" in problem for problem in problems), problems)
+
+    def test_formal_diagnosis_requires_reports_submissions_and_handling_for_all_rounds(self):
+        self.create_formal_round3(failed=True)
+        code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(any("round1" in problem for problem in problems), problems)
+
+        group = Path(self.root) / "group1"
+        for number in (1, 2):
+            round_path = group / f"round{number}"
+            round_path.mkdir(exist_ok=True)
+            (round_path / "review-main.json").write_text(
+                json_text(main_report()), encoding="utf-8",
+            )
+            (round_path / "review-razor.json").write_text(
+                json_text(razor_report()), encoding="utf-8",
+            )
+        for number in (1, 2, 3):
+            (group / f"round{number}" / "submitted-review.md").write_text(
+                "", encoding="utf-8",
+            )
+        code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(any("submitted" in problem for problem in problems), problems)
+
+        for number in (1, 2, 3):
+            (group / f"round{number}" / "submitted-review.md").write_text(
+                "本轮审查版本。\n", encoding="utf-8",
+            )
+        code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
+        self.assertEqual(code, 1, problems)
+        self.assertTrue(any("handling.md" in problem for problem in problems), problems)
+
+        (group / "round3" / "handling.md").write_text("逐项处理了不通过意见。\n", encoding="utf-8")
+        self.assertEqual(self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",)), (0, []))
 
     def test_formal_group_must_start_with_round1(self):
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), ("group1",))
@@ -600,7 +655,7 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(any("一组要复审到第 3 轮" in problem for problem in problems), problems)
 
-        self.create_formal_round3(failed=True)
+        self.create_complete_formal_group(failed=True)
         with open(os.path.join(self.root, "group1", "diagnosis.json"), "w", encoding="utf-8") as stream:
             stream.write(json_text(diagnosis_report(actions=["无效动作"])))
         code, problems = self.run_report("review-main.json", main_report(), folders)
