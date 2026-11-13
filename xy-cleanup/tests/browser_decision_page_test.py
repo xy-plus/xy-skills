@@ -33,6 +33,22 @@ def browser_decisions():
                     "lines": ["What is needed: clear behavior."],
                     "options": ["Keep", "Remove"],
                     "recommended": "Keep",
+                    "compare": {
+                        "before": (
+                            "Keep this requirement.\n"
+                            "This paragraph stays.\n"
+                            "Old wording stays.\n"
+                            "Remove this sentence.\n"
+                            "Another paragraph stays."
+                        ),
+                        "after": (
+                            "Keep this requirement.\n"
+                            "This paragraph stays.\n"
+                            "New wording stays.\n"
+                            "Another paragraph stays.\n"
+                            "Add this sentence."
+                        ),
+                    },
                 },
                 {
                     "id": "B1",
@@ -40,6 +56,7 @@ def browser_decisions():
                     "lines": ["Why: a short name helps."],
                     "options": ["Use current name", "Rename"],
                     "recommended": "Use current name",
+                    "compare": None,
                 },
                 {
                     "id": "__proto__",
@@ -47,6 +64,7 @@ def browser_decisions():
                     "lines": ["This id is valid."],
                     "options": ["Keep prototype", "Change prototype"],
                     "recommended": "Keep prototype",
+                    "compare": None,
                 },
                 {
                     "id": "constructor",
@@ -54,6 +72,7 @@ def browser_decisions():
                     "lines": ["This id is valid too."],
                     "options": ["Keep constructor", "Change constructor"],
                     "recommended": "Keep constructor",
+                    "compare": None,
                 },
             ],
         }],
@@ -120,6 +139,40 @@ class DecisionPageBridge(ThreadingHTTPServer):
 
 
 class DecisionPageBrowserTest(unittest.TestCase):
+    def test_compare_shows_counts_and_each_paragraph_change_on_a_phone(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        page_html = decision_page.render_decision_page(browser_decisions())
+        page_errors = []
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(executable_path=executable, headless=True)
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.set_content(page_html)
+
+            comparison = page.locator('[data-item-id="A1"] .comparison')
+            count_text = comparison.locator(".compare-counts").inner_text()
+            self.assertIn("原文", count_text)
+            self.assertIn("改写后", count_text)
+            self.assertIn("少了", count_text)
+            self.assertEqual(
+                comparison.locator(".compare-unchanged").all_inner_texts(),
+                ["没改的 2 段", "没改的 1 段"],
+            )
+            self.assertEqual(comparison.locator(".compare-deleted del").inner_text(), "Remove this sentence.")
+            self.assertEqual(comparison.locator(".compare-added ins").inner_text(), "Add this sentence.")
+            self.assertEqual(comparison.locator(".compare-rewritten del").inner_text(), "Old wording stays.")
+            self.assertEqual(comparison.locator(".compare-rewritten ins").inner_text(), "New wording stays.")
+            self.assertEqual(page.locator('[data-item-id="B1"] .comparison').count(), 0)
+            self.assertLessEqual(
+                page.evaluate("document.documentElement.scrollWidth"),
+                page.evaluate("window.innerWidth"),
+            )
+            browser.close()
+
+        self.assertEqual(page_errors, [])
+
     def test_decisions_persist_per_call_and_submit_from_a_phone_view(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")

@@ -23,6 +23,13 @@ p{margin:6px 0;color:var(--ink2);overflow-wrap:anywhere}
 .head{font-weight:650;overflow-wrap:anywhere}
 .head .no{margin-right:7px;color:var(--muted);font:700 13px var(--mono)}
 .line{margin:4px 0 0;color:var(--ink2);font-size:14px}
+.comparison{min-width:0;margin-top:10px;padding:9px 10px;border:1px solid var(--hair);border-radius:8px;background:var(--page)}
+.compare-counts{margin:0 0 7px;color:var(--ink2);font-size:13px;font-weight:650;overflow-wrap:anywhere}
+.compare-row{margin:5px 0 0;color:var(--ink2);font-size:14px;overflow-wrap:anywhere;white-space:pre-wrap;word-break:break-word}
+.compare-unchanged{color:var(--muted);font-size:13px}
+.compare-deleted del,.compare-rewritten del{color:#a13b38;text-decoration-thickness:2px}
+.compare-added ins,.compare-rewritten ins{color:#167347;text-decoration:none;background:#dff3e7}
+@media(prefers-color-scheme:dark){.compare-deleted del,.compare-rewritten del{color:#ffaaa5}.compare-added ins,.compare-rewritten ins{color:#9ee0b8;background:#173426}}
 .storage-warning{padding:9px 11px;border:1px solid var(--mark);border-radius:8px;color:var(--ink)}
 .choices{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .choices label{position:relative;display:flex;flex:1 1 130px;min-width:110px;align-items:center;justify-content:center;gap:5px;padding:9px 10px;border:1px solid var(--hair);border-radius:9px;background:var(--surface);font-size:14px;text-align:center;overflow-wrap:anywhere;cursor:pointer;user-select:none}
@@ -129,6 +136,41 @@ function renderItem(item) {
   heading.append(make("span", "no", item.id), document.createTextNode(item.title));
   card.append(heading);
   for (const line of item.lines) card.append(make("p", "line", line));
+
+  const comparison = Object.prototype.hasOwnProperty.call(pageData.comparisons, item.id)
+    ? pageData.comparisons[item.id]
+    : null;
+  if (comparison) {
+    const section = make("div", "comparison");
+    const difference = comparison.before_chars - comparison.after_chars;
+    const change = difference >= 0
+      ? `少了 ${difference} 字`
+      : `多了 ${Math.abs(difference)} 字`;
+    section.append(make(
+      "p",
+      "compare-counts",
+      `原文 ${comparison.before_chars} 字 · 改写后 ${comparison.after_chars} 字 · ${change}`,
+    ));
+    for (const row of comparison.rows) {
+      if (row.kind === "unchanged") {
+        section.append(make("p", "compare-row compare-unchanged", `没改的 ${row.count} 段`));
+      } else if (row.kind === "delete") {
+        const paragraph = make("p", "compare-row compare-deleted");
+        paragraph.append(document.createTextNode("删："), make("del", "", row.text));
+        section.append(paragraph);
+      } else if (row.kind === "insert") {
+        const paragraph = make("p", "compare-row compare-added");
+        paragraph.append(document.createTextNode("加："), make("ins", "", row.text));
+        section.append(paragraph);
+      } else {
+        const paragraph = make("p", "compare-row compare-rewritten");
+        paragraph.append(make("del", "", row.before), document.createElement("br"));
+        paragraph.append(make("ins", "", row.after));
+        section.append(paragraph);
+      }
+    }
+    card.append(section);
+  }
 
   const choices = make("div", "choices");
   for (const option of item.options) {

@@ -226,6 +226,8 @@ python3 <xy-cleanup目录>/decision_page.py ask \
 
 决定清单对象的键必须与下面一致。各对象不能多字段或少字段，字符串不能为空；条目编号全局唯一；每条至少有两个不重复选项，建议项必须是其中之一；至少有一组，每组至少有一条。
 
+每条 `items` 恰有 `id`、`title`、`lines`、`options`、`recommended`、`compare` 六个字段。普通条目的 `compare` 写 `null`；文档改写条目写恰有 `before`、`after` 两个字符串字段的对象，`before` 非空，`after` 可以为空。页面按非空行逐段对照，折叠连续未改段，标出删除、新增和改写；顶部按非空白字符数显示原文、改写后和字数差。没有对照的条目照旧显示。
+
 ```json
 {
   "title": "清扫决定",
@@ -240,7 +242,8 @@ python3 <xy-cleanup目录>/decision_page.py ask \
           "title": "确认规则",
           "lines": ["要什么：……", "为什么：……"],
           "options": ["确认", "按我写的改"],
-          "recommended": "确认"
+          "recommended": "确认",
+          "compare": null
         }
       ]
     }

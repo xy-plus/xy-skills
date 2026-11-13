@@ -1,4 +1,5 @@
 import argparse
+import difflib
 from http.server import BaseHTTPRequestHandler
 import json
 import os
@@ -15,7 +16,8 @@ from urllib.parse import urlsplit
 
 DECISION_KEYS = {"title", "intro", "groups", "footnotes"}
 GROUP_KEYS = {"title", "notes", "items"}
-ITEM_KEYS = {"id", "title", "lines", "options", "recommended"}
+ITEM_KEYS = {"id", "title", "lines", "options", "recommended", "compare"}
+COMPARE_KEYS = {"before", "after"}
 FOOTNOTE_KEYS = {"title", "lines"}
 MAX_REQUEST_BYTES = 200 * 1024
 REQUEST_READ_TIMEOUT_SECONDS = 10
@@ -91,6 +93,14 @@ def validate_decisions(value):
             _require_text(item["recommended"], f"{item_label}.recommended")
             if item["recommended"] not in options:
                 raise ValueError(f"{item_label}.recommended 必须是 options 中的选项")
+            compare = item["compare"]
+            if compare is not None:
+                if not isinstance(compare, dict):
+                    raise ValueError(f"{item_label}.compare 必须是对象或 null")
+                _require_object(compare, COMPARE_KEYS, f"{item_label}.compare")
+                _require_text(compare["before"], f"{item_label}.compare.before")
+                if not isinstance(compare["after"], str):
+                    raise ValueError(f"{item_label}.compare.after 必须是字符串")
 
     footnotes = value["footnotes"]
     if not isinstance(footnotes, list):
@@ -103,9 +113,58 @@ def validate_decisions(value):
     return value
 
 
+def _non_whitespace_characters(text):
+    return sum(not character.isspace() for character in text)
+
+
+def _comparison_rows(before, after):
+    before_paragraphs = [line for line in before.splitlines() if line.strip()]
+    after_paragraphs = [line for line in after.splitlines() if line.strip()]
+    matcher = difflib.SequenceMatcher(None, before_paragraphs, after_paragraphs)
+    rows = []
+    for operation, before_start, before_end, after_start, after_end in matcher.get_opcodes():
+        old = before_paragraphs[before_start:before_end]
+        new = after_paragraphs[after_start:after_end]
+        if operation == "equal":
+            rows.append({"kind": "unchanged", "count": len(old)})
+        elif operation == "delete":
+            rows.extend({"kind": "delete", "text": line} for line in old)
+        elif operation == "insert":
+            rows.extend({"kind": "insert", "text": line} for line in new)
+        else:
+            paired = min(len(old), len(new))
+            rows.extend(
+                {"kind": "rewrite", "before": old[index], "after": new[index]}
+                for index in range(paired)
+            )
+            rows.extend({"kind": "delete", "text": line} for line in old[paired:])
+            rows.extend({"kind": "insert", "text": line} for line in new[paired:])
+    return rows
+
+
+def _comparison_data(compare):
+    before = compare["before"]
+    after = compare["after"]
+    return {
+        "before_chars": _non_whitespace_characters(before),
+        "after_chars": _non_whitespace_characters(after),
+        "rows": _comparison_rows(before, after),
+    }
+
+
 def render_decision_page(decisions):
     """Read the decision-page template and embed safe data for one call."""
-    page_data = {"call_id": secrets.token_urlsafe(18), "decisions": decisions}
+    comparisons = {
+        item["id"]: _comparison_data(item["compare"])
+        for group in decisions["groups"]
+        for item in group["items"]
+        if item["compare"] is not None
+    }
+    page_data = {
+        "call_id": secrets.token_urlsafe(18),
+        "decisions": decisions,
+        "comparisons": comparisons,
+    }
     embedded = json_for_html(page_data)
     template = TEMPLATE.read_text(encoding="utf-8")
     return template.replace("__DECISION_DATA__", embedded)
