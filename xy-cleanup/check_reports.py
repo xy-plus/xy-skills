@@ -1148,6 +1148,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 elif target == feature_id:
                     feature_targets.append(finding)
 
+            # 剃刀复审发现一律是「问你」，目标只能是本功能 id 或 keep 覆盖文件，写不出 TODO 行发现。
             if role in ("主审", "剃刀") and feature_data is not None:
                 problems.extend(_validate_feature_todo_reduction(
                     feature_id,

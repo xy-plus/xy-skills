@@ -40,7 +40,7 @@
           "why": {
             "text": "出了问题要改根因，不要在别处加东西收拾后果。",
             "source": "原话",
-            "quote": "打补丁就是出错的地方不改、在别处加东西收拾后果。",
+            "quote": "打补丁就是不改出错处，而在别处加东西收拾后果。",
             "from": "xy-iron-law/SKILL.md 第 1 条"
           },
           "directory": "xy-iron-law",
@@ -54,7 +54,7 @@
           "why": {
             "text": "积极删掉不必要的代码和文档，不留历史包袱和补丁。",
             "source": "原话",
-            "quote": "积极删除或合并不必要的代码或文档，我不喜欢历史包袱和打补丁。",
+            "quote": "积极删除或合并不必要的代码或文档；我不喜欢历史包袱和打补丁。",
             "from": "xy-repo-rules/SKILL.md 第 7 条"
           },
           "directory": "xy-repo-rules",
