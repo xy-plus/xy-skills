@@ -342,6 +342,20 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_skipped_document_and_todo_need_no_keep_or_todo_review(self):
+        self.add_tracked_file("alpha/guide.md", "A long experimental guide.\n")
+        self.add_tracked_file("alpha/TODO.md", "An experimental reminder.\n")
+        self.add_tracked_file(
+            "repo-map/skip.json",
+            json.dumps(["alpha/guide.md", "alpha/TODO.md"]),
+        )
+
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_razor_requires_necessity(self):
         main = report("主审", self.repository)
         razor = report("剃刀", self.repository)

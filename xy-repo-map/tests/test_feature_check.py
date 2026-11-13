@@ -19,6 +19,7 @@ class FeatureCheckTest(unittest.TestCase):
         self.repo.mkdir()
         self.write("README.md", "仓库说明。\n")
         self.write("repo-map/features.json", json.dumps(feature("root", "", subrepositories=[], external_dependencies=[]), ensure_ascii=False))
+        self.write("repo-map/skip.json", "[]\n")
         subprocess.run(["git", "-C", str(self.repo), "init", "-q"], check=True)
         subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
 

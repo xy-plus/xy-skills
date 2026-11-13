@@ -17,10 +17,15 @@ sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
 from repo_map_lib.features import load_features  # noqa: E402
 from repo_map_lib.git_repository import ArgumentError, tracked_paths  # noqa: E402
 from repo_map_lib.map_data import build_map  # noqa: E402
+from repo_map_lib.skip_paths import (  # noqa: E402
+    SKIP_LIST_PATH,
+    is_skipped_path,
+    read_skip_paths,
+)
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 
 
-EXCLUDED_PATHS = {"repo-map/features.json", APPROVED_RELATIVE_PATH}
+EXCLUDED_PATHS = {"repo-map/features.json", APPROVED_RELATIVE_PATH, SKIP_LIST_PATH}
 
 
 def parser():
@@ -110,6 +115,7 @@ def feature_values(repository):
 
 def feature_fingerprints(repository, data, values_by_id):
     """Return content fingerprints for every feature in the checked map."""
+    skip_paths = read_skip_paths(repository, tracked_paths(repository))
     result = {}
     for feature_id in values_by_id:
         feature = values_by_id[feature_id]
@@ -121,7 +127,8 @@ def feature_fingerprints(repository, data, values_by_id):
         file_hashes = []
         for group_paths in data["features"][feature_id]["files"].values():
             for relative_path in group_paths:
-                if relative_path in EXCLUDED_PATHS:
+                if (relative_path in EXCLUDED_PATHS
+                        or is_skipped_path(relative_path, skip_paths)):
                     continue
                 path = Path(repository) / relative_path
                 content = (

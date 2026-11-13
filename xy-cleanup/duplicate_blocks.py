@@ -2,7 +2,8 @@
 from collections import defaultdict
 from pathlib import Path
 
-from repo_map_lib.map_data import file_category
+from repo_map_lib.map_data import file_category_with_skip
+from repo_map_lib.skip_paths import is_skipped_path
 
 
 # Six lines avoid flagging common two- or three-line idioms with little to merge;
@@ -13,12 +14,14 @@ SCANNED_CATEGORIES = {"code", "tests", "docs"}
 TODO_FILENAME = "TODO.md"
 
 
-def find_duplicate_windows(repository, tracked_files):
+def find_duplicate_windows(repository, tracked_files, skip_paths):
     occurrences = defaultdict(list)
     for path in sorted(tracked_files):
         if Path(path).name == TODO_FILENAME:
             continue
-        if file_category(repository, path) not in SCANNED_CATEGORIES:
+        if is_skipped_path(path, skip_paths):
+            continue
+        if file_category_with_skip(repository, path, skip_paths) not in SCANNED_CATEGORIES:
             continue
         try:
             physical_lines = (Path(repository) / path).read_bytes().splitlines()

@@ -25,6 +25,7 @@ from .git_repository import (
 )
 from .metrics import count_file
 from .ownership import assign_files
+from .skip_paths import is_skipped_path, read_skip_paths
 
 
 SOURCE_SUFFIXES = set(CODE_SUFFIXES) | {".html"}
@@ -87,6 +88,15 @@ def _read_source(repository, path, category):
 
 def file_category(repository, path):
     """Return the effective category used by the repository map for one path."""
+    root = Path(repository)
+    skip_paths = read_skip_paths(root, tracked_paths(root))
+    return file_category_with_skip(root, path, skip_paths)
+
+
+def file_category_with_skip(repository, path, skip_paths):
+    """Classify a path using a skip list that was already validated."""
+    if is_skipped_path(path, skip_paths):
+        return "other"
     return _read_source(repository, path, _file_category(path))[0]
 
 
@@ -117,6 +127,7 @@ def build_map(repository):
     features, order, errors = load_features(root, paths)
     if errors:
         raise ValueError("\n".join(errors))
+    skip_paths = read_skip_paths(root, paths)
     errors = subrepository_errors(root, features[order[0]]["subrepositories"])
     if errors:
         raise ValueError("\n".join(errors))
@@ -124,6 +135,9 @@ def build_map(repository):
     categories = {}
     source_texts = {}
     for path in paths:
+        if is_skipped_path(path, skip_paths):
+            categories[path], source_texts[path] = "other", ""
+            continue
         categories[path], source_texts[path] = _read_source(
             root, path, _file_category(path)
         )

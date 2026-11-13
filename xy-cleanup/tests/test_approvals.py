@@ -55,7 +55,11 @@ class ApprovalPlanTest(unittest.TestCase):
         (external_directory / "features.json").write_bytes(
             (repo_map_path / "features.json").read_bytes()
         )
+        (external_directory / "skip.json").write_bytes(
+            (repo_map_path / "skip.json").read_bytes()
+        )
         (repo_map_path / "features.json").unlink()
+        (repo_map_path / "skip.json").unlink()
         repo_map_path.rmdir()
         repo_map_path.symlink_to(external_directory, target_is_directory=True)
         return external_directory
@@ -105,7 +109,7 @@ class ApprovalPlanTest(unittest.TestCase):
         )
         self.assertEqual(
             sorted(path.name for path in approved_path.parent.iterdir()),
-            ["approved.json", "features.json"],
+            ["approved.json", "features.json", "skip.json"],
         )
         plan = self.plan()
         self.assertEqual(plan.returncode, 0, plan.stdout + plan.stderr)
@@ -161,7 +165,7 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertEqual(
             sorted(path.name for path in external_directory.iterdir()),
-            ["features.json"],
+            ["features.json", "skip.json"],
         )
 
     def test_plan_expands_parent_scope_and_can_review_every_feature(self):

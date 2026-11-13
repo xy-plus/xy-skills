@@ -244,7 +244,7 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(data["features"]["package"]["files"]["directory"], ["pkg/one.py", "pkg/two.py"])
         self.assertEqual(
             data["features"]["root"]["files"]["whole"],
-            ["README.md", "repo-map/features.json"],
+            ["README.md", "repo-map/features.json", "repo-map/skip.json"],
         )
 
     def test_directory_entry_registers_all_tracked_files_below_it(self):
@@ -433,6 +433,7 @@ class DerivationTest(unittest.TestCase):
                 "root", "", subrepositories=[], external_dependencies=[],
             )
             feature_path.write_text(json.dumps(root_feature), encoding="utf-8")
+            (feature_path.parent / "skip.json").write_text("[]\n", encoding="utf-8")
             subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)
             subprocess.run(["git", "-C", str(primary), "config", "user.name", "Fixture"], check=True)
             subprocess.run(["git", "-C", str(primary), "config", "user.email", "fixture@example.invalid"], check=True)

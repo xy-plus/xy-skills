@@ -12,7 +12,12 @@ sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
 sys.path.insert(0, str(REPOSITORY / "xy-review"))
 from repo_map_lib.git_repository import ArgumentError  # noqa: E402
 from repo_map_lib.git_repository import tracked_paths  # noqa: E402
-from repo_map_lib.map_data import build_map, file_category  # noqa: E402
+from repo_map_lib.map_data import (  # noqa: E402
+    build_map,
+    file_category,
+    file_category_with_skip,
+)
+from repo_map_lib.skip_paths import is_skipped_path, read_skip_paths  # noqa: E402
 from approvals import (  # noqa: E402
     APPROVED_RELATIVE_PATH,
     feature_fingerprints,
@@ -775,6 +780,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     duplicate_windows = None
     pending_recheck_verdicts = []
     evidence_lines_by_file = {}
+    skip_paths = read_skip_paths(repository, tracked_files)
     tracked_todo_files = {
         path for path in tracked_files if Path(path).name == TODO_FILENAME
     }
@@ -853,13 +859,16 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     for path in group_paths
                 }
                 direct_todo_files = {
-                    path for path in direct_files if Path(path).name == TODO_FILENAME
+                    path for path in direct_files
+                    if Path(path).name == TODO_FILENAME
+                    and not is_skipped_path(path, skip_paths)
                 }
                 keep_files = (
                     {
                         path for path in direct_files
                         if Path(path).name != TODO_FILENAME
-                        and file_category(repository, path) in {"code", "tests", "docs"}
+                        and file_category_with_skip(repository, path, skip_paths)
+                        in {"code", "tests", "docs"}
                     }
                     if role in ("剃刀", "剃刀复审") else set()
                 )
@@ -934,7 +943,9 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 keep_items = review.get("keep")
                 has_keep_items = isinstance(keep_items, list) and bool(keep_items)
                 if has_keep_items and duplicate_windows is None:
-                    duplicate_windows = find_duplicate_windows(repository, tracked_files)
+                    duplicate_windows = find_duplicate_windows(
+                        repository, tracked_files, skip_paths,
+                    )
                 problems.extend(_validate_keep_items(
                     keep_items,
                     f"报告 {label} 的功能 {feature_id}.keep",

@@ -65,6 +65,9 @@ def _make_repository(repository, files, root_feature):
     feature_path = repository / "repo-map" / "features.json"
     feature_path.parent.mkdir(parents=True, exist_ok=True)
     feature_path.write_text(json.dumps(root_feature, ensure_ascii=False), encoding="utf-8")
+    skip_path = feature_path.parent / "skip.json"
+    if not skip_path.exists():
+        skip_path.write_text("[]\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(repository), "init", "-q"], check=True)
     subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
     return repository
