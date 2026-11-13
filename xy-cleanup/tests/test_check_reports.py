@@ -601,6 +601,83 @@ class CheckReportsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("围栏代码块不能被块边界切开", result.stdout + result.stderr)
 
+    def test_container_fenced_code_blocks_cannot_be_split(self):
+        cases = (
+            (
+                "quoted-fence.md",
+                "> ```sh\n> echo x\n> ``` \n",
+            ),
+            (
+                "list-fence.md",
+                "- ```sh\n  echo x\n  ```\n",
+            ),
+        )
+        for name, content in cases:
+            with self.subTest(name=name):
+                path = f"alpha/{name}"
+                self.add_tracked_file(path, content)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["rewrites"] = [
+                    {"lines": f"{path}:{line}-{line}", "text": text}
+                    for line, text in enumerate(content.splitlines(), start=1)
+                ]
+                for candidate in ("alpha/quoted-fence.md", "alpha/list-fence.md"):
+                    candidate_path = self.repository / candidate
+                    if candidate_path.exists():
+                        line_count = len(candidate_path.read_text(encoding="utf-8").splitlines())
+                        alpha["keep"].append(
+                            razor_keep_item("alpha", f"{candidate}:1-{line_count}")
+                        )
+                self.write_reports(report("主审", self.repository), razor)
+
+                result = self.run_check()
+
+                output = result.stdout + result.stderr
+                self.assertNotEqual(result.returncode, 0, output)
+                self.assertIn("围栏代码块不能被块边界切开", output)
+
+    def test_container_fenced_code_blocks_must_be_kept_verbatim(self):
+        cases = (
+            (
+                "quoted-fence.md",
+                "> ```sh\n> echo x\n> ``` \n",
+                "```sh\necho x\n```",
+            ),
+            (
+                "list-fence.md",
+                "- ```sh\n  echo x\n  ```\n",
+                "```sh\necho x\n```",
+            ),
+        )
+        for name, content, changed_text in cases:
+            with self.subTest(name=name):
+                path = f"alpha/{name}"
+                self.add_tracked_file(path, content)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["rewrites"] = [{
+                    "lines": f"{path}:1-3",
+                    "text": changed_text + " with enough added words to be longer",
+                }]
+                rewrite_finding = finding("重构", True, "问你")
+                rewrite_finding["target"] = f"{path}:1-3"
+                alpha["findings"] = [rewrite_finding]
+                for candidate in ("alpha/quoted-fence.md", "alpha/list-fence.md"):
+                    candidate_path = self.repository / candidate
+                    if candidate_path.exists():
+                        line_count = len(candidate_path.read_text(encoding="utf-8").splitlines())
+                        alpha["keep"].append(
+                            razor_keep_item("alpha", f"{candidate}:1-{line_count}")
+                        )
+                self.write_reports(report("主审", self.repository), razor)
+
+                result = self.run_check()
+
+                output = result.stdout + result.stderr
+                self.assertNotEqual(result.returncode, 0, output)
+                self.assertIn("围栏代码块必须在改写块中原样保留", output)
+
     def test_shorter_rewrite_needs_a_whole_file_finding_and_reports_character_counts(self):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")
         razor = report("剃刀", self.repository)
@@ -710,6 +787,38 @@ class CheckReportsTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("跳过名单", result.stdout + result.stderr)
+
+    def test_skipped_finding_target_is_rejected_before_reading_its_file(self):
+        target_path = self.repository / "alpha" / "guide.md"
+        self.add_tracked_file("alpha/guide.md", "Skipped guide.\n")
+        self.add_tracked_file("repo-map/skip.json", json.dumps(["alpha/guide.md"]))
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        skipped_finding = finding("重构", True, "问你")
+        skipped_finding["target"] = "alpha/guide.md:1-1"
+        alpha["findings"] = [skipped_finding]
+        self.write_reports(report("主审", self.repository), razor)
+        data = check_reports_module.build_map(self.repository)
+        tracked_files = tracked_paths(self.repository)
+        original_read = check_reports_module._read_file_lines
+        target_reads = []
+
+        def record_reads(file_path):
+            if Path(file_path) == target_path:
+                target_reads.append(file_path)
+            return original_read(file_path)
+
+        with patch.object(check_reports_module, "_read_file_lines", side_effect=record_reads):
+            problems = check_reports_module.validate_reports(
+                data,
+                self.repository,
+                set(data["features"]),
+                self.reports_for_check(),
+                tracked_files,
+            )
+
+        self.assertTrue(any("跳过名单" in problem for problem in problems), problems)
+        self.assertEqual(target_reads, [])
 
     def test_skipped_todo_target_is_not_validated_as_a_todo_finding(self):
         self.add_tracked_file("alpha/TODO.md", "Delete this skipped reminder.\n")

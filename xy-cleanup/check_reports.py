@@ -130,10 +130,11 @@ def _fenced_code_blocks(file_lines):
     blocks = []
     opening = re.compile(r"^ {0,3}(`{3,})([^`]*)$")
     closing = re.compile(r"^ {0,3}(`{3,})[ \t]*$")
+    original_lines = [_line_text(raw_line) for raw_line in file_lines]
     start_line = None
     fence_length = None
-    for line_number, raw_line in enumerate(file_lines, start=1):
-        line = _line_text(raw_line)
+    for line_number, original_line in enumerate(original_lines, start=1):
+        line = _strip_markdown_container_prefixes(original_line)
         if fence_length is None:
             match = opening.match(line)
             if match:
@@ -145,7 +146,7 @@ def _fenced_code_blocks(file_lines):
             blocks.append((
                 start_line,
                 line_number,
-                "\n".join(_line_text(item) for item in file_lines[start_line - 1:line_number]),
+                "\n".join(original_lines[start_line - 1:line_number]),
             ))
             start_line = None
             fence_length = None
@@ -153,7 +154,7 @@ def _fenced_code_blocks(file_lines):
         blocks.append((
             start_line,
             len(file_lines),
-            "\n".join(_line_text(item) for item in file_lines[start_line - 1:]),
+            "\n".join(original_lines[start_line - 1:]),
         ))
     return blocks
 
@@ -1131,16 +1132,16 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 if not isinstance(finding, dict) or not _nonempty(finding.get("target")):
                     continue
                 target = finding["target"]
-                if not _valid_target(target, data, repository, tracked_files):
-                    problems.append(
-                        f"{finding_label}.target 必须是功能 id、文件:行号或 文件:起始行-结束行："
-                        f"{target}"
-                    )
-                    continue
                 target_range = _parse_line_range(target, allow_single_line=True)
                 if target_range is not None and is_skipped_path(target_range[0], skip_paths):
                     problems.append(
                         f"{finding_label}.target 不能落在跳过名单命中的文件上：{target}"
+                    )
+                    continue
+                if not _valid_target(target, data, repository, tracked_files):
+                    problems.append(
+                        f"{finding_label}.target 必须是功能 id、文件:行号或 文件:起始行-结束行："
+                        f"{target}"
                     )
                     continue
                 if (
