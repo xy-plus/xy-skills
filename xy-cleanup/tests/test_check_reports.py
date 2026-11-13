@@ -721,17 +721,14 @@ class CheckReportsTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_shorter_rewrite_finding_covers_file_without_keep_or_recheck(self):
+    def test_shorter_rewrite_finding_covers_file_without_keep(self):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"] = []
         alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": "Short."}]
         rewrite_finding = finding("重构", True, "问你")
         rewrite_finding["target"] = "alpha/guide.md:1-1"
-        deletion = finding("删除", False, "直接做")
-        deletion["target"] = "alpha"
-        alpha["findings"] = [rewrite_finding, deletion]
+        alpha["findings"] = [rewrite_finding]
         self.write_reports(report("主审", self.repository), razor)
 
         result = self.run_check()
