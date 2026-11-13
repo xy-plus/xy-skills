@@ -17,6 +17,7 @@ from repo_map_lib.map_data import (  # noqa: E402
     file_category,
     file_category_with_skip,
 )
+from repo_map_lib.metrics import count_non_whitespace_characters  # noqa: E402
 from repo_map_lib.skip_paths import is_skipped_path, read_skip_paths  # noqa: E402
 from approvals import (  # noqa: E402
     APPROVED_RELATIVE_PATH,
@@ -83,32 +84,32 @@ def _nonempty(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def _non_whitespace_characters(text):
-    return sum(not character.isspace() for character in text)
-
-
-def _backtick_fragments(text):
+def _paired_delimiter_fragments(text, marker, minimum_length):
     fragments = []
     index = 0
     while index < len(text):
-        if text[index] != "`" or (index > 0 and text[index - 1] == "`"):
+        if text[index] != marker or (index > 0 and text[index - 1] == marker):
             index += 1
             continue
         delimiter_end = index + 1
-        while delimiter_end < len(text) and text[delimiter_end] == "`":
+        while delimiter_end < len(text) and text[delimiter_end] == marker:
             delimiter_end += 1
+        if delimiter_end - index < minimum_length:
+            index = delimiter_end
+            continue
         delimiter = text[index:delimiter_end]
         search_from = delimiter_end
         closing = None
-        # A code line with a run as long as its outer fence pairs early, leaving later code unscanned.
+        # A same-length backtick run inside a code block can close early and hide later code.
+        # Indented code blocks have no fence markers, so this check does not inspect them.
         while True:
             candidate = text.find(delimiter, search_from)
             if candidate < 0:
                 break
             candidate_end = candidate + len(delimiter)
             if (
-                (candidate == 0 or text[candidate - 1] != "`")
-                and (candidate_end == len(text) or text[candidate_end] != "`")
+                (candidate == 0 or text[candidate - 1] != marker)
+                and (candidate_end == len(text) or text[candidate_end] != marker)
             ):
                 closing = candidate_end
                 break
@@ -184,7 +185,11 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
         rewritten_text = "\n".join(rewritten_texts)
         block_ranges = ranges_by_file.get(path, [])
         required_fragments = {}
-        for start, end, fragment in _backtick_fragments(original_text):
+        fragments = (
+            _paired_delimiter_fragments(original_text, "`", 1)
+            + _paired_delimiter_fragments(original_text, "~", 3)
+        )
+        for start, end, fragment in sorted(fragments, key=lambda item: item[0]):
             start_line = len(re.findall(r"\r\n|\r|\n", original_text[:start])) + 1
             end_line = len(re.findall(r"\r\n|\r|\n", original_text[:end - 1])) + 1
             deleted_whole = any(
@@ -213,8 +218,8 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
         original_text = original_text_by_file.get(path)
         if original_text is None:
             continue
-        before_chars = _non_whitespace_characters(original_text)
-        after_chars = sum(_non_whitespace_characters(text) for text in texts)
+        before_chars = count_non_whitespace_characters(original_text)
+        after_chars = sum(count_non_whitespace_characters(text) for text in texts)
         if after_chars >= before_chars:
             continue
 

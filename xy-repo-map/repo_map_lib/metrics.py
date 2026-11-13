@@ -10,6 +10,10 @@ from .constants import CODE_SUFFIXES
 LineCounts = namedtuple("LineCounts", "code docs comments tests")
 
 
+def count_non_whitespace_characters(text):
+    """Count the characters in text that are not whitespace."""
+    return sum(not character.isspace() for character in text)
+
 
 def _python_doc_lines(source):
     try:

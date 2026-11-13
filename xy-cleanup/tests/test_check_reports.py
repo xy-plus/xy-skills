@@ -591,6 +591,40 @@ class CheckReportsTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, output)
                 self.assertIn("缺少原文反引号片段", output)
 
+    def test_changed_tilde_fenced_code_is_rejected(self):
+        self.add_tracked_file("alpha/guide.md", "~~~sh\necho x\n~~~\n")
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [
+            {"lines": "alpha/guide.md:1-1", "text": "~~~sh"},
+            {"lines": "alpha/guide.md:2-2", "text": "echo y"},
+            {"lines": "alpha/guide.md:3-3", "text": "~~~"},
+        ]
+        alpha["keep"].append(razor_keep_item("alpha", "alpha/guide.md:1-3"))
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("缺少原文反引号片段", output)
+
+    def test_unchanged_tilde_fenced_code_is_allowed(self):
+        content = "~~~sh\necho x\n~~~\n"
+        self.add_tracked_file("alpha/guide.md", content)
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [
+            {"lines": f"alpha/guide.md:{line}-{line}", "text": text}
+            for line, text in enumerate(content.splitlines(), start=1)
+        ]
+        alpha["keep"].append(razor_keep_item("alpha", "alpha/guide.md:1-3"))
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_inline_backtick_removed_from_rewrite_is_rejected(self):
         self.add_tracked_file("alpha/guide.md", "Run `tool --flag` today.\n")
         razor = report("剃刀", self.repository)

@@ -2,18 +2,10 @@
 import json
 from pathlib import Path
 
+from .features import _safe_relative_path
+
 
 SKIP_LIST_PATH = "repo-map/skip.json"
-
-
-def _safe_parts(path):
-    if not path or path.startswith("/") or "\\" in path:
-        return None
-    relative_path = path[:-1] if path.endswith("/") else path
-    parts = relative_path.split("/")
-    if any(part in ("", ".", "..") for part in parts):
-        return None
-    return parts
 
 
 def read_skip_paths(repository, tracked_paths):
@@ -37,8 +29,7 @@ def read_skip_paths(repository, tracked_paths):
         label = f"{SKIP_LIST_PATH}[{index}]"
         if not isinstance(path, str):
             raise ValueError(f"{label} 必须是字符串")
-        parts = _safe_parts(path)
-        if parts is None:
+        if not _safe_relative_path(path, allow_directory_marker=True):
             raise ValueError(f"{label} 路径不安全：{path}")
         if path in seen:
             raise ValueError(f"{label} 路径不能重复：{path}")

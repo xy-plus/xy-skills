@@ -4,10 +4,14 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from repo_map_lib import metrics
 from repo_map_lib.metrics import LineCounts, code_counts, count_file
 
 
 class MetricsTest(unittest.TestCase):
+    def test_shared_non_whitespace_character_count(self):
+        self.assertEqual(metrics.count_non_whitespace_characters("你 好\nA\tB"), 4)
+
     def test_python_docstrings_comments_and_inline_comments(self):
         source = '''"""Module docs.
 Second docs line.

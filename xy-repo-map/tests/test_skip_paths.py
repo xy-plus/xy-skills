@@ -117,6 +117,7 @@ class SkipPathsTest(unittest.TestCase):
             (["alpha//main.py"], "不安全"),
             (["alpha/./main.py"], "不安全"),
             (["alpha/../main.py"], "不安全"),
+            (["bad\0path"], "不安全"),
         )
 
         for paths, expected in invalid_lists:

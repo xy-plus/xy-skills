@@ -25,6 +25,7 @@ TEMPLATE = Path(__file__).resolve().parent / "templates" / "decision-page.html"
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
 sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
 from repo_map_lib.embedded_json import json_for_html  # noqa: E402
+from repo_map_lib.metrics import count_non_whitespace_characters  # noqa: E402
 from repo_map_lib.publish_command import PLATFORM_PYTHON, PORTAL_SCRIPT  # noqa: E402
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 
@@ -156,10 +157,6 @@ def validate_decisions(value):
     return value
 
 
-def _non_whitespace_characters(text):
-    return sum(not character.isspace() for character in text)
-
-
 def _comparison_rows(compare):
     rows = []
     unchanged_ranges = []
@@ -195,8 +192,8 @@ def _comparison_rows(compare):
 
 def _comparison_data(compare):
     return {
-        "before_chars": sum(_non_whitespace_characters(block["before"]) for block in compare),
-        "after_chars": sum(_non_whitespace_characters(block["after"]) for block in compare),
+        "before_chars": sum(count_non_whitespace_characters(block["before"]) for block in compare),
+        "after_chars": sum(count_non_whitespace_characters(block["after"]) for block in compare),
         "rows": _comparison_rows(compare),
     }
 
