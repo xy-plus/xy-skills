@@ -24,26 +24,33 @@ class BrowserTreeTest(unittest.TestCase):
     def test_tree_filters_decisions_and_fits_a_phone_viewport(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        external_name = "external-" + "x" * 51
         alpha_source = "# one comment\n" + "".join(
             f"value_{index} = {index}\n" for index in range(12)
         )
         repository = make_repo(self, {
-            "README.md": "See alpha/main.py and group. Claude Code is used here.\n",
+            "README.md": (
+                f"See alpha/main.py and group. Claude Code and {external_name} are used here.\n"
+            ),
             "alpha/main.py": alpha_source,
             "alpha/guide.md": "See group/ready.py for details.\n",
             "group/ready.py": "value = 2\n",
             "group/consumer.py": "import alpha.main\nimport group.ready\n",
             "group/orphan.py": "orphan = True\n",
             "group/tests/test_ready.py": "import group.ready\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=["Claude Code"], children=[
-            feature("alpha", "alpha"),
-            feature("group", "group", children=[
-                feature("ready", None, entries=["group/ready.py"]),
-                feature("consumer", None, entries=["group/consumer.py"], source="确认"),
-                feature("future", None, source="起草"),
-            ]),
-            feature("guide", None, entries=["README.md"]),
-        ]))
+        }, feature(
+            "root", "", subrepositories=[],
+            external_dependencies=["Claude Code", external_name],
+            children=[
+                feature("alpha", "alpha"),
+                feature("group", "group", children=[
+                    feature("ready", None, entries=["group/ready.py"]),
+                    feature("consumer", None, entries=["group/consumer.py"], source="确认"),
+                    feature("future", None, source="起草"),
+                ]),
+                feature("guide", None, entries=["README.md"]),
+            ],
+        ))
         with tempfile.TemporaryDirectory() as temporary:
             output = self.render(repository, temporary)
             expected = json.loads((output / "map-data.json").read_text(encoding="utf-8"))
@@ -94,10 +101,14 @@ class BrowserTreeTest(unittest.TestCase):
                 }
                 guide = expected["features"][by_title["Guide"]]
                 self.assertEqual(guide["uses"], [])
-                self.assertEqual(guide["external_uses"], ["Claude Code"])
+                self.assertEqual(guide["external_uses"], ["Claude Code", external_name])
                 guide_uses = row_for_title("Guide").locator(".uses")
                 self.assertEqual(guide_uses.locator(".uses-label").text_content(), "用到")
-                external_chip = guide_uses.locator(".external-use")
+                self.assertEqual(
+                    guide_uses.locator(".external-use").all_text_contents(),
+                    ["Claude Code外部", f"{external_name}外部"],
+                )
+                external_chip = guide_uses.locator(".external-use").first
                 self.assertEqual(external_chip.text_content(), "Claude Code外部")
                 self.assertEqual(external_chip.evaluate("element => element.tagName"), "SPAN")
                 self.assertFalse(external_chip.evaluate("element => Boolean(element.closest('button'))"))
@@ -195,7 +206,7 @@ class BrowserTreeTest(unittest.TestCase):
                 citation = panel.locator("blockquote")
                 self.assertIn("用户说过的话。", citation.inner_text())
                 self.assertIn("测试契约", citation.inner_text())
-                detail_external = panel.locator(".detail-list").first.locator(".external-use")
+                detail_external = panel.locator(".detail-list").first.locator(".external-use").first
                 self.assertEqual(detail_external.text_content(), "Claude Code外部")
                 self.assertEqual(detail_external.evaluate("element => element.tagName"), "SPAN")
                 self.assertFalse(detail_external.evaluate("element => Boolean(element.closest('button'))"))
@@ -213,45 +224,3 @@ class BrowserTreeTest(unittest.TestCase):
                 self.assertEqual(panel.locator(".why-detail-body .source-label").text_content(), "AI 起草 · 等你拍板")
                 self.assertNotIn("来源：", panel.inner_text())
                 browser.close()
-
-    def test_long_external_name_does_not_overflow_a_phone_viewport(self):
-        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
-        self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
-        external_name = "external-" + "x" * 51
-        repository = make_repo(self, {
-            "area/subarea/guide.md": f"Uses {external_name}.\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[external_name], children=[
-            feature("area", "area", children=[
-                feature("subarea", "area/subarea", children=[
-                    feature("guide", None, entries=["area/subarea/guide.md"]),
-                ]),
-            ]),
-        ]))
-
-        with tempfile.TemporaryDirectory() as temporary:
-            output = self.render(repository, temporary)
-
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(executable_path=executable, headless=True)
-                try:
-                    page = browser.new_page(viewport={"width": 390, "height": 844})
-                    page.goto((output / "index.html").as_uri())
-
-                    subarea_row = next(
-                        row for row in page.locator(".feature-row").all()
-                        if row.locator(".feature-title .title").text_content() == "Subarea"
-                    )
-                    subarea_row.locator(".caret").click()
-                    guide_row = next(
-                        row for row in page.locator(".feature-row").all()
-                        if row.locator(".feature-title .title").text_content() == "Guide"
-                    )
-                    guide_row.locator(".feature-title").click()
-
-                    self.assertTrue(page.locator(".detail-panel").is_visible())
-                    self.assertLessEqual(
-                        page.evaluate("document.documentElement.scrollWidth"),
-                        page.evaluate("window.innerWidth"),
-                    )
-                finally:
-                    browser.close()

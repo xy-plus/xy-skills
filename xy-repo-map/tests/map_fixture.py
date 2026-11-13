@@ -1,4 +1,3 @@
-"""Build small tracked repositories for feature-map tests."""
 import json
 from pathlib import Path
 import subprocess

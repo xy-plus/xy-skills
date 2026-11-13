@@ -1,4 +1,3 @@
-"""Test file metrics, dependencies, ownership, and feature markers."""
 import json
 from pathlib import Path
 import subprocess
@@ -75,12 +74,6 @@ class DerivationTest(unittest.TestCase):
 
         data = map_data.build_map(repository)
 
-        self.assertEqual(map_data.file_category(repository, "src/main.py"), "code")
-        self.assertEqual(map_data.file_category(repository, "docs/guide.md"), "docs")
-        self.assertEqual(map_data.file_category(repository, "tests/test_parser.py"), "tests")
-        self.assertEqual(map_data.file_category(repository, "assets/data.json"), "other")
-        self.assertEqual(map_data.file_category(repository, "assets/link.py"), "other")
-        self.assertEqual(map_data.file_category(repository, "assets/binary.py"), "other")
         self.assertEqual(data["features"]["root"]["lines"]["own"], {
             "code": 2, "docs": 2, "comments": 0, "tests": 1,
         })
@@ -141,8 +134,6 @@ class DerivationTest(unittest.TestCase):
 
         data = map_data.build_map(repository)
 
-        self.assertEqual(map_data.file_category(repository, "src/helper_tests.rs"), "tests")
-        self.assertEqual(map_data.file_category(repository, "src/tests.rs"), "tests")
         self.assertEqual(data["features"]["root"]["lines"]["own"]["tests"], 4)
 
     def test_files_classified_as_other_are_not_read(self):

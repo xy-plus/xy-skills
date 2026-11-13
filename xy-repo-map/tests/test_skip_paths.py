@@ -1,4 +1,3 @@
-"""Test repository-declared paths excluded from map and cleanup inputs."""
 import json
 from pathlib import Path
 import subprocess
@@ -12,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent / "xy-cleanup"))
 from repo_map_lib.map_data import build_map as derive_map  # noqa: E402
-from repo_map_lib.map_data import file_category  # noqa: E402
 from approvals import feature_fingerprints, feature_values  # noqa: E402
 
 
@@ -82,8 +80,6 @@ class SkipPathsTest(unittest.TestCase):
         with patch.object(Path, "read_bytes", reject_skipped_content):
             data = derive_map(repository)
 
-        self.assertEqual(file_category(repository, "pkg/hidden.py"), "other")
-        self.assertEqual(file_category(repository, "archive/log.md"), "other")
         self.assertEqual(data["features"]["hidden-file"]["lines"]["own"], {
             "code": 0, "docs": 0, "comments": 0, "tests": 0,
         })
@@ -164,7 +160,3 @@ class SkipPathsTest(unittest.TestCase):
         )
 
         self.assertEqual(first, second)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -2,9 +2,7 @@ import json
 from pathlib import Path
 
 from .git_repository import ArgumentError
-from .map_data import build_map
 from .render_page import render_page
-from .workspace_map import build_workspace_map
 
 
 def require_empty_output_directory(output):
@@ -35,13 +33,7 @@ def write_map(data, directory):
     return directory
 
 
-def render_repository(repository, output):
-    """Validate the repository and write a page to an empty output directory."""
+def render_repository(repository, output, build):
+    """Build a repository map and write a page to an empty output directory."""
     directory = require_empty_output_directory(output)
-    return write_map(build_map(repository), directory)
-
-
-def render_workspace_repository(repository, output):
-    """Compose registered repository maps and write them like a regular render."""
-    directory = require_empty_output_directory(output)
-    return write_map(build_workspace_map(repository), directory)
+    return write_map(build(repository), directory)

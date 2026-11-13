@@ -190,10 +190,6 @@ def _span_counts(source, spans):
     return LineCounts(line_counts["code"], line_counts["docs"], line_counts["comments"], 0)
 
 
-def _lexed_counts(source, language):
-    return _span_counts(source, _comment_spans(source, language))
-
-
 def code_counts(path, source):
     suffix = Path(path).suffix.lower()
     if suffix == ".html":
@@ -213,7 +209,7 @@ def code_counts(path, source):
             else:
                 code += 1
         return LineCounts(code, 0, comments, 0)
-    return _lexed_counts(source, language)
+    return _span_counts(source, _comment_spans(source, language))
 
 
 def _html_counts(source):

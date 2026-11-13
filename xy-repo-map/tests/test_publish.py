@@ -12,8 +12,7 @@ from unittest.mock import patch
 from map_fixture import COMMAND
 
 
-REPOSITORY_MAP = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY_MAP))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from repo_map_lib.git_repository import ArgumentError
 from repo_map_lib.publish_command import (

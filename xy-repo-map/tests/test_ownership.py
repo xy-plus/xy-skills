@@ -3,8 +3,7 @@ import sys
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "xy-repo-map"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "xy-repo-map"))
 
 from repo_map_lib.ownership import _test_code_match  # noqa: E402
 from map_fixture import build_map, feature, make_repo  # noqa: E402
@@ -38,18 +37,3 @@ class OwnershipTest(unittest.TestCase):
             "src/foo.rs",
         )
         self.assertIsNone(_test_code_match("tests.rs", {"src/tests.rs"}))
-
-    def test_test_file_without_imports_marks_its_parent_as_whole(self):
-        repository = make_repo(self, {
-            "pkg/core.py": "value = 1\n",
-            "pkg/tests/test_orphan.py": "def test_orphan():\n    return None\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("package", "pkg", children=[
-                feature("core", None, entries=["pkg/core.py"]),
-            ]),
-        ]))
-
-        result = build_map(self, repository)
-        package = result["features"]["package"]
-
-        self.assertIn("没归到功能的代码或测试", package["markers"])

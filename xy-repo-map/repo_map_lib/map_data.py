@@ -13,8 +13,8 @@ from .constants import (
 from .dependencies import (
     directory_mentions,
     file_mentions,
-    imports_for_file,
     name_mentions,
+    _import_targets,
 )
 from .features import directory_home, is_feature_ancestor, load_features
 from .git_repository import (
@@ -84,13 +84,6 @@ def _read_source(repository, path, category):
     if source is None:
         return "other", ""
     return category, source
-
-
-def file_category(repository, path):
-    """Return the effective category used by the repository map for one path."""
-    root = Path(repository)
-    skip_paths = read_skip_paths(root, tracked_paths(root))
-    return file_category_with_skip(root, path, skip_paths)
 
 
 def file_category_with_skip(repository, path, skip_paths):
@@ -182,10 +175,11 @@ def build_map(repository):
     python_paths = [path for path in paths if Path(path).suffix.lower() == ".py"]
     imports = {}
     for path in paths:
-        if categories[path] in ("code", "tests"):
-            imports[path] = imports_for_file(path, source_texts[path], python_paths)
-        else:
+        if (Path(path).suffix.lower() != ".py"
+                or categories[path] not in ("code", "tests")):
             imports[path] = set()
+        else:
+            imports[path] = _import_targets(path, source_texts[path], python_paths)
 
     entries = _entry_files(features, order, paths)
     owners, groups = assign_files(features, order, paths, categories, entries, imports)

@@ -5,7 +5,8 @@ import sys
 from repo_map_lib.git_repository import ArgumentError
 from repo_map_lib.map_data import build_map
 from repo_map_lib.publish_command import PUBLISH_MODES, publish_repository
-from repo_map_lib.render_command import render_repository, render_workspace_repository
+from repo_map_lib.render_command import render_repository
+from repo_map_lib.workspace_map import build_workspace_map
 
 
 def parser():
@@ -43,11 +44,11 @@ def main(argv):
         if options.command == "publish":
             return publish_repository(options.out, options.publish_as)
         if options.command == "render":
-            directory = render_repository(options.repo, options.out)
+            directory = render_repository(options.repo, options.out, build_map)
             print(f"页面已生成：{directory}")
             return 0
         if options.command == "render-workspace":
-            directory = render_workspace_repository(options.repo, options.out)
+            directory = render_repository(options.repo, options.out, build_workspace_map)
             print(f"页面已生成：{directory}")
             return 0
         build_map(options.repo)

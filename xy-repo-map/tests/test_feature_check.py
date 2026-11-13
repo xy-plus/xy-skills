@@ -1,4 +1,3 @@
-"""Check feature-list rules through the public repository command."""
 import json
 from pathlib import Path
 import subprocess

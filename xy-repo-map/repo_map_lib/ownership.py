@@ -9,8 +9,6 @@ from .features import (
 
 
 def _common_parent(feature_ids, features):
-    if not feature_ids:
-        return None
     first_chain = list(feature_chain(feature_ids[0], features))
     shared = set(first_chain)
     for feature_id in feature_ids[1:]:
@@ -96,19 +94,12 @@ def assign_files(features, order, paths, categories, entries, imports):
             same_directory_code = {
                 target for target in imported_code if directory_by_path[target] == home
             }
-            matched_code = _test_code_match(path, same_directory_code)
+            candidate_code = same_directory_code or imported_code - same_directory_code
+            matched_code = _test_code_match(path, candidate_code)
             if matched_code is not None:
                 owners[path], groups[path] = owners[matched_code], "reached"
                 continue
-            if same_directory_code:
-                imported_owners = {owners[target] for target in same_directory_code}
-            else:
-                other_directory_code = imported_code - same_directory_code
-                matched_code = _test_code_match(path, other_directory_code)
-                if matched_code is not None:
-                    owners[path], groups[path] = owners[matched_code], "reached"
-                    continue
-                imported_owners = {owners[target] for target in other_directory_code}
+            imported_owners = {owners[target] for target in candidate_code}
             if imported_owners:
                 selected = imported_owners
                 group = "reached"

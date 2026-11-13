@@ -3,20 +3,19 @@ from pathlib import Path
 import re
 
 
-def _module_path(path):
-    if not path.endswith(".py"):
-        return None
-    module = path[:-3]
-    return module[:-9] if module.endswith("/__init__") else module
-
-
 def _match_module(name, python_paths):
     if not name:
         return None
     suffix = name.replace(".", "/")
-    matches = [path for path in python_paths
-               if (module := _module_path(path)) is not None
-               and (module == suffix or module.endswith("/" + suffix))]
+    matches = []
+    for path in python_paths:
+        if not path.endswith(".py"):
+            continue
+        module = path[:-3]
+        if module.endswith("/__init__"):
+            module = module[:-9]
+        if module == suffix or module.endswith("/" + suffix):
+            matches.append(path)
     return matches[0] if len(matches) == 1 else None
 
 
@@ -56,13 +55,6 @@ def _import_targets(path, source, python_paths):
                         result.add(target)
                         break
     return result
-
-
-def imports_for_file(path, source, python_paths):
-    """Return uniquely resolved tracked Python targets imported by a file."""
-    if Path(path).suffix.lower() != ".py":
-        return set()
-    return _import_targets(path, source, python_paths)
 
 
 def file_mentions(path, source, tracked_paths):

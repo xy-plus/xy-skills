@@ -18,6 +18,13 @@ class WorkspaceRenderTest(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
 
+    def assert_workspace_render_fails(self):
+        result = self.render()
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertFalse(self.output.exists())
+        return output
+
     def test_render_workspace_combines_maps_and_resolves_external_names(self):
         root_manifest = self.workspace / "repo-map" / "features.json"
         root_feature = json.loads(root_manifest.read_text(encoding="utf-8"))
@@ -100,49 +107,34 @@ class WorkspaceRenderTest(unittest.TestCase):
             json.dumps(root, ensure_ascii=False), encoding="utf-8",
         )
 
-        result = self.render()
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("没有登记子仓", result.stdout + result.stderr)
-        self.assertFalse(self.output.exists())
+        output = self.assert_workspace_render_fails()
+        self.assertIn("没有登记子仓", output)
 
     def test_render_workspace_reports_a_missing_child_checkout(self):
         shutil.rmtree(self.workspace / "sub-a")
 
-        result = self.render()
-
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 1, output)
+        output = self.assert_workspace_render_fails()
         self.assertIn("sub-a", output)
         self.assertIn("不存在", output)
         self.assertIn("子仓所在的检出", output)
-        self.assertFalse(self.output.exists())
 
     def test_render_workspace_reports_a_child_without_its_own_map(self):
         (self.workspace / "sub-a" / "repo-map" / "features.json").unlink()
 
-        result = self.render()
-
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 1, output)
+        output = self.assert_workspace_render_fails()
         self.assertIn("sub-a", output)
         self.assertIn("repo-map/features.json", output)
         self.assertIn("起草", output)
-        self.assertFalse(self.output.exists())
 
     def test_render_workspace_reports_an_invalid_child_map(self):
         (self.workspace / "sub-a" / "repo-map" / "features.json").write_text(
             "{}", encoding="utf-8",
         )
 
-        result = self.render()
-
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 1, output)
+        output = self.assert_workspace_render_fails()
         self.assertIn("sub-a", output)
         self.assertIn("功能图检查失败", output)
         self.assertIn("缺少键", output)
-        self.assertFalse(self.output.exists())
 
     def test_render_workspace_keeps_argument_errors_at_two(self):
         result = subprocess.run(
