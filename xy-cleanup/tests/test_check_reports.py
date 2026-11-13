@@ -96,15 +96,11 @@ def report(role, repository, feature_ids=("root", "alpha", "beta")):
                 for path in group_paths
             }
             current["rewrites"] = [
-                {
-                    "path": path,
-                    "text": (Path(repository) / path).read_text(
-                        encoding="utf-8", errors="replace",
-                    ),
-                }
+                block
                 for path in sorted(direct_files)
                 if Path(path).name != "TODO.md"
                 and file_category_with_skip(repository, path, skip_paths) == "docs"
+                for block in rewrite_blocks(repository, path)
             ]
         reviews.append(current)
     return {"role": role, "repo": str(repository), "features": reviews}
@@ -179,6 +175,15 @@ def character_count(text):
     return sum(not character.isspace() for character in text)
 
 
+def rewrite_blocks(repository, path):
+    content = (Path(repository) / path).read_text(encoding="utf-8", errors="replace")
+    return [
+        {"lines": f"{path}:{line_number}-{line_number}", "text": line}
+        for line_number, line in enumerate(content.splitlines(), start=1)
+        if line.strip()
+    ]
+
+
 class CheckReportsTest(unittest.TestCase):
     def setUp(self):
         self.repository = make_cleanup_repo(self)
@@ -219,28 +224,35 @@ class CheckReportsTest(unittest.TestCase):
                     == "docs"
                 }
                 existing_paths = {
-                    rewrite.get("path") for rewrite in item["rewrites"]
-                    if isinstance(rewrite, dict) and isinstance(rewrite.get("path"), str)
+                    parsed[0]
+                    for rewrite in item["rewrites"]
+                    if isinstance(rewrite, dict)
+                    and (parsed := check_reports_module._parse_line_range(
+                        rewrite.get("lines"), allow_single_line=False,
+                    )) is not None
                 }
                 item["rewrites"].extend(
-                    {
-                        "path": path,
-                        "text": (self.repository / path).read_text(
-                            encoding="utf-8", errors="replace",
-                        ),
-                    }
+                    block
                     for path in sorted(document_files - existing_paths)
+                    for block in rewrite_blocks(self.repository, path)
                 )
-            rewrite_reduction_targets = set()
+            rewrite_text_by_path = {}
             for rewrite in item.get("rewrites", []):
                 if not isinstance(rewrite, dict):
                     continue
-                path, text = rewrite.get("path"), rewrite.get("text")
-                if not isinstance(path, str) or not isinstance(text, str):
+                parsed = check_reports_module._parse_line_range(
+                    rewrite.get("lines"), allow_single_line=False,
+                )
+                text = rewrite.get("text")
+                if parsed is None or not isinstance(text, str):
                     continue
+                path = parsed[0]
+                rewrite_text_by_path.setdefault(path, []).append(text)
+            rewrite_reduction_targets = set()
+            for path, texts in rewrite_text_by_path.items():
                 original_path = self.repository / path
                 original = original_path.read_bytes().decode("utf-8", errors="replace")
-                if character_count(text) < character_count(original):
+                if sum(character_count(text) for text in texts) < character_count(original):
                     line_count = len(original_path.read_bytes().splitlines())
                     rewrite_reduction_targets.add(f"{path}:1-{line_count}")
             has_reduction = any(
@@ -427,7 +439,7 @@ class CheckReportsTest(unittest.TestCase):
         self.add_tracked_file("alpha/guide.md", "Original guide.\n")
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["rewrites"] = [{"path": "alpha/main.py", "text": "value = 1\n"}]
+        alpha["rewrites"] = [{"lines": "alpha/main.py:1-1", "text": "value = 1"}]
         self.write_reports(report("主审", self.repository), razor)
 
         result = self.run_check()
@@ -439,9 +451,9 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("alpha/main.py", output)
 
         for rewrite, expected in (
-            ({"path": "alpha/guide.md"}, "缺少字段 text"),
-            ({"path": "alpha/guide.md", "text": "Original guide.\n", "extra": 1}, "多余字段 extra"),
-            ({"path": "alpha/guide.md", "text": 7}, "text 必须是字符串"),
+            ({"lines": "alpha/guide.md:1-1"}, "缺少字段 text"),
+            ({"lines": "alpha/guide.md:1-1", "text": "Original guide.\n", "extra": 1}, "多余字段 extra"),
+            ({"lines": "alpha/guide.md:1-1", "text": 7}, "text 必须是字符串"),
         ):
             with self.subTest(rewrite=rewrite):
                 fresh = report("剃刀", self.repository)
@@ -454,11 +466,92 @@ class CheckReportsTest(unittest.TestCase):
                 self.assertNotEqual(checked.returncode, 0, checked.stdout + checked.stderr)
                 self.assertIn(expected, checked.stdout + checked.stderr)
 
+    def test_rewrite_blocks_cover_every_nonempty_line_without_overlap(self):
+        self.add_tracked_file("alpha/guide.md", "First paragraph.\n\nSecond paragraph.\nThird paragraph.\n")
+        cases = (
+            (
+                [
+                    {"lines": "alpha/guide.md:1-1", "text": "First paragraph."},
+                    {"lines": "alpha/guide.md:4-4", "text": "Third paragraph."},
+                ],
+                "未覆盖直属文档改写的非空行：alpha/guide.md:3",
+            ),
+            (
+                [
+                    {"lines": "alpha/guide.md:1-3", "text": "First and second."},
+                    {"lines": "alpha/guide.md:3-4", "text": "Second and third."},
+                ],
+                "行范围重叠",
+            ),
+        )
+        for rewrites, expected in cases:
+            with self.subTest(expected=expected):
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["rewrites"] = rewrites
+                self.write_reports(report("主审", self.repository), razor)
+
+                result = self.run_check()
+
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(expected, result.stdout + result.stderr)
+
+    def test_rewrite_ranges_must_be_valid_and_belong_to_a_direct_document(self):
+        self.add_tracked_file("alpha/guide.md", "First paragraph.\nSecond paragraph.\n")
+        cases = (
+            ([{"lines": "alpha/guide.md:1", "text": "First."}], "必须写成 路径:起始行-结束行"),
+            ([{"lines": "alpha/guide.md:0-1", "text": "First."}], "行范围无效"),
+            ([{"lines": "alpha/guide.md:1-3", "text": "Both."}], "行范围无效"),
+            ([{"lines": "alpha/main.py:1-1", "text": "Code."}], "文件不在允许范围内"),
+        )
+        for rewrites, expected in cases:
+            with self.subTest(rewrites=rewrites):
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["rewrites"] = rewrites
+                self.write_reports(report("主审", self.repository), razor)
+
+                result = self.run_check()
+
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(expected, result.stdout + result.stderr)
+
+    def test_rewrite_keeps_each_backtick_span_verbatim(self):
+        self.add_tracked_file("alpha/guide.md", "Run `tool --flag` now.\n")
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [{
+            "lines": "alpha/guide.md:1-1",
+            "text": "Run tool --flag now.",
+        }]
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("`tool --flag`", result.stdout + result.stderr)
+
+    def test_rewrite_keeps_fenced_code_blocks_verbatim(self):
+        code_block = "```sh\nrun --all\n```"
+        self.add_tracked_file("alpha/guide.md", f"{code_block}\n")
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [{
+            "lines": "alpha/guide.md:1-3",
+            "text": "```sh\nrun\n```",
+        }]
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(code_block, result.stdout + result.stderr)
+
     def test_shorter_rewrite_needs_a_whole_file_finding_and_reports_character_counts(self):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["rewrites"] = [{"path": "alpha/guide.md", "text": "Short."}]
+        alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": "Short."}]
         self.write_reports(report("主审", self.repository), razor)
 
         result = self.run_check()
@@ -469,6 +562,26 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("18", output)
         self.assertIn("6", output)
 
+    def test_rewrite_character_count_sums_each_block(self):
+        self.add_tracked_file("alpha/guide.md", "Original first paragraph.\nOriginal second paragraph.\n")
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [
+            {"lines": "alpha/guide.md:1-1", "text": "Short."},
+            {"lines": "alpha/guide.md:2-2", "text": "Tiny."},
+        ]
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("alpha/guide.md:1-2", output)
+        self.assertIn(str(character_count("Original first paragraph.") + character_count(
+            "Original second paragraph."
+        )), output)
+        self.assertIn(str(character_count("Short.") + character_count("Tiny.")), output)
+
     def test_rewrite_finding_kind_matches_empty_or_nonempty_text(self):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")
         for text, kind, expected in (
@@ -478,7 +591,7 @@ class CheckReportsTest(unittest.TestCase):
             with self.subTest(text=text, kind=kind):
                 razor = report("剃刀", self.repository)
                 alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-                alpha["rewrites"] = [{"path": "alpha/guide.md", "text": text}]
+                alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": text}]
                 rewrite_finding = finding(kind, True, "问你")
                 rewrite_finding["target"] = "alpha/guide.md:1-1"
                 alpha["findings"] = [rewrite_finding]
@@ -493,7 +606,7 @@ class CheckReportsTest(unittest.TestCase):
         self.add_tracked_file("alpha/guide.md", "Original guide.\n")
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["rewrites"] = [{"path": "alpha/guide.md", "text": "Original guide."}]
+        alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": "Original guide."}]
         alpha["keep"].append(razor_keep_item("alpha", "alpha/guide.md:1-1"))
         self.write_reports(report("主审", self.repository), razor)
 
@@ -505,7 +618,7 @@ class CheckReportsTest(unittest.TestCase):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["rewrites"] = [{"path": "alpha/guide.md", "text": "Short."}]
+        alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": "Short."}]
         rewrite_finding = finding("重构", True, "问你")
         rewrite_finding["target"] = "alpha/guide.md:1-1"
         alpha["findings"] = [rewrite_finding]

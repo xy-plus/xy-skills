@@ -48,7 +48,7 @@ FINDING_KEYS = {
 BASIS_KEYS = {"source", "text"}
 TODO_ITEM_KEYS = {"lines", "needed", "smaller", "why_holds"}
 KEEP_ITEM_KEYS = {"lines", "requirement", "achieved", "cost"}
-REWRITE_KEYS = {"path", "text"}
+REWRITE_KEYS = {"lines", "text"}
 RECHECK_VERDICT_KEYS = {"lines", "attempt", "evidence", "verdict"}
 ROLES = {"主审", "剃刀"}
 REPORT_ROLES = ROLES | {"剃刀复审"}
@@ -87,48 +87,116 @@ def _non_whitespace_characters(text):
     return sum(not character.isspace() for character in text)
 
 
+def _backtick_fragments(text):
+    fragments = set()
+    index = 0
+    while index < len(text):
+        if text[index] != "`" or (index > 0 and text[index - 1] == "`"):
+            index += 1
+            continue
+        delimiter_end = index + 1
+        while delimiter_end < len(text) and text[delimiter_end] == "`":
+            delimiter_end += 1
+        delimiter = text[index:delimiter_end]
+        search_from = delimiter_end
+        closing = None
+        while True:
+            candidate = text.find(delimiter, search_from)
+            if candidate < 0:
+                break
+            candidate_end = candidate + len(delimiter)
+            if (
+                (candidate == 0 or text[candidate - 1] != "`")
+                and (candidate_end == len(text) or text[candidate_end] != "`")
+            ):
+                closing = candidate_end
+                break
+            search_from = candidate_end
+        if closing is None:
+            index = delimiter_end
+            continue
+        fragments.add(text[index:closing])
+        index = closing
+    return fragments
+
+
 def _validate_rewrites(rewrites, label, repository, document_files, findings):
     problems = []
     reduction_targets = set()
     if not isinstance(rewrites, list):
         return [f"{label} 必须是数组"], reduction_targets
 
-    seen_paths = set()
+    lines_by_file = {}
+    ranges_by_file = {}
+    texts_by_file = {}
+    labels_by_file = {}
     for index, rewrite in enumerate(rewrites):
         rewrite_label = f"{label}[{index}]"
         item_problems = _field_errors(rewrite, REWRITE_KEYS, rewrite_label)
         problems.extend(item_problems)
         if item_problems or not isinstance(rewrite, dict):
             continue
-        path = rewrite["path"]
+        line_spec = rewrite["lines"]
         text = rewrite["text"]
-        if not isinstance(path, str) or not path:
-            problems.append(f"{rewrite_label}.path 必须是非空字符串")
-            continue
-        if path in seen_paths:
-            problems.append(f"{rewrite_label}.path 不能重复：{path}")
-        seen_paths.add(path)
-        if path not in document_files:
-            problems.append(f"{rewrite_label}.path 不是本功能直属的非 TODO 文档：{path}")
-            continue
         if not isinstance(text, str):
             problems.append(f"{rewrite_label}.text 必须是字符串")
             continue
+        line_range, range_problems = _checked_line_range(
+            line_spec,
+            rewrite_label,
+            "lines",
+            repository,
+            document_files,
+            lines_by_file,
+            allow_single_line=False,
+        )
+        problems.extend(range_problems)
+        if line_range is None:
+            continue
+        overlapping = _record_line_range(
+            ranges_by_file, line_range, rewrite_label, "lines",
+        )
+        if overlapping is not None:
+            problems.append(overlapping)
+        path, start_line, end_line = line_range
+        labels_by_file.setdefault(path, rewrite_label)
+        source_lines = lines_by_file[path][start_line - 1:end_line]
+        source_text = "\n".join(
+            line.decode("utf-8", errors="replace") for line in source_lines
+        )
+        if text != "":
+            for fragment in sorted(_backtick_fragments(source_text)):
+                if fragment not in text:
+                    problems.append(
+                        f"{rewrite_label}.text 缺少原文反引号片段：{fragment}"
+                    )
+        texts_by_file.setdefault(path, []).append(text)
 
+    problems.extend(_uncovered_nonempty_lines(
+        document_files,
+        ranges_by_file,
+        label,
+        "直属文档改写",
+        repository,
+        lines_by_file,
+    ))
+
+    for path, texts in texts_by_file.items():
+        rewrite_label = labels_by_file[path]
         try:
             original_bytes = (Path(repository) / path).read_bytes()
         except OSError as error:
-            problems.append(f"{rewrite_label} 无法读取原文 {path}：{error}")
+            problems.append(f"{label} 无法读取原文 {path}：{error}")
             continue
         original = original_bytes.decode("utf-8", errors="replace")
         before_chars = _non_whitespace_characters(original)
-        after_chars = _non_whitespace_characters(text)
+        after_chars = sum(_non_whitespace_characters(text) for text in texts)
         if after_chars >= before_chars:
             continue
 
         line_count = len(original_bytes.splitlines())
         target = f"{path}:1-{line_count}"
-        expected_kind = "删除" if text == "" else "重构"
+        expected_kind = "删除" if all(text == "" for text in texts) else "重构"
         matching = [
             finding for finding in findings
             if isinstance(finding, dict) and finding.get("target") == target
@@ -151,11 +219,6 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
             continue
         reduction_targets.add(target)
 
-    if seen_paths != document_files:
-        problems.append(
-            f"{label} 的 path 集合必须恰好等于本功能直属文档；"
-            f"应有 {sorted(document_files)}，实际 {sorted(seen_paths)}"
-        )
     return problems, reduction_targets
 
 
