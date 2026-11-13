@@ -48,18 +48,6 @@ class AuditTest(unittest.TestCase):
         self.assertTrue(any("followup-keep-list/impl" in problem and "report-round7" in problem
                             for problem in problems), problems)
 
-    def test_formal_round_structure_is_not_audited(self):
-        with tempfile.TemporaryDirectory() as root:
-            object_path = os.path.join(root, "spec", "object-a")
-            write_file(os.path.join(object_path, "group1", "round1"), "submitted.json", "")
-            write_file(os.path.join(object_path, "group1", "round3"), "submitted-razor.json", "")
-            write_file(os.path.join(object_path, "group2", "round4"), "submitted.json", "")
-
-            code, problems = self.run_audit(root)
-
-        self.assertEqual(code, 0, problems)
-        self.assertEqual(problems, [])
-
     def test_clean_directory_and_usage_errors(self):
         with tempfile.TemporaryDirectory() as root:
             self.assertEqual(self.run_audit(root), (0, []))

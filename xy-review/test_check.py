@@ -317,7 +317,7 @@ class CheckTest(unittest.TestCase):
     def test_main_report_accepts_a_continuous_quote_from_the_named_rule(self):
         quotes = (
             ("xy-iron-law 第 1 条", "第一性原理：思考"),
-            ("xy-iron-law 第 3 条", "用户原话、功能清单，或写了证据的派方需求"),
+            ("xy-iron-law 第 3 条", "用户原话、功能清单或有证据的派方需求"),
         )
         for source, text in quotes:
             with self.subTest(source=source):

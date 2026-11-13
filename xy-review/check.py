@@ -7,12 +7,12 @@ import sys
 HANDOFF_DIRECTORY = pathlib.Path(__file__).resolve().parents[1] / "xy-handoff"
 sys.path.insert(0, str(HANDOFF_DIRECTORY))
 from check_handoff import check_value, object_without_duplicate_keys  # noqa: E402
-from audit import REPORT_ROUND_RE  # noqa: E402
 from rule_references import (  # noqa: E402
-    RULE_FILES, is_rule_source, numbered_rule_numbers, rule_quote_problem
+    RULE_FILES, numbered_rule_numbers, rule_quote_problem
 )
 
 
+REPORT_ROUND_RE = re.compile(r"report-round([1-9]\d*)\.md")
 REPO_RULE_NUMBERS = numbered_rule_numbers(RULE_FILES["xy-repo-rules"])
 SECTION = {
     "items": [{
@@ -138,8 +138,6 @@ def check_rule_quotes(document, report_kind):
             if not isinstance(quote, dict):
                 continue
             source = quote.get("source")
-            if not is_rule_source(source):
-                continue
             problem = rule_quote_problem(source, quote.get("text"))
             if problem is not None:
                 problems.append(

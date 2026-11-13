@@ -31,11 +31,6 @@ def _numbered_rules(skill_path):
     return tuple(rules)
 
 
-def numbered_text(skill_path, number):
-    """Return one numbered rule from a local skill document."""
-    return dict(_numbered_rules(Path(skill_path))).get(number, "")
-
-
 def numbered_rule_numbers(skill_path):
     """Return the rule numbers present in one local skill document."""
     return tuple(number for number, _ in _numbered_rules(Path(skill_path)))
@@ -51,7 +46,10 @@ def rule_quote_problem(source, text):
     if not is_rule_source(source):
         return None
     match = RULE_SOURCE.fullmatch(source)
-    rule = numbered_text(RULE_FILES[match.group(1)], int(match.group(2))) if match else ""
+    rule = (
+        dict(_numbered_rules(RULE_FILES[match.group(1)])).get(int(match.group(2)), "")
+        if match else ""
+    )
     if not rule:
         return f"规范条款来源格式错误或条号不存在：{source}"
     if not isinstance(text, str) or not text.strip() or text not in rule:

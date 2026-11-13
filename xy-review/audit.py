@@ -1,10 +1,7 @@
 import pathlib
-import re
 import sys
 
-
-REPORT_ROUND_RE = re.compile(r"report-round([1-9]\d*)\.md")
-
+from check import REPORT_ROUND_RE, diagnosis_file_problems
 
 def audit(directory):
     root = pathlib.Path(directory)
@@ -24,8 +21,6 @@ def audit(directory):
                     f"{directory_path}：report-round{last_number}.md 已达到非正式循环上限 3，缺少 diagnosis.json"
                 )
             else:
-                from check import diagnosis_file_problems
-
                 diagnosis_problems = diagnosis_file_problems(diagnosis_path)
                 if diagnosis_problems:
                     problems.append(
