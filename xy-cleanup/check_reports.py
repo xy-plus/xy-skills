@@ -120,6 +120,44 @@ def _backtick_fragments(text):
     return fragments
 
 
+def _line_text(line):
+    if isinstance(line, bytes):
+        return line.decode("utf-8", errors="replace")
+    return line
+
+
+def _fenced_code_blocks(file_lines):
+    blocks = []
+    opening = re.compile(r"^ {0,3}(`{3,})([^`]*)$")
+    closing = re.compile(r"^ {0,3}(`{3,})[ \t]*$")
+    start_line = None
+    fence_length = None
+    for line_number, raw_line in enumerate(file_lines, start=1):
+        line = _line_text(raw_line)
+        if fence_length is None:
+            match = opening.match(line)
+            if match:
+                start_line = line_number
+                fence_length = len(match.group(1))
+            continue
+        match = closing.match(line)
+        if match and len(match.group(1)) >= fence_length:
+            blocks.append((
+                start_line,
+                line_number,
+                "\n".join(_line_text(item) for item in file_lines[start_line - 1:line_number]),
+            ))
+            start_line = None
+            fence_length = None
+    if fence_length is not None:
+        blocks.append((
+            start_line,
+            len(file_lines),
+            "\n".join(_line_text(item) for item in file_lines[start_line - 1:]),
+        ))
+    return blocks
+
+
 def _validate_rewrites(rewrites, label, repository, document_files, findings):
     problems = []
     reduction_targets = set()
@@ -130,6 +168,7 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
     ranges_by_file = {}
     texts_by_file = {}
     labels_by_file = {}
+    last_start_by_file = {}
     for index, rewrite in enumerate(rewrites):
         rewrite_label = f"{label}[{index}]"
         item_problems = _field_errors(rewrite, REWRITE_KEYS, rewrite_label)
@@ -159,11 +198,15 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
         if overlapping is not None:
             problems.append(overlapping)
         path, start_line, end_line = line_range
+        previous_start = last_start_by_file.get(path)
+        if previous_start is not None and start_line < previous_start:
+            problems.append(
+                f"{rewrite_label}.lines 必须按同一文件起始行递增：{path}:{start_line}-{end_line}"
+            )
+        last_start_by_file[path] = start_line
         labels_by_file.setdefault(path, rewrite_label)
         source_lines = lines_by_file[path][start_line - 1:end_line]
-        source_text = "\n".join(
-            line.decode("utf-8", errors="replace") for line in source_lines
-        )
+        source_text = "\n".join(_line_text(line) for line in source_lines)
         if text != "":
             for fragment in sorted(_backtick_fragments(source_text)):
                 if fragment not in text:
@@ -171,6 +214,34 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
                         f"{rewrite_label}.text 缺少原文反引号片段：{fragment}"
                     )
         texts_by_file.setdefault(path, []).append(text)
+
+    for path in document_files:
+        if path not in lines_by_file:
+            lines_by_file[path] = _read_file_lines(Path(repository) / path)
+        file_lines = lines_by_file[path]
+        if file_lines is None:
+            continue
+        path_ranges = ranges_by_file.get(path, [])
+        for fence_start, fence_end, fence_text in _fenced_code_blocks(file_lines):
+            covering = [
+                (start, end, index)
+                for index, (start, end) in enumerate(path_ranges)
+                if start <= fence_start and fence_end <= end
+            ]
+            if not covering:
+                problems.append(
+                    f"{label} 原文围栏代码块不能被块边界切开：{path}:{fence_start}-{fence_end}"
+                )
+                continue
+            _start, _end, range_index = covering[0]
+            # ranges_by_file is recorded in rewrite order for this path; match its
+            # corresponding text by the same per-path position.
+            path_texts = texts_by_file.get(path, [])
+            if range_index < len(path_texts) and path_texts[range_index] != "":
+                if fence_text not in path_texts[range_index]:
+                    problems.append(
+                        f"{label} 原文围栏代码块必须在改写块中原样保留：{path}:{fence_start}-{fence_end}"
+                    )
 
     problems.extend(_uncovered_nonempty_lines(
         document_files,
@@ -924,7 +995,8 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     evidence_lines_by_file = {}
     skip_paths = read_skip_paths(repository, tracked_files)
     tracked_todo_files = {
-        path for path in tracked_files if Path(path).name == TODO_FILENAME
+        path for path in tracked_files
+        if Path(path).name == TODO_FILENAME and not is_skipped_path(path, skip_paths)
     }
     for report_path in report_paths:
         try:
@@ -1066,6 +1138,11 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     )
                     continue
                 target_range = _parse_line_range(target, allow_single_line=True)
+                if target_range is not None and is_skipped_path(target_range[0], skip_paths):
+                    problems.append(
+                        f"{finding_label}.target 不能落在跳过名单命中的文件上：{target}"
+                    )
+                    continue
                 if (
                     role == "剃刀复审"
                     and feature_data is not None

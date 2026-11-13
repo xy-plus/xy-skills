@@ -177,11 +177,30 @@ def character_count(text):
 
 def rewrite_blocks(repository, path):
     content = (Path(repository) / path).read_text(encoding="utf-8", errors="replace")
-    return [
-        {"lines": f"{path}:{line_number}-{line_number}", "text": line}
-        for line_number, line in enumerate(content.splitlines(), start=1)
-        if line.strip()
-    ]
+    lines = content.splitlines()
+    fenced = {
+        start: (end, text)
+        for start, end, text in check_reports_module._fenced_code_blocks(lines)
+    }
+    blocks = []
+    line_number = 1
+    while line_number <= len(lines):
+        if line_number in fenced:
+            end_line, text = fenced[line_number]
+            blocks.append({
+                "lines": f"{path}:{line_number}-{end_line}",
+                "text": text,
+            })
+            line_number = end_line + 1
+        else:
+            line = lines[line_number - 1]
+            if line.strip():
+                blocks.append({
+                    "lines": f"{path}:{line_number}-{line_number}",
+                    "text": line,
+                })
+            line_number += 1
+    return blocks
 
 
 class CheckReportsTest(unittest.TestCase):
@@ -496,6 +515,22 @@ class CheckReportsTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn(expected, result.stdout + result.stderr)
 
+    def test_rewrite_blocks_must_be_sorted_by_start_line(self):
+        self.add_tracked_file("alpha/guide.md", "First paragraph.\nSecond paragraph.\n")
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [
+            {"lines": "alpha/guide.md:2-2", "text": "Second paragraph."},
+            {"lines": "alpha/guide.md:1-1", "text": "First paragraph."},
+        ]
+        alpha["keep"].append(razor_keep_item("alpha", "alpha/guide.md:1-2"))
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("起始行递增", result.stdout + result.stderr)
+
     def test_rewrite_ranges_must_be_valid_and_belong_to_a_direct_document(self):
         self.add_tracked_file("alpha/guide.md", "First paragraph.\nSecond paragraph.\n")
         cases = (
@@ -546,6 +581,25 @@ class CheckReportsTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(code_block, result.stdout + result.stderr)
+
+    def test_rewrite_blocks_cannot_split_a_fenced_code_block(self):
+        self.add_tracked_file(
+            "alpha/guide.md",
+            "Before.\n```sh\nrun --all\n```\nAfter.\n",
+        )
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [
+            {"lines": "alpha/guide.md:1-2", "text": "Before.\n```sh"},
+            {"lines": "alpha/guide.md:3-5", "text": "run --all\n```\nAfter."},
+        ]
+        alpha["keep"].append(razor_keep_item("alpha", "alpha/guide.md:1-5"))
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("围栏代码块不能被块边界切开", result.stdout + result.stderr)
 
     def test_shorter_rewrite_needs_a_whole_file_finding_and_reports_character_counts(self):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")
@@ -641,6 +695,38 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_finding_target_cannot_be_in_a_skipped_file(self):
+        self.add_tracked_file("alpha/guide.md", "Skipped guide.\n")
+        self.add_tracked_file("repo-map/skip.json", json.dumps(["alpha/guide.md"]))
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        skipped_finding = finding("重构", True, "问你")
+        skipped_finding["target"] = "alpha/guide.md:1-1"
+        alpha["findings"] = [skipped_finding]
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("跳过名单", result.stdout + result.stderr)
+
+    def test_skipped_todo_target_is_not_validated_as_a_todo_finding(self):
+        self.add_tracked_file("alpha/TODO.md", "Delete this skipped reminder.\n")
+        self.add_tracked_file("repo-map/skip.json", json.dumps(["alpha/TODO.md"]))
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        skipped_todo_finding = finding("删除", False, "直接做")
+        skipped_todo_finding["target"] = "alpha/TODO.md:1-1"
+        alpha["findings"] = [skipped_todo_finding]
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("跳过名单", output)
+        self.assertNotIn("目标在 TODO 文件", output)
 
     def test_razor_requires_necessity(self):
         main = report("主审", self.repository)
