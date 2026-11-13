@@ -610,6 +610,49 @@ class CheckReportsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, output)
         self.assertIn("缺少原文反引号片段", output)
 
+    def test_duplicate_backtick_fragment_may_be_kept_once(self):
+        self.add_tracked_file(
+            "alpha/guide.md",
+            "Use `why.source` twice and then `why.source` again.\n",
+        )
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [{
+            "lines": "alpha/guide.md:1-1",
+            "text": "Use `why.source` once.\n",
+        }]
+        rewrite_finding = finding("重构", True, "问你")
+        rewrite_finding["target"] = "alpha/guide.md:1-1"
+        alpha["findings"] = [rewrite_finding]
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_duplicate_backtick_fragment_missing_from_rewrite_is_rejected(self):
+        self.add_tracked_file(
+            "alpha/guide.md",
+            "Use `why.source` twice and then `why.source` again.\n",
+        )
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [{
+            "lines": "alpha/guide.md:1-1",
+            "text": "Use the property once.\n",
+        }]
+        rewrite_finding = finding("重构", True, "问你")
+        rewrite_finding["target"] = "alpha/guide.md:1-1"
+        alpha["findings"] = [rewrite_finding]
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("缺少原文反引号片段", output)
+        self.assertIn("`why.source`", output)
+
     def test_backtick_fragment_inside_a_wholly_deleted_block_is_allowed(self):
         self.add_tracked_file("alpha/guide.md", "Run `obsolete-tool` today.\n")
         razor = report("剃刀", self.repository)

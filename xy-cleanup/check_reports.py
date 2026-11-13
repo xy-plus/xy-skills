@@ -192,10 +192,9 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
                 for (block_start, block_end), text in zip(block_ranges, rewritten_texts)
             )
             if not deleted_whole:
-                required_fragments[fragment] = required_fragments.get(fragment, 0) + 1
-        for fragment, required_count in required_fragments.items():
-            missing_count = required_count - rewritten_text.count(fragment)
-            for _ in range(max(0, missing_count)):
+                required_fragments.setdefault(fragment, None)
+        for fragment in required_fragments:
+            if fragment not in rewritten_text:
                 problems.append(
                     f"{label} 文件 {path} 的改写全文缺少原文反引号片段：{fragment}"
                 )
