@@ -387,8 +387,6 @@ def run_ask(decisions, name, answers_path, platform_runner, stdout, stderr, stop
             name,
             "--app",
             str(socket_path),
-            "--login",
-            "portal",
         ]
         mount_result = platform_runner(mount_command)
         stdout.write(mount_result.stdout)

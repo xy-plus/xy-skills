@@ -356,7 +356,7 @@ class DecisionPageCommandTest(unittest.TestCase):
             self.assertEqual(
                 mount,
                 ["python3", str(decision_page.PORTAL_SCRIPT), "mount", "decision-test",
-                 "--app", mount[5], "--login", "portal"],
+                 "--app", mount[5]],
             )
             socket_path = mount[5]
 
