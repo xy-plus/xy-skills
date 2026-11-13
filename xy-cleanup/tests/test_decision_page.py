@@ -43,6 +43,12 @@ def valid_decisions():
     }
 
 
+def decisions_with_large_page():
+    decisions = valid_decisions()
+    decisions["intro"] = ["x" * (2 * 1024 * 1024)]
+    return decisions
+
+
 class UnixSocketHTTPConnection(http.client.HTTPConnection):
     def __init__(self, socket_path, timeout):
         super().__init__("localhost", timeout=timeout)
@@ -522,6 +528,89 @@ class DecisionPageCommandTest(unittest.TestCase):
                 server.server_close()
                 socket_path.unlink(missing_ok=True)
             self.assertFalse(serving.is_alive())
+
+    def test_slow_page_reader_receives_complete_response_after_timeout_period(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            decisions = decisions_with_large_page()
+            with patch.object(decision_page, "IDLE_TIMEOUT_SECONDS", 0.5):
+                with decision_receiver(
+                    Path(temporary), decisions, Path(temporary) / "answers.json"
+                ) as (socket_path, _):
+                    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    client.connect(socket_path)
+                    client.sendall(
+                        b"GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                    )
+                    response = http.client.HTTPResponse(client)
+                    try:
+                        response.begin()
+                        content_length = int(response.getheader("Content-Length"))
+                        body = bytearray()
+                        read_error = None
+                        started = time.monotonic()
+                        try:
+                            while len(body) < content_length:
+                                chunk = response.read(
+                                    min(16 * 1024, content_length - len(body))
+                                )
+                                if not chunk:
+                                    break
+                                body.extend(chunk)
+                                time.sleep(0.01)
+                        except (OSError, http.client.HTTPException) as error:
+                            read_error = error
+                        elapsed = time.monotonic() - started
+                    finally:
+                        client.close()
+
+        self.assertGreater(content_length, 2 * 1024 * 1024)
+        self.assertGreater(elapsed, 0.5)
+        self.assertIsNone(read_error, f"慢速读取收到错误：{read_error}")
+        self.assertEqual(len(body), content_length)
+
+    def test_idle_page_reader_disconnects_and_server_accepts_next_request(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            decisions = decisions_with_large_page()
+            with patch.object(decision_page, "IDLE_TIMEOUT_SECONDS", 0.5):
+                with decision_receiver(
+                    Path(temporary), decisions, Path(temporary) / "answers.json"
+                ) as (socket_path, _):
+                    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    client.connect(socket_path)
+                    client.sendall(
+                        b"GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                    )
+                    time.sleep(0.8)
+                    client.settimeout(2)
+                    response_bytes = bytearray()
+                    disconnected = False
+                    try:
+                        while True:
+                            chunk = client.recv(16 * 1024)
+                            if not chunk:
+                                disconnected = True
+                                break
+                            response_bytes.extend(chunk)
+                    except socket.timeout:
+                        pass
+                    finally:
+                        client.close()
+
+                    response_head, response_body = bytes(response_bytes).split(b"\r\n\r\n", 1)
+                    content_length = int(
+                        next(
+                            line.split(b":", 1)[1].strip()
+                            for line in response_head.split(b"\r\n")
+                            if line.lower().startswith(b"content-length:")
+                        )
+                    )
+                    next_status, next_body = request_socket(socket_path, "GET", "/", None)
+
+        self.assertTrue(disconnected, "停读的客户端在超时后仍未断开")
+        self.assertIn(b"200 OK", response_head)
+        self.assertLess(len(response_body), content_length)
+        self.assertEqual(next_status, 200)
+        self.assertIn(b"decision-data", next_body)
 
     def test_mount_failure_stops_service_without_unmounting(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:

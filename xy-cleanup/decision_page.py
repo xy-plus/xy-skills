@@ -19,7 +19,10 @@ ITEM_KEYS = {"id", "title", "lines", "options", "recommended", "compare"}
 COMPARE_KEYS = {"lines", "before", "after"}
 FOOTNOTE_KEYS = {"title", "lines"}
 MAX_REQUEST_BYTES = 200 * 1024
-REQUEST_READ_TIMEOUT_SECONDS = 10
+# Release the single-threaded service when a connection stops making progress.
+# Comparison pages are about 500 KB, so slow readers need a timeout per send,
+# not one timeout for the entire response.
+IDLE_TIMEOUT_SECONDS = 10
 REPOSITORY = Path(__file__).resolve().parents[1]
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "decision-page.html"
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
@@ -307,7 +310,7 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
     """Return the page and validate a single JSON answer submission."""
 
     def setup(self):
-        self.request.settimeout(REQUEST_READ_TIMEOUT_SECONDS)
+        self.request.settimeout(IDLE_TIMEOUT_SECONDS)
         super().setup()
 
     def log_message(self, format_string, *arguments):
@@ -323,8 +326,17 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        self._write_body(body)
         self.close_connection = True
+
+    def _write_body(self, body):
+        self.wfile.flush()
+        remaining = memoryview(body)
+        while remaining:
+            sent = self.request.send(remaining)
+            if sent == 0:
+                raise ConnectionError("连接在响应写完前关闭")
+            remaining = remaining[sent:]
 
     def do_POST(self):
         if urlsplit(self.path).path != "/submit":
@@ -379,7 +391,7 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        self._write_body(body)
         self.close_connection = True
 
 
