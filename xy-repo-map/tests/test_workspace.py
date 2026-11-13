@@ -39,6 +39,13 @@ class WorkspaceRenderTest(unittest.TestCase):
             data["features"]["root"]["lines"]["total"],
             {"code": 2, "docs": 3, "comments": 0, "tests": 0},
         )
+        root_doc_chars = data["features"]["root"].get("doc_chars", {})
+        child_doc_chars = sum(
+            data["features"][f"{name}/root"].get("doc_chars", {}).get("total", 0)
+            for name in ("sub-a", "sub-b")
+        )
+        self.assertEqual(root_doc_chars.get("own"), 17)
+        self.assertEqual(root_doc_chars.get("total"), 17 + child_doc_chars)
         sub_a_files = [
             path
             for group in data["features"]["sub-a/root"]["files"].values()

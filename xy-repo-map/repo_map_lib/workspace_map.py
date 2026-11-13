@@ -37,8 +37,10 @@ def _compose_maps(main_map, child_maps):
         child_root_id = f"{relative_path}/{child_map['root']}"
         repository_roots[relative_path] = child_root_id
         root["children"].append(child_root_id)
-        for name, count in child_map["features"][child_map["root"]]["lines"]["total"].items():
+        child_root = child_map["features"][child_map["root"]]
+        for name, count in child_root["lines"]["total"].items():
             root["lines"]["total"][name] += count
+        root["doc_chars"]["total"] += child_root["doc_chars"]["total"]
         for name, count in child_map["markers"].items():
             markers[name] += count
 

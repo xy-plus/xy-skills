@@ -23,7 +23,7 @@ from .git_repository import (
     subrepository_errors,
     tracked_paths,
 )
-from .metrics import count_file
+from .metrics import count_doc_chars, count_file
 from .ownership import assign_files
 from .skip_paths import is_skipped_path, read_skip_paths
 
@@ -178,6 +178,7 @@ def build_map(repository):
         path: count_file(path, categories[path], source_texts[path])
         for path in paths
     }
+    doc_chars = {feature_id: 0 for feature_id in order}
     python_paths = [path for path in paths if Path(path).suffix.lower() == ".py"]
     imports = {}
     for path in paths:
@@ -197,6 +198,9 @@ def build_map(repository):
     for path in paths:
         owner = owners[path]
         files[owner][groups[path]].append(path)
+        doc_chars[owner] += count_doc_chars(
+            path, categories[path], source_texts[path],
+        )
         for name in LINE_NAMES:
             lines[owner][name] += getattr(counts[path], name)
 
@@ -207,13 +211,18 @@ def build_map(repository):
             children[parent].append(feature_id)
 
     totals = {}
+    total_doc_chars = {}
 
     def total(feature_id):
         result = dict(lines[feature_id])
+        result_doc_chars = doc_chars[feature_id]
         for child in children[feature_id]:
-            for name, value in total(child).items():
+            child_lines = total(child)
+            for name, value in child_lines.items():
                 result[name] += value
+            result_doc_chars += total_doc_chars[child]
         totals[feature_id] = result
+        total_doc_chars[feature_id] = result_doc_chars
         return result
 
     root_id = order[0]
@@ -294,6 +303,10 @@ def build_map(repository):
             "what": value["what"],
             "why": value["why"],
             "lines": {"own": lines[feature_id], "total": totals[feature_id]},
+            "doc_chars": {
+                "own": doc_chars[feature_id],
+                "total": total_doc_chars[feature_id],
+            },
             "files": files[feature_id],
             "uses": feature_uses,
             "external_uses": sorted(external_uses[feature_id]),

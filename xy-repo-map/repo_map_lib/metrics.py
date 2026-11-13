@@ -151,23 +151,38 @@ def _comment_spans(source, language):
     return spans
 
 
-def _span_counts(source, spans):
-    line_counts = {"code": 0, "docs": 0, "comments": 0}
+def _span_line_categories(source, spans):
     offset = 0
-    for line in source.splitlines(keepends=True):
+    for number, line in enumerate(source.splitlines(keepends=True), 1):
         content = line.rstrip("\r\n")
         if content.strip():
-            visible = [offset + index for index, char in enumerate(content) if not char.isspace()]
-            covering = [span for span in spans if span[0] < offset + len(content) and span[1] > offset]
+            visible = [
+                offset + index for index, char in enumerate(content)
+                if not char.isspace()
+            ]
+            covering = [
+                span for span in spans
+                if span[0] < offset + len(content) and span[1] > offset
+            ]
             covered_positions = [
                 position for position in visible
                 if any(start <= position < end for start, end, _ in covering)
             ]
             if visible and len(covered_positions) == len(visible):
-                line_counts["docs" if any(is_doc for _, _, is_doc in covering) else "comments"] += 1
+                category = (
+                    "docs" if any(is_doc for _, _, is_doc in covering)
+                    else "comments"
+                )
             else:
-                line_counts["code"] += 1
+                category = "code"
+            yield number, category
         offset += len(line)
+
+
+def _span_counts(source, spans):
+    line_counts = {"code": 0, "docs": 0, "comments": 0}
+    for _number, category in _span_line_categories(source, spans):
+        line_counts[category] += 1
     return LineCounts(line_counts["code"], line_counts["docs"], line_counts["comments"], 0)
 
 
@@ -222,3 +237,36 @@ def count_file(path, category, content):
         return LineCounts(0, 0, 0, sum(bool(line.strip()) for line in content.splitlines()))
     if category == "other":
         return LineCounts(0, 0, 0, 0)
+
+
+def count_doc_chars(path, category, content):
+    """Count non-whitespace characters on lines classified as documentation."""
+    if category == "docs":
+        documentation_lines = {
+            number for number, line in enumerate(content.splitlines(), 1)
+            if line.strip()
+        }
+    elif category == "code":
+        suffix = Path(path).suffix.lower()
+        if suffix == ".html":
+            return 0
+        language = CODE_SUFFIXES[suffix]
+        if language == "Python":
+            documentation_lines = _python_doc_lines(content)
+        elif language == "Shell":
+            return 0
+        else:
+            spans = _comment_spans(content, language)
+            documentation_lines = {
+                number for number, category_name
+                in _span_line_categories(content, spans)
+                if category_name == "docs"
+            }
+    else:
+        return 0
+
+    return sum(
+        sum(not character.isspace() for character in line)
+        for number, line in enumerate(content.splitlines(), 1)
+        if number in documentation_lines
+    )

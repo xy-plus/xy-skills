@@ -86,6 +86,8 @@ description: 从仓库功能清单推导文件归属、行数和依赖，并生�
 | 文档 | `.md`、`.rst`，且不在测试目录中；所有非空行都计为文档。 |
 | 其他 | 符号链接、含 NUL 字节的文件、`repo-map/skip.json` 列出的路径，以及其余文件（包括 `third_party`、`vendor`、`node_modules` 下的文件），行数为零。 |
 
+`doc_chars` 统计 `lines.docs` 中各行的非空白字符：包括 Markdown 文档的非空行，以及代码里归为文档的文档字符串和文档注释行。代码、测试、普通注释和其他文件不计字数。
+
 路径上已归为「其他」的文件不读内容。读取代码、测试或文档时不跟随符号链接；发现 NUL 字节后将文件归为「其他」。其余内容按 UTF-8 解码，无效字节以替换字符解码后照常计数和推导依赖。Git 跟踪文件读不出来时，检查会报错并指出文件路径。
 
 代码后缀由 `repo_map_lib/constants.py` 维护。已知但不支持统计的语言后缀会列出文件并使检查失败。
@@ -110,6 +112,7 @@ Python `import` 通过 AST 解析；模块名只在仓内恰好匹配一个 `.py
 
 - `title`、`directory_name`、`parent`、`children`、`what`、`why`。根功能的 `directory_name` 使用 `git worktree list --porcelain -z` 中主检出的目录名，所以从 linked worktree 出图也显示仓库名。
 - `lines.own` 与 `lines.total`，分别是直接归属和包含所有子功能的代码、文档、注释、测试行数。
+- `doc_chars.own` 与 `doc_chars.total`，分别是直接归属和包含所有子功能的文档非空白字符数。
 - `files.registered`、`files.reached`、`files.directory`、`files.shared`、`files.whole`，按归属原因列出直接文件。
 - `uses`，列出用到的功能和关系类型 `import` 或 `mention`。
 - `external_uses`，列出从代码和文档推导出的外部依赖名字，排序、去重；没有时为 `[]`。
@@ -144,6 +147,6 @@ python3 <xy-repo-map目录>/repo_map.py publish \
 
 `render-workspace` 先用 `build_map` 分别检查主仓和每个登记子仓；主仓必须登记至少一个子仓，登记的子仓必须在当前检出中、是 Git 仓根并有自己的有效 `repo-map/features.json`。检查失败退出 `1`，错误会指出子仓和原因；子仓缺少清单时提示先为它起草只有根功能的清单，子仓未在当前检出时提示到子仓所在的检出里运行。参数错误仍退出 `2`。主仓根保持不变，子仓根按登记顺序接在它的子功能末尾；子仓功能 id 加上登记路径前缀，`parent`、`children`、`uses` 和 `files` 中的路径同步改写。子仓自己的行数和标记保持不变；主仓根的 `lines.total` 与顶层标记计数加上各子仓的计数。子仓不会递归组合它登记的其他仓。
 
-组合时，每个功能的外部依赖名字只在声明该名字的仓以外查找目录名恰好匹配的功能。主仓根用主检出目录名作为目录名，子仓根用登记路径最后一段，其他目录功能用目录最后一段。唯一匹配时，将名字从 `external_uses` 移到指向该功能的 `uses`，关系类型为 `mention`；已有同目标 `import` 时保留 `import`。如果源和目标互为祖先或子孙，则只移出外部依赖，不加关系。找不到或匹配多个目录功能时，该名字继续作为不可点击的外部依赖显示。功能行的「用到」按钮显示目标的完整功能名（标题和目录名），详情面板也显示完整功能名。`check` 和 `render` 仍只检查或生成当前仓自己的图；`publish` 行为不变。
+组合时，各子仓根功能的 `lines.total` 和 `doc_chars.total` 都加到主仓根功能；每个功能的外部依赖名字只在声明该名字的仓以外查找目录名恰好匹配的功能。主仓根用主检出目录名作为目录名，子仓根用登记路径最后一段，其他目录功能用目录最后一段。唯一匹配时，将名字从 `external_uses` 移到指向该功能的 `uses`，关系类型为 `mention`；已有同目标 `import` 时保留 `import`。如果源和目标互为祖先或子孙，则只移出外部依赖，不加关系。找不到或匹配多个目录功能时，该名字继续作为不可点击的外部依赖显示。功能行的「用到」按钮显示目标的完整功能名（标题和目录名），详情面板也显示完整功能名。`check` 和 `render` 仍只检查或生成当前仓自己的图；`publish` 行为不变。
 
 `publish` 要求目录内同时有 `index.html` 与 `map-data.json`，并从 `map-data.json` 生成站点名，不接受手写站点名。根功能 `directory_name` 加 `-map` 是单仓的固定站点名；若功能 id 中有 `/`，则加 `-overview-map` 作为组合图固定站点名。`--as 当前` 每次覆盖固定站点；`--as 清扫前` 和 `--as 清扫后` 分别追加发布当天本地日期及 `-before`、`-after`，保留清扫快照。map-data 无法读取、缺少根功能或根功能没有 `directory_name` 时参数检查失败，退出 `2`。把命令输出的链接交给用户。

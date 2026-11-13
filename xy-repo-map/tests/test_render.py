@@ -39,6 +39,10 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(set(data), {"root", "features", "markers"})
         self.assertEqual(data["root"], "root")
         self.assertEqual(data["markers"]["等你拍板"], 1)
+        self.assertEqual(
+            data["features"]["root"].get("doc_chars"),
+            {"own": 15, "total": 15},
+        )
         page = (self.output / "index.html").read_text(encoding="utf-8")
         embedded = re.search(r'<script id="map-data" type="application/json">(.*?)</script>',
                              page, re.DOTALL)

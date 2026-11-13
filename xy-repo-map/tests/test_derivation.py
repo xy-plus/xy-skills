@@ -34,6 +34,30 @@ def build_map_with_sources(repository):
 
 
 class DerivationTest(unittest.TestCase):
+    def test_doc_characters_count_markdown_and_code_documentation_only(self):
+        repository = make_repo(self, {
+            "README.md": "A B\n",
+            "pkg/module.py": '"""AB\n C"""\n# comment\nvalue = 1\n',
+            "pkg/api.rs": "/// AB\n/// C\npub fn visible() {}\n// normal comment\n",
+            "pkg/guide.md": " A B \n\nC D\n",
+            "pkg/tests/test_docs.py": '"""TEST DOCS"""\n# test comment\n',
+        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("package", "pkg", children=[
+                feature("module", None, entries=["pkg/module.py"]),
+                feature("api", None, entries=["pkg/api.rs"]),
+                feature("guide", None, entries=["pkg/guide.md"]),
+            ]),
+        ]))
+
+        data = build_map(self, repository)
+        features = data["features"]
+
+        self.assertEqual(features["root"].get("doc_chars"), {"own": 2, "total": 24})
+        self.assertEqual(features["package"].get("doc_chars"), {"own": 0, "total": 22})
+        self.assertEqual(features["module"].get("doc_chars"), {"own": 9, "total": 9})
+        self.assertEqual(features["api"].get("doc_chars"), {"own": 9, "total": 9})
+        self.assertEqual(features["guide"].get("doc_chars"), {"own": 4, "total": 4})
+
     def test_file_category_matches_build_map_categories_and_line_totals(self):
         repository = make_repo(self, {
             "src/main.py": "value = 1\n",
