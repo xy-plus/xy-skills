@@ -90,7 +90,7 @@ description: 按功能范围审查仓库，让代码相对功能清单最小，�
           "decision": "直接做",
           "basis": {
             "source": "xy-iron-law 第 3 条",
-            "text": "如无必要，勿增实体（奥卡姆剃刀）。"
+            "text": "如无必要，勿增实体（奥卡姆剃刀）"
           },
           "evidence": "证据",
           "benefit": "收益",
@@ -159,7 +159,7 @@ description: 按功能范围审查仓库，让代码相对功能清单最小，�
           "decision": "问你",
           "basis": {
             "source": "xy-iron-law 第 3 条",
-            "text": "如无必要，勿增实体（奥卡姆剃刀）。"
+            "text": "如无必要，勿增实体（奥卡姆剃刀）"
           },
           "evidence": "两个实现处理同一输入并产生相同结果。",
           "benefit": "减少重复代码。",

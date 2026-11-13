@@ -41,13 +41,6 @@ class ApprovalPlanTest(unittest.TestCase):
             "record", "--repo", str(self.repository), "--scope", *scope,
         )
 
-    def link_approved_to_external_file(self):
-        approved_path = self.repository / "repo-map" / "approved.json"
-        external_path = self.repository.parent / "outside-approved.json"
-        external_path.write_text("{}\n", encoding="utf-8")
-        approved_path.symlink_to(external_path)
-        return approved_path, external_path
-
     def link_repo_map_to_external_directory(self):
         repo_map_path = self.repository / "repo-map"
         external_directory = self.repository.parent / "outside-repo-map"
@@ -121,7 +114,10 @@ class ApprovalPlanTest(unittest.TestCase):
         for kind in cases:
             with self.subTest(kind=kind):
                 if kind == "symlink":
-                    approved_path, external_path = self.link_approved_to_external_file()
+                    approved_path = self.repository / "repo-map" / "approved.json"
+                    external_path = self.repository.parent / "outside-approved.json"
+                    external_path.write_text("{}\n", encoding="utf-8")
+                    approved_path.symlink_to(external_path)
                     original_content = external_path.read_text(encoding="utf-8")
                 else:
                     approved_path.mkdir()

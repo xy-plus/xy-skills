@@ -118,6 +118,19 @@ def decision_receiver(directory, decisions, answers):
         serving.join(2)
 
 
+def run_ask(decisions, answers, runner):
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    code = decision_page.main(
+        ["ask", "--decisions", str(decisions), "--name", "decision-test",
+         "--answers", str(answers)],
+        runner,
+        stdout,
+        stderr,
+    )
+    return code, stdout.getvalue(), stderr.getvalue()
+
+
 class DecisionPageCommandTest(unittest.TestCase):
     def test_decision_list_with_duplicate_json_key_exits_two(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -130,17 +143,14 @@ class DecisionPageCommandTest(unittest.TestCase):
                 1,
             )
             decisions.write_text(encoded, encoding="utf-8")
-            stderr = io.StringIO()
-            code = decision_page.main(
-                ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                 "--answers", str(answers)],
+            code, _, stderr = run_ask(
+                decisions,
+                answers,
                 lambda arguments: self.fail(f"不应启动平台：{arguments}"),
-                io.StringIO(),
-                stderr,
             )
 
-        self.assertEqual(code, 2, stderr.getvalue())
-        self.assertIn("重复键：title", stderr.getvalue())
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("重复键：title", stderr)
 
     def test_decision_schema_errors_name_the_invalid_location(self):
         extra_top_level = valid_decisions()
@@ -178,16 +188,13 @@ class DecisionPageCommandTest(unittest.TestCase):
                     decisions = Path(temporary) / "decisions.json"
                     answers = Path(temporary) / "answers.json"
                     decisions.write_text(json.dumps(decisions_data), encoding="utf-8")
-                    stderr = io.StringIO()
-                    code = decision_page.main(
-                        ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                         "--answers", str(answers)],
+                    code, _, stderr = run_ask(
+                        decisions,
+                        answers,
                         lambda arguments: self.fail(f"不应启动平台：{arguments}"),
-                        io.StringIO(),
-                        stderr,
                     )
-                self.assertEqual(code, 2, stderr.getvalue())
-                self.assertIn(expected, stderr.getvalue())
+                self.assertEqual(code, 2, stderr)
+                self.assertIn(expected, stderr)
 
     def test_existing_answers_exit_two_without_starting_platform(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -195,18 +202,15 @@ class DecisionPageCommandTest(unittest.TestCase):
             answers = Path(temporary) / "answers.json"
             decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
             answers.write_text("keep", encoding="utf-8")
-            stderr = io.StringIO()
-            code = decision_page.main(
-                ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                 "--answers", str(answers)],
+            code, _, stderr = run_ask(
+                decisions,
+                answers,
                 lambda arguments: self.fail(f"不应启动平台：{arguments}"),
-                io.StringIO(),
-                stderr,
             )
             self.assertEqual(answers.read_text(encoding="utf-8"), "keep")
 
-        self.assertEqual(code, 2, stderr.getvalue())
-        self.assertIn("已经存在", stderr.getvalue())
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("已经存在", stderr)
 
     def test_existing_broken_answer_symlink_exits_two_without_mounting(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -220,13 +224,7 @@ class DecisionPageCommandTest(unittest.TestCase):
                 calls.append(arguments)
                 return subprocess.CompletedProcess(arguments, 1, "", "mount failed")
 
-            code = decision_page.main(
-                ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                 "--answers", str(answers)],
-                platform_runner,
-                io.StringIO(),
-                io.StringIO(),
-            )
+            code, _, _ = run_ask(decisions, answers, platform_runner)
 
             self.assertEqual(code, 2)
             self.assertEqual(calls, [])
@@ -260,13 +258,7 @@ class DecisionPageCommandTest(unittest.TestCase):
                     else:
                         patcher = nullcontext()
                     with patcher:
-                        code = decision_page.main(
-                            ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                             "--answers", str(answers)],
-                            platform_runner,
-                            io.StringIO(),
-                            io.StringIO(),
-                        )
+                        code, _, _ = run_ask(decisions, answers, platform_runner)
 
                     self.assertEqual(code, 2)
                     self.assertEqual(calls, [])
@@ -472,61 +464,44 @@ class DecisionPageCommandTest(unittest.TestCase):
 
     def test_incomplete_request_line_times_out_before_next_submission(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            socket_path = Path(temporary) / "s"
             answers = Path(temporary) / "answers.json"
             decisions = valid_decisions()
-            server = decision_page.DecisionHTTPServer(
-                socket_path,
-                decision_page.render_decision_page(decisions),
-                decisions,
-                answers,
-            )
-            stop_event = threading.Event()
-            serving = threading.Thread(
-                target=server.serve_until_complete,
-                args=(stop_event,),
-                daemon=True,
-            )
-            serving.start()
-            partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            complete = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                partial.connect(str(socket_path))
-                partial.sendall(b"POST /sub")
-                time.sleep(0.1)
-
-                payload = json.dumps(
-                    {"answers": {"A1": {"option": "Keep", "note": ""}}}
-                ).encode("utf-8")
-                complete.settimeout(12)
-                complete.connect(str(socket_path))
-                complete.sendall(
-                    b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
-                    b"Content-Type: application/json\r\nContent-Length: "
-                    + str(len(payload)).encode("ascii")
-                    + b"\r\n\r\n"
-                    + payload
-                )
-                response = bytearray()
+            with decision_receiver(Path(temporary), decisions, answers) as (socket_path, serving):
+                partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                complete = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 try:
-                    while True:
-                        chunk = complete.recv(4096)
-                        if not chunk:
-                            break
-                        response.extend(chunk)
-                except socket.timeout:
-                    pass
+                    partial.connect(socket_path)
+                    partial.sendall(b"POST /sub")
+                    time.sleep(0.1)
 
-                self.assertIn(b"HTTP/1.0 200 OK", response)
-                self.assertTrue(answers.exists())
-            finally:
-                partial.shutdown(socket.SHUT_WR)
-                stop_event.set()
-                serving.join(3)
-                partial.close()
-                complete.close()
-                server.server_close()
-                socket_path.unlink(missing_ok=True)
+                    payload = json.dumps(
+                        {"answers": {"A1": {"option": "Keep", "note": ""}}}
+                    ).encode("utf-8")
+                    complete.settimeout(12)
+                    complete.connect(socket_path)
+                    complete.sendall(
+                        b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
+                        b"Content-Type: application/json\r\nContent-Length: "
+                        + str(len(payload)).encode("ascii")
+                        + b"\r\n\r\n"
+                        + payload
+                    )
+                    response = bytearray()
+                    try:
+                        while True:
+                            chunk = complete.recv(4096)
+                            if not chunk:
+                                break
+                            response.extend(chunk)
+                    except socket.timeout:
+                        pass
+
+                    self.assertIn(b"HTTP/1.0 200 OK", response)
+                    self.assertTrue(answers.exists())
+                finally:
+                    partial.shutdown(socket.SHUT_WR)
+                    partial.close()
+                    complete.close()
             self.assertFalse(serving.is_alive())
 
     def test_slow_page_reader_receives_complete_response_after_timeout_period(self):
@@ -618,13 +593,7 @@ class DecisionPageCommandTest(unittest.TestCase):
                 calls.append(arguments)
                 return subprocess.CompletedProcess(arguments, 1, "", "name is occupied\n")
 
-            code = decision_page.main(
-                ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                 "--answers", str(answers)],
-                platform_runner,
-                io.StringIO(),
-                io.StringIO(),
-            )
+            code, _, _ = run_ask(decisions, answers, platform_runner)
 
             self.assertEqual(code, 1)
             self.assertEqual(len(calls), 1)
@@ -826,17 +795,14 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                 "after": "After.",
             }]
             decisions.write_text(json.dumps(value), encoding="utf-8")
-            stderr = io.StringIO()
-            code = decision_page.main(
-                ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                 "--answers", str(answers)],
+            code, _, stderr = run_ask(
+                decisions,
+                answers,
                 lambda arguments: self.fail(f"不应启动平台：{arguments}"),
-                io.StringIO(),
-                stderr,
             )
 
-        self.assertEqual(code, 2, stderr.getvalue())
-        self.assertIn("行范围", stderr.getvalue())
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("行范围", stderr)
 
     def test_text_fields_are_nonempty_strings_at_every_level(self):
         cases = []

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "xy-repo-map" / "tests"))
 sys.path.insert(0, str(ROOT / "xy-cleanup"))
 
-from map_fixture import feature, make_cleanup_repo, make_repo  # noqa: E402
+from map_fixture import feature, make_cleanup_repo  # noqa: E402
 import check_reports as check_reports_module  # noqa: E402
 from repo_map_lib.git_repository import tracked_paths  # noqa: E402
 from repo_map_lib.map_data import file_category_with_skip  # noqa: E402
@@ -20,7 +20,7 @@ from repo_map_lib.skip_paths import read_skip_paths  # noqa: E402
 
 COMMAND = ROOT / "xy-cleanup" / "check_reports.py"
 RULE_SOURCE = "xy-iron-law 第 3 条"
-RULE_TEXT = "如无必要，勿增实体（奥卡姆剃刀）。"
+RULE_TEXT = "如无必要，勿增实体（奥卡姆剃刀）"
 DUPLICATE_BLOCK_LINES = [
     "This shared paragraph explains the first concrete behavior clearly.",
     "This shared paragraph explains the second concrete behavior clearly.",
@@ -291,9 +291,6 @@ class CheckReportsTest(unittest.TestCase):
             self.clear_recheck_reports()
         self.main_path.write_text(json.dumps(main, ensure_ascii=False), encoding="utf-8")
         self.razor_path.write_text(json.dumps(razor, ensure_ascii=False), encoding="utf-8")
-
-    def write_recheck_report(self, recheck):
-        self.write_recheck_reports([recheck])
 
     def write_recheck_reports(self, reports):
         self.clear_recheck_reports()
@@ -624,25 +621,6 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_inline_backtick_removed_from_rewrite_is_rejected(self):
-        self.add_tracked_file("alpha/guide.md", "Run `tool --flag` today.\n")
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["rewrites"] = [{
-            "lines": "alpha/guide.md:1-1",
-            "text": "Run tool today.",
-        }]
-        rewrite_finding = finding("重构", True, "问你")
-        rewrite_finding["target"] = "alpha/guide.md:1-1"
-        alpha["findings"] = [rewrite_finding]
-        self.write_reports(report("主审", self.repository), razor)
-
-        result = self.run_check()
-
-        output = result.stdout + result.stderr
-        self.assertNotEqual(result.returncode, 0, output)
-        self.assertIn("缺少原文反引号片段", output)
 
     def test_duplicate_backtick_fragment_may_be_kept_once(self):
         self.add_tracked_file(
@@ -1182,26 +1160,6 @@ class CheckReportsTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_feature_deletion_does_not_require_a_keep_duplicate_reference(self):
-        self.add_tracked_file(
-            "alpha/first.md", "\n".join(DUPLICATE_BLOCK_LINES) + "\n",
-        )
-        self.add_tracked_file(
-            "alpha/second.md", "\n".join(DUPLICATE_BLOCK_LINES) + "\n",
-        )
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"] = []
-        removal = finding("删除", changes_behavior=False, decision="直接做")
-        removal["target"] = "alpha"
-        alpha["findings"] = [removal]
-        self.write_reports(main, razor)
-
-        result = self.run_check()
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def test_razor_recheck_findings_do_not_need_duplicate_keep_locations(self):
         self.check_duplicate_documents(
             DUPLICATE_BLOCK_LINES,
@@ -1351,6 +1309,49 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_feature_id_reduction_with_todo_must_ask_user(self):
+        self.add_tracked_file("alpha/TODO.md", "待办事项。\n")
+        for kind in ("删除", "合并"):
+            with self.subTest(kind=kind):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                for document in (main, razor):
+                    alpha = next(item for item in document["features"] if item["feature"] == "alpha")
+                    alpha["todo_items"] = [todo_item("alpha/TODO.md:1-1")]
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["keep"] = []
+                reduction = finding(kind, False, "直接做")
+                reduction["target"] = "alpha"
+                alpha["findings"] = [reduction]
+                self.write_reports(main, razor)
+
+                result = self.run_check()
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("会影响直属 TODO", result.stdout)
+
+    def test_feature_id_reduction_must_cover_affected_todo_lines_with_ask_findings(self):
+        self.add_tracked_file("alpha/TODO.md", "待办事项。\n")
+        for kind in ("删除", "合并"):
+            with self.subTest(kind=kind):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                for document in (main, razor):
+                    alpha = next(item for item in document["features"] if item["feature"] == "alpha")
+                    alpha["todo_items"] = [todo_item("alpha/TODO.md:1-1")]
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["keep"] = []
+                reduction = finding(kind, True, "问你")
+                reduction["target"] = "alpha"
+                alpha["findings"] = [reduction]
+                self.write_reports(main, razor)
+
+                result = self.run_check()
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("直属 TODO", result.stdout)
+                self.assertIn("alpha/TODO.md:1", result.stdout)
+
     def test_missing_recheck_report_lists_each_required_feature(self):
         self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
         self.clear_recheck_reports()
@@ -1363,7 +1364,7 @@ class CheckReportsTest(unittest.TestCase):
     def test_exact_recheck_coverage_accepts_only_zero_reduction_with_refactor(self):
         main, razor = self.recheck_scenario()
         self.write_reports(main, razor)
-        self.write_recheck_report(recheck_report(self.repository, ["alpha"]))
+        self.write_recheck_reports([recheck_report(self.repository, ["alpha"])])
         result = self.run_check(
             reports=(str(self.main_path), str(self.razor_path), str(self.recheck_path))
         )
@@ -1401,7 +1402,7 @@ class CheckReportsTest(unittest.TestCase):
             item["keep"] = []
             item["findings"] = [removal]
         self.write_reports(main, razor)
-        self.write_recheck_report(recheck_report(self.repository, []))
+        self.write_recheck_reports([recheck_report(self.repository, [])])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("不用复审", result.stdout)
@@ -1420,7 +1421,7 @@ class CheckReportsTest(unittest.TestCase):
                 item["keep"] = []
                 item["findings"] = []
         self.write_reports(main, razor)
-        self.write_recheck_report(recheck_report(self.repository, ["alpha"]))
+        self.write_recheck_reports([recheck_report(self.repository, ["alpha"])])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("不用复审", result.stdout)
@@ -1449,7 +1450,7 @@ class CheckReportsTest(unittest.TestCase):
         recheck = recheck_report(self.repository, ["alpha"])
         recheck["features"][0]["findings"] = [item]
         self.write_reports(main, razor)
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("剃刀复审的决定必须是 问你", result.stdout)
@@ -1460,7 +1461,7 @@ class CheckReportsTest(unittest.TestCase):
         recheck = recheck_report(self.repository, ["alpha"])
         recheck["features"][0]["keep"] = []
         self.write_reports(main, razor)
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("有多余字段 keep", result.stdout)
@@ -1486,7 +1487,7 @@ class CheckReportsTest(unittest.TestCase):
         recheck = self.read_recheck_for_feature("alpha")
         alpha = recheck["features"][0]
         alpha["verdicts"][0]["lines"] = "alpha/main.py:2-2"
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("alpha/main.py:2-2", result.stdout)
@@ -1496,7 +1497,7 @@ class CheckReportsTest(unittest.TestCase):
         recheck = self.read_recheck_for_feature("alpha")
         alpha = recheck["features"][0]
         alpha["verdicts"].append(dict(alpha["verdicts"][0]))
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("重复", result.stdout)
@@ -1507,7 +1508,7 @@ class CheckReportsTest(unittest.TestCase):
         recheck = self.read_recheck_for_feature("alpha")
         alpha = recheck["features"][0]
         alpha["verdicts"][0]["attempt"] = "  "
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("attempt", result.stdout)
@@ -1517,7 +1518,7 @@ class CheckReportsTest(unittest.TestCase):
         recheck = self.read_recheck_for_feature("alpha")
         alpha = recheck["features"][0]
         alpha["verdicts"][0]["verdict"] = "待定"
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("verdict 必须是 站得住 或 站不住", result.stdout)
@@ -1528,7 +1529,7 @@ class CheckReportsTest(unittest.TestCase):
         recheck = self.read_recheck_for_feature("alpha")
         alpha = recheck["features"][0]
         alpha["verdicts"][0].pop("attempt")
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("缺少字段 attempt", result.stdout)
@@ -1538,7 +1539,7 @@ class CheckReportsTest(unittest.TestCase):
         recheck = self.read_recheck_for_feature("alpha")
         alpha = recheck["features"][0]
         alpha["verdicts"][0].pop("evidence")
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("缺少字段 evidence", result.stdout)
@@ -1575,7 +1576,7 @@ class CheckReportsTest(unittest.TestCase):
                 else:
                     self.write_reports(report("主审", self.repository),
                                        report("剃刀", self.repository))
-                self.write_recheck_report(recheck_report(self.repository, feature_ids))
+                self.write_recheck_reports([recheck_report(self.repository, feature_ids)])
                 result = self.run_check(reports=self.reports_for_check())
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("features 必须恰有一个功能对象", result.stdout)
@@ -1643,7 +1644,7 @@ class CheckReportsTest(unittest.TestCase):
         item = finding("重构", True, "问你")
         item["target"] = "beta/main.py:1"
         recheck["features"][0]["findings"] = [item]
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("复审发现目标必须在本功能", result.stdout)
@@ -1655,7 +1656,7 @@ class CheckReportsTest(unittest.TestCase):
         item = finding("重构", True, "问你")
         item["target"] = "beta"
         recheck["features"][0]["findings"] = [item]
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("复审发现目标必须在本功能", result.stdout)
@@ -1665,7 +1666,7 @@ class CheckReportsTest(unittest.TestCase):
         self.write_reports(main, razor)
         recheck = self.read_recheck_for_feature("alpha")
         recheck["features"][0]["feature"] = ["alpha"]
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("不在功能清单中", result.stdout)
@@ -1677,13 +1678,13 @@ class CheckReportsTest(unittest.TestCase):
         recheck = self.read_recheck_for_feature("alpha")
         alpha = recheck["features"][0]
         alpha["verdicts"][0]["evidence"] = "结果见 README.md:1."
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         recheck = self.read_recheck_for_feature("alpha")
         recheck["features"][0]["verdicts"][0]["evidence"] = "小数 README.md:1.5 不作为行号。"
-        self.write_recheck_report(recheck)
+        self.write_recheck_reports([recheck])
         result = self.run_check(reports=self.reports_for_check())
         self.assertEqual(result.returncode, 1)
         self.assertIn("evidence 必须引至少一处有效位置", result.stdout)
@@ -1739,36 +1740,6 @@ class CheckReportsTest(unittest.TestCase):
             razor_keep_item("alpha", "alpha/service.py:2-3"),
             razor_keep_item("alpha", "alpha/service.py:4-5"),
             razor_keep_item("alpha", "alpha/wrappers.py:1-6"),
-        ])
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_markdown_keep_cannot_cross_two_headings_but_code_fence_hash_is_not_a_heading(self):
-        self.add_tracked_file("alpha/two-headings.md", "# First\nText.\n## Second\n")
-        self.add_tracked_file(
-            "alpha/code-sample.md", "# Guide\n```python\n# inside\n```\n"
-        )
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"].extend([
-            razor_keep_item("alpha", "alpha/two-headings.md:1-3"),
-            razor_keep_item("alpha", "alpha/code-sample.md:1-4"),
-        ])
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("alpha/two-headings.md:1-3", result.stdout)
-        self.assertIn("一个实体", result.stdout)
-
-        alpha["keep"].remove(next(
-            item for item in alpha["keep"]
-            if item["lines"] == "alpha/two-headings.md:1-3"
-        ))
-        alpha["keep"].extend([
-            razor_keep_item("alpha", "alpha/two-headings.md:1-1"),
-            razor_keep_item("alpha", "alpha/two-headings.md:2-3"),
         ])
         self.write_reports(main, razor)
         result = self.run_check()

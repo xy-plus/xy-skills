@@ -13,7 +13,6 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 APPROVED_RELATIVE_PATH = "repo-map/approved.json"
 APPROVED_VALUE = re.compile(r"^[0-9a-f]{64}$")
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
-sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
 from repo_map_lib.features import load_features  # noqa: E402
 from repo_map_lib.git_repository import ArgumentError, tracked_paths  # noqa: E402
 from repo_map_lib.map_data import build_map  # noqa: E402

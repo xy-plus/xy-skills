@@ -14,7 +14,6 @@ from repo_map_lib.git_repository import ArgumentError  # noqa: E402
 from repo_map_lib.git_repository import tracked_paths  # noqa: E402
 from repo_map_lib.map_data import (  # noqa: E402
     build_map,
-    file_category,
     file_category_with_skip,
 )
 from repo_map_lib.metrics import count_non_whitespace_characters  # noqa: E402
@@ -396,14 +395,41 @@ def _uncovered_nonempty_lines(paths, ranges_by_file, label, description,
             for line_number in range(start_line, end_line + 1)
         }
         for line_number, line in enumerate(file_lines, start=1):
-            if _line_is_nonempty(line) and line_number not in covered_lines:
+            if isinstance(line, bytes):
+                line = line.decode("utf-8", errors="replace")
+            if line.strip() and line_number not in covered_lines:
                 problems.append(
                     f"{label} 未覆盖{description}的非空行：{path}:{line_number}"
                 )
     return problems
 
 
-def _validate_finding(finding, label, tracked_todo_files, force_ask_user):
+def _validate_feature_todo_reduction(feature_id, feature_targets, finding_ranges,
+                                     direct_todo_files, label, repository):
+    if not direct_todo_files or not any(
+        finding.get("kind") in {"删除", "合并"}
+        for finding in feature_targets
+    ):
+        return []
+
+    # A feature-level reduction affects every direct TODO file, so each nonempty line needs its own user question.
+    todo_ranges = {}
+    for _finding, target_range in finding_ranges:
+        path, start_line, end_line = target_range
+        if path in direct_todo_files:
+            todo_ranges.setdefault(path, []).append((start_line, end_line))
+    return _uncovered_nonempty_lines(
+        direct_todo_files,
+        todo_ranges,
+        label,
+        f"功能级删除或合并 {feature_id} 影响的直属 TODO ",
+        repository,
+        {},
+    )
+
+
+def _validate_finding(finding, label, tracked_todo_files, force_ask_user,
+                      feature_id, direct_todo_files):
     problems = _field_errors(finding, FINDING_KEYS, label)
     if problems:
         return problems
@@ -428,11 +454,21 @@ def _validate_finding(finding, label, tracked_todo_files, force_ask_user):
             and decision in DECISIONS and isinstance(kind, str) and kind in KINDS):
         target_range = _parse_line_range(finding["target"], allow_single_line=True)
         target_is_todo = target_range is not None and target_range[0] in tracked_todo_files
+        target_is_feature_todo_reduction = (
+            finding["target"] == feature_id
+            and bool(direct_todo_files)
+            and kind in {"删除", "合并"}
+        )
         if target_is_todo:
             # TODO 文件的改动一律由用户决定，即使删除或合并不改变行为。
             if decision != "问你":
                 problems.append(
                     f"{label}.decision 目标在 TODO 文件 {finding['target']} 时必须是 问你"
+                )
+        elif target_is_feature_todo_reduction:
+            if decision != "问你":
+                problems.append(
+                    f"{label}.decision 功能级删除或合并会影响直属 TODO，必须是 问你"
                 )
         else:
             must_do_directly = kind in {"删除", "合并"} and not changes_behavior
@@ -589,12 +625,6 @@ def _valid_target(target, data, repository, tracked_files):
         allow_single_line=True,
     )
     return checked is not None
-
-
-def _line_is_nonempty(line):
-    if isinstance(line, bytes):
-        line = line.decode("utf-8", errors="replace")
-    return bool(line.strip())
 
 
 def _validate_todo_items(items, label, repository, direct_todo_files):
@@ -1085,6 +1115,8 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 problems.extend(_validate_finding(
                     finding, finding_label, tracked_todo_files,
                     force_ask_user=role == "剃刀复审",
+                    feature_id=feature_id,
+                    direct_todo_files=direct_todo_files,
                 ))
                 if not isinstance(finding, dict) or not _nonempty(finding.get("target")):
                     continue
@@ -1115,6 +1147,16 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     finding_ranges.append((finding, target_range))
                 elif target == feature_id:
                     feature_targets.append(finding)
+
+            if role in ("主审", "剃刀") and feature_data is not None:
+                problems.extend(_validate_feature_todo_reduction(
+                    feature_id,
+                    feature_targets,
+                    finding_ranges,
+                    direct_todo_files,
+                    feature_label,
+                    repository,
+                ))
 
             if role == "剃刀" and feature_data is not None:
                 problems.extend(_validate_smallest(

@@ -1,4 +1,5 @@
 """Exercise the decision page in Chromium through a local portal bridge."""
+from contextlib import contextmanager
 import http.client
 import json
 import os
@@ -129,6 +130,35 @@ class DecisionPageBridge(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), DecisionPageBridgeHandler)
 
 
+@contextmanager
+def browser_receiver(directory, page_html, decisions, answers_path, fail_next_post):
+    socket_path = directory / "s"
+    receiver = decision_page.DecisionHTTPServer(
+        socket_path, page_html, decisions, answers_path
+    )
+    stop_event = threading.Event()
+    receiver_thread = threading.Thread(
+        target=receiver.serve_until_complete,
+        args=(stop_event,),
+        daemon=True,
+    )
+    bridge = DecisionPageBridge(page_html, str(socket_path))
+    bridge.fail_next_post = fail_next_post
+    bridge_thread = threading.Thread(target=bridge.serve_forever, daemon=True)
+    receiver_thread.start()
+    bridge_thread.start()
+    try:
+        yield receiver_thread, bridge
+    finally:
+        stop_event.set()
+        receiver.server_close()
+        socket_path.unlink(missing_ok=True)
+        bridge.shutdown()
+        bridge.server_close()
+        receiver_thread.join(2)
+        bridge_thread.join(2)
+
+
 class DecisionPageBrowserTest(unittest.TestCase):
     def test_compare_shows_counts_and_each_block_change_on_a_phone(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
@@ -172,25 +202,13 @@ class DecisionPageBrowserTest(unittest.TestCase):
         self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
         decisions = browser_decisions()
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            socket_path = Path(temporary) / "s"
             answers_path = Path(temporary) / "answers.json"
             first_page = decision_page.render_decision_page(decisions)
             second_page = decision_page.render_decision_page(decisions)
-            receiver = decision_page.DecisionHTTPServer(
-                socket_path, first_page, decisions, answers_path
-            )
-            stop_event = threading.Event()
-            receiver_thread = threading.Thread(
-                target=receiver.serve_until_complete,
-                args=(stop_event,),
-                daemon=True,
-            )
-            bridge = DecisionPageBridge(first_page, str(socket_path))
-            bridge_thread = threading.Thread(target=bridge.serve_forever, daemon=True)
             script_errors = []
-            receiver_thread.start()
-            bridge_thread.start()
-            try:
+            with browser_receiver(
+                Path(temporary), first_page, decisions, answers_path, True
+            ) as (receiver_thread, bridge):
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(
                         executable_path=executable,
@@ -301,14 +319,6 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 }
                 self.assertEqual(bridge.received_payloads, [submitted, submitted])
                 self.assertEqual(script_errors, [])
-            finally:
-                stop_event.set()
-                receiver.server_close()
-                socket_path.unlink(missing_ok=True)
-                bridge.shutdown()
-                bridge.server_close()
-                receiver_thread.join(2)
-                bridge_thread.join(2)
 
     def test_storage_errors_stay_visible_without_blocking_answers_or_submission(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
@@ -316,23 +326,10 @@ class DecisionPageBrowserTest(unittest.TestCase):
         decisions = browser_decisions()
         page_html = decision_page.render_decision_page(decisions)
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            socket_path = Path(temporary) / "s"
             answers_path = Path(temporary) / "answers.json"
-            receiver = decision_page.DecisionHTTPServer(
-                socket_path, page_html, decisions, answers_path
-            )
-            stop_event = threading.Event()
-            receiver_thread = threading.Thread(
-                target=receiver.serve_until_complete,
-                args=(stop_event,),
-                daemon=True,
-            )
-            bridge = DecisionPageBridge(page_html, str(socket_path))
-            bridge.fail_next_post = False
-            bridge_thread = threading.Thread(target=bridge.serve_forever, daemon=True)
-            receiver_thread.start()
-            bridge_thread.start()
-            try:
+            with browser_receiver(
+                Path(temporary), page_html, decisions, answers_path, False
+            ) as (receiver_thread, bridge):
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(executable_path=executable, headless=True)
                     context = browser.new_context()
@@ -370,11 +367,3 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     json.loads(answers_path.read_text(encoding="utf-8"))["answers"]["A1"],
                     {"option": "Remove", "note": "Still available for submission."},
                 )
-            finally:
-                stop_event.set()
-                receiver.server_close()
-                socket_path.unlink(missing_ok=True)
-                bridge.shutdown()
-                bridge.server_close()
-                receiver_thread.join(2)
-                bridge_thread.join(2)
