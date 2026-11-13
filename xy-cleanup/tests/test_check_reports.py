@@ -209,12 +209,6 @@ class CheckReportsTest(unittest.TestCase):
                 for group_paths in feature_data["files"].values()
                 for path in group_paths
             }
-            keep_files = {
-                path for path in direct_files
-                if Path(path).name != "TODO.md"
-                and file_category_with_skip(self.repository, path, skip_paths)
-                in {"code", "tests", "docs"}
-            }
             if isinstance(item.get("rewrites"), list):
                 document_files = {
                     path for path in direct_files
@@ -235,52 +229,14 @@ class CheckReportsTest(unittest.TestCase):
                     for path in sorted(document_files - existing_paths)
                     for block in rewrite_blocks(self.repository, path)
                 )
-            rewrite_text_by_path = {}
-            for rewrite in item.get("rewrites", []):
-                if not isinstance(rewrite, dict):
-                    continue
-                parsed = check_reports_module._parse_line_range(
-                    rewrite.get("lines"), allow_single_line=False,
-                )
-                text = rewrite.get("text")
-                if parsed is None or not isinstance(text, str):
-                    continue
-                path = parsed[0]
-                rewrite_text_by_path.setdefault(path, []).append(text)
-            rewrite_reduction_targets = set()
-            for path, texts in rewrite_text_by_path.items():
-                original_path = self.repository / path
-                original = original_path.read_bytes().decode("utf-8", errors="replace")
-                if sum(character_count(text) for text in texts) < character_count(original):
-                    line_count = len(original_path.read_bytes().splitlines())
-                    rewrite_reduction_targets.add(f"{path}:1-{line_count}")
-            has_reduction = any(
-                isinstance(item_finding, dict)
-                and (
-                    (item_finding.get("kind") in {"删除", "合并"}
-                     and (
-                         item_finding.get("target") == feature_id
-                         or (
-                             (target_range := check_reports_module._parse_line_range(
-                                 item_finding.get("target"), allow_single_line=True,
-                             )) is not None
-                             and target_range[0] in keep_files
-                         )
-                     ))
-                    or (
-                        item_finding.get("kind") == "重构"
-                        and item_finding.get("target") in rewrite_reduction_targets
-                    )
-                )
-                for item_finding in item["findings"]
-            )
-            if keep_files and not has_reduction:
+            keep_items = item.get("keep")
+            if isinstance(keep_items, list) and keep_items:
                 required.append(recheck_report(
                     self.repository,
                     [feature_id],
                     keep_lines=[
                         item_keep["lines"]
-                        for item_keep in item["keep"]
+                        for item_keep in keep_items
                         if isinstance(item_keep, dict)
                         and isinstance(item_keep.get("lines"), str)
                     ],
@@ -769,15 +725,35 @@ class CheckReportsTest(unittest.TestCase):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = []
         alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": "Short."}]
         rewrite_finding = finding("重构", True, "问你")
         rewrite_finding["target"] = "alpha/guide.md:1-1"
-        alpha["findings"] = [rewrite_finding]
+        deletion = finding("删除", False, "直接做")
+        deletion["target"] = "alpha"
+        alpha["findings"] = [rewrite_finding, deletion]
         self.write_reports(report("主审", self.repository), razor)
 
         result = self.run_check()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_shorter_rewrite_does_not_exempt_another_keep_from_recheck(self):
+        self.add_tracked_file("alpha/guide.md", "Long original words.\n")
+        main = report("主审", self.repository, ("alpha",))
+        razor = report("剃刀", self.repository, ("alpha",))
+        alpha = razor["features"][0]
+        alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": "Short."}]
+        rewrite_finding = finding("重构", True, "问你")
+        rewrite_finding["target"] = "alpha/guide.md:1-1"
+        alpha["findings"] = [rewrite_finding]
+        self.write_reports(main, razor)
+        self.clear_recheck_reports()
+
+        result = self.run_check(scope=("alpha",))
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("缺剃刀复审：alpha", result.stdout)
 
     def test_skipped_document_and_todo_need_no_keep_or_todo_review(self):
         self.add_tracked_file("alpha/guide.md", "A long experimental guide.\n")
@@ -1361,7 +1337,23 @@ class CheckReportsTest(unittest.TestCase):
         for feature_id in ("root", "alpha", "beta"):
             self.assertIn(feature_id, result.stdout)
 
-    def test_exact_recheck_coverage_accepts_only_zero_reduction_with_refactor(self):
+    def test_first_round_deletion_does_not_exempt_a_kept_feature_from_recheck(self):
+        self.add_tracked_file("alpha/extra.py", "value = 3\n")
+        main = report("主审", self.repository, ("alpha",))
+        razor = report("剃刀", self.repository, ("alpha",))
+        alpha = razor["features"][0]
+        deletion = finding("删除", False, "直接做")
+        deletion["target"] = "alpha/extra.py:1"
+        alpha["findings"] = [deletion]
+        self.write_reports(main, razor)
+        self.clear_recheck_reports()
+
+        result = self.run_check(scope=("alpha",))
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("缺剃刀复审：alpha", result.stdout)
+
+    def test_recheck_is_required_for_a_keep_even_when_first_round_refactors(self):
         main, razor = self.recheck_scenario()
         self.write_reports(main, razor)
         self.write_recheck_reports([recheck_report(self.repository, ["alpha"])])
@@ -1620,22 +1612,6 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("未覆盖功能文件", result.stdout)
         self.assertIn("alpha/main.py:1", result.stdout)
-
-    def test_out_of_scope_deletion_does_not_suppress_zero_reduction_recheck(self):
-        for target in ("beta/main.py:1", "beta"):
-            with self.subTest(target=target):
-                main = report("主审", self.repository)
-                razor = report("剃刀", self.repository)
-                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-                alpha["keep"] = []
-                deletion = finding("删除", False, "直接做")
-                deletion["target"] = target
-                alpha["findings"] = [deletion]
-                self.write_reports(main, razor)
-                self.clear_recheck_reports()
-                result = self.run_check()
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("缺剃刀复审：alpha", result.stdout)
 
     def test_recheck_finding_rejects_out_of_scope_file_target(self):
         main, razor = self.recheck_scenario()

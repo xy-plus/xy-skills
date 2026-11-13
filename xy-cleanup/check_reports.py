@@ -123,9 +123,8 @@ def _paired_delimiter_fragments(text, marker, minimum_length):
 
 def _validate_rewrites(rewrites, label, repository, document_files, findings):
     problems = []
-    reduction_targets = set()
     if not isinstance(rewrites, list):
-        return [f"{label} 必须是数组"], reduction_targets
+        return [f"{label} 必须是数组"]
 
     lines_by_file = {}
     ranges_by_file = {}
@@ -245,9 +244,8 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
                     f"原文 {before_chars} 字，改写后 {after_chars} 字"
                 )
             continue
-        reduction_targets.add(target)
 
-    return problems, reduction_targets
+    return problems
 
 
 SMALLEST_LINE_KEYS = {"code", "docs", "comments", "tests"}
@@ -1098,9 +1096,8 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             if not isinstance(findings, list):
                 problems.append(f"{feature_label}.findings 必须是数组")
                 findings = []
-            rewrite_reduction_targets = set()
             if role == "剃刀" and feature_data is not None:
-                rewrite_problems, rewrite_reduction_targets = _validate_rewrites(
+                rewrite_problems = _validate_rewrites(
                     review.get("rewrites"),
                     f"{feature_label}.rewrites",
                     repository,
@@ -1196,31 +1193,10 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     duplicate_windows if duplicate_windows is not None else {},
                     tracked_files,
                 ))
-                valid_reduction_targets = {
-                    id(finding)
-                    for finding, target_range in finding_ranges
-                    if target_range[0] in keep_files
-                }
-                valid_reduction_targets.update(id(finding) for finding in feature_targets)
-                has_reduction = any(
-                    isinstance(finding, dict)
-                    and finding.get("kind") in {"删除", "合并"}
-                    and id(finding) in valid_reduction_targets
-                    for finding in findings
-                )
-                has_reduction = has_reduction or any(
-                    isinstance(finding, dict)
-                    and finding.get("kind") == "重构"
-                    and finding.get("target") in rewrite_reduction_targets
-                    for finding in findings
-                )
-                if (
-                    feature_id in expected_features
-                    and feature_data["why"]["source"] != "起草"
-                    and keep_files
-                    and not has_reduction
-                ):
-                    # Zero reductions need an independent check; a numerical quota would reward made-up findings.
+                if (isinstance(feature_id, str)
+                        and feature_id in expected_features
+                        and has_keep_items):
+                    # 每个保留了实体的功能都要有独立复审挑战，不按删减多少设门槛。
                     required_rechecks.add(feature_id)
 
     # Requiring one verdict per keep prevents reviewers from skipping items and returning an empty report.
