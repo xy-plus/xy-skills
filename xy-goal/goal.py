@@ -858,22 +858,8 @@ def main(arguments, *, session_id, now):
     except Exception as error:
         # Claude Code 只把退出 0 的 hook 输出（additionalContext）交给 agent：退出 1 时
         # stderr 进不了 agent 上下文，UserPromptSubmit 退出 2 还会拦下用户消息（见 README）。
-        # 所以 hook 的任何失败都输出 JSON、退出 0，不写 stderr；参数解析失败时 argparse
-        # 不给出子命令，下面按它的规则自己扫一遍参数，认出是不是 hook。
-        if options is not None:
-            command = options.command
-        else:
-            command = None
-            skip_root_value = False
-            for argument in arguments:
-                if skip_root_value and not argument.startswith("-"):
-                    skip_root_value = False
-                    continue
-                # argparse 也接受 --root 的缩写；以 - 开头的 token 继续作为选项扫描。
-                skip_root_value = argument.startswith("--r") and "--root".startswith(argument)
-                if not argument.startswith("-"):
-                    command = argument
-                    break
+        # 所以运行期 hook 失败输出 JSON、退出 0，不写 stderr；参数语法错误由标准 argparse 退出 2。
+        command = options.command if options is not None else None
         if command in HOOK_COMMANDS:
             detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
             record = "" if isinstance(error, HookRecordError) else "这次输入没有记入契约。原始错误："
