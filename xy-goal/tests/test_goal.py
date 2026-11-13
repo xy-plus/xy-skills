@@ -1,5 +1,3 @@
-"""契约脚本的行为测试；所有文件只放 TemporaryDirectory。"""
-
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from io import StringIO
@@ -87,6 +85,15 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(self.files(), before, "拒绝前必须完整校验，不可写半截")
         return errors
 
+    def rejects_argument_error(self, *arguments, message):
+        before = self.files()
+        result = self.cli_command(*arguments)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn(message, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.files(), before, "参数错误不能写契约文件")
+        return result.stderr
+
     def assert_hook_error(self, result, command, *, message, record):
         code, output, errors = result
         self.assertEqual(code, 0, output + errors)
@@ -111,6 +118,21 @@ class GoalTests(unittest.TestCase):
     def open_goal(self, slug):
         self.succeeds("open", slug, "交付新版本")
         return self.project / f"20261024-093000-{slug}" / "xy-goal"
+
+    def make_contract_file_unreadable(self, contract, problem):
+        if problem == "missing-quotes":
+            bad_path = contract / "quotes"
+            bad_path.rmdir()
+        elif problem == "invalid-quote":
+            bad_path = contract / "quotes" / "1.md"
+            bad_path.write_bytes(b'\xff')
+        else:
+            bad_path = contract / "links.md"
+            if problem == "missing-links":
+                bad_path.unlink()
+            else:
+                bad_path.write_bytes(b'\xff')
+        return bad_path
 
     @staticmethod
     def quote(contract, number, text):
@@ -286,7 +308,7 @@ class GoalTests(unittest.TestCase):
     def test_add_requires_a_quote_source_even_with_evidence(self):
         self.open_goal("release")
 
-        self.rejects(
+        self.rejects_argument_error(
             "add", "--title", "整理发布流程", "--criteria", "流程验收通过",
             "--source-kind", "作者发起",
             "--evidence", "不做会延误；做了能发布；代价两小时",
@@ -555,37 +577,26 @@ class GoalTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.root = original_root / command
                 self.root.mkdir()
+                self.session = "session-main"
                 if command == "open":
-                    self.session = "session-main"
                     record = self.projects / self.project_name / f"{self.session}.jsonl"
                     record.unlink()
-                    for matches in (0, 2):
-                        with self.subTest(command=command, matches=matches):
-                            if matches == 2:
-                                self.session_record(self.session, self.project_name)
-                                self.session_record(self.session, "-another-project")
-                            before = list(self.root.rglob("*"))
-                            self.rejects("open", "release", "交付新版本", message="会话记录")
-                            self.assertEqual(list(self.root.rglob("*")), before)
+                    arguments = ("open", "release", "交付新版本")
+                else:
+                    arguments, contract, _ = self.owner_command_with_inbox("adopt")
+                    record = self.projects / self.project_name / f"{self.session}.jsonl"
+                    record.unlink()
+                for matches in (0, 2):
+                    with self.subTest(command=command, matches=matches):
+                        if matches == 2:
+                            self.session_record(self.session, self.project_name)
+                            self.session_record(self.session, "-another-project")
+                        before = list(self.root.rglob("*"))
+                        self.rejects(*arguments, message="会话记录")
+                        self.assertEqual(list(self.root.rglob("*")), before)
+                if command == "open":
                     extra_record = self.projects / "-another-project" / f"{self.session}.jsonl"
                     extra_record.unlink(missing_ok=True)
-                else:
-                    contract = self.open_goal("release")
-                    old = subprocess.Popen([sys.executable, "-c", "pass"])
-                    old.wait()
-                    metadata = contract / "goal.md"
-                    metadata.write_text(metadata.read_text().replace(f'"{self.pid}"', f'"{old.pid}"'))
-                    self.session = "new-session"
-                    self.hook("hook-prompt", {"session_id": self.session, "prompt": "等待接管"})
-                    (self.projects / self.project_name / f"{self.session}.jsonl").unlink()
-                    for matches in (0, 2):
-                        with self.subTest(command=command, matches=matches):
-                            if matches == 2:
-                                self.session_record(self.session, self.project_name)
-                                self.session_record(self.session, "-another-project")
-                            before = list(self.root.rglob("*"))
-                            self.rejects("adopt", str(contract), message="会话记录")
-                            self.assertEqual(list(self.root.rglob("*")), before)
 
     def test_open_treats_session_id_glob_characters_as_literal(self):
         self.session = "session*id"
@@ -1045,7 +1056,9 @@ class GoalTests(unittest.TestCase):
         for arguments in (("T1",), ("--source", "1")):
             with self.subTest(arguments=arguments):
                 self.rejects("relink", *arguments, message="同时")
-        self.rejects("relink", "T1", "--source", "不是数字", message="invalid int value")
+        self.rejects_argument_error(
+            "relink", "T1", "--source", "不是数字", message="invalid int value",
+        )
 
     def test_relink_rejects_closed_or_missing_tasks_and_missing_quotes_without_writes(self):
         contract = self.open_goal("release")
@@ -1082,18 +1095,7 @@ class GoalTests(unittest.TestCase):
                 self.root = original_root / problem
                 self.root.mkdir()
                 contract = self.open_goal("release")
-                if problem == "missing-quotes":
-                    bad_path = contract / "quotes"
-                    bad_path.rmdir()
-                elif problem == "invalid-quote":
-                    bad_path = contract / "quotes" / "1.md"
-                    bad_path.write_bytes(b'\xff')
-                else:
-                    bad_path = contract / "links.md"
-                    if problem == "missing-links":
-                        bad_path.unlink()
-                    else:
-                        bad_path.write_bytes(b'\xff')
+                bad_path = self.make_contract_file_unreadable(contract, problem)
                 self.rejects("relink", message=str(bad_path))
 
     def test_hook_with_empty_quotes_can_be_repaired_without_claiming_dangling_number(self):
@@ -1150,7 +1152,7 @@ class GoalTests(unittest.TestCase):
         arguments = ("--title", "补充发布检查", "--criteria", "复核通过",
                      "--source", "1", "--state", "在办", "--pointer", "无")
 
-        self.rejects("add", *arguments, message="--source-kind")
+        self.rejects_argument_error("add", *arguments, message="--source-kind")
         self.rejects("add", *arguments, "--source-kind", "作者发起", message="--evidence")
         self.rejects("add", *arguments, "--source-kind", "作者发起", "--evidence", " \t",
                      message="证据不能为空")
@@ -1322,7 +1324,7 @@ class GoalTests(unittest.TestCase):
                 self.rejects("dismiss", "1", "--reason", "甲" + separator + "乙", message="一行")
 
     def test_required_arguments_and_empty_fields_are_rejected_without_writes(self):
-        self.rejects("open", "release", message="target")
+        self.rejects_argument_error("open", "release", message="target")
         self.rejects("open", "../escape", "目标", message="slug")
         self.rejects("open", "release", "", message="目标")
         contract = self.open_goal("release")
@@ -1335,7 +1337,7 @@ class GoalTests(unittest.TestCase):
                 if name != field:
                     arguments.extend((f"--{name}", value))
             with self.subTest(field=field):
-                self.rejects(*arguments, message=f"--{field}")
+                self.rejects_argument_error(*arguments, message=f"--{field}")
         self.rejects("add", "--title", "", "--criteria", "通过", "--state", "在办",
                      "--pointer", "无", "--source", "1", "--source-kind", "原话直提",
                      message="标题")
@@ -1559,18 +1561,7 @@ class GoalTests(unittest.TestCase):
                     self.root = original_root / f"{problem}-{command}"
                     self.root.mkdir()
                     contract = self.open_goal("release")
-                    if problem == "missing-quotes":
-                        (contract / "quotes").rmdir()
-                        bad_path = contract / "quotes"
-                    elif problem == "invalid-quote":
-                        bad_path = contract / "quotes" / "1.md"
-                        bad_path.write_bytes(b'\xff')
-                    else:
-                        bad_path = contract / "links.md"
-                        if problem == "missing-links":
-                            bad_path.unlink()
-                        else:
-                            bad_path.write_bytes(b'\xff')
+                    bad_path = self.make_contract_file_unreadable(contract, problem)
                     before = self.files()
                     payload = {"session_id": self.session, "prompt": "不能假装记录",
                                "tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"}
@@ -1668,43 +1659,36 @@ class GoalTests(unittest.TestCase):
                 self.command("show")
         self.assertEqual(self.files(), before)
 
-    def test_parse_errors_hint_hooks_without_treating_root_values_as_commands(self):
-        missing_fields = "the following arguments are required: --title, --criteria, --state, --pointer, --source, --source-kind\n"
-        cases = [(["show"], None, "the following arguments are required: --root\n")]
+    def test_argument_errors_use_standard_argparse_exit_without_writes(self):
+        missing_fields = "the following arguments are required: --title, --criteria, --state, --pointer, --source, --source-kind"
+        cases = [(["show"], "the following arguments are required: --root")]
         for command in ("hook-prompt", "hook-answer"):
             cases.extend((
-                ([command], command, "the following arguments are required: --root"),
-                (["--root", str(self.root), command, "--unexpected"], command,
+                ([command], "the following arguments are required: --root"),
+                (["--root", str(self.root), command, "--unexpected"],
                  "unrecognized arguments: --unexpected"),
-                (["--root", "--bad", command], command, "argument --root: expected one argument"),
-                (["--root", "--root", command, "show"], None, "argument --root: expected one argument\n"),
-                (["--root", command, "add"], None, missing_fields),
-                (["--roo", command, "add"], None, missing_fields),
-                ([f"--root={command}", "add"], None, missing_fields),
-                (["--root", command], None, "the following arguments are required: command\n"),
-                ([f"--root={command}"], None, "the following arguments are required: command\n"),
+                (["--root", "--bad", command], "argument --root: expected one argument"),
+                (["--root", "--root", command, "show"], "argument --root: expected one argument"),
+                (["--root", command, "add"], missing_fields),
+                (["--roo", command, "add"], missing_fields),
+                ([f"--root={command}", "add"], missing_fields),
+                (["--root", command], "the following arguments are required: command"),
+                ([f"--root={command}"], "the following arguments are required: command"),
             ))
-        for arguments, command, expected in cases:
+        for arguments, expected in cases:
             with self.subTest(arguments=arguments):
                 before = self.files()
                 output, errors = StringIO(), StringIO()
                 with redirect_stdout(output), redirect_stderr(errors):
-                    code = goal.main(arguments, session_id=self.session, now=self.now)
-                result = code, output.getvalue(), errors.getvalue()
-                if command is None:
-                    self.assertEqual(result, (1, "", expected))
-                else:
-                    context = self.assert_hook_error(result, command, message=expected,
-                                                     record="这次输入没有记入契约。")
-                    self.assertTrue(context.endswith("原始错误：" + expected))
+                    with self.assertRaises(SystemExit) as error:
+                        goal.main(arguments, session_id=self.session, now=self.now)
+                self.assertEqual(error.exception.code, 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn(expected, errors.getvalue())
                 self.assertEqual(self.files(), before)
 
     def test_cli_errors_preserve_exact_output(self):
-        # argparse 的候选列表文案随 Python 版本变化，比较当前解释器的原始错误。
-        with self.assertRaises(goal.GoalError) as parse_error:
-            goal.parser().parse_args(["--root", str(self.root), "unknown"])
         cases = ((("show",), "本会话没有契约\n"),
-                 (("unknown",), str(parse_error.exception) + "\n"),
                  (("update", "hook-prompt", "--source", "1"), "本会话没有契约\n"),
                  (("open", "release", ""), "目标不能为空\n"))
         for arguments, expected in cases:
@@ -1714,6 +1698,13 @@ class GoalTests(unittest.TestCase):
                 self.assertEqual((code, output, errors), (1, "", expected))
                 self.assertNotIn("请优先修复本会话契约或 hook 问题，再做别的。", errors)
                 self.assertEqual(self.files(), before)
+
+        before = self.files()
+        result = self.cli_command("unknown")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("invalid choice", result.stderr)
+        self.assertEqual(self.files(), before)
 
     def test_relative_root_is_rejected_without_expanding_user(self):
         for root in ("relative-runs", "~/runs"):
@@ -1816,7 +1807,7 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(len(goals), 1)
         self.assertIn(f'claude_pid: "{result.stdout.splitlines()[0]}"', goals[0].read_text())
 
-    def test_cli_rejects_missing_or_invalid_bash_ppid_with_calling_instructions(self):
+    def test_cli_rejects_missing_or_invalid_bash_ppid(self):
         for arguments in (("open", "release", "目标"),
                           ("adopt", str(self.root / "old-contract"))):
             for value in (None, "", "not-a-pid", "0", "-1"):
@@ -1826,9 +1817,13 @@ class GoalTests(unittest.TestCase):
                         result = self.cli_command(*arguments)
                     else:
                         result = self.cli_command(*arguments, "--claude-pid", value)
-                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    for message in ("--claude-pid", "$PPID", "Claude Code", "Bash"):
-                        self.assertIn(message, result.stderr)
+                    if value is None or value in ("", "not-a-pid"):
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertIn("--claude-pid", result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        for message in ("--claude-pid", "$PPID", "Claude Code", "Bash"):
+                            self.assertIn(message, result.stderr)
                     self.assertEqual(self.files(), before)
 
     def test_cli_adopt_records_explicit_bash_parent_pid(self):
@@ -1942,13 +1937,17 @@ class GoalTests(unittest.TestCase):
         self.hook("hook-prompt", {"session_id": self.session, "prompt": "只领取一次"})
         return arguments, contract, self.inbox
 
-    def test_committed_owner_commands_warn_on_inbox_delete_failure_without_reimporting(self):
+    def owner_commands_with_inbox(self):
         original_root = self.root
         for operation in ("open", "adopt"):
+            self.root = original_root / operation
+            self.session = "session-main"
+            yield operation, self.owner_command_with_inbox(operation)
+
+    def test_committed_owner_commands_warn_on_inbox_delete_failure_without_reimporting(self):
+        for operation, prepared in self.owner_commands_with_inbox():
             with self.subTest(operation=operation):
-                self.root = original_root / operation
-                self.session = "session-main"
-                arguments, contract, inbox = self.owner_command_with_inbox(operation)
+                arguments, contract, inbox = prepared
                 with self.readonly_directory(inbox):
                     code, output, errors = self.command(*arguments)
                     self.assertEqual(code, 0, errors)
@@ -1962,12 +1961,9 @@ class GoalTests(unittest.TestCase):
                 self.assertEqual(len(list((contract / "quotes").iterdir())), 2)
 
     def test_failed_input_claim_rolls_back_owner_commands_and_can_be_retried(self):
-        original_root = self.root
-        for operation in ("open", "adopt"):
+        for operation, prepared in self.owner_commands_with_inbox():
             with self.subTest(operation=operation):
-                self.root = original_root / operation
-                self.session = "session-main"
-                arguments, contract, inbox = self.owner_command_with_inbox(operation)
+                arguments, contract, inbox = prepared
                 with self.readonly_directory(inbox.parent):
                     self.rejects(*arguments, message="Permission denied")
                 self.succeeds(*arguments)

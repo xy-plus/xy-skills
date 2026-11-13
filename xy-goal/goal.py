@@ -1,9 +1,3 @@
-"""xy-goal 的唯一写入口；读取可直接用 Read/cat，映射只存 links.md。
-
-Markdown 字段的值用 JSON 字符串编码，让换行和引号不会伪造新字段。
-原话正文不经过这个编码器：quotes/N.md 保存收到的原文。
-"""
-
 import argparse
 from contextlib import contextmanager
 from datetime import datetime
@@ -36,13 +30,6 @@ class GoalError(ValueError):
 
 class HookRecordError(GoalError):
     """原话已完整写入或有残缺文件；消息携带最终记录结果与原始错误。"""
-
-
-class ArgumentParser(argparse.ArgumentParser):
-    def error(self, message):
-        if "--claude-pid" in message:
-            message += "；" + PID_USAGE
-        raise GoalError(message)
 
 
 def encode_fields(values):
@@ -423,7 +410,7 @@ class Contract:
 
 
 def parser():
-    result = ArgumentParser(description=__doc__)
+    result = argparse.ArgumentParser()
     result.add_argument("--root", required=True)
     commands = result.add_subparsers(dest="command", required=True)
     opening = commands.add_parser("open")
