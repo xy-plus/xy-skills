@@ -48,7 +48,6 @@ def check_value(where, value, shape):
 
 
 def check(document):
-    """返回问题列表，为空即合格。"""
     problems = check_value("交接说明", document, FIELDS)
     if isinstance(document, dict):
         if document.get("quotes") == []:
