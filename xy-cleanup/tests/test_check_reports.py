@@ -178,29 +178,9 @@ def character_count(text):
 def rewrite_blocks(repository, path):
     content = (Path(repository) / path).read_text(encoding="utf-8", errors="replace")
     lines = content.splitlines()
-    fenced = {
-        start: (end, text)
-        for start, end, text in check_reports_module._fenced_code_blocks(lines)
-    }
-    blocks = []
-    line_number = 1
-    while line_number <= len(lines):
-        if line_number in fenced:
-            end_line, text = fenced[line_number]
-            blocks.append({
-                "lines": f"{path}:{line_number}-{end_line}",
-                "text": text,
-            })
-            line_number = end_line + 1
-        else:
-            line = lines[line_number - 1]
-            if line.strip():
-                blocks.append({
-                    "lines": f"{path}:{line_number}-{line_number}",
-                    "text": line,
-                })
-            line_number += 1
-    return blocks
+    if not lines:
+        return []
+    return [{"lines": f"{path}:1-{len(lines)}", "text": content}]
 
 
 class CheckReportsTest(unittest.TestCase):
@@ -566,117 +546,102 @@ class CheckReportsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("`tool --flag`", result.stdout + result.stderr)
 
-    def test_rewrite_keeps_fenced_code_blocks_verbatim(self):
-        code_block = "```sh\nrun --all\n```"
-        self.add_tracked_file("alpha/guide.md", f"{code_block}\n")
+    def test_split_code_blocks_with_changed_code_are_rejected(self):
+        cases = (
+            (
+                "bare-fence.md",
+                "```sh\necho x\n```\n",
+                "echo y",
+            ),
+            (
+                "quoted-fence.md",
+                "> ```sh\n> echo x\n> ```\n",
+                "> echo y",
+            ),
+            (
+                "list-fence.md",
+                "- ```sh\n  echo x\n  ```\n",
+                "  echo y",
+            ),
+        )
+        for name, content, changed_code in cases:
+            with self.subTest(name=name):
+                path = f"alpha/{name}"
+                self.add_tracked_file(path, content)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                source_lines = content.splitlines()
+                alpha["rewrites"] = [
+                    {"lines": f"{path}:{line}-{line}",
+                     "text": changed_code if line == 2 else text}
+                    for line, text in enumerate(source_lines, start=1)
+                ]
+                for candidate, _content, _changed in cases:
+                    candidate_path = self.repository / "alpha" / candidate
+                    if candidate_path.exists():
+                        line_count = len(candidate_path.read_text(encoding="utf-8").splitlines())
+                        alpha["keep"].append(
+                            razor_keep_item("alpha", f"alpha/{candidate}:1-{line_count}")
+                        )
+                self.write_reports(report("主审", self.repository), razor)
+
+                result = self.run_check()
+
+                output = result.stdout + result.stderr
+                self.assertNotEqual(result.returncode, 0, output)
+                self.assertIn("缺少原文反引号片段", output)
+
+    def test_inline_backtick_removed_from_rewrite_is_rejected(self):
+        self.add_tracked_file("alpha/guide.md", "Run `tool --flag` today.\n")
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
         alpha["rewrites"] = [{
-            "lines": "alpha/guide.md:1-3",
-            "text": "```sh\nrun\n```",
+            "lines": "alpha/guide.md:1-1",
+            "text": "Run tool today.",
         }]
+        rewrite_finding = finding("重构", True, "问你")
+        rewrite_finding["target"] = "alpha/guide.md:1-1"
+        alpha["findings"] = [rewrite_finding]
         self.write_reports(report("主审", self.repository), razor)
 
         result = self.run_check()
 
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(code_block, result.stdout + result.stderr)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("缺少原文反引号片段", output)
 
-    def test_rewrite_blocks_cannot_split_a_fenced_code_block(self):
-        self.add_tracked_file(
-            "alpha/guide.md",
-            "Before.\n```sh\nrun --all\n```\nAfter.\n",
-        )
+    def test_backtick_fragment_inside_a_wholly_deleted_block_is_allowed(self):
+        self.add_tracked_file("alpha/guide.md", "Run `obsolete-tool` today.\n")
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": ""}]
+        removal = finding("删除", False, "直接做")
+        removal["target"] = "alpha/guide.md:1-1"
+        alpha["findings"] = [removal]
+        self.write_reports(report("主审", self.repository), razor)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_backtick_fragment_crossing_a_deleted_block_is_still_required(self):
+        self.add_tracked_file("alpha/guide.md", "Use `tool\ncommand` now.\n")
         razor = report("剃刀", self.repository)
         alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
         alpha["rewrites"] = [
-            {"lines": "alpha/guide.md:1-2", "text": "Before.\n```sh"},
-            {"lines": "alpha/guide.md:3-5", "text": "run --all\n```\nAfter."},
+            {"lines": "alpha/guide.md:1-1", "text": ""},
+            {"lines": "alpha/guide.md:2-2", "text": "command now."},
         ]
-        alpha["keep"].append(razor_keep_item("alpha", "alpha/guide.md:1-5"))
+        rewrite_finding = finding("重构", True, "问你")
+        rewrite_finding["target"] = "alpha/guide.md:1-2"
+        alpha["findings"] = [rewrite_finding]
         self.write_reports(report("主审", self.repository), razor)
 
         result = self.run_check()
 
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("围栏代码块不能被块边界切开", result.stdout + result.stderr)
-
-    def test_container_fenced_code_blocks_cannot_be_split(self):
-        cases = (
-            (
-                "quoted-fence.md",
-                "> ```sh\n> echo x\n> ``` \n",
-            ),
-            (
-                "list-fence.md",
-                "- ```sh\n  echo x\n  ```\n",
-            ),
-        )
-        for name, content in cases:
-            with self.subTest(name=name):
-                path = f"alpha/{name}"
-                self.add_tracked_file(path, content)
-                razor = report("剃刀", self.repository)
-                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-                alpha["rewrites"] = [
-                    {"lines": f"{path}:{line}-{line}", "text": text}
-                    for line, text in enumerate(content.splitlines(), start=1)
-                ]
-                for candidate in ("alpha/quoted-fence.md", "alpha/list-fence.md"):
-                    candidate_path = self.repository / candidate
-                    if candidate_path.exists():
-                        line_count = len(candidate_path.read_text(encoding="utf-8").splitlines())
-                        alpha["keep"].append(
-                            razor_keep_item("alpha", f"{candidate}:1-{line_count}")
-                        )
-                self.write_reports(report("主审", self.repository), razor)
-
-                result = self.run_check()
-
-                output = result.stdout + result.stderr
-                self.assertNotEqual(result.returncode, 0, output)
-                self.assertIn("围栏代码块不能被块边界切开", output)
-
-    def test_container_fenced_code_blocks_must_be_kept_verbatim(self):
-        cases = (
-            (
-                "quoted-fence.md",
-                "> ```sh\n> echo x\n> ``` \n",
-                "```sh\necho x\n```",
-            ),
-            (
-                "list-fence.md",
-                "- ```sh\n  echo x\n  ```\n",
-                "```sh\necho x\n```",
-            ),
-        )
-        for name, content, changed_text in cases:
-            with self.subTest(name=name):
-                path = f"alpha/{name}"
-                self.add_tracked_file(path, content)
-                razor = report("剃刀", self.repository)
-                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-                alpha["rewrites"] = [{
-                    "lines": f"{path}:1-3",
-                    "text": changed_text + " with enough added words to be longer",
-                }]
-                rewrite_finding = finding("重构", True, "问你")
-                rewrite_finding["target"] = f"{path}:1-3"
-                alpha["findings"] = [rewrite_finding]
-                for candidate in ("alpha/quoted-fence.md", "alpha/list-fence.md"):
-                    candidate_path = self.repository / candidate
-                    if candidate_path.exists():
-                        line_count = len(candidate_path.read_text(encoding="utf-8").splitlines())
-                        alpha["keep"].append(
-                            razor_keep_item("alpha", f"{candidate}:1-{line_count}")
-                        )
-                self.write_reports(report("主审", self.repository), razor)
-
-                result = self.run_check()
-
-                output = result.stdout + result.stderr
-                self.assertNotEqual(result.returncode, 0, output)
-                self.assertIn("围栏代码块必须在改写块中原样保留", output)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("缺少原文反引号片段", output)
 
     def test_shorter_rewrite_needs_a_whole_file_finding_and_reports_character_counts(self):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")

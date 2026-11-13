@@ -88,7 +88,7 @@ def _non_whitespace_characters(text):
 
 
 def _backtick_fragments(text):
-    fragments = set()
+    fragments = []
     index = 0
     while index < len(text):
         if text[index] != "`" or (index > 0 and text[index - 1] == "`"):
@@ -100,6 +100,7 @@ def _backtick_fragments(text):
         delimiter = text[index:delimiter_end]
         search_from = delimiter_end
         closing = None
+        # A code line with a run as long as its outer fence pairs early, leaving later code unscanned.
         while True:
             candidate = text.find(delimiter, search_from)
             if candidate < 0:
@@ -115,48 +116,9 @@ def _backtick_fragments(text):
         if closing is None:
             index = delimiter_end
             continue
-        fragments.add(text[index:closing])
+        fragments.append((index, closing, text[index:closing]))
         index = closing
     return fragments
-
-
-def _line_text(line):
-    if isinstance(line, bytes):
-        return line.decode("utf-8", errors="replace")
-    return line
-
-
-def _fenced_code_blocks(file_lines):
-    blocks = []
-    opening = re.compile(r"^ {0,3}(`{3,})([^`]*)$")
-    closing = re.compile(r"^ {0,3}(`{3,})[ \t]*$")
-    original_lines = [_line_text(raw_line) for raw_line in file_lines]
-    start_line = None
-    fence_length = None
-    for line_number, original_line in enumerate(original_lines, start=1):
-        line = _strip_markdown_container_prefixes(original_line)
-        if fence_length is None:
-            match = opening.match(line)
-            if match:
-                start_line = line_number
-                fence_length = len(match.group(1))
-            continue
-        match = closing.match(line)
-        if match and len(match.group(1)) >= fence_length:
-            blocks.append((
-                start_line,
-                line_number,
-                "\n".join(original_lines[start_line - 1:line_number]),
-            ))
-            start_line = None
-            fence_length = None
-    if fence_length is not None:
-        blocks.append((
-            start_line,
-            len(file_lines),
-            "\n".join(original_lines[start_line - 1:]),
-        ))
-    return blocks
 
 
 def _validate_rewrites(rewrites, label, repository, document_files, findings):
@@ -206,43 +168,37 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
             )
         last_start_by_file[path] = start_line
         labels_by_file.setdefault(path, rewrite_label)
-        source_lines = lines_by_file[path][start_line - 1:end_line]
-        source_text = "\n".join(_line_text(line) for line in source_lines)
-        if text != "":
-            for fragment in sorted(_backtick_fragments(source_text)):
-                if fragment not in text:
-                    problems.append(
-                        f"{rewrite_label}.text 缺少原文反引号片段：{fragment}"
-                    )
         texts_by_file.setdefault(path, []).append(text)
 
+    original_text_by_file = {}
     for path in document_files:
-        if path not in lines_by_file:
-            lines_by_file[path] = _read_file_lines(Path(repository) / path)
-        file_lines = lines_by_file[path]
-        if file_lines is None:
+        try:
+            original_text = (Path(repository) / path).read_bytes().decode(
+                "utf-8", errors="replace",
+            )
+        except OSError as error:
+            problems.append(f"{label} 无法读取原文 {path}：{error}")
             continue
-        path_ranges = ranges_by_file.get(path, [])
-        for fence_start, fence_end, fence_text in _fenced_code_blocks(file_lines):
-            covering = [
-                (start, end, index)
-                for index, (start, end) in enumerate(path_ranges)
-                if start <= fence_start and fence_end <= end
-            ]
-            if not covering:
+        original_text_by_file[path] = original_text
+        rewritten_texts = texts_by_file.get(path, [])
+        rewritten_text = "\n".join(rewritten_texts)
+        block_ranges = ranges_by_file.get(path, [])
+        required_fragments = {}
+        for start, end, fragment in _backtick_fragments(original_text):
+            start_line = len(re.findall(r"\r\n|\r|\n", original_text[:start])) + 1
+            end_line = len(re.findall(r"\r\n|\r|\n", original_text[:end - 1])) + 1
+            deleted_whole = any(
+                text == "" and block_start <= start_line and end_line <= block_end
+                for (block_start, block_end), text in zip(block_ranges, rewritten_texts)
+            )
+            if not deleted_whole:
+                required_fragments[fragment] = required_fragments.get(fragment, 0) + 1
+        for fragment, required_count in required_fragments.items():
+            missing_count = required_count - rewritten_text.count(fragment)
+            for _ in range(max(0, missing_count)):
                 problems.append(
-                    f"{label} 原文围栏代码块不能被块边界切开：{path}:{fence_start}-{fence_end}"
+                    f"{label} 文件 {path} 的改写全文缺少原文反引号片段：{fragment}"
                 )
-                continue
-            _start, _end, range_index = covering[0]
-            # ranges_by_file is recorded in rewrite order for this path; match its
-            # corresponding text by the same per-path position.
-            path_texts = texts_by_file.get(path, [])
-            if range_index < len(path_texts) and path_texts[range_index] != "":
-                if fence_text not in path_texts[range_index]:
-                    problems.append(
-                        f"{label} 原文围栏代码块必须在改写块中原样保留：{path}:{fence_start}-{fence_end}"
-                    )
 
     problems.extend(_uncovered_nonempty_lines(
         document_files,
@@ -255,18 +211,15 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
 
     for path, texts in texts_by_file.items():
         rewrite_label = labels_by_file[path]
-        try:
-            original_bytes = (Path(repository) / path).read_bytes()
-        except OSError as error:
-            problems.append(f"{label} 无法读取原文 {path}：{error}")
+        original_text = original_text_by_file.get(path)
+        if original_text is None:
             continue
-        original = original_bytes.decode("utf-8", errors="replace")
-        before_chars = _non_whitespace_characters(original)
+        before_chars = _non_whitespace_characters(original_text)
         after_chars = sum(_non_whitespace_characters(text) for text in texts)
         if after_chars >= before_chars:
             continue
 
-        line_count = len(original_bytes.splitlines())
+        line_count = len(original_text.splitlines())
         target = f"{path}:1-{line_count}"
         expected_kind = "删除" if all(text == "" for text in texts) else "重构"
         matching = [
