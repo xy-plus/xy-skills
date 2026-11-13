@@ -402,19 +402,14 @@ class ProcessTests(CleanerTestCase):
                 self.stop_process(process)
                 shutil.rmtree(item)
 
-    # A prefix sibling is not the item, even if the full path is a substring.
-    def test_command_path_prefix_does_not_keep_item(self):
-        item = self.make_item("command")
-        self.start_process(item, "idle", [str(item) + "-other"])
-        self.run_cleaner([str(self.root)], "delete", self.cutoff)
-        self.assertFalse(item.exists())
-
-    # A path preceded by a different absolute path is not a complete path match.
-    def test_embedded_command_path_does_not_keep_item(self):
-        item = self.make_item("command")
-        self.start_process(item, "idle", ["/elsewhere" + str(item)])
-        self.run_cleaner([str(self.root)], "delete", self.cutoff)
-        self.assertFalse(item.exists())
+    # Neither a prefix sibling nor a path embedded in another absolute path is a match.
+    def test_incomplete_command_path_matches_do_not_keep_item(self):
+        for prefix, suffix in (("", "-other"), ("/elsewhere", "")):
+            with self.subTest(prefix=prefix, suffix=suffix):
+                item = self.make_item("command")
+                self.start_process(item, "idle", [prefix + str(item) + suffix])
+                self.run_cleaner([str(self.root)], "delete", self.cutoff)
+                self.assertFalse(item.exists())
 
     # A non-dumpable process still exposes its own user's command line.
     def test_hidden_process_with_command_path_keeps_item(self):
