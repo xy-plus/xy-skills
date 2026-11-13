@@ -27,6 +27,8 @@ p{margin:6px 0;color:var(--ink2);overflow-wrap:anywhere}
 .compare-counts{margin:0 0 7px;color:var(--ink2);font-size:13px;font-weight:650;overflow-wrap:anywhere}
 .compare-row{margin:5px 0 0;color:var(--ink2);font-size:14px;overflow-wrap:anywhere;white-space:pre-wrap;word-break:break-word}
 .compare-unchanged{color:var(--muted);font-size:13px}
+.compare-range{display:inline-block;margin-right:7px;color:var(--muted);font:12px/1.5 var(--mono);overflow-wrap:anywhere}
+.compare-summary{color:var(--muted)}
 .compare-deleted del,.compare-rewritten del{color:#a13b38;text-decoration-thickness:2px}
 .compare-rewritten ins{color:#167347;text-decoration:none;background:#dff3e7}
 @media(prefers-color-scheme:dark){.compare-deleted del,.compare-rewritten del{color:#ffaaa5}.compare-rewritten ins{color:#9ee0b8;background:#173426}}
@@ -153,13 +155,18 @@ function renderItem(item) {
     ));
     for (const row of comparison.rows) {
       if (row.kind === "unchanged") {
-        section.append(make("p", "compare-row compare-unchanged", `没改的 ${row.count} 段`));
+        const paragraph = make("p", "compare-row compare-unchanged");
+        for (const range of row.ranges) paragraph.append(make("span", "compare-range", range));
+        paragraph.append(make("span", "compare-summary", `没改的 ${row.count} 段`));
+        section.append(paragraph);
       } else if (row.kind === "delete") {
         const paragraph = make("p", "compare-row compare-deleted");
+        paragraph.append(make("span", "compare-range", row.lines));
         paragraph.append(document.createTextNode("删："), make("del", "", row.text));
         section.append(paragraph);
       } else {
         const paragraph = make("p", "compare-row compare-rewritten");
+        paragraph.append(make("span", "compare-range", row.lines));
         paragraph.append(make("del", "", row.before), document.createElement("br"));
         paragraph.append(make("ins", "", row.after));
         section.append(paragraph);

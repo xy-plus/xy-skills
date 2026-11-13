@@ -34,11 +34,11 @@ def browser_decisions():
                     "options": ["Keep", "Remove"],
                     "recommended": "Keep",
                     "compare": [
-                        {"before": "Keep this requirement.", "after": "Keep this requirement."},
-                        {"before": "This paragraph stays.", "after": "This paragraph stays."},
-                        {"before": "Old wording stays.", "after": "New wording stays."},
-                        {"before": "Remove this sentence.", "after": ""},
-                        {"before": "Another paragraph stays.", "after": "Another paragraph stays."},
+                        {"lines": "guide.md:1-1", "before": "Keep this requirement.", "after": "Keep this requirement."},
+                        {"lines": "guide.md:2-2", "before": "This paragraph stays.", "after": "This paragraph stays."},
+                        {"lines": "guide.md:3-3", "before": "Old wording stays.", "after": "New wording stays."},
+                        {"lines": "guide.md:4-4", "before": "Remove this sentence.", "after": ""},
+                        {"lines": "guide.md:5-5", "before": "Another paragraph stays.", "after": "Another paragraph stays."},
                     ],
                 },
                 {
@@ -148,8 +148,12 @@ class DecisionPageBrowserTest(unittest.TestCase):
             self.assertIn("改写后", count_text)
             self.assertIn("少了", count_text)
             self.assertEqual(
-                comparison.locator(".compare-unchanged").all_inner_texts(),
+                comparison.locator(".compare-unchanged .compare-summary").all_inner_texts(),
                 ["没改的 2 段", "没改的 1 段"],
+            )
+            self.assertEqual(
+                comparison.locator(".compare-range").all_inner_texts(),
+                ["guide.md:1-1", "guide.md:2-2", "guide.md:3-3", "guide.md:4-4", "guide.md:5-5"],
             )
             self.assertEqual(comparison.locator(".compare-deleted del").inner_text(), "Remove this sentence.")
             self.assertEqual(comparison.locator(".compare-rewritten del").inner_text(), "Old wording stays.")

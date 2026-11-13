@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 DECISION_KEYS = {"title", "intro", "groups", "footnotes"}
 GROUP_KEYS = {"title", "notes", "items"}
 ITEM_KEYS = {"id", "title", "lines", "options", "recommended", "compare"}
-COMPARE_KEYS = {"before", "after"}
+COMPARE_KEYS = {"lines", "before", "after"}
 FOOTNOTE_KEYS = {"title", "lines"}
 MAX_REQUEST_BYTES = 200 * 1024
 REQUEST_READ_TIMEOUT_SECONDS = 10
@@ -52,6 +52,22 @@ def _require_text_list(value, label):
         raise ValueError(f"{label} 必须是字符串数组")
     for index, text in enumerate(value):
         _require_text(text, f"{label}[{index}]")
+
+
+def _parse_compare_line_range(value):
+    if not isinstance(value, str):
+        return None
+    path, separator, numbers = value.rpartition(":")
+    if not separator or not path.strip():
+        return None
+    parts = numbers.split("-")
+    if (len(parts) != 2
+            or any(not part.isascii() or not part.isdecimal() for part in parts)):
+        return None
+    start_line, end_line = (int(part) for part in parts)
+    if start_line < 1 or end_line < start_line:
+        return None
+    return path, start_line, end_line
 
 
 def validate_decisions(value):
@@ -96,9 +112,35 @@ def validate_decisions(value):
             if compare is not None:
                 if not isinstance(compare, list) or not compare:
                     raise ValueError(f"{item_label}.compare 必须是非空数组或 null")
+                compare_path = None
+                previous_start = None
+                previous_end = None
                 for compare_index, block in enumerate(compare):
                     block_label = f"{item_label}.compare[{compare_index}]"
                     _require_object(block, COMPARE_KEYS, block_label)
+                    _require_text(block["lines"], f"{block_label}.lines")
+                    line_range = _parse_compare_line_range(block["lines"])
+                    if line_range is None:
+                        raise ValueError(
+                            f"{block_label}.lines 行范围无效，必须写成 路径:起始行-结束行：{block['lines']}"
+                        )
+                    path, start_line, end_line = line_range
+                    if compare_path is None:
+                        compare_path = path
+                    elif path != compare_path:
+                        raise ValueError(
+                            f"{block_label}.lines 必须与同一 compare 的其他块使用同一个路径：{path}"
+                        )
+                    if previous_start is not None and start_line <= previous_start:
+                        raise ValueError(
+                            f"{block_label}.lines 必须按起始行递增：{block['lines']}"
+                        )
+                    if previous_end is not None and start_line <= previous_end:
+                        raise ValueError(
+                            f"{block_label}.lines 与前一块不能重叠：{block['lines']}"
+                        )
+                    previous_start = start_line
+                    previous_end = end_line
                     _require_text(block["before"], f"{block_label}.before")
                     if not isinstance(block["after"], str):
                         raise ValueError(f"{block_label}.after 必须是字符串")
@@ -120,24 +162,34 @@ def _non_whitespace_characters(text):
 
 def _comparison_rows(compare):
     rows = []
-    unchanged_count = 0
+    unchanged_ranges = []
+
+    def append_unchanged():
+        if unchanged_ranges:
+            rows.append({
+                "kind": "unchanged",
+                "count": len(unchanged_ranges),
+                "ranges": list(unchanged_ranges),
+            })
+            unchanged_ranges.clear()
+
     for block in compare:
         before = block["before"]
         after = block["after"]
         if before == after:
-            unchanged_count += 1
+            unchanged_ranges.append(block["lines"])
         elif after == "":
-            if unchanged_count:
-                rows.append({"kind": "unchanged", "count": unchanged_count})
-                unchanged_count = 0
-            rows.append({"kind": "delete", "text": before})
+            append_unchanged()
+            rows.append({"kind": "delete", "lines": block["lines"], "text": before})
         else:
-            if unchanged_count:
-                rows.append({"kind": "unchanged", "count": unchanged_count})
-                unchanged_count = 0
-            rows.append({"kind": "rewrite", "before": before, "after": after})
-    if unchanged_count:
-        rows.append({"kind": "unchanged", "count": unchanged_count})
+            append_unchanged()
+            rows.append({
+                "kind": "rewrite",
+                "lines": block["lines"],
+                "before": before,
+                "after": after,
+            })
+    append_unchanged()
     return rows
 
 

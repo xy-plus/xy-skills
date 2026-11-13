@@ -671,7 +671,7 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
 
         deleted_compare = valid_decisions()
         deleted_compare["groups"][0]["items"][0]["compare"] = [
-            {"before": "A paragraph to remove.", "after": ""},
+            {"lines": "guide.md:1-1", "before": "A paragraph to remove.", "after": ""},
         ]
         self.assertIs(decision_page.validate_decisions(deleted_compare), deleted_compare)
 
@@ -680,12 +680,16 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
             ("not an array", "compare 必须是非空数组或 null"),
             ([], "compare 必须是非空数组或 null"),
             ({"before": "Before.", "after": "After."}, "compare 必须是非空数组或 null"),
-            ([{"before": "Before."}], "缺少字段 after"),
-            ([{"before": "Before.", "after": "After.", "extra": 1}], "多余字段 extra"),
-            ([{"before": "", "after": "After."}], "before 必须是非空字符串"),
-            ([{"before": 7, "after": "After."}], "before 必须是非空字符串"),
-            ([{"before": "Before.", "after": 7}], "after 必须是字符串"),
+            ([{"before": "Before.", "after": "After."}], "缺少字段 lines"),
+            ([{"lines": "guide.md:1-1", "before": "Before."}], "缺少字段 after"),
+            ([{"lines": "guide.md:1-1", "before": "Before.", "after": "After.", "extra": 1}], "多余字段 extra"),
+            ([{"lines": "guide.md:1-1", "before": "", "after": "After."}], "before 必须是非空字符串"),
+            ([{"lines": "guide.md:1-1", "before": 7, "after": "After."}], "before 必须是非空字符串"),
+            ([{"lines": "guide.md:1-1", "before": "Before.", "after": 7}], "after 必须是字符串"),
             ([None], "必须是对象"),
+            ([{"lines": "guide.md:1", "before": "Before.", "after": "After."}], "行范围"),
+            ([{"lines": "guide.md:0-1", "before": "Before.", "after": "After."}], "行范围"),
+            ([{"lines": "guide.md:2-1", "before": "Before.", "after": "After."}], "行范围"),
         )
         for compare, expected in cases:
             with self.subTest(compare=compare):
@@ -694,6 +698,61 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                 with self.assertRaises(ValueError) as context:
                     decision_page.validate_decisions(decisions)
                 self.assertIn(expected, str(context.exception))
+
+    def test_compare_ranges_must_use_one_path_and_increasing_nonoverlapping_lines(self):
+        cases = (
+            (
+                [
+                    {"lines": "guide.md:1-1", "before": "First.", "after": "First."},
+                    {"lines": "other.md:2-2", "before": "Second.", "after": "Second."},
+                ],
+                "同一个路径",
+            ),
+            (
+                [
+                    {"lines": "guide.md:2-2", "before": "First.", "after": "First."},
+                    {"lines": "guide.md:1-1", "before": "Second.", "after": "Second."},
+                ],
+                "起始行递增",
+            ),
+            (
+                [
+                    {"lines": "guide.md:1-3", "before": "First.", "after": "First."},
+                    {"lines": "guide.md:3-4", "before": "Second.", "after": "Second."},
+                ],
+                "不能重叠",
+            ),
+        )
+        for compare, expected in cases:
+            with self.subTest(compare=compare):
+                decisions = valid_decisions()
+                decisions["groups"][0]["items"][0]["compare"] = compare
+                with self.assertRaises(ValueError) as context:
+                    decision_page.validate_decisions(decisions)
+                self.assertIn(expected, str(context.exception))
+
+    def test_invalid_compare_range_exits_two_without_starting_platform(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            decisions = Path(temporary) / "decisions.json"
+            answers = Path(temporary) / "answers.json"
+            value = valid_decisions()
+            value["groups"][0]["items"][0]["compare"] = [{
+                "lines": "guide.md:0-1",
+                "before": "Before.",
+                "after": "After.",
+            }]
+            decisions.write_text(json.dumps(value), encoding="utf-8")
+            stderr = io.StringIO()
+            code = decision_page.main(
+                ["ask", "--decisions", str(decisions), "--name", "decision-test",
+                 "--answers", str(answers)],
+                lambda arguments: self.fail(f"不应启动平台：{arguments}"),
+                io.StringIO(),
+                stderr,
+            )
+
+        self.assertEqual(code, 2, stderr.getvalue())
+        self.assertIn("行范围", stderr.getvalue())
 
     def test_text_fields_are_nonempty_strings_at_every_level(self):
         cases = []
