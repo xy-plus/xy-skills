@@ -36,7 +36,9 @@ FEATURE_KEYS = {
     "主审": {
         "feature", "what_true", "why_holds", "structure", "todo_items", "findings",
     },
-    "剃刀": {"feature", "necessity", "smallest", "keep", "todo_items", "findings"},
+    "剃刀": {
+        "feature", "necessity", "smallest", "rewrites", "keep", "todo_items", "findings",
+    },
     "剃刀复审": {"feature", "verdicts", "findings"},
 }
 FINDING_KEYS = {
@@ -46,6 +48,7 @@ FINDING_KEYS = {
 BASIS_KEYS = {"source", "text"}
 TODO_ITEM_KEYS = {"lines", "needed", "smaller", "why_holds"}
 KEEP_ITEM_KEYS = {"lines", "requirement", "achieved", "cost"}
+REWRITE_KEYS = {"path", "text"}
 RECHECK_VERDICT_KEYS = {"lines", "attempt", "evidence", "verdict"}
 ROLES = {"主审", "剃刀"}
 REPORT_ROLES = ROLES | {"剃刀复审"}
@@ -78,6 +81,82 @@ def _field_errors(value, expected, label):
 
 def _nonempty(value):
     return isinstance(value, str) and bool(value.strip())
+
+
+def _non_whitespace_characters(text):
+    return sum(not character.isspace() for character in text)
+
+
+def _validate_rewrites(rewrites, label, repository, document_files, findings):
+    problems = []
+    reduction_targets = set()
+    if not isinstance(rewrites, list):
+        return [f"{label} 必须是数组"], reduction_targets
+
+    seen_paths = set()
+    for index, rewrite in enumerate(rewrites):
+        rewrite_label = f"{label}[{index}]"
+        item_problems = _field_errors(rewrite, REWRITE_KEYS, rewrite_label)
+        problems.extend(item_problems)
+        if item_problems or not isinstance(rewrite, dict):
+            continue
+        path = rewrite["path"]
+        text = rewrite["text"]
+        if not isinstance(path, str) or not path:
+            problems.append(f"{rewrite_label}.path 必须是非空字符串")
+            continue
+        if path in seen_paths:
+            problems.append(f"{rewrite_label}.path 不能重复：{path}")
+        seen_paths.add(path)
+        if path not in document_files:
+            problems.append(f"{rewrite_label}.path 不是本功能直属的非 TODO 文档：{path}")
+            continue
+        if not isinstance(text, str):
+            problems.append(f"{rewrite_label}.text 必须是字符串")
+            continue
+
+        try:
+            original_bytes = (Path(repository) / path).read_bytes()
+        except OSError as error:
+            problems.append(f"{rewrite_label} 无法读取原文 {path}：{error}")
+            continue
+        original = original_bytes.decode("utf-8", errors="replace")
+        before_chars = _non_whitespace_characters(original)
+        after_chars = _non_whitespace_characters(text)
+        if after_chars >= before_chars:
+            continue
+
+        line_count = len(original_bytes.splitlines())
+        target = f"{path}:1-{line_count}"
+        expected_kind = "删除" if text == "" else "重构"
+        matching = [
+            finding for finding in findings
+            if isinstance(finding, dict) and finding.get("target") == target
+        ]
+        matching_kinds = {
+            finding.get("kind") for finding in matching
+            if isinstance(finding.get("kind"), str)
+        }
+        if expected_kind not in matching_kinds:
+            if matching:
+                problems.append(
+                    f"{rewrite_label} target {target} 的发现类型必须是 {expected_kind}；"
+                    f"原文 {before_chars} 字，改写后 {after_chars} 字"
+                )
+            else:
+                problems.append(
+                    f"{rewrite_label} 比原文短，必须有 target 为 {target}、kind 为 {expected_kind} 的发现；"
+                    f"原文 {before_chars} 字，改写后 {after_chars} 字"
+                )
+            continue
+        reduction_targets.add(target)
+
+    if seen_paths != document_files:
+        problems.append(
+            f"{label} 的 path 集合必须恰好等于本功能直属文档；"
+            f"应有 {sorted(document_files)}，实际 {sorted(seen_paths)}"
+        )
+    return problems, reduction_targets
 
 
 SMALLEST_LINE_KEYS = {"code", "docs", "comments", "tests"}
@@ -858,6 +937,14 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     for group_paths in feature_data["files"].values()
                     for path in group_paths
                 }
+                document_files = (
+                    {
+                        path for path in direct_files
+                        if Path(path).name != TODO_FILENAME
+                        and file_category_with_skip(repository, path, skip_paths) == "docs"
+                    }
+                    if role == "剃刀" else set()
+                )
                 direct_todo_files = {
                     path for path in direct_files
                     if Path(path).name == TODO_FILENAME
@@ -874,6 +961,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 )
             else:
                 direct_files = set()
+                document_files = set()
                 direct_todo_files = set()
                 keep_files = set()
             if isinstance(role, str) and role in ROLES and "todo_items" in review:
@@ -887,6 +975,16 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             if not isinstance(findings, list):
                 problems.append(f"{feature_label}.findings 必须是数组")
                 findings = []
+            rewrite_reduction_targets = set()
+            if role == "剃刀" and feature_data is not None:
+                rewrite_problems, rewrite_reduction_targets = _validate_rewrites(
+                    review.get("rewrites"),
+                    f"{feature_label}.rewrites",
+                    repository,
+                    document_files,
+                    findings,
+                )
+                problems.extend(rewrite_problems)
             finding_ranges = []
             feature_targets = []
             for finding_index, finding in enumerate(findings):
@@ -967,6 +1065,12 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     isinstance(finding, dict)
                     and finding.get("kind") in {"删除", "合并"}
                     and id(finding) in valid_reduction_targets
+                    for finding in findings
+                )
+                has_reduction = has_reduction or any(
+                    isinstance(finding, dict)
+                    and finding.get("kind") == "重构"
+                    and finding.get("target") in rewrite_reduction_targets
                     for finding in findings
                 )
                 if (
