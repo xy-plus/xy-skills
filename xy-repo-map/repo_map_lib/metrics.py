@@ -270,7 +270,7 @@ def count_doc_chars(path, category, content):
         return 0
 
     return sum(
-        sum(not character.isspace() for character in line)
+        count_non_whitespace_characters(line)
         for number, line in enumerate(content.splitlines(), 1)
         if number in documentation_lines
     )

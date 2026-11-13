@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -11,6 +12,17 @@ from repo_map_lib.metrics import LineCounts, code_counts, count_file
 class MetricsTest(unittest.TestCase):
     def test_shared_non_whitespace_character_count(self):
         self.assertEqual(metrics.count_non_whitespace_characters("你 好\nA\tB"), 4)
+
+    def test_doc_character_count_uses_shared_counter(self):
+        with patch.object(
+            metrics,
+            "count_non_whitespace_characters",
+            wraps=metrics.count_non_whitespace_characters,
+        ) as count_characters:
+            result = metrics.count_doc_chars("guide.md", "docs", "a b\nc d")
+
+        self.assertEqual(result, 4)
+        self.assertEqual(count_characters.call_args_list, [call("a b"), call("c d")])
 
     def test_python_docstrings_comments_and_inline_comments(self):
         source = '''"""Module docs.
