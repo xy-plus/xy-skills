@@ -1,5 +1,4 @@
 import argparse
-import difflib
 from http.server import BaseHTTPRequestHandler
 import json
 import os
@@ -95,12 +94,14 @@ def validate_decisions(value):
                 raise ValueError(f"{item_label}.recommended 必须是 options 中的选项")
             compare = item["compare"]
             if compare is not None:
-                if not isinstance(compare, dict):
-                    raise ValueError(f"{item_label}.compare 必须是对象或 null")
-                _require_object(compare, COMPARE_KEYS, f"{item_label}.compare")
-                _require_text(compare["before"], f"{item_label}.compare.before")
-                if not isinstance(compare["after"], str):
-                    raise ValueError(f"{item_label}.compare.after 必须是字符串")
+                if not isinstance(compare, list) or not compare:
+                    raise ValueError(f"{item_label}.compare 必须是非空数组或 null")
+                for compare_index, block in enumerate(compare):
+                    block_label = f"{item_label}.compare[{compare_index}]"
+                    _require_object(block, COMPARE_KEYS, block_label)
+                    _require_text(block["before"], f"{block_label}.before")
+                    if not isinstance(block["after"], str):
+                        raise ValueError(f"{block_label}.after 必须是字符串")
 
     footnotes = value["footnotes"]
     if not isinstance(footnotes, list):
@@ -117,38 +118,34 @@ def _non_whitespace_characters(text):
     return sum(not character.isspace() for character in text)
 
 
-def _comparison_rows(before, after):
-    before_paragraphs = [line for line in before.splitlines() if line.strip()]
-    after_paragraphs = [line for line in after.splitlines() if line.strip()]
-    matcher = difflib.SequenceMatcher(None, before_paragraphs, after_paragraphs)
+def _comparison_rows(compare):
     rows = []
-    for operation, before_start, before_end, after_start, after_end in matcher.get_opcodes():
-        old = before_paragraphs[before_start:before_end]
-        new = after_paragraphs[after_start:after_end]
-        if operation == "equal":
-            rows.append({"kind": "unchanged", "count": len(old)})
-        elif operation == "delete":
-            rows.extend({"kind": "delete", "text": line} for line in old)
-        elif operation == "insert":
-            rows.extend({"kind": "insert", "text": line} for line in new)
+    unchanged_count = 0
+    for block in compare:
+        before = block["before"]
+        after = block["after"]
+        if before == after:
+            unchanged_count += 1
+        elif after == "":
+            if unchanged_count:
+                rows.append({"kind": "unchanged", "count": unchanged_count})
+                unchanged_count = 0
+            rows.append({"kind": "delete", "text": before})
         else:
-            paired = min(len(old), len(new))
-            rows.extend(
-                {"kind": "rewrite", "before": old[index], "after": new[index]}
-                for index in range(paired)
-            )
-            rows.extend({"kind": "delete", "text": line} for line in old[paired:])
-            rows.extend({"kind": "insert", "text": line} for line in new[paired:])
+            if unchanged_count:
+                rows.append({"kind": "unchanged", "count": unchanged_count})
+                unchanged_count = 0
+            rows.append({"kind": "rewrite", "before": before, "after": after})
+    if unchanged_count:
+        rows.append({"kind": "unchanged", "count": unchanged_count})
     return rows
 
 
 def _comparison_data(compare):
-    before = compare["before"]
-    after = compare["after"]
     return {
-        "before_chars": _non_whitespace_characters(before),
-        "after_chars": _non_whitespace_characters(after),
-        "rows": _comparison_rows(before, after),
+        "before_chars": sum(_non_whitespace_characters(block["before"]) for block in compare),
+        "after_chars": sum(_non_whitespace_characters(block["after"]) for block in compare),
+        "rows": _comparison_rows(compare),
     }
 
 

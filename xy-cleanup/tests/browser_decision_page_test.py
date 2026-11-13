@@ -33,22 +33,13 @@ def browser_decisions():
                     "lines": ["What is needed: clear behavior."],
                     "options": ["Keep", "Remove"],
                     "recommended": "Keep",
-                    "compare": {
-                        "before": (
-                            "Keep this requirement.\n"
-                            "This paragraph stays.\n"
-                            "Old wording stays.\n"
-                            "Remove this sentence.\n"
-                            "Another paragraph stays."
-                        ),
-                        "after": (
-                            "Keep this requirement.\n"
-                            "This paragraph stays.\n"
-                            "New wording stays.\n"
-                            "Another paragraph stays.\n"
-                            "Add this sentence."
-                        ),
-                    },
+                    "compare": [
+                        {"before": "Keep this requirement.", "after": "Keep this requirement."},
+                        {"before": "This paragraph stays.", "after": "This paragraph stays."},
+                        {"before": "Old wording stays.", "after": "New wording stays."},
+                        {"before": "Remove this sentence.", "after": ""},
+                        {"before": "Another paragraph stays.", "after": "Another paragraph stays."},
+                    ],
                 },
                 {
                     "id": "B1",
@@ -139,7 +130,7 @@ class DecisionPageBridge(ThreadingHTTPServer):
 
 
 class DecisionPageBrowserTest(unittest.TestCase):
-    def test_compare_shows_counts_and_each_paragraph_change_on_a_phone(self):
+    def test_compare_shows_counts_and_each_block_change_on_a_phone(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
         page_html = decision_page.render_decision_page(browser_decisions())
@@ -161,7 +152,6 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 ["没改的 2 段", "没改的 1 段"],
             )
             self.assertEqual(comparison.locator(".compare-deleted del").inner_text(), "Remove this sentence.")
-            self.assertEqual(comparison.locator(".compare-added ins").inner_text(), "Add this sentence.")
             self.assertEqual(comparison.locator(".compare-rewritten del").inner_text(), "Old wording stays.")
             self.assertEqual(comparison.locator(".compare-rewritten ins").inner_text(), "New wording stays.")
             self.assertEqual(page.locator('[data-item-id="B1"] .comparison').count(), 0)

@@ -665,25 +665,27 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                     decision_page.validate_decisions(decisions)
                 self.assertIn(expected, str(context.exception))
 
-    def test_compare_accepts_null_and_text_pair_with_an_empty_after(self):
+    def test_compare_accepts_null_and_block_array_with_an_empty_after(self):
         null_compare = valid_decisions()
         self.assertIs(decision_page.validate_decisions(null_compare), null_compare)
 
         deleted_compare = valid_decisions()
-        deleted_compare["groups"][0]["items"][0]["compare"] = {
-            "before": "A paragraph to remove.",
-            "after": "",
-        }
+        deleted_compare["groups"][0]["items"][0]["compare"] = [
+            {"before": "A paragraph to remove.", "after": ""},
+        ]
         self.assertIs(decision_page.validate_decisions(deleted_compare), deleted_compare)
 
     def test_compare_rejects_wrong_keys_types_and_empty_before(self):
         cases = (
-            ("not an object", "compare 必须是对象或 null"),
-            ({"before": "Before."}, "缺少字段 after"),
-            ({"before": "Before.", "after": "After.", "extra": 1}, "多余字段 extra"),
-            ({"before": "", "after": "After."}, "before 必须是非空字符串"),
-            ({"before": 7, "after": "After."}, "before 必须是非空字符串"),
-            ({"before": "Before.", "after": 7}, "after 必须是字符串"),
+            ("not an array", "compare 必须是非空数组或 null"),
+            ([], "compare 必须是非空数组或 null"),
+            ({"before": "Before.", "after": "After."}, "compare 必须是非空数组或 null"),
+            ([{"before": "Before."}], "缺少字段 after"),
+            ([{"before": "Before.", "after": "After.", "extra": 1}], "多余字段 extra"),
+            ([{"before": "", "after": "After."}], "before 必须是非空字符串"),
+            ([{"before": 7, "after": "After."}], "before 必须是非空字符串"),
+            ([{"before": "Before.", "after": 7}], "after 必须是字符串"),
+            ([None], "必须是对象"),
         )
         for compare, expected in cases:
             with self.subTest(compare=compare):

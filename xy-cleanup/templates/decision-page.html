@@ -28,8 +28,8 @@ p{margin:6px 0;color:var(--ink2);overflow-wrap:anywhere}
 .compare-row{margin:5px 0 0;color:var(--ink2);font-size:14px;overflow-wrap:anywhere;white-space:pre-wrap;word-break:break-word}
 .compare-unchanged{color:var(--muted);font-size:13px}
 .compare-deleted del,.compare-rewritten del{color:#a13b38;text-decoration-thickness:2px}
-.compare-added ins,.compare-rewritten ins{color:#167347;text-decoration:none;background:#dff3e7}
-@media(prefers-color-scheme:dark){.compare-deleted del,.compare-rewritten del{color:#ffaaa5}.compare-added ins,.compare-rewritten ins{color:#9ee0b8;background:#173426}}
+.compare-rewritten ins{color:#167347;text-decoration:none;background:#dff3e7}
+@media(prefers-color-scheme:dark){.compare-deleted del,.compare-rewritten del{color:#ffaaa5}.compare-rewritten ins{color:#9ee0b8;background:#173426}}
 .storage-warning{padding:9px 11px;border:1px solid var(--mark);border-radius:8px;color:var(--ink)}
 .choices{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .choices label{position:relative;display:flex;flex:1 1 130px;min-width:110px;align-items:center;justify-content:center;gap:5px;padding:9px 10px;border:1px solid var(--hair);border-radius:9px;background:var(--surface);font-size:14px;text-align:center;overflow-wrap:anywhere;cursor:pointer;user-select:none}
@@ -157,10 +157,6 @@ function renderItem(item) {
       } else if (row.kind === "delete") {
         const paragraph = make("p", "compare-row compare-deleted");
         paragraph.append(document.createTextNode("删："), make("del", "", row.text));
-        section.append(paragraph);
-      } else if (row.kind === "insert") {
-        const paragraph = make("p", "compare-row compare-added");
-        paragraph.append(document.createTextNode("加："), make("ins", "", row.text));
         section.append(paragraph);
       } else {
         const paragraph = make("p", "compare-row compare-rewritten");
