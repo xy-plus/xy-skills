@@ -546,26 +546,21 @@ class DecisionPageCommandTest(unittest.TestCase):
                         response.begin()
                         content_length = int(response.getheader("Content-Length"))
                         body = bytearray()
-                        read_error = None
                         started = time.monotonic()
-                        try:
-                            while len(body) < content_length:
-                                chunk = response.read(
-                                    min(16 * 1024, content_length - len(body))
-                                )
-                                if not chunk:
-                                    break
-                                body.extend(chunk)
-                                time.sleep(0.01)
-                        except (OSError, http.client.HTTPException) as error:
-                            read_error = error
+                        while len(body) < content_length:
+                            chunk = response.read(
+                                min(16 * 1024, content_length - len(body))
+                            )
+                            if not chunk:
+                                break
+                            body.extend(chunk)
+                            time.sleep(0.01)
                         elapsed = time.monotonic() - started
                     finally:
                         client.close()
 
         self.assertGreater(content_length, 2 * 1024 * 1024)
         self.assertGreater(elapsed, 0.5)
-        self.assertIsNone(read_error, f"慢速读取收到错误：{read_error}")
         self.assertEqual(len(body), content_length)
 
     def test_idle_page_reader_disconnects_and_server_accepts_next_request(self):
