@@ -1,4 +1,3 @@
-"""只读校验 handoff.json：合格退出 0，不合格逐条报错并退出 1，用法错误退出 2。"""
 import json
 import sys
 
@@ -57,22 +56,18 @@ def check(document):
     return problems
 
 
-def main(argv):
-    if len(argv) != 2:
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
         print("用法：check_handoff.py <交接 JSON 路径>")
-        return 2
+        sys.exit(2)
     try:
-        with open(argv[1], encoding="utf-8") as stream:
+        with open(sys.argv[1], encoding="utf-8") as stream:
             document = json.load(stream, object_pairs_hook=object_without_duplicate_keys)
     except (OSError, ValueError) as error:
-        print(f"无法读取 JSON「{argv[1]}」：{error}")
-        return 1
+        print(f"无法读取 JSON「{sys.argv[1]}」：{error}")
+        sys.exit(1)
     problems = check(document)
     if problems:
         print("\n".join(problems))
-        return 1
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+        sys.exit(1)
+    sys.exit(0)

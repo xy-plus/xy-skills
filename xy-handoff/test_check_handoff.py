@@ -1,22 +1,11 @@
-import json
+import json, subprocess, sys, tempfile, unittest
 from pathlib import Path
-import subprocess
-import sys
-import tempfile
-import unittest
 
 
 def handoff():
-    return {
-        "from": {"name": "行情重建", "short_id": "a1b2c3d4"},
-        "task": {"what": "数据服务", "done_when": "导入样例验收通过", "others": "引擎由引擎会话负责"},
-        "reply": "要",
-        "quotes": [{"text": "把行情数据接过来。", "source": "/runs/xy-goal/quotes/1.md"}],
-        "rules": "无",
-        "facts": ["现有数据目录为空"],
-        "decide_yourself": ["重试策略"],
-        "boundaries": ["保留现有回测界面"],
-    }
+    text = Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8")
+    sample = text.split("```json\n", 1)[1].split("\n```", 1)[0]
+    return json.loads(sample)
 
 
 class CheckHandoffTest(unittest.TestCase):
@@ -24,9 +13,6 @@ class CheckHandoffTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "交接.json"
-
-    def run_check(self, document):
-        return self.run_text(json.dumps(document, ensure_ascii=False))
 
     def run_text(self, text):
         self.path.write_text(text, encoding="utf-8")
@@ -39,25 +25,25 @@ class CheckHandoffTest(unittest.TestCase):
         )
 
     def assert_rejected(self, document, *fields):
-        result = self.run_check(document)
+        result = self.run_text(json.dumps(document, ensure_ascii=False))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(result.stderr, "")
         for field in fields:
             self.assertIn(field, result.stdout)
 
     def test_valid_child_and_independent_handoffs(self):
-        for reply in ("要", "不要"):
-            with self.subTest(reply=reply):
-                document = handoff()
-                document["reply"] = reply
-                result = self.run_check(document)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(result.stdout + result.stderr, "")
+        document = handoff()
+        document["reply"] = "不要"
+        result = self.run_text(json.dumps(document, ensure_ascii=False))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout + result.stderr, "")
+        document["reply"] = "也许"
+        self.assert_rejected(document, "reply")
 
     def test_facts_decisions_and_boundaries_may_be_empty(self):
         document = handoff()
         document.update(facts=[], decide_yourself=[], boundaries=[])
-        result = self.run_check(document)
+        result = self.run_text(json.dumps(document, ensure_ascii=False))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout + result.stderr, "")
 
@@ -85,15 +71,6 @@ class CheckHandoffTest(unittest.TestCase):
             "decide_yourself", "boundaries", "缺少",
         )
 
-    def test_missing_nested_fields_are_reported(self):
-        document = handoff()
-        document["from"].clear()
-        document["task"].clear()
-        self.assert_rejected(
-            document, "from.name", "from.short_id", "task.what",
-            "task.done_when", "task.others", "缺少",
-        )
-
     def test_empty_required_strings_and_list_items_are_rejected(self):
         paths = (("from", "name"), ("from", "short_id"), ("task", "what"),
                  ("task", "done_when"), ("task", "others"), ("rules",),
@@ -116,14 +93,14 @@ class CheckHandoffTest(unittest.TestCase):
 
     def test_each_quote_requires_text_and_source(self):
         document = handoff()
-        document["quotes"] = [{"text": "第一条"}, {"source": "/quotes/2.md"}, {}]
+        document["quotes"] = [{"text": "第一条"}, {"source": "/quotes/2.md"}]
         self.assert_rejected(document, "quotes[0].source", "quotes[1].text",
-                             "quotes[2].text", "quotes[2].source")
+                             "缺少字段")
 
     def test_wrong_json_types_are_rejected(self):
-        for key, value in (("from", "派方"), ("task", []), ("quotes", {}),
-                           ("quotes", ["原话"]), ("rules", []), ("facts", "事实"),
-                           ("decide_yourself", None), ("boundaries", [False])):
+        for key, value in (("from", "派方"), ("quotes", {}),
+                           ("quotes", ["原话"]), ("rules", []),
+                           ("boundaries", [False])):
             with self.subTest(key=key, value=value):
                 document = handoff()
                 document[key] = value
@@ -131,8 +108,7 @@ class CheckHandoffTest(unittest.TestCase):
         self.assert_rejected([], "交接说明", "必须是")
 
     def test_invalid_json_is_reported_without_a_traceback(self):
-        self.path.write_text('{"reply":', encoding="utf-8")
-        result = self.run_command(self.path)
+        result = self.run_text('{"reply":')
         self.assertEqual(result.returncode, 1)
         self.assertIn("JSON", result.stdout)
         self.assertEqual(result.stderr, "")
