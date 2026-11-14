@@ -73,6 +73,9 @@ def browser_decisions():
 
 
 class DecisionPageBridgeHandler(BaseHTTPRequestHandler):
+    def log_message(self, format_string, *arguments):
+        return
+
     def do_GET(self):
         if self.path != "/":
             self._send(404, b"not found", "text/plain; charset=utf-8")

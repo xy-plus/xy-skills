@@ -155,10 +155,10 @@
       "title": "标准工作流程",
       "what": "纯调查只交答案，调查中产生的临时代码不并入产品；请求已含快速任务所需信息时直接做（不讨论、不写 spec、不审 spec），仍终审、跑全套测试并合入；其他规模走完整流程。",
       "why": {
-        "text": "步骤一个不少，结果才靠得住；小改动是把每一步做小，不是跳过。",
+        "text": "规模分档照 superpowers 原文（固定版本）：它的方案好用，直接调用、不自己另定判据；审查、全套测试和合入照走，结果才靠得住。",
         "source": "确认",
         "quote": "",
-        "from": "20261110 清扫决定页面第一页"
+        "from": "/data/user/xy/runs/-home-xy-xy-skills/20261114-011056-xy-skills-recheck-round/xy-goal/quotes/97.md（选择题回答：按照最新的superpower来定）"
       },
       "directory": "xy-workflow",
       "items": [
@@ -976,10 +976,10 @@
       "title": "会话任务交接",
       "what": "识别过大的任务，把适合独立验收的部分交给不同会话，需要时再拆；换会话继续只是其中一种用法。",
       "why": {
-        "text": "超级大的事情要能识别出来，可以拆成多个中等大小的任务。",
+        "text": "大事一个会话做不完、也难一次验收：拆给不同会话，才能并行推进、分别验收。",
         "source": "确认",
         "quote": "",
-        "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json L2"
+        "from": "/data/user/xy/runs/-home-xy-xy-skills/20261114-011056-xy-skills-recheck-round/xy-goal/quotes/100.md（选择题回答：改成说清解决什么问题）"
       },
       "directory": "xy-handoff",
       "items": [
@@ -2391,6 +2391,11 @@
                 {
                   "id": "complete-slow-response",
                   "text": "慢但一直在读的连接也能收完整页面，只断开完全没有进展的连接。",
+                  "status": "确认"
+                },
+                {
+                  "id": "unix-socket-requests",
+                  "text": "页面经 Unix 套接字挂载时，请求照常响应，不因客户端地址为空而出错。",
                   "status": "确认"
                 }
               ],
