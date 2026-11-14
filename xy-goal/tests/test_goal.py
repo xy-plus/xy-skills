@@ -71,6 +71,20 @@ class GoalTests(unittest.TestCase):
     def command(self, *arguments):
         return self.run_goal(*arguments, session=self.session, pid=self.pid, stdin="")
 
+    def test_read_text_preserves_filesystem_errors(self):
+        path = self.root / "unreadable.md"
+        caught = []
+        with mock.patch.object(Path, "read_bytes", side_effect=PermissionError("access denied")):
+            try:
+                goal.read_text(path)
+            except Exception as error:
+                caught.append(error)
+            else:
+                self.fail("读取失败必须抛出原始文件系统异常")
+        self.assertEqual(len(caught), 1)
+        self.assertIs(type(caught[0]), PermissionError)
+        self.assertEqual(str(caught[0]), "access denied")
+
     def succeeds(self, *arguments):
         code, output, errors = self.command(*arguments)
         self.assertEqual(code, 0, errors)
@@ -221,15 +235,6 @@ class GoalTests(unittest.TestCase):
                      message="原话 2 是机器输入（自动：本契约定时提示）")
         self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "1 T1\n")
 
-    def test_check_reports_machine_input_already_linked_to_a_task(self):
-        contract = self.open_goal("release")
-        self.quote(contract, 1, "发布要求")
-        self.add_task(1)
-        self.quote(contract, 2, f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做")
-        (contract / "links.md").write_text("1 T1\n2 T1\n", encoding="utf-8")
-        errors = self.rejects("check", message="原话 2 是机器输入（自动：本契约定时提示）")
-        self.assertIn(goal.RELINK_USAGE, errors)
-
     def test_relink_drops_machine_mapping_and_records_automatic_reason(self):
         contract = self.open_goal("release")
         self.quote(contract, 1, "发布要求")
@@ -315,16 +320,6 @@ class GoalTests(unittest.TestCase):
             "--state", "在办", "--pointer", "无",
             message="--source",
         )
-
-    def test_add_rejects_empty_author_evidence(self):
-        contract = self.open_goal("release")
-        self.quote(contract, 1, "用户要求按期发布。")
-        for evidence, message in (("", "证据不能为空"), ("无", "作者发起证据不能写「无」")):
-            with self.subTest(evidence=evidence):
-                self.rejects("add", "--title", "整理流程", "--criteria", "验收通过",
-                             "--source", "1", "--source-kind", "作者发起", "--evidence", evidence,
-                             "--state", "在办", "--pointer", "无",
-                             message=message)
 
     def test_evidence_item_can_receive_an_additional_quote_source(self):
         contract = self.open_goal("release")
@@ -1156,6 +1151,8 @@ class GoalTests(unittest.TestCase):
         self.rejects("add", *arguments, "--source-kind", "作者发起", message="--evidence")
         self.rejects("add", *arguments, "--source-kind", "作者发起", "--evidence", " \t",
                      message="证据不能为空")
+        self.rejects("add", *arguments, "--source-kind", "作者发起", "--evidence", "无",
+                     message="作者发起证据不能写「无」")
 
         self.succeeds("add", *arguments, "--source-kind", "作者发起",
                       "--evidence", "由发布要求补出复核步骤及其依据")

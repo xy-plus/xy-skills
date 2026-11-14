@@ -13,10 +13,8 @@ import sys
 import tempfile
 
 
-ITEM_LIMIT = 300
-TOTAL_LIMIT = 5000
+ITEM_LIMIT, TOTAL_LIMIT = 300, 5000
 TASK_FIELDS = {"标题": "title", "判据": "criteria", "状态": "state", "指针": "pointer"}
-GOAL_FIELDS = ("target", "session_id", "claude_pid")
 HOOK_COMMANDS = ("hook-prompt", "hook-answer")
 RELINK_USAGE = "；用 relink [<事项> --source <编号>…] 修复，编号看 quotes/"
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
@@ -53,16 +51,9 @@ def require_state(value):
         raise GoalError("状态只认「在办」或「等用户：待定的事」")
 
 
-def read_bytes(path):
-    try:
-        return path.read_bytes()
-    except OSError as error:
-        raise GoalError(f"{path}: 无法读取：{error}") from error
-
-
 def read_text(path):
     try:
-        return read_bytes(path).decode("utf-8")
+        return path.read_bytes().decode("utf-8")
     except UnicodeError as error:
         raise GoalError(f"{path}: 无法读取：{error}") from error
 
@@ -203,7 +194,7 @@ def parse_links(text, quotes, tasks):
 class Contract:
     def __init__(self, path, goal_content):
         self.path = path
-        self.metadata = parse_fields(path / "goal.md", GOAL_FIELDS, goal_content)
+        self.metadata = parse_fields(path / "goal.md", ("target", "session_id", "claude_pid"), goal_content)
         if re.fullmatch(r"[1-9][0-9]*", self.metadata["claude_pid"]) is None:
             raise GoalError(f"{path / 'goal.md'}: claude_pid 必须是正整数")
         self.quotes = quote_files(path / "quotes")
@@ -245,7 +236,7 @@ class Contract:
         for path in (self.path / directory).iterdir():
             if not path.is_file() or re.fullmatch(r"T[1-9][0-9]*\.md", path.name) is None:
                 raise GoalError(f"{path}: 事项文件名必须是 T 加正整数.md")
-            content = read_bytes(path)
+            content = path.read_bytes()
             fields = list(TASK_FIELDS.values())
             if b"\nevidence: " in content:
                 fields.append("evidence")
@@ -577,7 +568,7 @@ def publish_contract(root, destination, metadata, quotes, links, input_paths):
             (staging / "quotes" / f"{number}.md").write_bytes(text.encode("utf-8"))
         (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
         (staging / "links.md").write_text(links, encoding="utf-8")
-        Contract(staging, read_bytes(staging / "goal.md"))
+        Contract(staging, (staging / "goal.md").read_bytes())
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
         with consume_inputs(input_paths):
             staging.parent.rename(item)
@@ -773,7 +764,7 @@ def execute(options, *, root, session_id, claude_pid, now):
             if len(parts) != 3 or not parts[0].startswith("-") or parts[2] != "xy-goal":
                 raise GoalError(f"契约目录必须是 <根>/<以 - 开头的项目目录>/<一件事>/xy-goal：{path}")
             require_project_directory(root, path.parents[1])
-            content = goal_content if path == matched_path else read_bytes(path / "goal.md")
+            content = goal_content if path == matched_path else (path / "goal.md").read_bytes()
             contract = Contract(path, content)
             if contract.metadata["session_id"] == session_id:
                 # --resume 沿用会话 id。同会话只刷新 PID，不领取或改动其他内容。
