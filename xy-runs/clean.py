@@ -15,9 +15,7 @@ import time
 import uuid
 
 
-RETENTION_SECONDS = 30 * 24 * 60 * 60
 TRASH_NAME = ".runs-cleaner-trash"
-PREVIEW_MARKER_NAME = ".runs-cleaner-previewed"
 DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
@@ -149,6 +147,8 @@ def clean_roots(patterns, mode, cutoff, output, errors):
             trash = outer / TRASH_NAME
             try:
                 with checked_directory(outer, roots[outer]) as outer_descriptor, ExitStack() as handles:
+                    # The shared lock keeps active removals distinct from crash leftovers.
+                    fcntl.flock(outer_descriptor, fcntl.LOCK_EX)
                     try:
                         trash_descriptor = os.open(TRASH_NAME, DIRECTORY_OPEN_FLAGS,
                                                    dir_fd=outer_descriptor)
@@ -174,7 +174,7 @@ def clean_roots(patterns, mode, cutoff, output, errors):
             with checked_directory(root, roots[root]) as root_descriptor:
                 for name in sorted(os.listdir(root_descriptor)):
                     item = root / name
-                    if name in (TRASH_NAME, PREVIEW_MARKER_NAME):
+                    if name in (TRASH_NAME, ".runs-cleaner-previewed"):
                         continue
                     if not is_expired(Path(f"/proc/self/fd/{root_descriptor}") / name, cutoff):
                         continue
@@ -183,8 +183,7 @@ def clean_roots(patterns, mode, cutoff, output, errors):
                             print(json.dumps(str(item), ensure_ascii=True), file=output)
                         continue
                     try:
-                        # Keep the trash handle alive until recursive removal has
-                        # finished outside the lock. No parent path is re-resolved.
+                        # Keep the outer-root lock and trash handle until recursive removal finishes.
                         with ExitStack() as handles:
                             # Writers and cleaners flock the root directory itself, never a lock file.
                             with checked_directory(outer, roots[outer]) as outer_descriptor:
@@ -205,8 +204,8 @@ def clean_roots(patterns, mode, cutoff, output, errors):
                                         destination = destination.parent / uuid.uuid4().hex
                                     os.rename(name, destination.name, src_dir_fd=checked_descriptor,
                                               dst_dir_fd=trash_descriptor)
-                            remove_item(destination)
-                            print(json.dumps(str(item), ensure_ascii=True), file=output)
+                                remove_item(destination)
+                                print(json.dumps(str(item), ensure_ascii=True), file=output)
                     except OSError as error:
                         print(f"error: {item}: {error}", file=errors)
                         status = 1
@@ -223,7 +222,7 @@ def main(arguments):
     parser.add_argument("roots", nargs="+", help="root directories or quoted globs")
     options = parser.parse_args(arguments)
     return clean_roots(options.roots, options.mode,
-                       time.time() - RETENTION_SECONDS, sys.stdout, sys.stderr)
+                       time.time() - 30 * 24 * 60 * 60, sys.stdout, sys.stderr)
 
 
 if __name__ == "__main__":

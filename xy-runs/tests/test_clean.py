@@ -7,6 +7,7 @@ import select
 import shutil
 import subprocess
 import sys
+import threading
 import tempfile
 import time
 from types import SimpleNamespace
@@ -64,46 +65,6 @@ sys.stdin.read(1)
 """
 
 
-class CommandLineTests(unittest.TestCase):
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
-
-    def command(self, *arguments):
-        return subprocess.run(
-            [sys.executable, str(SCRIPT), *arguments],
-            text=True, capture_output=True, check=False,
-        )
-
-    # Omitting --mode must not silently select a destructive mode.
-    def test_mode_is_required(self):
-        result = self.command(str(self.root))
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("--mode", result.stderr)
-
-    # An explicit list of a fresh root succeeds without changing its contents.
-    def test_list_keeps_fresh_items(self):
-        item = self.root / "fresh"
-        item.write_text("keep")
-        result = self.command("--mode", "list", str(self.root))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "")
-        self.assertEqual(item.read_text(), "keep")
-
-    # A missing root argument must not select an implicit cleanup location.
-    def test_root_is_required(self):
-        result = self.command("--mode", "list")
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("roots", result.stderr)
-
-    # Retention is not user configurable through a second CLI policy.
-    def test_days_argument_is_rejected(self):
-        result = self.command("--mode", "list", "--days", "1", str(self.root))
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("--days", result.stderr)
-
-
 class CleanerTestCase(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -111,6 +72,32 @@ class CleanerTestCase(unittest.TestCase):
         self.root = Path(self.temporary.name) / "root"
         self.root.mkdir()
         self.cutoff = time.time() + 60
+
+    def command(self, *arguments):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *arguments],
+            text=True, capture_output=True, check=False,
+        )
+
+    def test_command_line_arguments(self):
+        cases = (
+            ("mode required", (str(self.root),), 2, "--mode", False),
+            ("fresh list", ("--mode", "list", str(self.root)), 0, "", True),
+            ("root required", ("--mode", "list"), 2, "roots", False),
+            ("days rejected", ("--mode", "list", "--days", "1", str(self.root)), 2, "--days", False),
+        )
+        for name, arguments, expected_status, message, has_fresh_item in cases:
+            with self.subTest(name=name):
+                if has_fresh_item:
+                    fresh = self.root / "fresh"
+                    fresh.write_text("keep")
+                result = self.command(*arguments)
+                self.assertEqual(result.returncode, expected_status, result.stderr)
+                if message:
+                    self.assertIn(message, result.stderr)
+                else:
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(fresh.read_text(), "keep")
 
     def run_cleaner(self, roots, mode, cutoff):
         output, errors = io.StringIO(), io.StringIO()
@@ -145,9 +132,8 @@ class CleanerTestCase(unittest.TestCase):
                 str(self.root / "-*" / "xy-goal-inbox")]
 
 
-class ListingTests(CleanerTestCase):
-    # Omitting recursive age checks would list a partially fresh item.
-    def test_lists_whole_expired_item_but_keeps_deep_new_file(self):
+    # All expiry boundaries are decided from the item's full timestamp tree.
+    def test_age_matrix(self):
         expired = self.root / "expired"
         (expired / "nested").mkdir(parents=True)
         (expired / "nested" / "old.txt").write_text("old")
@@ -155,56 +141,51 @@ class ListingTests(CleanerTestCase):
         (fresh / "nested").mkdir(parents=True)
         new_file = fresh / "nested" / "new.txt"
         new_file.write_text("new")
-        os.utime(new_file, (self.cutoff + 1, self.cutoff + 1))
-        status, paths, errors = self.run_cleaner(
-            [str(self.root)], "list", self.cutoff
-        )
-        self.assertEqual(paths, [str(expired)])
-        self.assertEqual(status, 0)
-        self.assertEqual(errors, "")
-        self.assertTrue((expired / "nested" / "old.txt").exists())
-
-    # A fresh ctime must keep an old file that just arrived by rename.
-    def test_newly_moved_old_file_is_kept_by_ctime(self):
-        expired = self.root / "expired"
-        expired.write_text("old")
         source = Path(self.temporary.name) / "source"
         source.write_text("old contents")
         old = time.time() - 1000
         os.utime(source, (old, old))
+        boundary = self.root / "boundary"
+        boundary.touch()
         cutoff = time.time()
         time.sleep(0.02)
         moved = self.root / "moved"
         source.rename(moved)
-        status, paths, errors = self.run_cleaner(
-            [str(self.root)], "list", cutoff
-        )
+        os.utime(new_file, (cutoff + 1, cutoff + 1))
+        os.utime(boundary, (cutoff, cutoff))
+        status, paths, errors = self.run_cleaner([str(self.root)], "list", cutoff)
         self.assertEqual(paths, [str(expired)])
+        self.assertTrue((expired / "nested" / "old.txt").exists())
+        self.assertTrue(new_file.exists())
         self.assertTrue(moved.exists())
+        self.assertTrue(boundary.exists())
         self.assertEqual((status, errors), (0, ""))
-
-    # Equality is not "earlier than" the cutoff.
-    def test_mtime_at_cutoff_is_not_expired(self):
-        expired = self.root / "expired"
-        expired.touch()
-        boundary = self.root / "boundary"
-        boundary.touch()
-        os.utime(boundary, (self.cutoff, self.cutoff))
-        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
-        self.assertEqual(paths, [str(expired)])
 
     # Symlink targets, even fresh directories, are not part of an item's age.
     def test_symlink_is_judged_without_following_target(self):
         target = Path(self.temporary.name) / "target"
         target.mkdir()
+        data = target / "data"
+        data.write_text("keep")
         os.utime(target, (self.cutoff + 1, self.cutoff + 1))
         link = self.root / "link"
         link.symlink_to(target, target_is_directory=True)
         dangling = self.root / "dangling"
         dangling.symlink_to(target / "missing")
+        expired = self.root / "expired"
+        (expired / "nested").mkdir(parents=True)
+        (expired / "nested" / "data").touch()
+        candidates = [str(dangling), str(expired), str(link)]
         _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
-        self.assertEqual(paths, [str(dangling), str(link)])
+        self.assertEqual(paths, candidates)
         self.assertTrue(link.is_symlink())
+        status, paths, errors = self.run_cleaner([str(self.root)], "delete", self.cutoff)
+        self.assertEqual(paths, candidates)
+        self.assertFalse(expired.exists())
+        self.assertFalse(dangling.is_symlink())
+        self.assertFalse(link.is_symlink())
+        self.assertEqual(data.read_text(), "keep")
+        self.assertEqual((status, errors), (0, ""))
 
     # The reserved trash directory must never be emitted as a cleanup unit.
     def test_list_preserves_metadata_without_listing_or_clearing_it(self):
@@ -227,29 +208,27 @@ class ListingTests(CleanerTestCase):
                 _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
                 self.assertEqual(paths, [str(expired)])
                 self.assertTrue(preserved.exists())
+                if metadata == "preview marker":
+                    status, paths, errors = self.run_cleaner([str(self.root)], "delete", self.cutoff)
+                    self.assertTrue(preserved.exists())
+                    self.assertNotIn(str(preserved), paths)
+                    self.assertEqual((status, errors), (0, ""))
 
-    # Quoting globs in the shell must still expand to all matching roots.
-    def test_script_expands_root_globs(self):
+    # Root globs expand, and a missing root does not block existing matches.
+    def test_root_globs_and_missing_roots(self):
         first = self.root / "-first"
         second = self.root / "-second"
         first.mkdir()
         second.mkdir()
-        (first / "one").touch()
-        (second / "two").touch()
-        _, paths, _ = self.run_cleaner(
-            [str(self.root / "-*")], "list", self.cutoff
-        )
-        self.assertEqual(paths, [str(first / "one"), str(second / "two")])
-
-    # One missing root must not prevent processing another root.
-    def test_missing_root_warns_and_continues(self):
-        expired = self.root / "expired"
-        expired.touch()
+        one = first / "one"
+        two = second / "two"
+        one.touch()
+        two.touch()
         missing = Path(self.temporary.name) / "missing"
         status, paths, errors = self.run_cleaner(
-            [str(missing), str(self.root)], "list", self.cutoff
+            [str(self.root / "-*"), str(missing)], "list", self.cutoff
         )
-        self.assertEqual(paths, [str(expired)])
+        self.assertEqual(paths, [str(first / "one"), str(second / "two")])
         self.assertIn(str(missing), errors)
         self.assertEqual(status, 0)
 
@@ -273,96 +252,46 @@ class ListingTests(CleanerTestCase):
         self.assertEqual((status, errors.getvalue()), (0, ""))
 
 
-class DeletionTests(CleanerTestCase):
-    # Deleting just descendants would leave half of the expired unit behind.
-    def test_delete_removes_an_entire_expired_item(self):
-        item = self.root / "expired"
-        (item / "nested").mkdir(parents=True)
-        (item / "nested" / "data").write_text("old")
-        status, paths, errors = self.run_cleaner(
-            [str(self.root)], "delete", self.cutoff
-        )
-        self.assertFalse(item.exists())
-        self.assertEqual(paths, [str(item)])
-        self.assertEqual((status, errors), (0, ""))
-
-    # Removing a directory symlink must leave its target untouched.
-    def test_delete_unlinks_symlink_and_preserves_target(self):
-        target = Path(self.temporary.name) / "target"
-        target.mkdir()
-        data = target / "data"
-        data.write_text("keep")
-        link = self.root / "link"
-        link.symlink_to(target, target_is_directory=True)
-        self.run_cleaner([str(self.root)], "delete", self.cutoff)
-        self.assertFalse(link.is_symlink())
-        self.assertEqual(data.read_text(), "keep")
-
-    # Deletion must preserve the root-scoped first-run preview gate.
-    def test_delete_keeps_preview_marker(self):
-        marker = self.root / ".runs-cleaner-previewed"
-        marker.touch()
-        status, paths, errors = self.run_cleaner(
-            [str(self.root)], "delete", self.cutoff
-        )
-        self.assertTrue(marker.exists())
-        self.assertNotIn(str(marker), paths)
-        self.assertEqual((status, errors), (0, ""))
-
-    # A per-item rename failure must be reported while a later item is deleted.
-    def test_item_error_reports_and_continues(self):
-        first, second = self.root / "first", self.root / "second"
-        first.touch()
-        second.touch()
+    # Rename errors, interrupted trash removal, and later success stay ordered.
+    def test_rename_and_removal_errors_report_and_continue(self):
+        rename_error = self.root / "01-rename-error"
+        partial_remove = self.root / "02-partial-remove"
+        later = self.root / "03-later"
+        for item in (rename_error, partial_remove, later):
+            item.mkdir()
+            (item / "data").write_text(item.name)
         real_rename = os.rename
+        real_remove = clean.remove_item
 
-        def fail_first(source, destination, *, src_dir_fd, dst_dir_fd):
-            if descriptor_directory(src_dir_fd) / source == first:
+        def fail_rename(source, destination, *, src_dir_fd, dst_dir_fd):
+            if descriptor_directory(src_dir_fd) / source == rename_error:
                 raise PermissionError("test rename denied")
             return real_rename(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
-        with mock.patch("clean.os.rename", side_effect=fail_first):
-            status, paths, errors = self.run_cleaner(
-                [str(self.root)], "delete", self.cutoff
-            )
-        self.assertFalse(second.exists())
-        self.assertTrue(first.exists())
-        self.assertEqual(paths, [str(second)])
-        self.assertNotEqual(status, 0)
-        self.assertIn(str(first), errors)
-        self.assertIn("test rename denied", errors)
-
-    # Even a generated-name collision must not overwrite a previous moved unit.
-    def test_trash_name_collision_preserves_both_items(self):
-        first, second = self.root / "first", self.root / "second"
-        first.mkdir()
-        second.mkdir()
-        (first / "data").write_text("first")
-        (second / "data").write_text("second")
-        real_remove = clean.remove_item
-
-        def interrupt_first(path):
+        def interrupt_partial_remove(path):
             if path.name == "occupied":
-                raise PermissionError("test interrupted first removal")
-            real_remove(path)
+                raise PermissionError("test interrupted removal")
+            return real_remove(path)
 
         names = [SimpleNamespace(hex="occupied"), SimpleNamespace(hex="occupied"),
                  SimpleNamespace(hex="available")]
         with mock.patch("clean.uuid.uuid4", side_effect=names), \
-                mock.patch("clean.remove_item", side_effect=interrupt_first):
-            status, paths, errors = self.run_cleaner(
-                [str(self.root)], "delete", self.cutoff
-            )
-        self.assertFalse(second.exists())
-        self.assertFalse(first.exists())
+                mock.patch("clean.remove_item", side_effect=interrupt_partial_remove), \
+                mock.patch("clean.os.rename", side_effect=fail_rename):
+            status, paths, errors = self.run_cleaner([str(self.root)], "delete", self.cutoff)
+
+        self.assertTrue(rename_error.exists())
+        self.assertFalse(partial_remove.exists())
         self.assertEqual((self.root / ".runs-cleaner-trash" / "occupied" / "data").read_text(),
-                         "first")
-        self.assertEqual(paths, [str(second)])
+                         partial_remove.name)
+        self.assertFalse(later.exists())
+        self.assertEqual(paths, [str(later)])
         self.assertNotEqual(status, 0)
-        self.assertIn("test interrupted first removal", errors)
+        self.assertIn(str(rename_error), errors)
+        self.assertIn("test rename denied", errors)
+        self.assertIn("test interrupted removal", errors)
 
 
-class ProcessTests(CleanerTestCase):
     def make_item(self, name):
         item = self.root / name
         item.mkdir()
@@ -371,72 +300,52 @@ class ProcessTests(CleanerTestCase):
 
     # Each /proc reference must protect an item, without argv mentioning it.
     def test_cwd_open_files_directory_handles_and_mappings_keep_items(self):
-        for action in ("cwd", "file", "directory", "mapping", "executable"):
-            with self.subTest(action=action):
-                item = self.make_item(action)
+        cases = [(action, action) for action in ("cwd", "file", "directory", "mapping", "executable")]
+        cases.extend((action, f"kept-{action} (deleted)") for action in ("cwd", "directory"))
+        for action, name in cases:
+            with self.subTest(action=action, name=name):
+                item = self.make_item(name)
                 if action == "executable":
                     shutil.copy2(sys.executable, item / "python")
                 process = self.start_process(item, action, [])
-                self.run_cleaner([str(self.root)], "delete", self.cutoff)
-                self.assertTrue(item.exists(), action)
-                self.stop_process(process)
-
-    # A real name ending in " (deleted)" must still count as in use.
-    def test_name_ending_with_deleted_marker_keeps_item(self):
-        for action in ("cwd", "directory"):
-            with self.subTest(action=action):
-                item = self.make_item(f"kept-{action} (deleted)")
-                process = self.start_process(item, action, [])
-                self.run_cleaner([str(self.root)], "delete", self.cutoff)
-                self.assertTrue(item.exists(), action)
-                self.stop_process(process)
-
-    # The real argv match must accept descendants, equals options and whitespace.
-    def test_complete_command_paths_keep_items(self):
-        for suffix in ("", "/data", " extra"):
-            with self.subTest(suffix=suffix):
-                item = self.make_item("command")
-                process = self.start_process(item, "idle", [f"--output={item}{suffix}"])
-                self.run_cleaner([str(self.root)], "delete", self.cutoff)
-                self.assertTrue(item.exists())
+                _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
+                self.assertEqual(paths, [], name)
+                status, paths, errors = self.run_cleaner(
+                    [str(self.root)], "delete", self.cutoff
+                )
+                self.assertTrue(item.exists(), name)
+                self.assertEqual((status, paths, errors), (0, [], ""))
                 self.stop_process(process)
                 shutil.rmtree(item)
 
-    # Neither a prefix sibling nor a path embedded in another absolute path is a match.
-    def test_incomplete_command_path_matches_do_not_keep_item(self):
-        for prefix, suffix in (("", "-other"), ("/elsewhere", "")):
+    # Command-line paths match complete roots, never prefixes or suffix siblings.
+    def test_command_paths_match_only_complete_roots(self):
+        cases = (("", "", True), ("", "/data", True), ("", " extra", True),
+                 ("", "-other", False), ("/elsewhere", "", False))
+        for prefix, suffix, kept in cases:
             with self.subTest(prefix=prefix, suffix=suffix):
                 item = self.make_item("command")
-                self.start_process(item, "idle", [prefix + str(item) + suffix])
+                path = prefix + str(item) + suffix
+                process = self.start_process(item, "idle", [f"--output={path}"])
                 self.run_cleaner([str(self.root)], "delete", self.cutoff)
-                self.assertFalse(item.exists())
+                self.assertEqual(item.exists(), kept)
+                self.stop_process(process)
+                if kept:
+                    shutil.rmtree(item)
 
-    # A non-dumpable process still exposes its own user's command line.
-    def test_hidden_process_with_command_path_keeps_item(self):
-        item = self.make_item("hidden")
-        self.start_process(item, "hidden-cwd", [str(item)])
-        self.run_cleaner([str(self.root)], "delete", self.cutoff)
-        self.assertTrue(item.exists())
-
-    # Hidden references without a command path are the explicitly accepted blind spot.
-    def test_hidden_process_without_command_path_does_not_block_delete(self):
-        item = self.make_item("hidden")
-        process = self.start_process(item, "hidden-cwd", [])
-        with self.assertRaises(PermissionError):
-            os.readlink(f"/proc/{process.pid}/cwd")
-        self.run_cleaner([str(self.root)], "delete", self.cutoff)
-        self.assertFalse(item.exists())
-
-    # The candidate list omits items in use by this user's processes.
-    def test_list_keeps_in_use_item(self):
-        item = self.make_item("busy")
-        self.start_process(item, "file", [])
-        _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
-        self.assertEqual(paths, [])
-        self.assertTrue(item.exists())
+    # A hidden process is kept only when its readable command names the item.
+    def test_hidden_process_with_and_without_command_path(self):
+        for name, arguments, kept in (("with-path", True, True), ("without-path", False, False)):
+            with self.subTest(name=name):
+                item = self.make_item(name)
+                process = self.start_process(item, "hidden-cwd", [str(item)] if arguments else [])
+                with self.assertRaises(PermissionError):
+                    os.readlink(f"/proc/{process.pid}/cwd")
+                self.run_cleaner([str(self.root)], "delete", self.cutoff)
+                self.assertEqual(item.exists(), kept)
+                self.stop_process(process)
 
 
-class NestedRootTests(CleanerTestCase):
     def keep_fresh(self, directory):
         file = directory / "fresh"
         file.touch()
@@ -477,7 +386,8 @@ class NestedRootTests(CleanerTestCase):
         def verify_remove(path):
             descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             finally:
                 os.close(descriptor)
             real_remove(path)
@@ -523,6 +433,52 @@ class NestedRootTests(CleanerTestCase):
         self.assertEqual(paths, [])
         self.assertEqual((status, errors), (0, ""))
 
+    def test_overlapping_cleaners_do_not_recover_an_active_removal(self):
+        item = self.root / "matter"
+        item.mkdir()
+        (item / "data").touch()
+        first_started = threading.Event()
+        second_finished = threading.Event()
+        release_first = threading.Event()
+        calls = []
+        calls_lock = threading.Lock()
+        results = [[], []]
+        remove = clean.remove_item
+
+        def pause_first_removal(path):
+            with calls_lock:
+                calls.append(path)
+                number = len(calls)
+            if number == 1:
+                first_started.set()
+                if not release_first.wait(5):
+                    raise TimeoutError("first cleaner was not released")
+            return remove(path)
+
+        def run(index, finished=None):
+            results[index].append(self.run_cleaner([str(self.root)], "delete", self.cutoff))
+            if finished:
+                finished.set()
+
+        with mock.patch("clean.remove_item", side_effect=pause_first_removal):
+            first = threading.Thread(target=run, args=(0,))
+            first.start()
+            self.assertTrue(first_started.wait(5), "first cleaner did not reach removal")
+            second = threading.Thread(target=run, args=(1, second_finished))
+            second.start()
+            second_finished_early = second_finished.wait(0.5)
+            release_first.set()
+            first.join(timeout=5)
+            second.join(timeout=5)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertFalse(second_finished_early, "second cleaner must wait for active removal")
+        self.assertEqual(len(calls), 1, calls)
+        self.assertEqual(results[0][0][0], 0)
+        self.assertEqual(results[1][0][0], 0)
+        self.assertFalse(item.exists())
+
     # A legacy flat item is an indivisible unit, not a second-level root.
     def test_legacy_flat_item_is_not_split_by_project_glob(self):
         flat = self.root / "legacy"
@@ -541,7 +497,6 @@ class NestedRootTests(CleanerTestCase):
         self.assertEqual(status, 0)
 
 
-class LockAndBoundaryTests(CleanerTestCase):
     def replacement_fixture(self):
         project = self.root / "-project"
         project.mkdir()
@@ -798,7 +753,6 @@ os.close(handle)
         self.assertIn(".runs-cleaner-trash", errors)
 
 
-class ProcessBoundaryTests(CleanerTestCase):
     def process_fixture(self, uid):
         process = Path(self.temporary.name) / "proc" / "123"
         process.mkdir(parents=True)

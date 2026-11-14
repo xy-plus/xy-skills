@@ -66,38 +66,26 @@ class ServiceTests(unittest.TestCase):
                     str(runs), str(runs / "-*"), str(runs / "-*" / "xy-goal-inbox"),
                 ])
 
-    # A marker under another root does not authorize deletion in the configured root.
-    def test_preview_marker_must_belong_to_current_runs_root(self):
-        previous_runs = self.home / "previous runs"
-        previous_runs.mkdir()
-        (previous_runs / ".runs-cleaner-previewed").touch()
-        runs = self.home / "runs"
-        runs.mkdir()
-        self.settings.write_text(json.dumps({"env": {"RUNS_ROOT": str(runs)}}))
-        result = self.launch()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "")
-        self.assertIn(".runs-cleaner-previewed", result.stderr)
-        self.assertIn(f"RUNS_ROOT preview marker is missing: {runs / '.runs-cleaner-previewed'}",
-                      result.stderr)
-        self.assertNotIn("Traceback", result.stderr)
-
-    def test_preview_marker_must_be_a_regular_file_not_a_symlink(self):
+    # Only a regular preview marker under the configured root authorizes deletion.
+    def test_preview_marker_must_be_current_and_regular(self):
         previous_runs = self.home / "previous runs"
         previous_runs.mkdir()
         previous_marker = previous_runs / ".runs-cleaner-previewed"
         previous_marker.touch()
-        runs = self.home / "runs"
-        runs.mkdir()
-        marker = runs / ".runs-cleaner-previewed"
-        marker.symlink_to(previous_marker)
-        self.settings.write_text(json.dumps({"env": {"RUNS_ROOT": str(runs)}}))
-        result = self.launch()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "")
-        self.assertIn(".runs-cleaner-previewed", result.stderr)
-        self.assertIn(f"RUNS_ROOT preview marker is missing: {marker}", result.stderr)
-        self.assertNotIn("Traceback", result.stderr)
+        for name, symlink in (("missing", False), ("symlink", True)):
+            with self.subTest(name=name):
+                runs = self.home / name
+                runs.mkdir()
+                marker = runs / ".runs-cleaner-previewed"
+                if symlink:
+                    marker.symlink_to(previous_marker)
+                self.settings.write_text(json.dumps({"env": {"RUNS_ROOT": str(runs)}}))
+                result = self.launch()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(".runs-cleaner-previewed", result.stderr)
+                self.assertIn(f"RUNS_ROOT preview marker is missing: {marker}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
 
     # An unset setting must not fall back to the shell's RUNS_ROOT or home directory.
     # Missing, empty, and relative roots must fail before the cleaner starts.
