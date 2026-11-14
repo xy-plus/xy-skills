@@ -74,16 +74,10 @@ def other_ranges_for_keep(keep_range, duplicate_windows):
 
 def _merge_ranges(locations):
     merged = []
-    for path in sorted({location[0] for location in locations}):
-        ranges = sorted(
-            (start, end)
-            for location_path, start, end in locations
-            if location_path == path
-        )
-        for start, end in ranges:
-            if merged and merged[-1][0] == path and start <= merged[-1][2] + 1:
-                previous_path, previous_start, previous_end = merged[-1]
-                merged[-1] = (previous_path, previous_start, max(previous_end, end))
-            else:
-                merged.append((path, start, end))
+    for path, start, end in sorted(locations):
+        if merged and merged[-1][0] == path and start <= merged[-1][2] + 1:
+            previous_path, previous_start, previous_end = merged[-1]
+            merged[-1] = (previous_path, previous_start, max(previous_end, end))
+        else:
+            merged.append((path, start, end))
     return merged

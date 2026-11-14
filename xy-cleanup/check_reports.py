@@ -722,12 +722,8 @@ def _python_definition_lines(path, file_lines):
 
 
 def _strip_markdown_container_prefixes(text):
-    remaining = text
+    _quotes, remaining = _strip_markdown_quote_prefixes(text)
     while True:
-        quote = re.match(r"^ {0,3}>[ \t]?", remaining)
-        if quote is not None:
-            remaining = remaining[quote.end():]
-            continue
         list_item = re.match(
             r"^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)", remaining,
         )

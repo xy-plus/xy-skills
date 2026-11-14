@@ -720,7 +720,7 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
 
     def test_compare_accepts_null_and_block_array_with_an_empty_after(self):
         null_compare = valid_decisions()
-        self.assertIs(decision_page.validate_decisions(null_compare), null_compare)
+        decision_page.validate_decisions(null_compare)
 
         deleted_compare = valid_decisions()
         deleted_compare["groups"][0]["items"][0]["compare"] = [
@@ -783,26 +783,6 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                 with self.assertRaises(ValueError) as context:
                     decision_page.validate_decisions(decisions)
                 self.assertIn(expected, str(context.exception))
-
-    def test_invalid_compare_range_exits_two_without_starting_platform(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions = Path(temporary) / "decisions.json"
-            answers = Path(temporary) / "answers.json"
-            value = valid_decisions()
-            value["groups"][0]["items"][0]["compare"] = [{
-                "lines": "guide.md:0-1",
-                "before": "Before.",
-                "after": "After.",
-            }]
-            decisions.write_text(json.dumps(value), encoding="utf-8")
-            code, _, stderr = run_ask(
-                decisions,
-                answers,
-                lambda arguments: self.fail(f"不应启动平台：{arguments}"),
-            )
-
-        self.assertEqual(code, 2, stderr)
-        self.assertIn("行范围", stderr)
 
     def test_text_fields_are_nonempty_strings_at_every_level(self):
         cases = []

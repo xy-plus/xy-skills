@@ -313,9 +313,6 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
         self.request.settimeout(IDLE_TIMEOUT_SECONDS)
         super().setup()
 
-    def log_message(self, format_string, *arguments):
-        return
-
     def do_GET(self):
         if urlsplit(self.path).path != "/":
             self._send_json(404, {"error": "找不到页面"})

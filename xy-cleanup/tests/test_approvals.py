@@ -59,22 +59,6 @@ class ApprovalPlanTest(unittest.TestCase):
             check=True,
         )
 
-    def link_repo_map_to_external_directory(self):
-        repo_map_path = self.repository / "repo-map"
-        external_directory = self.repository.parent / "outside-repo-map"
-        external_directory.mkdir()
-        (external_directory / "features.json").write_bytes(
-            (repo_map_path / "features.json").read_bytes()
-        )
-        (external_directory / "skip.json").write_bytes(
-            (repo_map_path / "skip.json").read_bytes()
-        )
-        (repo_map_path / "features.json").unlink()
-        (repo_map_path / "skip.json").unlink()
-        repo_map_path.rmdir()
-        repo_map_path.symlink_to(external_directory, target_is_directory=True)
-        return external_directory
-
     def test_plan_does_not_fingerprint_files_outside_its_scope(self):
         data = build_map(self, self.repository)
         values, _ = approvals.feature_values(self.repository)
@@ -170,7 +154,16 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.stderr, "")
 
     def test_record_rejects_repo_map_directory_symlink_without_creating_files(self):
-        external_directory = self.link_repo_map_to_external_directory()
+        repo_map_path = self.repository / "repo-map"
+        external_directory = self.repository.parent / "outside-repo-map"
+        external_directory.mkdir()
+        for filename in ("features.json", "skip.json"):
+            (external_directory / filename).write_bytes(
+                (repo_map_path / filename).read_bytes()
+            )
+            (repo_map_path / filename).unlink()
+        repo_map_path.rmdir()
+        repo_map_path.symlink_to(external_directory, target_is_directory=True)
 
         result = self.record()
 
