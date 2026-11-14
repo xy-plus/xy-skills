@@ -2279,6 +2279,11 @@
                   "id": "document-rewrite-coverage",
                   "text": "未跳过的直属文档改写须按顺序完整覆盖所有非空行、保留原有代码片段；缩短后须对整份文档提出对应提议。",
                   "status": "确认"
+                },
+                {
+                  "id": "rewrite-table-structure",
+                  "text": "文档改写不丢表格：每块的表格行数、各行列数和首格与原文一致。",
+                  "status": "确认"
                 }
               ],
               "entries": [

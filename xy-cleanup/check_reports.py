@@ -121,6 +121,153 @@ def _paired_delimiter_fragments(text, marker, minimum_length):
     return fragments
 
 
+def _markdown_cells(line):
+    line = line.strip()
+    cells = []
+    separators = []
+    start = 0
+    for index, character in enumerate(line):
+        if character != "|":
+            continue
+        backslashes = 0
+        previous = index - 1
+        while previous >= 0 and line[previous] == "\\":
+            backslashes += 1
+            previous -= 1
+        # An odd backslash run escapes this bar, so it stays in its cell.
+        if backslashes % 2:
+            continue
+        separators.append(index)
+        cells.append(line[start:index])
+        start = index + 1
+    if not separators:
+        return None
+    cells.append(line[start:])
+    if separators[0] == 0:
+        cells.pop(0)
+    if separators[-1] == len(line) - 1 and separators[-1] != separators[0]:
+        cells.pop()
+    return [cell.strip() for cell in cells]
+
+
+def _markdown_tables(text):
+    lines = text.splitlines()
+    code_lines = [False] * len(lines)
+    fence_character = None
+    fence_length = 0
+    for index, line in enumerate(lines):
+        if fence_character is not None:
+            code_lines[index] = True
+            closing = re.match(r"^ {0,3}(`+|~+)[ \t]*$", line)
+            if (closing is not None and closing.group(1)[0] == fence_character
+                    and len(closing.group(1)) >= fence_length):
+                fence_character = None
+                fence_length = 0
+            continue
+        # Four-space indents are Markdown code; shorter leading whitespace is table indentation.
+        if line.startswith("    ") or line.startswith("\t"):
+            code_lines[index] = True
+            continue
+        opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if opening is not None:
+            code_lines[index] = True
+            fence_character = opening.group(1)[0]
+            fence_length = len(opening.group(1))
+
+    tables = []
+    index = 1
+    while index < len(lines):
+        if code_lines[index] or code_lines[index - 1]:
+            index += 1
+            continue
+        divider_cells = _markdown_cells(lines[index])
+        header_cells = _markdown_cells(lines[index - 1])
+        if (divider_cells is None or header_cells is None
+                or not all(re.fullmatch(r":?-+:?", cell) for cell in divider_cells)):
+            index += 1
+            continue
+
+        rows = [(index, header_cells), (index + 1, divider_cells)]
+        next_line = index + 1
+        while next_line < len(lines):
+            if code_lines[next_line] or not lines[next_line].strip():
+                break
+            cells = _markdown_cells(lines[next_line])
+            if cells is None:
+                break
+            rows.append((next_line + 1, cells))
+            next_line += 1
+        tables.append({"start": index, "end": next_line, "rows": rows})
+        index = next_line
+    return tables
+
+
+def _validate_rewrite_table_structure(path, original_text, blocks, label):
+    problems = []
+    original_rows_by_block = {index: [] for index in range(len(blocks))}
+    for table in _markdown_tables(original_text):
+        # Map original table rows by line so a table split between rewrite blocks is rejected.
+        row_blocks = [
+            next((index for index, (line_range, _block_label, _text) in enumerate(blocks)
+                  if line_range[1] <= line_number <= line_range[2]), None)
+            for line_number, _cells in table["rows"]
+        ]
+        block_indexes = set(row_blocks)
+        if len(block_indexes) > 1:
+            block_ranges = []
+            for block_index in row_blocks:
+                if block_index is None:
+                    description = "未覆盖"
+                else:
+                    _range, _block_label, _text = blocks[block_index]
+                    description = f"{path}:{_range[1]}-{_range[2]}"
+                if description not in block_ranges:
+                    block_ranges.append(description)
+            problems.append(
+                f"{label} 文件 {path} 的 Markdown 表格 {path}:{table['start']}-{table['end']} "
+                f"跨多个改写块：{', '.join(block_ranges)}"
+            )
+            continue
+        if None in block_indexes or not row_blocks:
+            continue
+        block_index = row_blocks[0]
+        if blocks[block_index][2] != "":
+            original_rows_by_block[block_index].extend(table["rows"])
+
+    for block_index, (line_range, _block_label, rewritten_text) in enumerate(blocks):
+        if rewritten_text == "":
+            continue
+        expected_rows = original_rows_by_block[block_index]
+        rewritten_rows = [
+            row for table in _markdown_tables(rewritten_text) for row in table["rows"]
+        ]
+        for row_index in range(max(len(expected_rows), len(rewritten_rows))):
+            if row_index >= len(expected_rows):
+                location = f"改写文本第 {rewritten_rows[row_index][0]} 行多出表格行"
+                difference = f"原文 {len(expected_rows)} 行、改写稿 {len(rewritten_rows)} 行"
+            elif row_index >= len(rewritten_rows):
+                location = f"原文第 {expected_rows[row_index][0]} 行在改写稿中缺失"
+                difference = f"原文 {len(expected_rows)} 行、改写稿 {len(rewritten_rows)} 行"
+            else:
+                original_line, original_cells = expected_rows[row_index]
+                rewritten_line, rewritten_cells = rewritten_rows[row_index]
+                if (len(original_cells) == len(rewritten_cells)
+                        and original_cells[0] == rewritten_cells[0]):
+                    continue
+                location = f"原文第 {original_line} 行、改写文本第 {rewritten_line} 行"
+                difference = (
+                    f"列数 {len(original_cells)}→{len(rewritten_cells)}，"
+                    f"首格 {original_cells[0]!r}→{rewritten_cells[0]!r}"
+                )
+            block_path, block_start, block_end = line_range
+            problems.append(
+                f"{label} 文件 {path} 改写块 {block_path}:{block_start}-{block_end} "
+                f"Markdown 表格结构不一致：{location}（{difference}）"
+            )
+            break
+    return problems
+
+
 def _validate_rewrites(rewrites, label, repository, document_files, findings):
     problems = []
     if not isinstance(rewrites, list):
@@ -130,6 +277,7 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
     ranges_by_file = {}
     texts_by_file = {}
     labels_by_file = {}
+    blocks_by_file = {}
     last_start_by_file = {}
     for index, rewrite in enumerate(rewrites):
         rewrite_label = f"{label}[{index}]"
@@ -160,6 +308,7 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
         if overlapping is not None:
             problems.append(overlapping)
         path, start_line, end_line = line_range
+        blocks_by_file.setdefault(path, []).append((line_range, rewrite_label, text))
         previous_start = last_start_by_file.get(path)
         if previous_start is not None and start_line < previous_start:
             problems.append(
@@ -201,6 +350,9 @@ def _validate_rewrites(rewrites, label, repository, document_files, findings):
                 problems.append(
                     f"{label} 文件 {path} 的改写全文缺少原文反引号片段：{fragment}"
                 )
+        problems.extend(_validate_rewrite_table_structure(
+            path, original_text, blocks_by_file.get(path, []), label,
+        ))
 
     problems.extend(_uncovered_nonempty_lines(
         document_files,

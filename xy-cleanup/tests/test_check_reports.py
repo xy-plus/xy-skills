@@ -309,6 +309,24 @@ class CheckReportsTest(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         subprocess.run(["git", "-C", str(self.repository), "add", relative_path], check=True)
 
+    def check_guide_rewrites(self, original, rewrites):
+        self.add_tracked_file("alpha/guide.md", original)
+        main, razor, alpha = reports_for_feature(self.repository, "alpha")
+        alpha["rewrites"] = rewrites
+        deleted = all(block["text"] == "" for block in rewrites)
+        if not deleted:
+            alpha["keep"].append(
+                razor_keep_item("alpha", f"alpha/guide.md:1-{len(original.splitlines())}"),
+            )
+        original_chars = character_count(original)
+        rewritten_chars = sum(character_count(block["text"]) for block in rewrites)
+        if rewritten_chars < original_chars:
+            rewrite_finding = finding("删除" if deleted else "重构")
+            rewrite_finding["target"] = f"alpha/guide.md:1-{len(original.splitlines())}"
+            alpha["findings"].append(rewrite_finding)
+        self.write_reports(main, razor)
+        return self.run_check()
+
     def check_duplicate_documents(self, first_lines, second_lines,
                                   first_cost=None, second_cost=None):
         self.add_tracked_file("alpha/first.md", "\n".join(first_lines) + "\n")
@@ -486,6 +504,162 @@ class CheckReportsTest(unittest.TestCase):
 
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn(expected, result.stdout + result.stderr)
+
+    def test_rewrite_rejects_a_table_with_a_missing_first_cell(self):
+        original = "| Stage | Action | Note |\n|---|---|---|\n| Plan | Draft | Review |\n"
+        rewritten = "| Action | Note |\n|---|---|\n| Draft | Review |\n"
+
+        result = self.check_guide_rewrites(
+            original, [{"lines": "alpha/guide.md:1-3", "text": rewritten}],
+        )
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("表格", output)
+        self.assertIn("alpha/guide.md", output)
+        self.assertIn("alpha/guide.md:1-3", output)
+
+    def test_rewrite_rejects_a_table_with_a_missing_column(self):
+        original = "| Stage | Action | Note |\n|---|---|---|\n| Plan | Draft | Review |\n"
+        rewritten = "| Stage | Action |\n|---|---|\n| Plan | Draft |\n"
+
+        result = self.check_guide_rewrites(
+            original, [{"lines": "alpha/guide.md:1-3", "text": rewritten}],
+        )
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("表格", output)
+        self.assertIn("alpha/guide.md", output)
+        self.assertIn("alpha/guide.md:1-3", output)
+
+    def test_rewrite_rejects_a_table_with_a_deleted_data_row(self):
+        original = (
+            "| Stage | Action |\n|---|---|\n| Plan | Draft |\n"
+            "| Review | Check |\n| Report | Share |\n"
+        )
+        rewritten = (
+            "| Stage | Action |\n|---|---|\n| Plan | Draft |\n"
+            "| Report | Share |\n"
+        )
+
+        result = self.check_guide_rewrites(
+            original, [{"lines": "alpha/guide.md:1-5", "text": rewritten}],
+        )
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("表格", output)
+        self.assertIn("alpha/guide.md", output)
+        self.assertIn("alpha/guide.md:1-5", output)
+
+    def test_rewrite_accepts_a_table_when_other_cells_change(self):
+        original = "| Stage | Before |\n|---|---|\n| Plan | Fixed |\n"
+        rewritten = "| Stage | Change |\n|---|---|\n| Plan | Other |\n"
+
+        result = self.check_guide_rewrites(
+            original, [{"lines": "alpha/guide.md:1-3", "text": rewritten}],
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rewrite_checks_tables_without_outer_pipes(self):
+        original = "Stage | Action | Note\n---|---|---\nPlan | Draft | Review\n"
+        cases = (
+            "Action | Note\n---|---\nDraft | Review\n",
+            "Stage | Action\n---|---\nPlan | Draft\n",
+        )
+
+        for rewritten in cases:
+            with self.subTest(rewritten=rewritten):
+                result = self.check_guide_rewrites(
+                    original, [{"lines": "alpha/guide.md:1-3", "text": rewritten}],
+                )
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 1, output)
+                self.assertIn("表格", output)
+                self.assertIn("alpha/guide.md:1-3", output)
+
+    def test_rewrite_checks_indented_tables(self):
+        original = "  Stage | Action | Note\n  ---|---|---\n  Plan | Draft | Review\n"
+        cases = (
+            "Action | Note\n---|---\nDraft | Review\n",
+            "Stage | Action\n---|---\nPlan | Draft\n",
+        )
+
+        for rewritten in cases:
+            with self.subTest(rewritten=rewritten):
+                result = self.check_guide_rewrites(
+                    original, [{"lines": "alpha/guide.md:1-3", "text": rewritten}],
+                )
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 1, output)
+                self.assertIn("表格", output)
+                self.assertIn("alpha/guide.md:1-3", output)
+
+    def test_table_rows_must_stay_in_one_rewrite_block(self):
+        original = (
+            "Opening.\n| Stage | Action |\n|---|---|\n"
+            "| Plan | Draft |\n| Review | Check |\nClosing.\n"
+        )
+        rewrites = [
+            {"lines": "alpha/guide.md:1-3", "text": "Opening.\n| Stage | Action |\n|---|---|"},
+            {"lines": "alpha/guide.md:4-6", "text": "| Plan | Draft |\n| Review | Check |\nClosing."},
+        ]
+
+        result = self.check_guide_rewrites(original, rewrites)
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("表格", output)
+        self.assertIn("alpha/guide.md:2-5", output)
+        self.assertIn("alpha/guide.md:1-3", output)
+        self.assertIn("alpha/guide.md:4-6", output)
+
+    def test_wholly_deleted_rewrite_block_skips_table_check(self):
+        original = "| Stage | Action |\n|---|---|\n| Plan | Draft |\n"
+
+        result = self.check_guide_rewrites(
+            original, [{"lines": "alpha/guide.md:1-3", "text": ""}],
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_fenced_code_tables_are_not_compared(self):
+        for fence in ("```", "~~~"):
+            with self.subTest(fence=fence):
+                table = (
+                    f"{fence}md\n| Stage | Action |\n|---|---|\n"
+                    f"| Plan | Draft |\n{fence}"
+                )
+                shortened = f"{fence}md\n| Stage | Action |\n|---|---|\n{fence}"
+                original = f"Start.\n{table}\nMiddle.\n{table}\nEnd.\n"
+                rewritten = (
+                    f"Start.\n{shortened}\nThis explanation is long enough to keep the rewrite from being shorter.\n"
+                    f"Middle.\n{table}\nEnd."
+                )
+                result = self.check_guide_rewrites(
+                    original,
+                    [{"lines": f"alpha/guide.md:1-{len(original.splitlines())}", "text": rewritten}],
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_fenced_code_table_rows_do_not_trigger_cross_block_error(self):
+        for fence in ("```", "~~~"):
+            with self.subTest(fence=fence):
+                original = (
+                    f"{fence}md\n| Stage | Action |\n|---|---|\n"
+                    f"| Plan | Draft |\n{fence}\n"
+                )
+                lines = original.splitlines()
+                rewrites = [
+                    {"lines": "alpha/guide.md:1-2", "text": "\n".join(lines[:2])},
+                    {"lines": f"alpha/guide.md:3-{len(lines)}", "text": "\n".join(lines[2:])},
+                ]
+
+                result = self.check_guide_rewrites(original, rewrites)
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_rewrite_keeps_each_backtick_span_verbatim(self):
         self.add_tracked_file("alpha/guide.md", "Run `tool --flag` now.\n")
