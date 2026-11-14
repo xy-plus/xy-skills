@@ -50,10 +50,18 @@ def make_cleanup_repo(test_case):
         "README.md": "Demo.\n",
         "alpha/main.py": "value = 1\n",
         "beta/main.py": "value = 2\n",
-    }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
-        feature("alpha", "alpha"),
-        feature("beta", "beta"),
-    ]))
+    }, feature(
+        "root", "", subrepositories=[], external_dependencies=[],
+        items=[{"id": "core", "text": "提供 root 功能。", "status": "确认"}],
+        children=[
+            feature("alpha", "alpha", items=[{
+                "id": "core", "text": "提供 alpha 功能。", "status": "确认",
+            }]),
+            feature("beta", "beta", items=[{
+                "id": "core", "text": "提供 beta 功能。", "status": "确认",
+            }]),
+        ],
+    ))
 
 
 def _make_repository(repository, files, root_feature):

@@ -172,10 +172,16 @@ def _plan(data, fingerprints, records, scope, review):
 def _record(repository, data, feature_values, fingerprints, records, scope):
     approved_path = repository / APPROVED_RELATIVE_PATH
     selected = _scope_features(data, scope)
-    drafts = [feature_id for feature_id in selected
-              if feature_values[feature_id]["why"]["source"] == "起草"]
+    drafts = [
+        feature_id for feature_id in selected
+        if feature_values[feature_id]["why"]["source"] == "起草"
+        or any(item["status"] == "起草" for item in feature_values[feature_id]["items"])
+    ]
     if drafts:
-        raise ValueError("拒绝记录：这些功能的 why.source 仍是 起草：" + ", ".join(drafts))
+        raise ValueError(
+            "拒绝记录：这些功能的 why.source 或 items.status 仍是 起草："
+            + ", ".join(drafts)
+        )
 
     selected_set = set(selected)
     updated = {

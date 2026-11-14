@@ -31,18 +31,24 @@ DUPLICATE_BLOCK_LINES = [
 ]
 
 
-def razor_keep_item(feature_id, lines=None, source="要什么", text=None):
+def razor_keep_item(feature_id, lines=None, source=None, text=None):
     default_lines = {
         "root": "README.md:1-1",
         "alpha": "alpha/main.py:1-1",
         "beta": "beta/main.py:1-1",
     }
+    if source is None:
+        source = f"{feature_id}:core"
     if text is None:
-        text = {
-            "要什么": f"提供 {feature_id} 功能。",
-            "为什么": "让功能容易使用。",
-            RULE_SOURCE: RULE_TEXT,
-        }.get(source, "")
+        source_feature, separator, item_id = source.partition(":")
+        text = (
+            f"提供 {source_feature} 功能。"
+            if separator and item_id == "core" else {
+                "要什么": f"提供 {feature_id} 功能。",
+                "为什么": "让功能容易使用。",
+                RULE_SOURCE: RULE_TEXT,
+            }.get(source, "")
+        )
     line_spec = default_lines[feature_id] if lines is None else lines
     return {
         "lines": line_spec,
@@ -942,7 +948,10 @@ class CheckReportsTest(unittest.TestCase):
                 alpha = recheck["features"][0]
                 alpha["verdicts"][0]["verdict"] = "站不住"
                 if kind is not None:
-                    proposal = finding(kind, False, "问你")
+                    proposal = finding(
+                        kind, False,
+                        "直接做" if kind in {"删除", "合并"} else "问你",
+                    )
                     proposal["target"] = "alpha"
                     alpha["findings"] = [proposal]
                 self.write_recheck_reports(rechecks)
@@ -1150,7 +1159,7 @@ class CheckReportsTest(unittest.TestCase):
         for verdict in review["verdicts"]:
             if verdict["lines"] == "alpha/first.md:1-6":
                 verdict["verdict"] = "站不住"
-        challenge = finding("删除", changes_behavior=False, decision="问你")
+        challenge = finding("删除", changes_behavior=False, decision="直接做")
         challenge["target"] = "alpha/first.md:1-6"
         review["findings"] = [challenge]
         for path in self.recheck_paths:
@@ -1431,18 +1440,49 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("不用复审", result.stdout)
         self.assertIn("empty", result.stdout)
 
-    def test_recheck_deletion_must_be_asked_even_when_behavior_does_not_change(self):
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        item = finding("删除", False, "直接做")
-        item["target"] = "alpha/main.py:1"
-        recheck = recheck_report(self.repository, ["alpha"])
-        recheck["features"][0]["findings"] = [item]
-        self.write_reports(main, razor)
-        self.write_recheck_reports([recheck])
-        result = self.run_check(reports=self.reports_for_check())
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("剃刀复审的决定必须是 问你", result.stdout)
+    def test_recheck_findings_use_the_same_decisions_as_first_pass_findings(self):
+        valid = [
+            finding("删除", False, "直接做"),
+            finding("合并", False, "直接做"),
+            finding("删除", True, "问你"),
+            finding("重构", False, "问你"),
+        ]
+        for item in valid:
+            with self.subTest(kind=item["kind"], behavior=item["changes_behavior"]):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                self.write_reports(main, razor)
+                rechecks = self.read_recheck_reports()
+                recheck = next(
+                    document for document in rechecks
+                    if document["features"][0]["feature"] == "alpha"
+                )
+                recheck["features"][0]["findings"] = [item]
+                self.write_recheck_reports(rechecks)
+                result = self.run_check(reports=self.reports_for_check())
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        invalid = [
+            finding("删除", False, "问你"),
+            finding("删除", True, "直接做"),
+            finding("重构", False, "直接做"),
+        ]
+        for item in invalid:
+            with self.subTest(kind=item["kind"], behavior=item["changes_behavior"],
+                              decision=item["decision"]):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                self.write_reports(main, razor)
+                rechecks = self.read_recheck_reports()
+                recheck = next(
+                    document for document in rechecks
+                    if document["features"][0]["feature"] == "alpha"
+                )
+                recheck["features"][0]["findings"] = [item]
+                self.write_recheck_reports(rechecks)
+                result = self.run_check(reports=self.reports_for_check())
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("decision", result.stdout)
 
     def test_recheck_feature_rejects_razor_only_fields(self):
         main = report("主审", self.repository)
@@ -1832,11 +1872,10 @@ class CheckReportsTest(unittest.TestCase):
         self.assertIn("无法检查", result.stdout)
         self.assertIn("一个实体", result.stdout)
 
-    def test_keep_requirement_accepts_feature_text_and_supported_rule_quotes(self):
+    def test_keep_requirement_accepts_items_from_the_same_or_another_feature(self):
         for source, text in (
-            ("要什么", "提供 alpha 功能。"),
-            ("为什么", "让功能容易使用。"),
-            (RULE_SOURCE, RULE_TEXT),
+            ("alpha:core", "提供 alpha 功能。"),
+            ("root:core", "提供 root 功能。"),
         ):
             with self.subTest(source=source):
                 main = report("主审", self.repository)
@@ -1847,28 +1886,24 @@ class CheckReportsTest(unittest.TestCase):
                 result = self.run_check()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_keep_requirement_accepts_a_continuous_substring(self):
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"] = [razor_keep_item(
-            "alpha", source="要什么", text="alpha 功能",
-        )]
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_keep_requirement_rejects_text_joined_from_noncontiguous_parts(self):
-        main = report("主审", self.repository)
-        razor = report("剃刀", self.repository)
-        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
-        alpha["keep"] = [razor_keep_item(
-            "alpha", source="要什么", text="提供 功能",
-        )]
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("requirement.text", result.stdout)
+    def test_keep_requirement_rejects_missing_items_legacy_sources_and_partial_text(self):
+        cases = [
+            ("alpha:missing", "提供 alpha 功能。", "requirement.source"),
+            ("要什么", "提供 alpha 功能。", "requirement.source"),
+            ("为什么", "让功能容易使用。", "requirement.source"),
+            (RULE_SOURCE, RULE_TEXT, "requirement.source"),
+            ("alpha:core", "alpha 功能", "requirement.text"),
+        ]
+        for source, text, expected in cases:
+            with self.subTest(source=source, text=text):
+                main = report("主审", self.repository)
+                razor = report("剃刀", self.repository)
+                alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+                alpha["keep"] = [razor_keep_item("alpha", source=source, text=text)]
+                self.write_reports(main, razor)
+                result = self.run_check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(expected, result.stdout)
 
     def test_keep_achieved_and_cost_must_be_nonempty(self):
         for key in ("achieved", "cost"):
@@ -2249,6 +2284,26 @@ class CheckReportsTest(unittest.TestCase):
                 main["features"][0]["findings"] = [item]
                 self.write_reports(main, report("剃刀", self.repository))
                 self.assertEqual(self.run_check().returncode, 1)
+
+    def test_accepts_an_orphan_finding_that_asks_the_user(self):
+        main = report("主审", self.repository)
+        main["features"][0]["findings"] = [finding("孤儿", True, "问你")]
+        self.write_reports(main, report("剃刀", self.repository))
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_orphan_findings_cannot_be_decided_directly(self):
+        main = report("主审", self.repository)
+        main["features"][0]["findings"] = [finding("孤儿", False, "直接做")]
+        self.write_reports(main, report("剃刀", self.repository))
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("kind 不是允许的类型", result.stdout)
+        self.assertIn("decision", result.stdout)
 
     def test_basis_must_match_a_local_rule_quote(self):
         main = report("主审", self.repository)

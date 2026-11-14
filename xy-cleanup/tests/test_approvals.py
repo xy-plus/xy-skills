@@ -41,6 +41,24 @@ class ApprovalPlanTest(unittest.TestCase):
             "record", "--repo", str(self.repository), "--scope", *scope,
         )
 
+    def set_item_status(self, feature_id, status):
+        path = self.repository / "repo-map" / "features.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        pending = [document]
+        while pending:
+            feature_value = pending.pop()
+            if feature_value["id"] == feature_id:
+                feature_value["items"][0]["status"] = status
+                break
+            pending.extend(feature_value["children"])
+        else:
+            self.fail(f"找不到功能 {feature_id}")
+        path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.repository), "add", "repo-map/features.json"],
+            check=True,
+        )
+
     def link_repo_map_to_external_directory(self):
         repo_map_path = self.repository / "repo-map"
         external_directory = self.repository.parent / "outside-repo-map"
@@ -295,6 +313,27 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertIn("alpha", result.stdout)
         self.assertEqual(result.stderr, "")
         self.assertFalse((temporary_repo / "repo-map" / "approved.json").exists())
+
+    def test_record_rejects_an_in_scope_draft_item_without_writing(self):
+        self.set_item_status("alpha", "起草")
+
+        result = self.record(("alpha",))
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("alpha", result.stdout)
+        self.assertIn("items.status", result.stdout)
+        self.assertFalse((self.repository / "repo-map" / "approved.json").exists())
+
+    def test_record_allows_a_draft_item_outside_the_selected_scope(self):
+        self.set_item_status("alpha", "起草")
+
+        result = self.record(("beta",))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(set(records), {"beta"})
 
     def test_record_preserves_other_current_records_and_drops_unknown_ids(self):
         recorded = self.record()

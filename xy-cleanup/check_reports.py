@@ -52,7 +52,7 @@ REWRITE_KEYS = {"lines", "text"}
 RECHECK_VERDICT_KEYS = {"lines", "attempt", "evidence", "verdict"}
 ROLES = {"主审", "剃刀"}
 REPORT_ROLES = ROLES | {"剃刀复审"}
-KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "其他"}
+KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "孤儿", "其他"}
 DECISIONS = {"直接做", "问你"}
 CODE_DEFINITION_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 MARKDOWN_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]+|$)")
@@ -426,7 +426,7 @@ def _validate_feature_todo_reduction(feature_id, feature_targets, finding_ranges
     )
 
 
-def _validate_finding(finding, label, tracked_todo_files, force_ask_user,
+def _validate_finding(finding, label, tracked_todo_files,
                       feature_id, direct_todo_files):
     problems = _field_errors(finding, FINDING_KEYS, label)
     if problems:
@@ -444,11 +444,7 @@ def _validate_finding(finding, label, tracked_todo_files, force_ask_user,
     if not isinstance(decision, str) or decision not in DECISIONS:
         problems.append(f"{label}.decision 只能是 直接做 或 问你")
 
-    if force_ask_user:
-        # A recheck challenges the first Razor's keep decision, so both conclusions go to the user.
-        if decision != "问你":
-            problems.append(f"{label}.decision 剃刀复审的决定必须是 问你")
-    elif (isinstance(changes_behavior, bool) and isinstance(decision, str)
+    if (isinstance(changes_behavior, bool) and isinstance(decision, str)
             and decision in DECISIONS and isinstance(kind, str) and kind in KINDS):
         target_range = _parse_line_range(finding["target"], allow_single_line=True)
         target_is_todo = target_range is not None and target_range[0] in tracked_todo_files
@@ -664,7 +660,7 @@ def _validate_todo_items(items, label, repository, direct_todo_files):
     return problems
 
 
-def _validate_requirement(requirement, label, feature):
+def _validate_requirement(requirement, label, features):
     problems = _field_errors(requirement, BASIS_KEYS, label)
     if not isinstance(requirement, dict):
         return problems
@@ -677,20 +673,22 @@ def _validate_requirement(requirement, label, feature):
         return problems
 
     source = requirement["source"]
-    text = requirement["text"]
-    if source == "要什么":
-        expected_text = feature["what"]
-    elif source == "为什么":
-        expected_text = feature["why"]["text"]
-    elif basis_is_supported(requirement):
-        return problems
-    else:
+    feature_id, separator, item_id = source.partition(":")
+    if not separator or not feature_id or not item_id or ":" in item_id:
         problems.append(
-            f"{label}.source 必须是 要什么、为什么，或逐字引用有效的用户规范条款"
+            f"{label}.source 必须写成 功能 id:条目 id"
         )
         return problems
-    if text not in expected_text:
-        problems.append(f"{label}.text 必须逐字引用来源中的原文：{source}")
+    feature = features.get(feature_id)
+    if feature is None:
+        problems.append(f"{label}.source 指向的功能不存在：{feature_id}")
+        return problems
+    item = next((value for value in feature["items"] if value["id"] == item_id), None)
+    if item is None:
+        problems.append(f"{label}.source 指向的条目不存在：{source}")
+        return problems
+    if requirement["text"] != item["text"]:
+        problems.append(f"{label}.text 必须与条目原文完全相同：{source}")
     return problems
 
 
@@ -838,7 +836,7 @@ def _entity_range_problem(path, start_line, end_line, file_lines, label):
     return None
 
 
-def _validate_keep_items(items, label, repository, feature, keep_files,
+def _validate_keep_items(items, label, repository, feature, features, keep_files,
                          finding_ranges, feature_targets, duplicate_windows,
                          tracked_files):
     problems = []
@@ -857,7 +855,7 @@ def _validate_keep_items(items, label, repository, feature, keep_files,
             if not _nonempty(item.get(key)):
                 problems.append(f"{item_label}.{key} 必须是非空字符串")
         problems.extend(_validate_requirement(
-            item.get("requirement"), f"{item_label}.requirement", feature,
+            item.get("requirement"), f"{item_label}.requirement", features,
         ))
         line_spec = item.get("lines")
         if not _nonempty(line_spec):
@@ -1111,7 +1109,6 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 finding_label = f"{feature_label}.findings[{finding_index}]"
                 problems.extend(_validate_finding(
                     finding, finding_label, tracked_todo_files,
-                    force_ask_user=role == "剃刀复审",
                     feature_id=feature_id,
                     direct_todo_files=direct_todo_files,
                 ))
@@ -1145,7 +1142,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 elif target == feature_id:
                     feature_targets.append(finding)
 
-            # 剃刀复审发现一律是「问你」，目标只能是本功能 id 或 keep 覆盖文件，写不出 TODO 行发现。
+            # 复审发现目标只能是本功能 id 或 keep 覆盖文件，写不出 TODO 行发现。
             if role in ("主审", "剃刀") and feature_data is not None:
                 problems.extend(_validate_feature_todo_reduction(
                     feature_id,
@@ -1187,6 +1184,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     f"报告 {label} 的功能 {feature_id}.keep",
                     repository,
                     feature_data,
+                    data["features"],
                     keep_files,
                     finding_ranges,
                     feature_targets,
