@@ -76,18 +76,8 @@ def _annotation_type(token):
     return None
 
 
-def _annotation_tokens(source, path):
-    lexer = _lexer(path)
-    result = []
-    for offset, token, value in lexer.get_tokens_unprocessed(source):
-        kind = _annotation_type(token)
-        if kind is None:
-            continue
-        end = offset + len(value)
-        while end > offset and source[end - 1] in "\r\n":
-            end -= 1
-        result.append((offset, end, kind))
-    return result
+def _tokenize(source, path):
+    return list(_lexer(path).get_tokens_unprocessed(source))
 
 
 def _line_starts(source):
@@ -98,10 +88,15 @@ def _line_number(offset, starts):
     return bisect.bisect_right(starts, offset)
 
 
-def _comment_block_spans(source, path):
-    tokens = _annotation_tokens(source, path)
+def _comment_block_spans(source, tokens):
     groups = []
-    for start, end, kind in tokens:
+    for start, token, value in tokens:
+        kind = _annotation_type(token)
+        if kind is None:
+            continue
+        end = start + len(value)
+        while end > start and source[end - 1] in "\r\n":
+            end -= 1
         gap = source[groups[-1][1]:start] if groups else None
         if (kind == "comment" and groups and groups[-1][2] == "comment"
                 and (not gap or gap.isspace())):
@@ -124,9 +119,10 @@ def _comment_block_spans(source, path):
 
 def _blocks_command(arguments):
     source = _read_source(arguments.original)
+    tokens = _tokenize(source, arguments.original)
     blocks = [
         {key: block[key] for key in ("id", "lines", "text")}
-        for block in _comment_block_spans(source, arguments.original)
+        for block in _comment_block_spans(source, tokens)
     ]
     print(json.dumps(blocks, ensure_ascii=False, indent=2))
     return 0
@@ -165,10 +161,10 @@ def _parse_json_file(path, label):
         raise RewriteFormatError(f"{label}格式错误：{error}") from error
 
 
-def _prepare_edits(source, path, manifest):
+def _prepare_edits(source, tokens, manifest):
     if not isinstance(manifest, list):
         raise RewriteFormatError("块清单必须是数组")
-    spans = _comment_block_spans(source, path)
+    spans = _comment_block_spans(source, tokens)
     by_id = {block["id"]: block for block in spans}
     seen = set()
     edits = []
@@ -223,12 +219,7 @@ def _splice_text(source, edits):
     return "".join(parts), insertions
 
 
-def _all_tokens(source, path):
-    return list(_lexer(path).get_tokens_unprocessed(source))
-
-
-def _insertions_are_annotations(source, path, insertions):
-    tokens = _all_tokens(source, path)
+def _insertions_are_annotations(source, tokens, insertions):
     problems = []
     for start, end in insertions:
         for token_start, token, value in tokens:
@@ -244,9 +235,9 @@ def _insertions_are_annotations(source, path, insertions):
     return problems
 
 
-def _annotation_texts(source, path, kind=None):
+def _annotation_texts(tokens, kind=None):
     result = []
-    for _, token, value in _all_tokens(source, path):
+    for _, token, value in tokens:
         annotation = _annotation_type(token)
         if annotation is not None and (kind is None or annotation == kind):
             result.append(value)
@@ -262,15 +253,6 @@ def _ordered_texts_present(required, available):
             return False
         cursor = position + len(snippet)
     return True
-
-
-def _protected_tool_comments(source, path):
-    return [
-        value.rstrip("\r\n")
-        for _, token, value in _all_tokens(source, path)
-        if _annotation_type(token) == "comment"
-        and any(marker in value for marker in TOOL_MARKERS)
-    ]
 
 
 def _examples(text):
@@ -293,15 +275,20 @@ def _without_python_docstrings(tree):
     return tree
 
 
-def _splice_problems(original, rewritten, path, insertions):
-    problems = _insertions_are_annotations(rewritten, path, insertions)
-    required_tools = _protected_tool_comments(original, path)
-    actual_comments = _annotation_texts(rewritten, path, "comment")
+def _splice_problems(original, original_tokens, rewritten, rewritten_tokens, path,
+                     insertions):
+    problems = _insertions_are_annotations(rewritten, rewritten_tokens, insertions)
+    required_tools = [
+        value.rstrip("\r\n")
+        for value in _annotation_texts(original_tokens, "comment")
+        if any(marker in value for marker in TOOL_MARKERS)
+    ]
+    actual_comments = _annotation_texts(rewritten_tokens, "comment")
     if not _ordered_texts_present(required_tools, actual_comments):
         problems.append("工具注释被改动或删除")
 
-    original_annotations = _annotation_texts(original, path)
-    rewritten_annotations = _annotation_texts(rewritten, path)
+    original_annotations = _annotation_texts(original_tokens)
+    rewritten_annotations = _annotation_texts(rewritten_tokens)
     required_examples = _examples("".join(original_annotations))
     if not _ordered_texts_present(required_examples, rewritten_annotations):
         problems.append("注释里的代码示例或 doctest 行被改动或删除")
@@ -318,10 +305,14 @@ def _splice_problems(original, rewritten, path, insertions):
     return problems
 
 
-def _splice_candidate(source, path, manifest):
-    edits = _prepare_edits(source, path, manifest)
+def _splice_candidate(source, path, manifest, original_tokens):
+    edits = _prepare_edits(source, original_tokens, manifest)
     rewritten, insertions = _splice_text(source, edits)
-    return rewritten, _splice_problems(source, rewritten, path, insertions)
+    rewritten_tokens = _tokenize(rewritten, path)
+    problems = _splice_problems(
+        source, original_tokens, rewritten, rewritten_tokens, path, insertions
+    )
+    return rewritten, rewritten_tokens, problems
 
 
 def _splice_command(arguments):
@@ -330,7 +321,10 @@ def _splice_command(arguments):
         return 2
     source = _read_source(arguments.original)
     manifest = _parse_json_file(arguments.blocks, "块清单")
-    rewritten, problems = _splice_candidate(source, arguments.original, manifest)
+    original_tokens = _tokenize(source, arguments.original)
+    rewritten, _, problems = _splice_candidate(
+        source, arguments.original, manifest, original_tokens
+    )
     if problems:
         print("\n".join(problems))
         return 1
@@ -508,20 +502,21 @@ def _gate_command(arguments):
     rewritten = rewrite_bytes.decode("utf-8")
     manifest = _parse_json_file(arguments.blocks, "块清单")
     judgement = _parse_json_file(arguments.judgement, "评审 JSON")
-    expected_rewrite, splice_problems = _splice_candidate(
-        original, arguments.original, manifest
+    original_tokens = _tokenize(original, arguments.original)
+    expected_rewrite, rewrite_tokens, splice_problems = _splice_candidate(
+        original, arguments.original, manifest, original_tokens
     )
-    original_blocks = _comment_block_spans(original, arguments.original)
-    rewrite_annotation_blocks = [
-        block["text"]
-        for block in _comment_block_spans(rewritten, arguments.original)
-    ]
+    original_blocks = _comment_block_spans(original, original_tokens)
     if splice_problems:
         print("\n".join(splice_problems))
         return 1
     if rewrite_bytes != expected_rewrite.encode("utf-8"):
         print("改写稿字节与按块清单拼接结果不同")
         return 1
+    rewrite_annotation_blocks = [
+        block["text"]
+        for block in _comment_block_spans(rewritten, rewrite_tokens)
+    ]
     problems = _check_judgement(
         judgement, original_blocks, rewrite_annotation_blocks
     )

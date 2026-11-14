@@ -453,39 +453,23 @@ class CommentGateTest(CommentRewriteCommandTest):
 
         self.assert_gate_rejected(source, rewrite, judgement, "第 2 行")
 
-    def test_inventory_lines_cannot_extend_outside_the_assigned_block(self):
-        judgement = self.valid_judgement()
-        judgement["inventory"][0]["lines"] = "1-3"
-
-        self.assert_gate_rejected(
-            self.original, self.rewrite, judgement, "block"
+    def test_rejects_table_driven_judgement_field_changes(self):
+        cases = (
+            ("lines outside block", 0, "lines", "1-3", "block"),
+            ("original missing from block", 0, "original", "# original second", "original"),
+            ("rewritten missing from comments", 0, "rewritten", "# absent text", "rewritten"),
+            ("duplicate id", 1, "id", "I1", "重复"),
+            ("invalid status", 0, "status", "maybe", "status"),
+            ("non-string status", 0, "status", ["在"], "status"),
+            ("invalid impact", 0, "impact", "maybe", "impact"),
         )
-
-    def test_inventory_original_must_be_found_in_its_assigned_block(self):
-        judgement = self.valid_judgement()
-        judgement["inventory"][0]["original"] = "# original second"
-
-        self.assert_gate_rejected(
-            self.original, self.rewrite, judgement, "original"
-        )
-
-    def test_inventory_rewritten_must_be_found_in_rewrite_annotations(self):
-        judgement = self.valid_judgement()
-        judgement["inventory"][0]["rewritten"] = "# absent text"
-
-        self.assert_gate_rejected(
-            self.original, self.rewrite, judgement, "rewritten"
-        )
-
-    def test_inventory_rewritten_cannot_be_assembled_across_separate_blocks(self):
-        rewrite = self.write_file(
-            "split-rewrite.py", "# ab\nvalue = 1\n# cd\n"
-        )
-        judgement = self.valid_judgement()
-        judgement["inventory"][0]["rewritten"] = "ab# c"
-        judgement["inventory"][1]["rewritten"] = "# cd"
-
-        self.assert_gate_rejected(self.original, rewrite, judgement, "rewritten")
+        for label, index, field, value, phrase in cases:
+            with self.subTest(change=label):
+                judgement = self.valid_judgement()
+                judgement["inventory"][index][field] = value
+                self.assert_gate_rejected(
+                    self.original, self.rewrite, judgement, phrase
+                )
 
     def test_comment_blocks_cannot_be_omitted_from_inventory(self):
         self.assert_gate_rejected(
@@ -508,11 +492,15 @@ class CommentGateTest(CommentRewriteCommandTest):
 
         self.assert_gate_rejected(self.original, self.rewrite, judgement, "added")
 
-    def test_inventory_ids_must_be_unique(self):
+    def test_inventory_rewritten_cannot_be_assembled_across_separate_blocks(self):
+        rewrite = self.write_file(
+            "split-rewrite.py", "# ab\nvalue = 1\n# cd\n"
+        )
         judgement = self.valid_judgement()
-        judgement["inventory"][1]["id"] = judgement["inventory"][0]["id"]
+        judgement["inventory"][0]["rewritten"] = "ab# c"
+        judgement["inventory"][1]["rewritten"] = "# cd"
 
-        self.assert_gate_rejected(self.original, self.rewrite, judgement, "重复")
+        self.assert_gate_rejected(self.original, rewrite, judgement, "rewritten")
 
     def test_review_requires_exact_root_and_inventory_fields(self):
         cases = []
@@ -539,16 +527,6 @@ class CommentGateTest(CommentRewriteCommandTest):
             self.original, self.rewrite,
             '{"inventory":[],"inventory":[],"added":[]}', "重复键",
         )
-
-    def test_invalid_status_and_impact_values_are_rejected(self):
-        for field, value in (("status", "maybe"), ("impact", "maybe")):
-            with self.subTest(field=field):
-                judgement = self.valid_judgement()
-                judgement["inventory"][0][field] = value
-
-                result = self.gate(self.original, self.rewrite, judgement)
-
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
     def test_same_line_blocks_are_reviewed_against_their_block_ids(self):
         source = self.write_file(
