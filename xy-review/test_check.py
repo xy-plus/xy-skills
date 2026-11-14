@@ -315,6 +315,19 @@ class CheckTest(unittest.TestCase):
                              f"缺少字段：报告.repo_rules.{missing}",
                              f"repo_rules 多余字段：{REPO_RULE_NUMBERS[-1] + 1}")
 
+    def test_main_report_accepts_a_repository_rule_finding(self):
+        rules = {str(number): section() for number in REPO_RULE_NUMBERS}
+        rules[str(REPO_RULE_NUMBERS[0])] = section([{
+            "problem": "README 还不能让新读者立即上手",
+            "evidence": "README.md:1",
+            "quote": {
+                "source": "xy-repo-rules 第 1 条",
+                "text": "人类或 agent 读完 README.md 后都能立刻上手。",
+            },
+        }])
+        document = main_report(verdict="改了就过", repo_rules=rules)
+        self.assertEqual(self.run_report("review-main.json", document), (0, []))
+
     def test_main_verdict_matches_findings(self):
         findings = [{
             "problem": "增量：漏掉新约束；用户原话 4「格式规范」",

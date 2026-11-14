@@ -1689,9 +1689,9 @@
               "what": "识别 Python 导入，以及代码、文档里写出的路径和目录功能名提及关系。",
               "why": {
                 "text": "有些功能和规范会被许多地方依赖，但关系不容易看出来。",
-                "source": "起草",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json 的决定 L7（选「按建议改」，题面同目录 decisions.json 的 L7）"
               },
               "directory": null,
               "items": [
@@ -1727,9 +1727,9 @@
               "what": "把功能清单画成手机上能看的一页，显示各功能被用到的数量和来源详情，以及按代码、测试、文档、注释分段的行数条；提供层级加减、「全部」工具条和「等你拍板」筛选。",
               "why": {
                 "text": "功能图用于审核仓库，看实际功能是否与图相符。",
-                "source": "起草",
+                "source": "确认",
                 "quote": "",
-                "from": ""
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json 的决定 L7（选「按建议改」，题面同目录 decisions.json 的 L7）"
               },
               "directory": null,
               "items": [

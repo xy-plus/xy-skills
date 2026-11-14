@@ -1,6 +1,7 @@
 # runs-cleaner
 
 Linux 临时目录清理器，仅用 Python 标准库；需 Python 3.9 以上、`/proc`、`flock`。根目录的直接子项是清理单位；仅当其自身和全部后代的 mtime、ctime 都早于 30 天前且本用户无进程在用时，才整项删除。保留期固定 30 天，不提供天数参数。
+
 ## 命令行
 
 ```text
@@ -13,6 +14,7 @@ python3 /absolute/path/to/clean.py --mode delete ROOT_OR_GLOB [ROOT_OR_GLOB ...]
 预览和删除结果都是 JSON Lines，每行一个绝对路径 JSON 字符串；换行、回车、引号及非 ASCII 字符均转义。
 
 警告和错误写标准错误。单项失败后继续，退出码 1；根不存在时告警，单独此警告不导致失败。参数错误退出码 2，正常为 0。
+
 ## 安装与根目录配置
 
 假设仓库在 `$HOME/xy-skills`、程序在 `xy-runs/`。路径不同则替换仓库路径，并修改 service 的 `%h/xy-skills/xy-runs/clean.py`；工作树试用也指向其中的 `xy-runs/clean.py`。
@@ -34,6 +36,7 @@ service 每次从此文件读取 `RUNS_ROOT`，不依赖登录 shell；未设置
 - `%h/.codex-subagent*/sessions/*/*`，清理单位为按日的会话目录。
 
 账号目录的 `tasks/`、`reports/`、`logs/`、`brief-*.md` 不另配根；各工具配置目录与 harness 持久记忆不纳入。
+
 复制两个用户单元：
 
 ```bash
@@ -41,6 +44,7 @@ install -D -m 644 "$HOME/xy-skills/xy-runs/systemd/runs-cleaner.service" "$HOME/
 install -D -m 644 "$HOME/xy-skills/xy-runs/systemd/runs-cleaner.timer" "$HOME/.config/systemd/user/runs-cleaner.timer"
 systemctl --user daemon-reload
 ```
+
 ## 首次启用定时清理
 
 首次启用前，从与 service 相同的 `$HOME/.claude/settings.json` 读取并校验 `env.RUNS_ROOT`。命令先对根路径 `glob.escape`，再追加 `/-*`、`/-*/xy-goal-inbox`；Codex 会话 glob 不变。运行后逐项检查清单：
@@ -65,6 +69,7 @@ systemctl --user list-timers runs-cleaner.timer
 service 以 `--mode delete` 运行。每次启动先核验 `RUNS_ROOT` 为绝对路径，再要求根下 `.runs-cleaner-previewed` 存在；否则报错且不启动清理器。标记只对当前根有效；换 `RUNS_ROOT` 后，须在新根重跑 `--mode list`、检查清单并重建标记；旧根标记无效。
 
 定时器 `OnCalendar=daily`；service 标准输出/错误写入 journal。用户管理器须持续运行；本机已开启 linger。
+
 ## 删除协议与限制
 
 程序在最外层根上取 `flock(LOCK_EX)`。锁内复核根仍是展开时的真实目录，且候选仍过期、未在用，再以唯一名移入该根 `.runs-cleaner-trash/`；在锁内删除。根在展开后被替换则跳过并报告；操作依持有的目录句柄，不跟随软链。`delete` 每轮先清上次残留；内层根不建回收目录，回收目录不是候选，`list` 不改其内容。

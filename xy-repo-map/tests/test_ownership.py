@@ -24,4 +24,3 @@ class OwnershipTest(unittest.TestCase):
         ]
         self.assertIn("tests/test_consumer.py", owned_files)
         self.assertIn("tests/test_owned.py", owned_files)
-

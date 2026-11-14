@@ -31,8 +31,10 @@ def value_shape(value):
 
 
 REPORT_SHAPES = [value_shape(json.loads(block)) for block in TEMPLATE_BLOCKS]
+repo_rule_shape = next(iter(REPORT_SHAPES[0]["repo_rules"].values()))
+repo_rule_item_shape = REPORT_SHAPES[0]["first_principles"]["deviations"]["items"]
 REPORT_SHAPES[0]["repo_rules"] = {
-    str(number): next(iter(REPORT_SHAPES[0]["repo_rules"].values()))
+    str(number): {**repo_rule_shape, "items": repo_rule_item_shape}
     for number in REPO_RULE_NUMBERS
 }
 REPORTS = dict(zip(
