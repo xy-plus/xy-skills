@@ -94,7 +94,6 @@ body.detail-open main{padding-bottom:45vh}
 .detail-list button{color:var(--uses);overflow-wrap:anywhere}
 .detail-list small{margin-left:5px;color:var(--muted);font-size:11px}
 .items-list li{overflow-wrap:anywhere}
-.item-status{display:inline-block;border-radius:4px;background:#fab219;padding:0 5px;color:#0b0b0b;font-size:10.5px;font-weight:650}
 @media(max-width:520px){.wrap{padding-left:12px;padding-right:12px}.hero{padding-top:15px}.feature-title{font-size:14px}.feature-title .directory-name{font-size:11px}.meter-line{gap:5px}.metrics{gap:3px 7px}.feature-children{margin-left:10px}.undivided{margin-left:38px}.detail-panel{padding-left:14px;padding-right:14px}}
 </style>
 </head>
@@ -461,7 +460,7 @@ function itemList(items) {
     const line = make("li", "");
     line.append(make("span", "item-text", item.text));
     if (item.status === "起草") {
-      line.append(make("small", "item-status", "等你拍板"));
+      line.append(make("small", "source-label draft", "等你拍板"));
     }
     list.append(line);
   }

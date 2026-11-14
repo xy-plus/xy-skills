@@ -263,7 +263,7 @@ class BrowserTreeTest(unittest.TestCase):
                         [item["text"] for item in items],
                     )
                     self.assertEqual(
-                        item_list.locator(".item-status").all_text_contents(),
+                        item_list.locator(".source-label.draft").all_text_contents(),
                         ["等你拍板"],
                     )
                     self.assertLessEqual(
