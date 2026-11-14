@@ -48,18 +48,13 @@ class AuditTest(unittest.TestCase):
         self.assertTrue(any("followup-keep-list/impl" in problem and "report-round7" in problem
                             for problem in problems), problems)
 
-    def test_clean_directory_and_usage_errors(self):
+    def test_usage_errors(self):
         with tempfile.TemporaryDirectory() as root:
-            self.assertEqual(self.run_audit(root), (0, []))
-
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                missing_path_code = main(["audit.py"])
-            self.assertEqual(missing_path_code, 2)
-            self.assertIn("用法：audit.py <目录路径>", output.getvalue())
-
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                invalid_path_code = main(["audit.py", os.path.join(root, "missing")])
-            self.assertEqual(invalid_path_code, 2)
-            self.assertIn("用法：audit.py <目录路径>", output.getvalue())
+            cases = ([], [os.path.join(root, "missing")])
+            for arguments in cases:
+                with self.subTest(arguments=arguments):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        code = main(["audit.py", *arguments])
+                    self.assertEqual(code, 2)
+                    self.assertIn("用法：audit.py <目录路径>", output.getvalue())

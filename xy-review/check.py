@@ -4,8 +4,7 @@ import re
 import sys
 
 
-HANDOFF_DIRECTORY = pathlib.Path(__file__).resolve().parents[1] / "xy-handoff"
-sys.path.insert(0, str(HANDOFF_DIRECTORY))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "xy-handoff"))
 from check_handoff import check_value, object_without_duplicate_keys  # noqa: E402
 from rule_references import (  # noqa: E402
     RULE_FILES, numbered_rule_numbers, rule_quote_problem
@@ -14,95 +13,44 @@ from rule_references import (  # noqa: E402
 
 REPORT_ROUND_RE = re.compile(r"report-round([1-9]\d*)\.md")
 REPO_RULE_NUMBERS = numbered_rule_numbers(RULE_FILES["xy-repo-rules"])
-SECTION = {
-    "items": [{
-        "problem": str,
-        "evidence": str,
-        "quote": {"source": str, "text": str},
-    }],
-    "checked": str,
-}
-QUOTE_PROBLEMS = {
-    "items": [{
-        "problem": str,
-        "evidence": str,
-        "quote": {"source": str, "text": str},
-        "suggestion": str,
-    }],
-    "checked": str,
-}
-REVIEW_MAIN = {
-    "first_principles": {
-        "essence": str,
-        "deviations": SECTION,
-        "quote_problems": QUOTE_PROBLEMS,
-    },
-    "hard_to_misuse": SECTION,
-    "repo_rules": {str(number): SECTION for number in REPO_RULE_NUMBERS},
-    "verdict": str,
-}
-REVIEW_RAZOR = {
-    "occams_razor": {
-        "keep": [{"entity": str, "requirement": str, "achieved": str, "cost": str}],
-        "keep_old": [{"entity": str, "reason": str}],
-        "delete": {"items": [{"entity": str, "loss": str}], "checked": str},
-        "ask_user": {
-            "items": [{"entity": str, "now": str, "change_to": str, "saving": str}],
-            "checked": str,
-        },
-        "quote_problems": QUOTE_PROBLEMS,
-    },
-    "verdict": str,
-}
-DIAGNOSIS = {"diagnosis": str, "actions": [str]}
-REPORTS = {
-    "review-main.json": ("主审报告", REVIEW_MAIN),
-    "review-razor.json": ("剃刀报告", REVIEW_RAZOR),
-    "diagnosis.json": ("判因报告", DIAGNOSIS),
-}
 VERDICTS = ("通过", "改了就过", "不通过")
 DIAGNOSIS_ACTIONS = ("拆分", "重想", "问用户", "顶回")
+TEMPLATE_BLOCKS = re.findall(
+    r"```json\s*\n(.*?)```",
+    pathlib.Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8"),
+    re.S,
+)
+
+
+def value_shape(value):
+    if isinstance(value, dict):
+        return {key: value_shape(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [value_shape(value[0])] if value else []
+    return type(value)
+
+
+REPORT_SHAPES = [value_shape(json.loads(block)) for block in TEMPLATE_BLOCKS]
+REPORT_SHAPES[0]["repo_rules"] = {
+    str(number): next(iter(REPORT_SHAPES[0]["repo_rules"].values()))
+    for number in REPO_RULE_NUMBERS
+}
+REPORTS = dict(zip(
+    ("review-main.json", "review-razor.json", "diagnosis.json"),
+    zip(("主审报告", "剃刀报告", "判因报告"), REPORT_SHAPES),
+))
 TEMPLATE_PLACEHOLDERS = [
     placeholder
-    for block in re.findall(
-        r"```json\s*\n(.*?)```",
-        pathlib.Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8"),
-        re.S,
-    )
+    for block in TEMPLATE_BLOCKS
     for placeholder in re.findall(r"<([^<>]+)>", block)
 ]
-
-
-def find_placeholders(where, value):
-    """递归检查所有值，不复制 SKILL.md 中的占位符。"""
-    if isinstance(value, str):
-        if any(
-            len(piece) >= 2 and any(piece in template for template in TEMPLATE_PLACEHOLDERS)
-            for piece in re.findall(r"<([^<>]+)>", value)
-        ):
-            return [f"{where} 还留着模板占位符"]
-        return []
-    if isinstance(value, dict):
-        return [problem for key, item in value.items()
-                for problem in find_placeholders(f"{where}.{key}", item)]
-    if isinstance(value, list):
-        return [problem for index, item in enumerate(value)
-                for problem in find_placeholders(f"{where}[{index}]", item)]
-    return []
-
-
-def read_document(text):
-    """用交接检查器的重复键规则解析 JSON。"""
-    return json.loads(text, object_pairs_hook=object_without_duplicate_keys)
 
 
 def item_list(document, *path):
     """从结构正确的报告中取数组；结构错误由 check_value 报告。"""
     value = document
     for key in path:
-        if not isinstance(value, dict):
-            return []
-        value = value.get(key)
+        value = value.get(key) if isinstance(value, dict) else None
     return value if isinstance(value, list) else []
 
 
@@ -152,13 +100,18 @@ def check(text, filename):
         return ["报告文件名只能是 review-main.json、review-razor.json 或 diagnosis.json"]
     report_kind, shape = REPORTS[filename]
     try:
-        document = read_document(text)
+        document = json.loads(text, object_pairs_hook=object_without_duplicate_keys)
     except (ValueError, TypeError) as error:
         return [f"JSON 无效：{error}"]
 
     problems = check_value("报告", document, shape)
     if isinstance(document, (dict, list)):
-        problems += find_placeholders("报告", document)
+        serialized = json.dumps(document, ensure_ascii=False)
+        if any(
+            len(piece) >= 2 and any(piece in template for template in TEMPLATE_PLACEHOLDERS)
+            for piece in re.findall(r"<([^<>]+)>", serialized)
+        ):
+            problems.append("报告有模板占位符")
     if not isinstance(document, dict):
         return problems
 
@@ -251,7 +204,7 @@ def _formal_diagnosis_group_problems(group_path):
                 if report_problems:
                     problems.extend(f"{report_path}：{problem}" for problem in report_problems)
                 else:
-                    document = read_document(text)
+                    document = json.loads(text, object_pairs_hook=object_without_duplicate_keys)
                     if document.get("verdict") == "不通过":
                         if number == 3:
                             has_failure = True
@@ -334,7 +287,7 @@ def main(argv):
         return 1
 
     if kind in ("主审报告", "剃刀报告") and path.parent.name == "round3":
-        document = read_document(text)
+        document = json.loads(text, object_pairs_hook=object_without_duplicate_keys)
         if document.get("verdict") == "不通过":
             group = path.parent.parent.name
             print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.json，按结论处理后再开下一组")

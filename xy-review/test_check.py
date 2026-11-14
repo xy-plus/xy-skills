@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from test_audit import write_file
 import rule_references
 import check
 from check import REPO_RULE_NUMBERS, main
@@ -53,10 +54,6 @@ def diagnosis_report(diagnosis="问题在于目标被拆成互相矛盾的两种
     return {"diagnosis": diagnosis, "actions": ["重想"] if actions is None else actions}
 
 
-def json_text(document):
-    return json.dumps(document, ensure_ascii=False)
-
-
 class CheckTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -65,23 +62,18 @@ class CheckTest(unittest.TestCase):
 
     def run_main(self, path_parts, text):
         path = os.path.join(self.root, *path_parts)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as stream:
-            stream.write(text)
+        write_file(os.path.dirname(path), os.path.basename(path), text)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             code = main(["check.py", path])
         return code, output.getvalue().splitlines()
 
     def run_report(self, name, document, folders=("group1", "round1")):
-        return self.run_main((*folders, name), json_text(document))
-
-    def create_round1(self, group="group1"):
-        os.makedirs(os.path.join(self.root, group, "round1"), exist_ok=True)
+        return self.run_main((*folders, name), json.dumps(document, ensure_ascii=False))
 
     def create_formal_round3(self, failed=False, group="group1"):
         group_path = Path(self.root) / group
-        for number in (1, 2, 3):
+        for number in (1, 2):
             (group_path / f"round{number}").mkdir(parents=True, exist_ok=True)
         reports = [
             ("review-main.json", main_report()),
@@ -102,20 +94,12 @@ class CheckTest(unittest.TestCase):
         group_path = Path(self.root) / group
         for number in (1, 2):
             round_path = group_path / f"round{number}"
-            (round_path / "review-main.json").write_text(
-                json_text(main_report()), encoding="utf-8",
-            )
-            (round_path / "review-razor.json").write_text(
-                json_text(razor_report()), encoding="utf-8",
-            )
+            write_file(round_path, "review-main.json", json.dumps(main_report(), ensure_ascii=False))
+            write_file(round_path, "review-razor.json", json.dumps(razor_report(), ensure_ascii=False))
         for number in (1, 2, 3):
-            (group_path / f"round{number}" / "submitted-review.md").write_text(
-                "本轮审查版本。\n", encoding="utf-8",
-            )
+            write_file(group_path / f"round{number}", "submitted-review.md", "本轮审查版本。\n")
         if failed:
-            (group_path / "round3" / "handling.md").write_text(
-                "逐项处理了不通过意见。\n", encoding="utf-8",
-            )
+            write_file(group_path / "round3", "handling.md", "逐项处理了不通过意见。\n")
 
     def assert_rejected(self, name, document, *needles, folders=("group1", "round1")):
         code, problems = self.run_report(name, document, folders)
@@ -199,14 +183,6 @@ class CheckTest(unittest.TestCase):
             "review-main.json", document,
             "通过」但有发现", "first_principles.quote_problems",
         )
-
-    def test_quote_problems_can_be_the_only_findings_for_changed_verdict(self):
-        finding = {
-            "problem": "两条原话互相矛盾",
-            "evidence": "与原话 1「必须启用」相矛盾",
-            "quote": {"source": "Q2", "text": "默认关闭"},
-            "suggestion": "请用户决定是否启用，并说明理由",
-        }
         document = main_report(verdict="改了就过")
         document["first_principles"]["quote_problems"]["items"] = [finding]
         self.assertEqual(self.run_report("review-main.json", document), (0, []))
@@ -477,8 +453,7 @@ class CheckTest(unittest.TestCase):
 
     def test_informal_diagnosis_uses_the_shared_report_validation(self):
         directory = Path(self.root) / "informal-loop"
-        directory.mkdir()
-        (directory / "report-round4.md").write_text("改测记录", encoding="utf-8")
+        write_file(directory, "report-round4.md", "改测记录")
         self.assertEqual(self.run_report("diagnosis.json", diagnosis_report(),
                                          folders=("informal-loop",)), (0, []))
         self.assert_rejected("diagnosis.json", diagnosis_report(actions=[]), "actions 不能为空",
@@ -486,8 +461,7 @@ class CheckTest(unittest.TestCase):
 
     def test_informal_diagnosis_requires_a_valid_report_round_in_its_directory(self):
         directory = Path(self.root) / "informal-loop"
-        directory.mkdir()
-        (directory / "report-round04.md").write_text("不是合法轮次", encoding="utf-8")
+        write_file(directory, "report-round04.md", "不是合法轮次")
         code, problems = self.run_report("diagnosis.json", diagnosis_report(),
                                          folders=("informal-loop",))
         self.assertEqual(code, 1, problems)
@@ -502,15 +476,24 @@ class CheckTest(unittest.TestCase):
         document["first_principles"]["essence"] = "用户要的是 <用户真正要的是什么>"
         self.assert_rejected("review-main.json", document, "模板占位符")
 
-        self.create_round1()
         self.assert_rejected("diagnosis.json", diagnosis_report(diagnosis="<这组为什么没过，引用各轮报告的阻断项和证据>"),
                              "模板占位符", folders=("group1",))
+
+    def test_template_placeholder_error_does_not_name_the_field(self):
+        document = main_report()
+        document["first_principles"]["essence"] = "<用户真正要的是什么>"
+
+        code, problems = self.run_report("review-main.json", document)
+
+        self.assertEqual(code, 1, problems)
+        placeholder_problems = [problem for problem in problems if "模板占位符" in problem]
+        self.assertEqual(len(placeholder_problems), 1, problems)
+        self.assertNotIn("essence", placeholder_problems[0])
 
     def test_diagnosis_template_actions_are_rejected_when_copied(self):
         skill = Path(__file__).with_name("SKILL.md").read_text(encoding="utf-8")
         templates = [json.loads(block) for block in re.findall(r"```json\s*\n(.*?)```", skill, re.S)]
         diagnosis_template = next(template for template in templates if "diagnosis" in template)
-        self.create_round1()
         copied_actions = {"diagnosis": "引用阻断项和证据说明根因。", "actions": diagnosis_template["actions"]}
         self.assert_rejected("diagnosis.json", copied_actions, "模板占位符", folders=("group1",))
 
@@ -562,8 +545,6 @@ class CheckTest(unittest.TestCase):
         self.assertTrue(any("group<G>/diagnosis.json" in problem for problem in problems), problems)
 
     def test_formal_diagnosis_requires_round3(self):
-        self.create_round1()
-        os.makedirs(os.path.join(self.root, "group1", "round2"), exist_ok=True)
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
         self.assertEqual(code, 1, problems)
         self.assertTrue(any("必须已有 round3" in problem for problem in problems), problems)
@@ -577,7 +558,7 @@ class CheckTest(unittest.TestCase):
     def test_formal_diagnosis_rejects_an_invalid_required_report(self):
         self.create_complete_formal_group(failed=True, group="group1")
         report_path = Path(self.root) / "group1" / "round1" / "review-main.json"
-        report_path.write_text("{invalid", encoding="utf-8")
+        write_file(report_path.parent, report_path.name, "{invalid")
 
         code, problems = self.run_report(
             "diagnosis.json", diagnosis_report(), folders=("group1",),
@@ -598,30 +579,21 @@ class CheckTest(unittest.TestCase):
         group = Path(self.root) / "group1"
         for number in (1, 2):
             round_path = group / f"round{number}"
-            round_path.mkdir(exist_ok=True)
-            (round_path / "review-main.json").write_text(
-                json_text(main_report()), encoding="utf-8",
-            )
-            (round_path / "review-razor.json").write_text(
-                json_text(razor_report()), encoding="utf-8",
-            )
+            write_file(round_path, "review-main.json", json.dumps(main_report(), ensure_ascii=False))
+            write_file(round_path, "review-razor.json", json.dumps(razor_report(), ensure_ascii=False))
         for number in (1, 2, 3):
-            (group / f"round{number}" / "submitted-review.md").write_text(
-                "", encoding="utf-8",
-            )
+            write_file(group / f"round{number}", "submitted-review.md", "")
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
         self.assertEqual(code, 1, problems)
         self.assertTrue(any("submitted" in problem for problem in problems), problems)
 
         for number in (1, 2, 3):
-            (group / f"round{number}" / "submitted-review.md").write_text(
-                "本轮审查版本。\n", encoding="utf-8",
-            )
+            write_file(group / f"round{number}", "submitted-review.md", "本轮审查版本。\n")
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
         self.assertEqual(code, 1, problems)
         self.assertTrue(any("handling.md" in problem for problem in problems), problems)
 
-        (group / "round3" / "handling.md").write_text("逐项处理了不通过意见。\n", encoding="utf-8")
+        write_file(group / "round3", "handling.md", "逐项处理了不通过意见。\n")
         self.assertEqual(self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",)), (0, []))
 
     def test_formal_group_must_start_with_round1(self):
@@ -649,18 +621,17 @@ class CheckTest(unittest.TestCase):
         self.assertTrue(any("一组要复审到第 3 轮" in problem for problem in problems), problems)
 
         self.create_complete_formal_group(failed=True, group="group1")
-        with open(os.path.join(self.root, "group1", "diagnosis.json"), "w", encoding="utf-8") as stream:
-            stream.write(json_text(diagnosis_report(actions=["无效动作"])))
+        write_file(self.root, "group1/diagnosis.json",
+                   json.dumps(diagnosis_report(actions=["无效动作"])))
         code, problems = self.run_report("review-main.json", main_report(), folders)
         self.assertEqual(code, 1, problems)
         self.assertTrue(any("actions 只能包含" in problem for problem in problems), problems)
 
-        with open(os.path.join(self.root, "group1", "diagnosis.json"), "w", encoding="utf-8") as stream:
-            stream.write(json_text(diagnosis_report()))
+        write_file(self.root, "group1/diagnosis.json", json.dumps(diagnosis_report()))
         self.assertEqual(self.run_report("review-main.json", main_report(), folders), (0, []))
 
     def test_round3_failure_is_only_a_reminder(self):
-        self.create_round1()
+        os.makedirs(os.path.join(self.root, "group1", "round1"), exist_ok=True)
         os.makedirs(os.path.join(self.root, "group1", "round2"), exist_ok=True)
         document = main_report(verdict="不通过", hard_to_misuse=[{
             "problem": "缺陷",

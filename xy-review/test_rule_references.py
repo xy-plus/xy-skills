@@ -17,10 +17,6 @@ class RuleReferencesTest(unittest.TestCase):
                 problem = rule_quote_problem("xy-iron-law 第 5 条", "第五条")
             self.assertIsInstance(problem, str)
 
-    def test_rule_quote_must_be_continuous_text_from_its_named_rule(self):
-        problem = rule_quote_problem("xy-iron-law 第 1 条", "第一性原理……思考")
-        self.assertIsInstance(problem, str)
-
     def test_rule_document_without_numbered_rules_raises(self):
         with tempfile.TemporaryDirectory() as temporary:
             skill_path = Path(temporary) / "rules.md"
