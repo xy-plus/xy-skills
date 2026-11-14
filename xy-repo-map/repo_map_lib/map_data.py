@@ -273,7 +273,8 @@ def build_map(repository):
         directory = value["directory"]
         directory_name = repository_name if directory == "" else Path(directory).name if directory is not None else None
         markers = []
-        if value["why"]["source"] == "起草":
+        if (value["why"]["source"] == "起草"
+                or any(item["status"] == "起草" for item in value["items"])):
             markers.append("等你拍板")
         if directory is None and not children[feature_id] and not value["entries"]:
             markers.append("还没实现")
@@ -296,6 +297,7 @@ def build_map(repository):
             "children": children[feature_id],
             "what": value["what"],
             "why": value["why"],
+            "items": value["items"],
             "lines": {"own": lines[feature_id], "total": totals[feature_id]},
             "doc_chars": {
                 "own": doc_chars[feature_id],

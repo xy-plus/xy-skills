@@ -18,7 +18,11 @@ class RenderTest(unittest.TestCase):
             feature("alpha", "alpha"),
             feature("branch", "branch", children=[
                 feature("approved", None, entries=["branch/approved.py"]),
-                feature("future", None, source="起草"),
+                feature("future", None, source="起草", items=[{
+                    "id": "draft-item",
+                    "text": "用户可以检查待确认的内容。",
+                    "status": "起草",
+                }]),
             ]),
         ]))
         self.temporary = tempfile.TemporaryDirectory()
@@ -39,6 +43,12 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(set(data), {"root", "features", "markers"})
         self.assertEqual(data["root"], "root")
         self.assertEqual(data["markers"]["等你拍板"], 1)
+        self.assertEqual(data["features"]["root"].get("items"), [])
+        self.assertEqual(data["features"]["future"].get("items"), [{
+            "id": "draft-item",
+            "text": "用户可以检查待确认的内容。",
+            "status": "起草",
+        }])
         self.assertEqual(
             data["features"]["root"].get("doc_chars"),
             {"own": 15, "total": 15},

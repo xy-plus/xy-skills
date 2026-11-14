@@ -236,6 +236,125 @@ class FeatureCheckTest(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, output)
 
+    def test_requires_items_on_root_and_child_features(self):
+        root = feature("root", "", subrepositories=[], external_dependencies=[], items=[])
+        del root["items"]
+        self.set_features(root)
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 root 缺少键 items", result.stdout + result.stderr)
+
+        self.write("pkg/item.py", "value = 1\n")
+        child = feature("child", "pkg", items=[])
+        del child["items"]
+        root = feature(
+            "root", "", subrepositories=[], external_dependencies=[],
+            children=[child], items=[],
+        )
+        self.set_features(root)
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 child 缺少键 items", result.stdout + result.stderr)
+
+    def test_rejects_items_that_are_not_arrays_or_items_that_are_not_objects(self):
+        cases = [
+            ("not-an-array", "功能 root 的 items 必须是数组"),
+            ([None], "功能 root 的 items[0] 必须是对象"),
+        ]
+        for items, expected in cases:
+            with self.subTest(items=items):
+                root = feature(
+                    "root", "", subrepositories=[], external_dependencies=[], items=items,
+                )
+                self.set_features(root)
+                result = self.check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(expected, result.stdout + result.stderr)
+
+    def test_rejects_missing_or_extra_item_keys(self):
+        cases = [
+            ({"id": "core", "text": "输出正确结果。"}, "缺少键 status"),
+            ({"id": "core", "text": "输出正确结果。", "status": "确认", "extra": True},
+             "有多余键 extra"),
+        ]
+        for item, expected in cases:
+            with self.subTest(item=item):
+                root = feature(
+                    "root", "", subrepositories=[], external_dependencies=[], items=[item],
+                )
+                self.set_features(root)
+                result = self.check()
+                self.assertEqual(result.returncode, 1)
+                output = result.stdout + result.stderr
+                self.assertIn("功能 root 的 items[0]", output)
+                self.assertIn(expected, output)
+
+    def test_rejects_invalid_or_duplicate_item_ids(self):
+        cases = [
+            ([{"id": "Bad_ID", "text": "输出正确结果。", "status": "确认"}],
+             "items[0].id"),
+            ([
+                {"id": "same", "text": "输出正确结果。", "status": "确认"},
+                {"id": "same", "text": "输出其他结果。", "status": "确认"},
+            ], "条目 id 重复"),
+        ]
+        for items, expected in cases:
+            with self.subTest(items=items):
+                root = feature(
+                    "root", "", subrepositories=[], external_dependencies=[], items=items,
+                )
+                self.set_features(root)
+                result = self.check()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("功能 root", result.stdout + result.stderr)
+                self.assertIn(expected, result.stdout + result.stderr)
+
+    def test_rejects_empty_non_string_and_multiline_item_text(self):
+        valid_item = {"id": "core", "status": "确认"}
+        cases = [
+            ("", "items[0].text"),
+            ("  \t", "items[0].text"),
+            (None, "items[0].text"),
+            ("first\nsecond", "items[0].text"),
+            ("first\rsecond", "items[0].text"),
+            ("first\u2028second", "items[0].text"),
+            ("first\u2029second", "items[0].text"),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                root = feature(
+                    "root", "", subrepositories=[], external_dependencies=[],
+                    items=[{**valid_item, "text": text}],
+                )
+                self.set_features(root)
+                result = self.check()
+                self.assertEqual(result.returncode, 1)
+                output = result.stdout + result.stderr
+                self.assertIn("功能 root 的 items[0]", output)
+                self.assertIn(expected, output)
+
+    def test_rejects_item_status_outside_confirmed_or_draft(self):
+        root = feature(
+            "root", "", subrepositories=[], external_dependencies=[],
+            items=[{"id": "core", "text": "输出正确结果。", "status": "待定"}],
+        )
+        self.set_features(root)
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 root 的 items[0].status", result.stdout + result.stderr)
+
+    def test_accepts_valid_items_with_repeated_ids_on_different_features(self):
+        self.write("pkg/item.py", "value = 1\n")
+        item = {"id": "core", "text": "输出正确结果。", "status": "确认"}
+        root = feature(
+            "root", "", subrepositories=[], external_dependencies=[],
+            items=[item],
+            children=[feature("child", "pkg", items=[item])],
+        )
+        self.set_features(root)
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_rejects_an_invalid_identifier_and_duplicate_identifier(self):
         root = feature("Bad_ID", "", subrepositories=[], external_dependencies=[])
         self.set_features(root)

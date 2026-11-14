@@ -9,6 +9,7 @@
     "from": "20261110 清扫决定页面第一页"
   },
   "directory": "",
+  "items": [],
   "subrepositories": [],
   "external_dependencies": [
     "Claude Code",
@@ -31,6 +32,7 @@
         "from": "20261110 清扫决定页面第一页"
       },
       "directory": null,
+      "items": [],
       "entries": [],
       "children": [
         {
@@ -44,6 +46,7 @@
             "from": "xy-iron-law/SKILL.md 第 1 条"
           },
           "directory": "xy-iron-law",
+          "items": [],
           "entries": [],
           "children": []
         },
@@ -58,6 +61,7 @@
             "from": "xy-repo-rules/SKILL.md 第 7 条"
           },
           "directory": "xy-repo-rules",
+          "items": [],
           "entries": [],
           "children": []
         }
@@ -74,6 +78,7 @@
         "from": "20261110 清扫决定页面第一页"
       },
       "directory": "xy-workflow",
+      "items": [],
       "entries": [],
       "children": []
     },
@@ -88,6 +93,7 @@
         "from": "20261110 清扫决定页面第二页 R1"
       },
       "directory": null,
+      "items": [],
       "entries": [],
       "children": [
         {
@@ -101,6 +107,7 @@
             "from": "20261110 清扫决定页面第一页"
           },
           "directory": "sync-think",
+          "items": [],
           "entries": [],
           "children": []
         },
@@ -115,6 +122,7 @@
             "from": "20261110 清扫决定页面第一页 A6"
           },
           "directory": "xy-review",
+          "items": [],
           "entries": [
             "xy-review/SKILL.md"
           ],
@@ -130,6 +138,7 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-review/check.py"
               ],
@@ -146,6 +155,7 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L6"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-review/rule_references.py"
               ],
@@ -162,6 +172,7 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-review/audit.py"
               ],
@@ -180,6 +191,7 @@
             "from": "20261110 清扫决定页面第一页"
           },
           "directory": "xy-goal",
+          "items": [],
           "entries": [
             "xy-goal/README.md"
           ],
@@ -195,6 +207,7 @@
                 "from": "20261110 清扫决定页面第二页 R4"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-goal/SKILL.md",
                 "xy-goal/goal.py"
@@ -212,6 +225,7 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json P1、P7"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-goal/SKILL.md",
                 "xy-goal/goal.py"
@@ -229,6 +243,7 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-goal/SKILL.md",
                 "xy-goal/goal.py"
@@ -246,6 +261,7 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-goal/SKILL.md",
                 "xy-goal/goal.py"
@@ -267,6 +283,7 @@
         "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json L2"
       },
       "directory": "xy-handoff",
+      "items": [],
       "entries": [
         "xy-handoff/SKILL.md"
       ],
@@ -282,6 +299,7 @@
             "from": "20261110 清扫决定页面第一页"
           },
           "directory": null,
+          "items": [],
           "entries": [
             "xy-handoff/check_handoff.py",
             "xy-handoff/test_check_handoff.py"
@@ -301,6 +319,7 @@
         "from": "20261110 清扫决定页面第一页"
       },
       "directory": "xy-runs",
+      "items": [],
       "entries": [],
       "children": [
         {
@@ -314,6 +333,7 @@
             "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A17"
           },
           "directory": null,
+          "items": [],
           "entries": [
             "xy-runs/SKILL.md"
           ],
@@ -330,6 +350,7 @@
             "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A18"
           },
           "directory": null,
+          "items": [],
           "entries": [
             "xy-runs/clean.py",
             "xy-runs/README.md",
@@ -350,6 +371,7 @@
         "from": "20261031-002858-xy-skills-cleanup-skill 原话 1"
       },
       "directory": null,
+      "items": [],
       "entries": [],
       "children": [
         {
@@ -363,6 +385,7 @@
             "from": "20261031-002858-xy-skills-cleanup-skill 原话 5"
           },
           "directory": "xy-repo-map",
+          "items": [],
           "entries": [
             "xy-repo-map/SKILL.md",
             "xy-repo-map/repo_map.py",
@@ -383,6 +406,7 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-repo-map/repo_map_lib/features.py",
                 "xy-repo-map/tests/test_feature_check.py"
@@ -400,6 +424,7 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json P5"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-repo-map/repo_map_lib/ownership.py"
               ],
@@ -416,6 +441,7 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L1"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-repo-map/repo_map_lib/metrics.py"
               ],
@@ -432,6 +458,7 @@
                 "from": "20261113-091419-xy-skills-cleanup-text 原话 3"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-repo-map/repo_map_lib/skip_paths.py",
                 "xy-repo-map/tests/test_skip_paths.py"
@@ -449,6 +476,7 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json L7"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-repo-map/repo_map_lib/dependencies.py"
               ],
@@ -465,6 +493,7 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json L7"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-repo-map/repo_map_lib/render_command.py",
                 "xy-repo-map/repo_map_lib/render_page.py",
@@ -486,6 +515,7 @@
                 "from": "20261111-044910-xy-skills-cleanup-incremental 原话 47"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-repo-map/repo_map_lib/workspace_map.py",
                 "xy-repo-map/tests/test_workspace.py",
@@ -504,6 +534,7 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-repo-map/repo_map_lib/publish_command.py",
                 "xy-repo-map/tests/test_publish.py"
@@ -523,6 +554,7 @@
             "from": "20261111-112959-quant-workspace-maps 原话 63、64"
           },
           "directory": "xy-cleanup",
+          "items": [],
           "entries": [
             "xy-cleanup/SKILL.md",
             "xy-cleanup/review-misses.md"
@@ -539,6 +571,7 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A7"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-cleanup/check_reports.py",
                 "xy-cleanup/tests/test_check_reports.py"
@@ -556,6 +589,7 @@
                 "from": "20261110-070411-xy-skills-repo-map-cleanup-redesign 原话 61"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-cleanup/decision_page.py",
                 "xy-cleanup/templates/decision-page.html",
@@ -575,6 +609,7 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L9"
               },
               "directory": null,
+              "items": [],
               "entries": [
                 "xy-cleanup/approvals.py",
                 "xy-cleanup/tests/test_approvals.py"
@@ -596,6 +631,7 @@
         "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L10"
       },
       "directory": null,
+      "items": [],
       "entries": [
         "README.md"
       ],

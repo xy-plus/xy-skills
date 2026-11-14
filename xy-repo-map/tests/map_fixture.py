@@ -20,7 +20,7 @@ def why(source="原话", text="让功能容易使用。", quote="用户说过的
 
 
 def feature(feature_id, directory, children=None, entries=None, source="原话",
-            subrepositories=_UNSET, external_dependencies=_UNSET):
+            subrepositories=_UNSET, external_dependencies=_UNSET, items=_UNSET):
     result = {
         "id": feature_id,
         "title": feature_id.title(),
@@ -34,6 +34,7 @@ def feature(feature_id, directory, children=None, entries=None, source="原话",
         result["subrepositories"] = subrepositories
     if external_dependencies is not _UNSET:
         result["external_dependencies"] = external_dependencies
+    result["items"] = [] if items is _UNSET else items
     return result
 
 

@@ -10,8 +10,9 @@ sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 
 
-FEATURE_KEYS = {"id", "title", "what", "why", "directory", "entries", "children"}
+FEATURE_KEYS = {"id", "title", "what", "why", "directory", "items", "entries", "children"}
 WHY_KEYS = {"text", "source", "quote", "from"}
+ITEM_KEYS = {"id", "text", "status"}
 FEATURE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
@@ -75,15 +76,18 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
     allowed_keys = FEATURE_KEYS | (
         {"subrepositories", "external_dependencies"} if parent is None else set()
     )
+    feature_id = value.get("id")
+    current = feature_id if isinstance(feature_id, str) else label
     missing = allowed_keys - value.keys()
     extra = value.keys() - allowed_keys
     for key in sorted(missing):
-        errors.append(f"{label}缺少键 {key}")
+        if key == "items":
+            errors.append(f"功能 {current} 缺少键 items")
+        else:
+            errors.append(f"{label}缺少键 {key}")
     for key in sorted(extra):
         errors.append(f"{label}有多余键 {key}")
 
-    feature_id = value.get("id")
-    current = feature_id if isinstance(feature_id, str) else label
     if not isinstance(feature_id, str) or FEATURE_ID.fullmatch(feature_id) is None:
         errors.append(f"{label}的 id 必须匹配 ^[a-z][a-z0-9-]*$：{feature_id!r}")
     elif feature_id in features:
@@ -91,6 +95,39 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
     else:
         features[feature_id] = {**value, "parent": parent}
         order.append(feature_id)
+
+    if "items" in value:
+        items = value["items"]
+        if not isinstance(items, list):
+            errors.append(f"功能 {current} 的 items 必须是数组")
+        else:
+            item_ids = set()
+            for index, item in enumerate(items):
+                item_label = f"功能 {current} 的 items[{index}]"
+                if not isinstance(item, dict):
+                    errors.append(f"{item_label} 必须是对象")
+                    continue
+                for key in sorted(ITEM_KEYS - item.keys()):
+                    errors.append(f"{item_label}缺少键 {key}")
+                for key in sorted(item.keys() - ITEM_KEYS):
+                    errors.append(f"{item_label}有多余键 {key}")
+
+                item_id = item.get("id")
+                if not isinstance(item_id, str) or FEATURE_ID.fullmatch(item_id) is None:
+                    errors.append(
+                        f"{item_label}.id 必须匹配 ^[a-z][a-z0-9-]*$：{item_id!r}"
+                    )
+                elif item_id in item_ids:
+                    errors.append(f"功能 {current} 的条目 id 重复：{item_id}")
+                else:
+                    item_ids.add(item_id)
+
+                text = item.get("text")
+                if (not _nonempty_text(text)
+                        or any(character in text for character in ("\r", "\n", "\u2028", "\u2029"))):
+                    errors.append(f"{item_label}.text 必须是非空单行字符串")
+                if item.get("status") not in ("确认", "起草"):
+                    errors.append(f"{item_label}.status 只能是 确认、起草")
 
     for key in ("title", "what"):
         if not _nonempty_text(value.get(key)):

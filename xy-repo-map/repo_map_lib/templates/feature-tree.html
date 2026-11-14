@@ -93,6 +93,8 @@ body.detail-open main{padding-bottom:45vh}
 .detail-list li{border-bottom:1px solid var(--hair);padding:7px 2px;font-size:13px}
 .detail-list button{color:var(--uses);overflow-wrap:anywhere}
 .detail-list small{margin-left:5px;color:var(--muted);font-size:11px}
+.items-list li{overflow-wrap:anywhere}
+.item-status{display:inline-block;border-radius:4px;background:#fab219;padding:0 5px;color:#0b0b0b;font-size:10.5px;font-weight:650}
 @media(max-width:520px){.wrap{padding-left:12px;padding-right:12px}.hero{padding-top:15px}.feature-title{font-size:14px}.feature-title .directory-name{font-size:11px}.meter-line{gap:5px}.metrics{gap:3px 7px}.feature-children{margin-left:10px}.undivided{margin-left:38px}.detail-panel{padding-left:14px;padding-right:14px}}
 </style>
 </head>
@@ -453,6 +455,19 @@ function relationList(items, externalUses) {
   return list;
 }
 
+function itemList(items) {
+  const list = make("ul", "detail-list items-list");
+  for (const item of items) {
+    const line = make("li", "");
+    line.append(make("span", "item-text", item.text));
+    if (item.status === "起草") {
+      line.append(make("small", "item-status", "等你拍板"));
+    }
+    list.append(line);
+  }
+  return list;
+}
+
 function openDetails(featureId) {
   const feature = features[featureId];
   const panel = document.querySelector("#detail-panel");
@@ -475,6 +490,9 @@ function openDetails(featureId) {
   }
   panel.append(make("p", "detail-path", `上级路径：${path.join(" › ") || "无"}`));
   panel.append(make("h3", "", "要什么"), make("p", "", feature.what));
+  if (feature.items.length) {
+    panel.append(make("h3", "", "条目"), itemList(feature.items));
+  }
   panel.append(make("h3", "", "为什么要"));
   const why = make("p", "why-detail-body", feature.why.text);
   appendSourceLabel(why, feature.why.source);

@@ -21,8 +21,11 @@ description: 从功能清单推导文件归属、行数和依赖，生成离线�
 | `what` | 一句话说明要什么：写用户要的结果和约束，不写现在分几条路径、几个阶段、几个模块；非空。 |
 | `why` | 功能为什么需要，以及理由出处。 |
 | `directory` | 对应目录的仓内相对路径；仓库根写 `""`；不对应目录写 `null`。 |
+| `items` | 用户层面的功能条目数组；没有条目时写 `[]`。 |
 | `entries` | 仓内相对文件路径，或以 `/` 结尾的目录路径；目录入口包含其下所有跟踪文件。 |
 | `children` | 子功能数组。 |
+
+每个 `items` 对象必须且只含 `id`、`text`、`status`。`id` 在本功能内唯一，格式与功能 id 相同；引用时写 `功能 id:条目 id`。`text` 是一行非空字符串，只写一件可验证、能单独取舍的用户层面结果或约束，不写实现步骤、命令参数或文件名；若能说出「做了一半」，就拆成多条。`status` 只能是 `确认` 或 `起草`；起草条目会标「等你拍板」，用户确认后改为「确认」。
 
 根功能必须有 `subrepositories` 字段，记录另有功能图的独立子仓目录；无时写 `[]`。它是仓内相对目录路径数组：非空、不以 `/` 开头或结尾、不含 `\`，不得有空段、`.` 或 `..` 段。重复路径按集合比较，不报错。子功能不能有该字段。
 
@@ -52,6 +55,7 @@ description: 从功能清单推导文件归属、行数和依赖，生成离线�
     "from": ""
   },
   "directory": "",
+  "items": [],
   "subrepositories": [],
   "external_dependencies": [],
   "entries": [],
@@ -112,7 +116,7 @@ Python `import` 用 AST 解析；模块名仅在仓内恰好匹配一个 `.py` �
 
 `map-data.json` 顶层恰有 `root`、`features`、`markers`；`features` 以功能 id 为键，包含：
 
-- `title`、`directory_name`、`parent`、`children`、`what`、`why`。根功能的 `directory_name` 取 `git worktree list --porcelain -z` 中主检出的目录名，因此从 linked worktree 出图也显示仓库名。
+- `title`、`directory_name`、`parent`、`children`、`what`、`why`、`items`。根功能的 `directory_name` 取 `git worktree list --porcelain -z` 中主检出的目录名，因此从 linked worktree 出图也显示仓库名。
 - `lines.own` 是直属行数，`lines.total` 是含所有子功能的行数；两者都分代码、文档、注释、测试。
 - `doc_chars.own` 和 `doc_chars.total` 分别是直属及含所有子功能的文档非空白字符数。
 - `files.registered`、`files.reached`、`files.directory`、`files.shared`、`files.whole` 按归属原因列出直属文件。
@@ -145,7 +149,7 @@ python3 <xy-repo-map目录>/repo_map.py publish \
 
 `check` 校验清单、子仓、支持后缀、文件归属、行数、依赖和标记。
 
-`render` 完成同样校验后读取 `repo_map_lib/templates/feature-tree.html`，嵌入数据并写 `index.html` 和 `map-data.json`；模板路径须列在「出图」功能的 `entries` 中。输出目录必须不存在或为空。页面为可离线打开的单页，只画手机友好的功能树，不显示实现文件。页头显示根功能名、「要什么」「为什么」及其出处；点击根功能名打开详情，树从根功能的子功能开始。功能行和详情面板的「用到」都列出外部依赖并标「外部」，外部依赖使用不可点击的元素。默认显示根下两层。行数条长度表示占父功能的比例，条内按代码、测试、文档、注释分段。筛选「等你拍板」时，只显示带标记的功能及其各级上级，不显示其他功能或「没细分到子功能的部分」。页面内嵌数据与 `map-data.json` 相同，但不含 `files`。
+`render` 完成同样校验后读取 `repo_map_lib/templates/feature-tree.html`，嵌入数据并写 `index.html` 和 `map-data.json`；模板路径须列在「出图」功能的 `entries` 中。输出目录必须不存在或为空。页面为可离线打开的单页，只画手机友好的功能树，不显示实现文件。页头显示根功能名、「要什么」「为什么」及其出处；点击根功能名打开详情，树从根功能的子功能开始。详情面板列出功能条目，起草条目旁标「等你拍板」。功能行和详情面板的「用到」都列出外部依赖并标「外部」，外部依赖使用不可点击的元素。默认显示根下两层。行数条长度表示占父功能的比例，条内按代码、测试、文档、注释分段。筛选「等你拍板」时，只显示带标记的功能及其各级上级，不显示其他功能或「没细分到子功能的部分」。功能含起草条目时显示「等你拍板」标记；如果理由和条目同时起草，只计一次。页面内嵌数据与 `map-data.json` 相同，但不含 `files`。
 
 `render-workspace` 用 `build_map` 分别检查主仓和每个登记子仓。主仓至少登记一个子仓；每个子仓须在当前检出中，是 Git 仓根且有有效 `repo-map/features.json`。检查失败退出 `1`，错误指出子仓及原因；缺清单时提示先起草只有根功能的清单；子仓不在当前检出时提示到其检出目录运行。参数错误退出 `2`。组合时主仓根不变，按登记顺序将子仓根接在其子功能末尾；子仓功能 id 加登记路径前缀，并同步改写 `parent`、`children`、`uses` 和 `files` 中的路径。子仓自身行数和标记不变；主仓根的 `lines.total` 和顶层标记计数累加各子仓。不会递归组合子仓登记的其他仓。
 

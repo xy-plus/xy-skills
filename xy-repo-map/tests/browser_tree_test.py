@@ -224,3 +224,51 @@ class BrowserTreeTest(unittest.TestCase):
                 self.assertEqual(panel.locator(".why-detail-body .source-label").text_content(), "AI 起草 · 等你拍板")
                 self.assertNotIn("来源：", panel.inner_text())
                 browser.close()
+
+    def test_detail_panel_shows_items_at_phone_width(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        items = [
+            {
+                "id": "reviewable",
+                "text": "用户可以在手机上看到这条待确认的功能说明。",
+                "status": "起草",
+            },
+            {
+                "id": "confirmed",
+                "text": "已确认的说明也会显示。",
+                "status": "确认",
+            },
+        ]
+        repository = make_repo(self, {"README.md": "Demo.\n"}, feature(
+            "root", "", subrepositories=[], external_dependencies=[], children=[
+                feature("details", None, source="确认", items=items),
+            ],
+        ))
+        with tempfile.TemporaryDirectory() as temporary:
+            output = self.render(repository, temporary)
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(
+                    executable_path=executable, headless=True,
+                )
+                try:
+                    page = browser.new_page(viewport={"width": 390, "height": 844})
+                    page.goto((output / "index.html").as_uri())
+                    page.locator(".feature-title").click()
+                    panel = page.locator(".detail-panel")
+                    item_list = panel.locator(".items-list")
+                    self.assertEqual(item_list.count(), 1)
+                    self.assertEqual(
+                        item_list.locator(".item-text").all_text_contents(),
+                        [item["text"] for item in items],
+                    )
+                    self.assertEqual(
+                        item_list.locator(".item-status").all_text_contents(),
+                        ["等你拍板"],
+                    )
+                    self.assertLessEqual(
+                        page.evaluate("document.documentElement.scrollWidth"),
+                        page.evaluate("window.innerWidth"),
+                    )
+                finally:
+                    browser.close()

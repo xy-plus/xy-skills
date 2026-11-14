@@ -473,3 +473,39 @@ class DerivationTest(unittest.TestCase):
         self.assertIn("还没实现", data["features"]["future"]["markers"])
         self.assertIn("没归到功能的代码或测试", data["features"]["package"]["markers"])
         self.assertEqual(data["markers"], {"等你拍板": 2, "还没实现": 2, "没归到功能的代码或测试": 1})
+
+    def test_map_data_keeps_confirmed_items_on_each_feature(self):
+        root_items = [{"id": "main", "text": "仓库提供可用的结果。", "status": "确认"}]
+        child_items = [{"id": "detail", "text": "详情可被核对。", "status": "确认"}]
+        repository = make_repo(self, {"pkg/main.py": "value = 1\n"}, feature(
+            "root", "", subrepositories=[], external_dependencies=[], items=root_items,
+            children=[feature("package", "pkg", items=child_items)],
+        ))
+
+        data = build_map(self, repository)
+
+        self.assertEqual(data["features"]["root"].get("items"), root_items)
+        self.assertEqual(data["features"]["package"].get("items"), child_items)
+
+    def test_draft_item_marks_its_feature_as_waiting_for_approval(self):
+        items = [{"id": "draft", "text": "用户可获得此能力。", "status": "起草"}]
+        repository = make_repo(self, {"README.md": "Root.\n"}, feature(
+            "root", "", subrepositories=[], external_dependencies=[], items=items,
+        ))
+
+        data = build_map(self, repository)
+
+        self.assertIn("等你拍板", data["features"]["root"]["markers"])
+        self.assertEqual(data["markers"]["等你拍板"], 1)
+
+    def test_draft_reason_and_draft_item_count_as_one_decision_marker(self):
+        items = [{"id": "draft", "text": "用户可获得此能力。", "status": "起草"}]
+        repository = make_repo(self, {"README.md": "Root.\n"}, feature(
+            "root", "", subrepositories=[], external_dependencies=[], source="起草",
+            items=items,
+        ))
+
+        data = build_map(self, repository)
+
+        self.assertEqual(data["features"]["root"]["markers"].count("等你拍板"), 1)
+        self.assertEqual(data["markers"]["等你拍板"], 1)
