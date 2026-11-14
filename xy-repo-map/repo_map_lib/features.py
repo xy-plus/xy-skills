@@ -1,12 +1,10 @@
-"""Read feature descriptions and validate their paths against tracked files."""
 import json
 from pathlib import Path
 import re
 import sys
 
 
-REPOSITORY = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPOSITORY / "xy-handoff"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "xy-handoff"))
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 
 
@@ -45,13 +43,12 @@ def directory_home(feature_id, features):
 
 def deepest_directory(path, features, order):
     """Return the most specific directory feature containing a path."""
-    matches = [
-        feature_id for feature_id in order
-        if features[feature_id].get("directory") is not None
-        and path_is_under(path, features[feature_id]["directory"])
-    ]
     return max(
-        matches,
+        (
+            feature_id for feature_id in order
+            if features[feature_id].get("directory") is not None
+            and path_is_under(path, features[feature_id]["directory"])
+        ),
         key=lambda feature_id: len(features[feature_id]["directory"]),
         default=None,
     )

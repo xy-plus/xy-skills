@@ -26,6 +26,13 @@ class WorkspaceRenderTest(unittest.TestCase):
         return output
 
     def test_render_workspace_combines_maps_and_resolves_external_names(self):
+        sub_a_manifest = self.workspace / "sub-a" / "repo-map" / "features.json"
+        sub_a = json.loads(sub_a_manifest.read_text(encoding="utf-8"))
+        sub_a["external_dependencies"].append("workspace")
+        sub_a_manifest.write_text(json.dumps(sub_a, ensure_ascii=False), encoding="utf-8")
+        (self.workspace / "sub-a" / "README.md").write_text(
+            "Uses sub-b missing-tool workspace.\n", encoding="utf-8",
+        )
         root_manifest = self.workspace / "repo-map" / "features.json"
         root_feature = json.loads(root_manifest.read_text(encoding="utf-8"))
         root_feature["external_dependencies"] = ["lib"]
@@ -70,6 +77,10 @@ class WorkspaceRenderTest(unittest.TestCase):
             [{"feature": "sub-b/root", "by": "mention"}],
         )
         self.assertEqual(data["features"]["sub-a/root"]["external_uses"], ["missing-tool"])
+        self.assertEqual(
+            data["features"]["sub-a/root"]["uses"],
+            [{"feature": "sub-b/root", "by": "mention"}],
+        )
         self.assertEqual(data["features"]["sub-a/part"]["external_uses"], [])
         self.assertEqual(data["features"]["root"]["external_uses"], ["lib"])
         self.assertFalse(any(
@@ -81,23 +92,6 @@ class WorkspaceRenderTest(unittest.TestCase):
             "还没实现": 0,
             "没归到功能的代码或测试": 0,
         })
-
-    def test_external_use_named_after_workspace_checkout_is_removed_without_root_relation(self):
-        manifest_path = self.workspace / "sub-a" / "repo-map" / "features.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["external_dependencies"].append("workspace")
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-        (self.workspace / "sub-a" / "README.md").write_text(
-            "Uses sub-b missing-tool workspace.\n", encoding="utf-8",
-        )
-
-        result = self.render()
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        data = json.loads((self.output / "map-data.json").read_text(encoding="utf-8"))
-        feature = data["features"]["sub-a/root"]
-        self.assertEqual(feature["external_uses"], ["missing-tool"])
-        self.assertFalse(any(use["feature"] == "root" for use in feature["uses"]))
 
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")

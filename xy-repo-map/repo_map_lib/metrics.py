@@ -1,4 +1,4 @@
-from collections import namedtuple
+from collections import Counter, namedtuple
 import ast
 import io
 import tokenize
@@ -42,24 +42,6 @@ def _python_comment_lines(source):
     except (tokenize.TokenError, IndentationError):
         pass
     return result
-
-
-def _python_counts(source):
-    docs = _python_doc_lines(source)
-    comments = _python_comment_lines(source)
-    code = 0
-    doc_count = 0
-    comment_count = 0
-    for number, line in enumerate(source.splitlines(), 1):
-        if not line.strip():
-            continue
-        if number in docs:
-            doc_count += 1
-        elif number in comments:
-            comment_count += 1
-        else:
-            code += 1
-    return LineCounts(code, doc_count, comment_count, 0)
 
 
 def _quoted_end(source, start, quote, allow_newlines):
@@ -168,69 +150,63 @@ def _span_line_categories(source, spans):
                 span for span in spans
                 if span[0] < offset + len(content) and span[1] > offset
             ]
-            covered_positions = [
-                position for position in visible
-                if any(start <= position < end for start, end, _ in covering)
-            ]
-            if visible and len(covered_positions) == len(visible):
-                category = (
-                    "docs" if any(is_doc for _, _, is_doc in covering)
-                    else "comments"
-                )
+            if visible and all(
+                any(start <= position < end for start, end, _ in covering)
+                for position in visible
+            ):
+                if any(is_doc for _, _, is_doc in covering):
+                    yield number, "docs"
+                else:
+                    yield number, "comments"
             else:
-                category = "code"
-            yield number, category
+                yield number, "code"
         offset += len(line)
 
 
 def _span_counts(source, spans):
-    line_counts = {"code": 0, "docs": 0, "comments": 0}
-    for _number, category in _span_line_categories(source, spans):
-        line_counts[category] += 1
+    line_counts = Counter(category for _number, category in _span_line_categories(source, spans))
     return LineCounts(line_counts["code"], line_counts["docs"], line_counts["comments"], 0)
-
-
-def code_counts(path, source):
-    suffix = Path(path).suffix.lower()
-    if suffix == ".html":
-        return _html_counts(source)
-    language = CODE_SUFFIXES[suffix]
-    if language == "Python":
-        return _python_counts(source)
-    if language == "Shell":
-        code = 0
-        comments = 0
-        for number, line in enumerate(source.splitlines(), 1):
-            stripped = line.lstrip()
-            if not stripped:
-                continue
-            if stripped.startswith("#") and not (number == 1 and stripped.startswith("#!")):
-                comments += 1
-            else:
-                code += 1
-        return LineCounts(code, 0, comments, 0)
-    return _span_counts(source, _comment_spans(source, language))
-
-
-def _html_counts(source):
-    spans = []
-    start = 0
-    while True:
-        start = source.find("<!--", start)
-        if start < 0:
-            break
-        end = source.find("-->", start + 4)
-        if end < 0:
-            spans.append((start, len(source), False))
-            break
-        spans.append((start, end + 3, False))
-        start = end + 3
-    return _span_counts(source, spans)
 
 
 def count_file(path, category, content):
     if category == "code":
-        return code_counts(path, content)
+        suffix = Path(path).suffix.lower()
+        if suffix == ".html":
+            spans = []
+            start = 0
+            while True:
+                start = content.find("<!--", start)
+                if start < 0:
+                    break
+                end = content.find("-->", start + 4)
+                if end < 0:
+                    spans.append((start, len(content), False))
+                    break
+                spans.append((start, end + 3, False))
+                start = end + 3
+            return _span_counts(content, spans)
+        language = CODE_SUFFIXES[suffix]
+        if language == "Python":
+            docs = _python_doc_lines(content)
+            comments = _python_comment_lines(content)
+            counts = Counter(
+                "docs" if number in docs else "comments" if number in comments else "code"
+                for number, line in enumerate(content.splitlines(), 1)
+                if line.strip()
+            )
+            return LineCounts(counts["code"], counts["docs"], counts["comments"], 0)
+        if language == "Shell":
+            code = comments = 0
+            for number, line in enumerate(content.splitlines(), 1):
+                stripped = line.lstrip()
+                if not stripped:
+                    continue
+                if stripped.startswith("#") and not (number == 1 and stripped.startswith("#!")):
+                    comments += 1
+                else:
+                    code += 1
+            return LineCounts(code, 0, comments, 0)
+        return _span_counts(content, _comment_spans(content, language))
     if category == "docs":
         return LineCounts(0, sum(bool(line.strip()) for line in content.splitlines()), 0, 0)
     if category == "tests":

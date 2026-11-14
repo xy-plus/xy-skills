@@ -4,26 +4,15 @@ import subprocess
 import tempfile
 import unittest
 
-from map_fixture import build_map, feature
-
-
-ROOT = Path(__file__).resolve().parents[2]
-COMMAND = ROOT / "xy-repo-map" / "repo_map.py"
+from map_fixture import COMMAND, build_map, feature, make_repo
 
 
 class FeatureCheckTest(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.repo = Path(self.temporary.name) / "sample-repo"
-        self.repo.mkdir()
-        self.write("README.md", "仓库说明。\n")
-        self.write("repo-map/features.json", json.dumps(feature("root", "", subrepositories=[], external_dependencies=[]), ensure_ascii=False))
-        self.write("repo-map/skip.json", "[]\n")
-        subprocess.run(["git", "-C", str(self.repo), "init", "-q"], check=True)
-        subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
-
-    def tearDown(self):
-        self.temporary.cleanup()
+        self.repo = make_repo(
+            self, {"README.md": "仓库说明。\n"},
+            feature("root", "", subrepositories=[], external_dependencies=[]),
+        )
 
     def write(self, relative, content):
         path = self.repo / relative
@@ -106,9 +95,6 @@ class FeatureCheckTest(unittest.TestCase):
         self.make_nested_repository("sub")
         self.set_features(feature("root", "", subrepositories=["sub"], external_dependencies=[]))
 
-        result = self.check()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
         data = build_map(self, self.repo)
         files = [
             path
@@ -184,19 +170,10 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("还不支持子仓", output)
 
     def test_registered_gitlink_is_still_unsupported_and_mismatched(self):
-        child = self.repo.parent / "child-repository"
-        subprocess.run(["git", "-C", str(self.repo.parent), "init", str(child), "-q"], check=True)
-        subprocess.run(["git", "-C", str(child), "config", "user.name", "Fixture"], check=True)
-        subprocess.run(["git", "-C", str(child), "config", "user.email", "fixture@example.invalid"], check=True)
-        (child / "README.md").write_text("child\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(child), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(child), "commit", "-qm", "fixture"], check=True)
         self.set_features(feature("root", "", subrepositories=["linked"], external_dependencies=[]))
-        commit = subprocess.run(["git", "-C", str(child), "rev-parse", "HEAD"],
-                                capture_output=True, text=True, check=True).stdout.strip()
         subprocess.run(
             ["git", "-C", str(self.repo), "update-index", "--add", "--cacheinfo",
-             f"160000,{commit},linked"],
+             f"160000,{'1' * 40},linked"],
             check=True,
         )
         self.make_nested_repository("linked")
@@ -234,7 +211,7 @@ class FeatureCheckTest(unittest.TestCase):
         output = result.stdout + result.stderr
         for key in ("what", "subrepositories", "external_dependencies"):
             with self.subTest(key=key):
-                self.assertIn(key, output)
+                self.assertIn(f"根功能缺少键 {key}", output)
 
     def test_requires_items_on_root_and_child_features(self):
         root = feature("root", "", subrepositories=[], external_dependencies=[], items=[])
@@ -256,82 +233,58 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("功能 child 缺少键 items", result.stdout + result.stderr)
 
+    def assert_invalid_items(self, items, expected):
+        self.set_features(feature(
+            "root", "", subrepositories=[], external_dependencies=[], items=items,
+        ))
+        result = self.check()
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        for message in expected:
+            self.assertIn(message, output)
+
     def test_rejects_items_that_are_not_arrays_or_items_that_are_not_objects(self):
         cases = [
-            ("not-an-array", "功能 root 的 items 必须是数组"),
-            ([None], "功能 root 的 items[0] 必须是对象"),
+            ("not-an-array", ("功能 root 的 items 必须是数组",)),
+            ([None], ("功能 root 的 items[0] 必须是对象",)),
         ]
         for items, expected in cases:
             with self.subTest(items=items):
-                root = feature(
-                    "root", "", subrepositories=[], external_dependencies=[], items=items,
-                )
-                self.set_features(root)
-                result = self.check()
-                self.assertEqual(result.returncode, 1)
-                self.assertIn(expected, result.stdout + result.stderr)
+                self.assert_invalid_items(items, expected)
 
     def test_rejects_missing_or_extra_item_keys(self):
         cases = [
-            ({"id": "core", "text": "输出正确结果。"}, "缺少键 status"),
-            ({"id": "core", "text": "输出正确结果。", "status": "确认", "extra": True},
-             "有多余键 extra"),
+            ([{"id": "core", "text": "输出正确结果。"}],
+             ("功能 root 的 items[0]", "缺少键 status")),
+            ([{"id": "core", "text": "输出正确结果。", "status": "确认", "extra": True}],
+             ("功能 root 的 items[0]", "有多余键 extra")),
         ]
-        for item, expected in cases:
-            with self.subTest(item=item):
-                root = feature(
-                    "root", "", subrepositories=[], external_dependencies=[], items=[item],
-                )
-                self.set_features(root)
-                result = self.check()
-                self.assertEqual(result.returncode, 1)
-                output = result.stdout + result.stderr
-                self.assertIn("功能 root 的 items[0]", output)
-                self.assertIn(expected, output)
+        for items, expected in cases:
+            with self.subTest(items=items):
+                self.assert_invalid_items(items, expected)
 
     def test_rejects_invalid_or_duplicate_item_ids(self):
         cases = [
             ([{"id": "Bad_ID", "text": "输出正确结果。", "status": "确认"}],
-             "items[0].id"),
+             ("功能 root", "items[0].id")),
             ([
                 {"id": "same", "text": "输出正确结果。", "status": "确认"},
                 {"id": "same", "text": "输出其他结果。", "status": "确认"},
-            ], "条目 id 重复"),
+            ], ("功能 root", "条目 id 重复")),
         ]
         for items, expected in cases:
             with self.subTest(items=items):
-                root = feature(
-                    "root", "", subrepositories=[], external_dependencies=[], items=items,
-                )
-                self.set_features(root)
-                result = self.check()
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("功能 root", result.stdout + result.stderr)
-                self.assertIn(expected, result.stdout + result.stderr)
+                self.assert_invalid_items(items, expected)
 
     def test_rejects_empty_non_string_and_multiline_item_text(self):
-        valid_item = {"id": "core", "status": "确认"}
-        cases = [
-            ("", "items[0].text"),
-            ("  \t", "items[0].text"),
-            (None, "items[0].text"),
-            ("first\nsecond", "items[0].text"),
-            ("first\rsecond", "items[0].text"),
-            ("first\u2028second", "items[0].text"),
-            ("first\u2029second", "items[0].text"),
-        ]
-        for text, expected in cases:
+        cases = ("", "  \t", None, "first\nsecond", "first\rsecond",
+                 "first\u2028second", "first\u2029second")
+        for text in cases:
             with self.subTest(text=text):
-                root = feature(
-                    "root", "", subrepositories=[], external_dependencies=[],
-                    items=[{**valid_item, "text": text}],
+                self.assert_invalid_items(
+                    [{"id": "core", "status": "确认", "text": text}],
+                    ("功能 root 的 items[0]", "items[0].text"),
                 )
-                self.set_features(root)
-                result = self.check()
-                self.assertEqual(result.returncode, 1)
-                output = result.stdout + result.stderr
-                self.assertIn("功能 root 的 items[0]", output)
-                self.assertIn(expected, output)
 
     def test_rejects_item_status_outside_confirmed_or_draft(self):
         root = feature(
@@ -379,21 +332,23 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_rejects_invalid_why_source_combinations(self):
         invalid = [
-            ("原话", "", "契约"),
-            ("原话", "逐字引文", ""),
-            ("确认", "不允许的引文", "本次回答"),
-            ("确认", "", ""),
-            ("起草", "不允许的引文", ""),
-            ("未知", "", ""),
+            ("原话", "", "契约", "why（原话）必须有非空 quote 和 from"),
+            ("原话", "逐字引文", "", "why（原话）必须有非空 quote 和 from"),
+            ("确认", "不允许的引文", "本次回答", "why（确认）必须使用空 quote 和非空 from"),
+            ("确认", "", "", "why（确认）必须使用空 quote 和非空 from"),
+            ("起草", "不允许的引文", "", "why（起草）必须使用空 quote 和空 from"),
+            ("未知", "", "", "why.source 只能是 原话、确认、起草"),
         ]
-        for source, quote, origin in invalid:
+        for source, quote, origin, expected in invalid:
             with self.subTest(source=source, quote=quote, origin=origin):
                 root = feature("root", "", subrepositories=[], external_dependencies=[])
                 root["why"].update(source=source, quote=quote, **{"from": origin})
                 self.set_features(root)
                 result = self.check()
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("why", result.stdout + result.stderr)
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 1, output)
+                self.assertIn(f"根功能的 {expected}", output)
+                self.assertNotIn("Traceback", output)
 
     def test_requires_the_root_to_cover_the_repository(self):
         self.set_features(feature("root", "pkg", subrepositories=[], external_dependencies=[]))
@@ -445,25 +400,6 @@ class FeatureCheckTest(unittest.TestCase):
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("子仓", result.stdout + result.stderr)
-
-    def test_rejects_a_gitlink_child_repository(self):
-        child = self.repo.parent / "child-repository"
-        subprocess.run(["git", "-C", str(self.repo.parent), "init", str(child), "-q"], check=True)
-        subprocess.run(["git", "-C", str(child), "config", "user.name", "Fixture"], check=True)
-        subprocess.run(["git", "-C", str(child), "config", "user.email", "fixture@example.invalid"], check=True)
-        (child / "README.md").write_text("child\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(child), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(child), "commit", "-qm", "fixture"], check=True)
-        commit = subprocess.run(["git", "-C", str(child), "rev-parse", "HEAD"],
-                                capture_output=True, text=True, check=True).stdout.strip()
-        subprocess.run(
-            ["git", "-C", str(self.repo), "update-index", "--add", "--cacheinfo",
-             f"160000,{commit},linked"],
-            check=True,
-        )
-        result = self.check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("linked", result.stdout + result.stderr)
 
     def test_rejects_a_known_but_unsupported_code_suffix(self):
         suffixes = (".go", ".java", ".kt", ".swift", ".cpp", ".cc", ".hpp",

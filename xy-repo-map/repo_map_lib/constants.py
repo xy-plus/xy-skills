@@ -1,5 +1,3 @@
-"""Define source suffixes and line-count categories for repository maps."""
-
 CODE_SUFFIXES = {
     ".py": "Python",
     ".sh": "Shell",

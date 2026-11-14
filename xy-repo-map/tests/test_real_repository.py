@@ -7,11 +7,8 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[2]
-COMMAND = ROOT / "xy-repo-map" / "repo_map.py"
-LINE_NAMES = ("code", "docs", "comments", "tests")
-
-sys.path.insert(0, str(ROOT / "xy-repo-map"))
+from map_fixture import COMMAND, ROOT
+from repo_map_lib.constants import LINE_NAMES
 from repo_map_lib.map_data import _file_category, _read_source  # noqa: E402
 from repo_map_lib.metrics import count_file  # noqa: E402
 

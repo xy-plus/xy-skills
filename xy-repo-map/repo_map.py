@@ -1,4 +1,3 @@
-"""Check, render, and publish the feature map for one Git repository."""
 import argparse
 import sys
 
@@ -9,7 +8,7 @@ from repo_map_lib.render_command import render_repository
 from repo_map_lib.workspace_map import build_workspace_map
 
 
-def parser():
+def main(argv):
     result = argparse.ArgumentParser(description="管理仓库功能清单与功能图")
     commands = result.add_subparsers(dest="command", required=True)
 
@@ -32,12 +31,8 @@ def parser():
         "--as", dest="publish_as", required=True, choices=PUBLISH_MODES,
         help="发布当前图或清扫前后快照",
     )
-    return result
-
-
-def main(argv):
     try:
-        options = parser().parse_args(argv[1:])
+        options = result.parse_args(argv[1:])
     except SystemExit as error:
         return int(error.code)
     try:

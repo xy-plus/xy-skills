@@ -10,13 +10,8 @@ COMMAND = ROOT / "xy-repo-map" / "repo_map.py"
 LIBRARY = ROOT / "xy-repo-map"
 _UNSET = object()
 
-
-def why(source="原话", text="让功能容易使用。", quote="用户说过的话。", origin="测试契约"):
-    if source == "确认":
-        quote, origin = "", "本次回答"
-    elif source == "起草":
-        quote, origin = "", ""
-    return {"text": text, "source": source, "quote": quote, "from": origin}
+sys.path.insert(0, str(LIBRARY))
+from repo_map_lib.map_data import build_map as build_repository_map  # noqa: E402
 
 
 def feature(feature_id, directory, children=None, entries=None, source="原话",
@@ -25,7 +20,12 @@ def feature(feature_id, directory, children=None, entries=None, source="原话",
         "id": feature_id,
         "title": feature_id.title(),
         "what": f"提供 {feature_id} 功能。",
-        "why": why(source),
+        "why": {
+            "text": "让功能容易使用。",
+            "source": source,
+            "quote": "用户说过的话。" if source == "原话" else "",
+            "from": "测试契约" if source == "原话" else "本次回答" if source == "确认" else "",
+        },
         "directory": directory,
         "entries": [] if entries is None else entries,
         "children": [] if children is None else children,
@@ -117,14 +117,6 @@ def make_workspace(test_case, a_dependencies=("sub-b", "missing-tool"), b_depend
 
 
 def build_map(test_case, repository):
-    script = (
-        "import json,sys; sys.path.insert(0,sys.argv[1]); "
-        "from repo_map_lib.map_data import build_map; "
-        "print(json.dumps(build_map(sys.argv[2]),ensure_ascii=False))"
-    )
-    result = subprocess.run(
-        [sys.executable, "-B", "-c", script, str(LIBRARY), str(repository)],
-        capture_output=True, text=True, check=False,
-    )
-    test_case.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-    return json.loads(result.stdout)
+    result = build_repository_map(repository)
+    json.dumps(result, ensure_ascii=False)
+    return result

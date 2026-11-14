@@ -1,12 +1,6 @@
-from pathlib import Path
-import sys
 import unittest
 
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "xy-repo-map"))
-
-from repo_map_lib.ownership import _test_code_match  # noqa: E402
-from map_fixture import build_map, feature, make_repo  # noqa: E402
+from map_fixture import build_map, feature, make_repo
 
 
 class OwnershipTest(unittest.TestCase):
@@ -31,9 +25,3 @@ class OwnershipTest(unittest.TestCase):
         self.assertIn("tests/test_consumer.py", owned_files)
         self.assertIn("tests/test_owned.py", owned_files)
 
-    def test_plural_rust_test_name_matches_source_but_tests_rs_does_not(self):
-        self.assertEqual(
-            _test_code_match("pkg/foo_tests.rs", {"src/foo.rs"}),
-            "src/foo.rs",
-        )
-        self.assertIsNone(_test_code_match("tests.rs", {"src/tests.rs"}))

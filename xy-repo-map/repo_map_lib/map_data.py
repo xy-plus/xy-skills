@@ -1,5 +1,3 @@
-"""Derive feature ownership, line totals, dependencies, and review markers."""
-from collections import defaultdict
 from pathlib import Path
 
 from .constants import (
@@ -28,31 +26,23 @@ from .ownership import assign_files
 from .skip_paths import is_skipped_path, read_skip_paths
 
 
-SOURCE_SUFFIXES = set(CODE_SUFFIXES) | {".html"}
-CODE_CANDIDATE_SUFFIXES = SOURCE_SUFFIXES | UNSUPPORTED_CODE_SUFFIXES
-TEST_FILE_ENDINGS = ("_test.py", "_test.rs", "_tests.rs")
-
-
-def _is_test_file(path):
-    suffix = Path(path).suffix.lower()
-    name = Path(path).name
-    has_code_suffix = suffix in CODE_CANDIDATE_SUFFIXES
-    in_test_directory = any(part in TEST_DIRECTORY_NAMES for part in Path(path).parts[:-1])
-    named_test = (
-        (name.startswith("test_") and suffix == ".py")
-        or name == "conftest.py"
-        or name == "tests.rs"
-        or name.endswith(TEST_FILE_ENDINGS)
-    )
-    return has_code_suffix and (in_test_directory or named_test)
+CODE_CANDIDATE_SUFFIXES = set(CODE_SUFFIXES) | {".html"} | UNSUPPORTED_CODE_SUFFIXES
 
 
 def _file_category(path):
     if any(part in ("third_party", "vendor", "node_modules") for part in Path(path).parts):
         return "other"
-    if _is_test_file(path):
-        return "tests"
     suffix = Path(path).suffix.lower()
+    name = Path(path).name
+    in_test_directory = any(part in TEST_DIRECTORY_NAMES for part in Path(path).parts[:-1])
+    named_test = (
+        (name.startswith("test_") and suffix == ".py")
+        or name == "conftest.py"
+        or name == "tests.rs"
+        or name.endswith(("_test.py", "_test.rs", "_tests.rs"))
+    )
+    if suffix in CODE_CANDIDATE_SUFFIXES and (in_test_directory or named_test):
+        return "tests"
     if suffix in CODE_CANDIDATE_SUFFIXES:
         return "code"
     if suffix in (".md", ".rst") and not any(
@@ -62,28 +52,20 @@ def _file_category(path):
     return "other"
 
 
-def _source_text(repository, path):
-    """Read text sources, keeping symlinks and binary files out of text categories."""
+def _read_source(repository, path, category):
+    """Return the effective file category and text, without reading other files."""
+    if category == "other":
+        return "other", ""
     source_path = Path(repository) / path
     if source_path.is_symlink():
-        return None
+        return "other", ""
     try:
         content = source_path.read_bytes()
     except OSError as error:
         raise OSError(f"无法读取 Git 跟踪文件 {path}：{error}") from error
     if b"\0" in content:
-        return None
-    return content.decode("utf-8", errors="replace")
-
-
-def _read_source(repository, path, category):
-    """Return the effective file category and text, without reading other files."""
-    if category == "other":
         return "other", ""
-    source = _source_text(repository, path)
-    if source is None:
-        return "other", ""
-    return category, source
+    return category, content.decode("utf-8", errors="replace")
 
 
 def file_category_with_skip(repository, path, skip_paths):
@@ -93,24 +75,11 @@ def file_category_with_skip(repository, path, skip_paths):
     return _read_source(repository, path, _file_category(path))[0]
 
 
-def _entry_files(features, order, paths):
-    result = {feature_id: set() for feature_id in order}
-    path_set = set(paths)
-    for feature_id in order:
-        for entry in features[feature_id]["entries"]:
-            if entry.endswith("/"):
-                prefix = entry
-                result[feature_id].update(path for path in paths if path.startswith(prefix))
-            elif entry in path_set:
-                result[feature_id].add(entry)
-    return result
-
-
 def _add_use(uses, source, target, kind, features):
     if (source == target or is_feature_ancestor(source, target, features)
             or is_feature_ancestor(target, source, features)):
         return
-    uses[(source, target)].add(kind)
+    uses.setdefault((source, target), set()).add(kind)
 
 
 def build_map(repository):
@@ -181,7 +150,16 @@ def build_map(repository):
         else:
             imports[path] = _import_targets(path, source_texts[path], python_paths)
 
-    entries = _entry_files(features, order, paths)
+    entries = {feature_id: set() for feature_id in order}
+    path_set = set(paths)
+    for feature_id in order:
+        for entry in features[feature_id]["entries"]:
+            if entry.endswith("/"):
+                entries[feature_id].update(
+                    path for path in paths if path.startswith(entry)
+                )
+            elif entry in path_set:
+                entries[feature_id].add(entry)
     owners, groups = assign_files(features, order, paths, categories, entries, imports)
     if len(owners) != len(paths):
         missing = sorted(set(paths) - owners.keys())
@@ -232,7 +210,7 @@ def build_map(repository):
         for feature_id in order
     }
 
-    uses = defaultdict(set)
+    uses = {}
     external_uses = {feature_id: set() for feature_id in order}
     for source_path in paths:
         if categories[source_path] not in ("code", "docs"):

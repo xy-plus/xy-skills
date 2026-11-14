@@ -1,5 +1,5 @@
 import ast
-from pathlib import Path
+from collections import Counter
 import re
 
 
@@ -9,8 +9,6 @@ def _match_module(name, python_paths):
     suffix = name.replace(".", "/")
     matches = []
     for path in python_paths:
-        if not path.endswith(".py"):
-            continue
         module = path[:-3]
         if module.endswith("/__init__"):
             module = module[:-9]
@@ -20,7 +18,7 @@ def _match_module(name, python_paths):
 
 
 def _relative_module(path, level, module):
-    parts = Path(path).parent.parts
+    parts = path.rsplit("/", 1)[0].split("/") if "/" in path else ()
     if level > len(parts) + 1:
         return None
     return ".".join((*parts[:len(parts) + 1 - level], *(module.split(".") if module else ())))
@@ -84,20 +82,17 @@ def directory_mentions(source, directory_features, own_directory_feature):
     """Return other directory features named as whole words in source text."""
     result = set()
     directory_names = {
-        feature_id: Path(directory).name if directory else ""
+        feature_id: directory.rsplit("/", 1)[-1] if directory else ""
         for feature_id, directory in directory_features.items()
     }
-    name_counts = {}
-    for name in directory_names.values():
-        if name:
-            name_counts[name] = name_counts.get(name, 0) + 1
-
-    for feature_id, directory in directory_features.items():
+    unique_names = {
+        name for name, count in Counter(directory_names.values()).items()
+        if name and count == 1
+    }
+    mentioned = name_mentions(source, unique_names)
+    for feature_id, name in directory_names.items():
         if feature_id == own_directory_feature:
             continue
-        name = directory_names[feature_id]
-        if not name or name_counts[name] != 1:
-            continue
-        if name in name_mentions(source, (name,)):
+        if name in mentioned:
             result.add(feature_id)
     return result

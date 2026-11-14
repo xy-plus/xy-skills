@@ -1,11 +1,8 @@
-"""Git root checks, tracked paths, and subrepository classification."""
 from pathlib import Path
-import os
 import subprocess
 
 
-class ArgumentError(ValueError):
-    """The command received a path that cannot be used as a repository root."""
+class ArgumentError(ValueError): pass
 
 
 def run_git(repository, *arguments, check):
@@ -72,13 +69,6 @@ def _is_repository(path):
     return result.returncode == 0
 
 
-def _is_ignored(repository, relative_path):
-    directory_path = relative_path.rstrip("/") + "/"
-    result = run_git(repository, "check-ignore", "--quiet", "--", directory_path,
-                     check=False)
-    return result.returncode == 0
-
-
 def _untracked_repositories(root, start, own_common):
     found = set()
     pending = [start]
@@ -87,16 +77,19 @@ def _untracked_repositories(root, start, own_common):
         if candidate.is_symlink() or not candidate.is_dir():
             continue
         relative = candidate.relative_to(root).as_posix()
-        if _is_ignored(root, relative):
+        result = run_git(root, "check-ignore", "--quiet", "--",
+                         relative.rstrip("/") + "/", check=False)
+        if result.returncode == 0:
             continue
         if _is_repository(candidate):
             if _common_directory(candidate) != own_common:
                 found.add(relative)
             continue
         try:
-            with os.scandir(candidate) as entries:
-                pending.extend(Path(entry.path) for entry in entries
-                               if entry.name != ".git" and entry.is_dir(follow_symlinks=False))
+            pending.extend(
+                entry for entry in candidate.iterdir()
+                if entry.name != ".git" and not entry.is_symlink() and entry.is_dir()
+            )
         except OSError as error:
             raise ValueError(f"无法读取未跟踪目录以发现子仓：{candidate}：{error}") from error
     return found
@@ -152,7 +145,7 @@ def subrepository_errors(repository, registered_subrepositories):
     # A linked worktree or fresh clone may omit the ignored directories, so missing paths are valid.
     mismatched = {
         path for path in registered
-        if os.path.lexists(root / path) and path not in ignored
+        if ((root / path).exists() or (root / path).is_symlink()) and path not in ignored
     }
     if mismatched:
         errors.append(

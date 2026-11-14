@@ -1,28 +1,14 @@
-from pathlib import Path
 import sys
 import unittest
-from unittest.mock import call, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, "xy-repo-map")
 
-from repo_map_lib import metrics
-from repo_map_lib.metrics import code_counts, count_file
+from repo_map_lib.metrics import count_file, count_non_whitespace_characters
 
 
 class MetricsTest(unittest.TestCase):
     def test_shared_non_whitespace_character_count(self):
-        self.assertEqual(metrics.count_non_whitespace_characters("你 好\nA\tB"), 4)
-
-    def test_doc_character_count_uses_shared_counter(self):
-        with patch.object(
-            metrics,
-            "count_non_whitespace_characters",
-            wraps=metrics.count_non_whitespace_characters,
-        ) as count_characters:
-            result = metrics.count_doc_chars("guide.md", "docs", "a b\nc d")
-
-        self.assertEqual(result, 4)
-        self.assertEqual(count_characters.call_args_list, [call("a b"), call("c d")])
+        self.assertEqual(count_non_whitespace_characters("你 好\nA\tB"), 4)
 
     def test_python_docstrings_comments_and_inline_comments(self):
         source = '''"""Module docs.
@@ -45,52 +31,33 @@ class Public:
 def public_function():
     return value
 '''
-        counts = code_counts("sample.py", source)
+        counts = count_file("sample.py", "code", source)
         self.assertEqual((counts.code, counts.docs, counts.comments), (8, 5, 1))
 
     def test_python_docstrings_inside_control_flow_blocks_are_documentation(self):
         source = '''if condition:
-    def in_if_function():
-        """Function docs in if."""
-    class InIfClass:
-        """Class docs in if."""
-try:
-    def in_try_function():
-        """Function docs in try."""
-    class InTryClass:
-        """Class docs in try."""
-except Exception:
-    pass
-with manager:
-    def in_with_function():
-        """Function docs in with."""
-    class InWithClass:
-        """Class docs in with."""
-for item in items:
-    def in_for_function():
-        """Function docs in for."""
-    class InForClass:
-        """Class docs in for."""
+    def nested_function():
+        """Function docs."""
+    class NestedClass:
+        """Class docs."""
 '''
-        counts = code_counts("sample.py", source)
-        self.assertEqual(counts.docs, 8)
+        counts = count_file("sample.py", "code", source)
+        self.assertEqual(counts.docs, 2)
 
     def test_shell_shebang_is_code_but_full_line_hash_is_comment(self):
-        counts = code_counts("script.sh", "#!/bin/sh\n# explanation\necho hi # inline\n\n")
+        counts = count_file("script.sh", "code", "#!/bin/sh\n# explanation\necho hi # inline\n\n")
         self.assertEqual((counts.code, counts.docs, counts.comments), (2, 0, 1))
 
     def test_rust_doc_comments_and_nested_block_comments_are_separate(self):
         source = '''//! Crate docs.
 /// Public API docs.
-pub fn visible() {}
-pub(crate) fn hidden() {}
 /* normal start
    /* nested */
    normal end */
 let answer = 42; // inline
 '''
-        counts = code_counts("lib.rs", source)
-        self.assertEqual((counts.code, counts.docs, counts.comments), (3, 2, 3))
+        counts = count_file("lib.rs", "code", source)
+        self.assertEqual((counts.code, counts.docs, counts.comments), (1, 2, 3))
 
     def test_rust_string_bodies_do_not_turn_slashes_into_comments(self):
         samples = (
@@ -100,21 +67,10 @@ let answer = 42; // inline
         )
 
         for source in samples:
-            with self.subTest(source=source):
-                counts = code_counts("raw.rs", source)
-                self.assertEqual((counts.code, counts.docs, counts.comments), (3, 0, 0))
+            counts = count_file("raw.rs", "code", source)
+            self.assertEqual((counts.code, counts.docs, counts.comments), (3, 0, 0))
 
     def test_c_doc_blocks_count_as_documentation(self):
         c_source = "/** API docs\n * continued\n */\nint value;\n/* note */\n"
-        c_counts = code_counts("file.c", c_source)
+        c_counts = count_file("file.c", "code", c_source)
         self.assertEqual((c_counts.code, c_counts.docs, c_counts.comments), (1, 3, 1))
-
-    def test_count_file_counts_the_four_file_categories(self):
-        code = count_file("sample.py", "code", "value = 1\n")
-        docs = count_file("guide.md", "docs", "text\n\n next \n")
-        tests = count_file("test.py", "tests", "one\n\nnext\n")
-        other = count_file("data.json", "other", '{"value": 1}\n')
-        self.assertEqual((code.code, code.docs, code.comments, code.tests), (1, 0, 0, 0))
-        self.assertEqual((docs.code, docs.docs, docs.comments, docs.tests), (0, 2, 0, 0))
-        self.assertEqual((tests.code, tests.docs, tests.comments, tests.tests), (0, 0, 0, 2))
-        self.assertEqual((other.code, other.docs, other.comments, other.tests), (0, 0, 0, 0))

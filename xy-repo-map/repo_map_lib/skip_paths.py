@@ -1,4 +1,3 @@
-"""Load and match repository paths excluded from map and cleanup work."""
 import json
 from pathlib import Path
 
@@ -23,7 +22,6 @@ def read_skip_paths(repository, tracked_paths):
         raise ValueError(f"{SKIP_LIST_PATH} 必须是数组")
 
     tracked = set(tracked_paths)
-    checked = []
     seen = set()
     for index, path in enumerate(values):
         label = f"{SKIP_LIST_PATH}[{index}]"
@@ -40,8 +38,7 @@ def read_skip_paths(repository, tracked_paths):
         )
         if not exists:
             raise ValueError(f"{label} 路径不存在或没有被跟踪文件：{path}")
-        checked.append(path)
-    return tuple(checked)
+    return tuple(values)
 
 
 def is_skipped_path(path, skip_paths):

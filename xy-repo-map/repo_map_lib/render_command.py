@@ -1,8 +1,7 @@
-import json
 from pathlib import Path
 
+from .embedded_json import json_for_html
 from .git_repository import ArgumentError
-from .render_page import render_page
 
 
 def require_empty_output_directory(output):
@@ -25,8 +24,11 @@ def write_map(data, directory):
         },
         "markers": data["markers"],
     }
-    map_text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
-    page_text = render_page(page_data)
+    map_text = json_for_html(data) + "\n"
+    template = (Path(__file__).resolve().parent / "templates" / "feature-tree.html").read_text(
+        encoding="utf-8"
+    )
+    page_text = template.replace("__MAP_DATA__", json_for_html(page_data))
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "map-data.json").write_text(map_text, encoding="utf-8")
     (directory / "index.html").write_text(page_text, encoding="utf-8")

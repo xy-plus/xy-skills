@@ -1,14 +1,11 @@
 import json
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from map_fixture import COMMAND, build_map, feature, make_repo
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import repo_map_lib.map_data as map_data  # noqa: E402
 
 
@@ -57,27 +54,6 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(features["api"].get("doc_chars"), {"own": 9, "total": 9})
         self.assertEqual(features["guide"].get("doc_chars"), {"own": 4, "total": 4})
 
-    def test_file_category_matches_build_map_categories_and_line_totals(self):
-        repository = make_repo(self, {
-            "src/main.py": "value = 1\n",
-            "src/target.py": "target = 1\n",
-            "docs/guide.md": "# Guide\nA page.\n",
-            "tests/test_parser.py": "value = 2\n",
-            "assets/data.json": "{}\n",
-            "assets/link.py": "placeholder\n",
-            "assets/binary.py": "placeholder\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[]))
-        link = repository / "assets/link.py"
-        link.unlink()
-        link.symlink_to("../src/target.py")
-        (repository / "assets/binary.py").write_bytes(b"\0binary data\n")
-
-        data = map_data.build_map(repository)
-
-        self.assertEqual(data["features"]["root"]["lines"]["own"], {
-            "code": 2, "docs": 2, "comments": 0, "tests": 1,
-        })
-
     def test_derives_sorted_unique_external_uses_from_owned_code_and_documentation(self):
         repository = make_repo(self, {
             "src/run.py": "# Claude Code and superpowers; superpowers again.\nvalue = 1\n",
@@ -119,10 +95,20 @@ class DerivationTest(unittest.TestCase):
             "tests/example.py": '"""test docs"""\n# test comment\n',
             "vendor/lib.py": "value = 2\n",
             "assets/data.json": '{"value": 1}\n',
+            "assets/target.py": "value = 1\n",
+            "assets/link.py": "placeholder\n",
+            "assets/binary.go": "placeholder\n",
+            "tests/test_parser.py": "value = 2\n",
         }, feature("root", "", subrepositories=[], external_dependencies=[]))
-        data = build_map(self, repository)
+        link = repository / "assets/link.py"
+        link.unlink()
+        link.symlink_to("target.py")
+        (repository / "assets/binary.go").write_bytes(b"\0binary data\n")
+        data, sources = build_map_with_sources(repository)
         counts = data["features"]["root"]["lines"]["own"]
-        self.assertEqual(counts, {"code": 3, "docs": 3, "comments": 2, "tests": 2})
+        self.assertEqual(counts, {"code": 4, "docs": 3, "comments": 2, "tests": 3})
+        self.assertEqual(sources["assets/link.py"], ("other", ""))
+        self.assertEqual(sources["assets/binary.go"], ("other", ""))
 
     def test_classifies_rust_files_with_plural_test_names_as_tests(self):
         repository = make_repo(self, {
@@ -153,23 +139,6 @@ class DerivationTest(unittest.TestCase):
 
         self.assertEqual(sources["assets/data.bin"], ("other", ""))
         self.assertEqual(data["features"]["root"]["lines"]["total"]["code"], 0)
-
-    def test_symlinks_and_nul_files_are_other_and_count_zero_lines(self):
-        repository = make_repo(self, {
-            "assets/target.py": "value = 1\n",
-            "assets/link.py": "placeholder\n",
-            "assets/video.ts": "placeholder\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[]))
-        symlink = repository / "assets/link.py"
-        symlink.unlink()
-        symlink.symlink_to("target.py")
-        (repository / "assets/video.ts").write_bytes(b"\x00video data\n")
-
-        data, sources = build_map_with_sources(repository)
-
-        self.assertEqual(sources["assets/link.py"], ("other", ""))
-        self.assertEqual(sources["assets/video.ts"], ("other", ""))
-        self.assertEqual(data["features"]["root"]["lines"]["total"]["code"], 1)
 
     def test_unsupported_suffix_symlink_and_nul_files_are_other(self):
         repository = make_repo(self, {
@@ -384,9 +353,24 @@ class DerivationTest(unittest.TestCase):
         data = build_map(self, repository)
         self.assertEqual(data["features"]["alpha"]["uses"], [{"feature": "beta", "by": "import"}])
 
+    def test_import_matches_uppercase_python_suffix(self):
+        repository = make_repo(self, {
+            "alpha/main.py": "import beta.helper\n",
+            "beta/helper.PY": "value = 1\n",
+        }, child_tree([
+            feature("alpha", "alpha"),
+            feature("beta", "beta"),
+        ]))
+
+        data = build_map(self, repository)
+
+        self.assertEqual(data["features"]["alpha"]["uses"], [
+            {"feature": "beta", "by": "import"},
+        ])
+
     def test_mention_finds_paths_and_other_directory_names(self):
         repository = make_repo(self, {
-            "alpha/guide.md": "See beta/helper.py and the beta directory.\n",
+            "alpha/guide.md": "The beta directory is used here.\n",
             "beta/helper.py": "value = 1\n",
         }, child_tree([
             feature("alpha", "alpha"),

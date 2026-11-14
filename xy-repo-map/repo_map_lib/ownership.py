@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from .features import (
     deepest_directory,
     directory_home,
@@ -9,11 +7,9 @@ from .features import (
 
 
 def _common_parent(feature_ids, features):
-    first_chain = list(feature_chain(feature_ids[0], features))
-    shared = set(first_chain)
-    for feature_id in feature_ids[1:]:
-        shared.intersection_update(feature_chain(feature_id, features))
-    return next(item for item in first_chain if item in shared)
+    chains = [set(feature_chain(item, features)) for item in feature_ids]
+    return next(item for item in feature_chain(feature_ids[0], features)
+                if all(item in chain for chain in chains))
 
 
 def _prune_ancestors(feature_ids, features):
@@ -23,19 +19,15 @@ def _prune_ancestors(feature_ids, features):
 
 
 def _test_code_match(test_path, code_paths):
-    name = Path(test_path).name
+    name = test_path.rsplit("/", 1)[-1]
     candidate = None
     if name.startswith("test_") and name.endswith(".py"):
         candidate = name[5:]
     elif name.endswith("_test.py"):
         candidate = name[:-8] + ".py"
-    elif name.endswith("_tests.rs"):
-        candidate = name[:-9] + ".rs"
-    elif name.endswith("_test.rs"):
-        candidate = name[:-8] + ".rs"
     if candidate is None:
         return None
-    matches = [path for path in code_paths if Path(path).name == candidate]
+    matches = [path for path in code_paths if path.rsplit("/", 1)[-1] == candidate]
     return matches[0] if len(matches) == 1 else None
 
 

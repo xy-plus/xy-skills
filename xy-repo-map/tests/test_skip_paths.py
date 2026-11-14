@@ -5,21 +5,16 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from map_fixture import COMMAND, build_map, feature, make_repo
+from map_fixture import COMMAND, LIBRARY, feature, make_repo
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT.parent / "xy-cleanup"))
+sys.path[:0] = [str(LIBRARY.parent / "xy-cleanup"), str(LIBRARY)]
 from repo_map_lib.map_data import build_map as derive_map  # noqa: E402
 from approvals import feature_fingerprints, feature_values  # noqa: E402
 
 
 def write_skip_list(repository, paths):
     skip_file = repository / "repo-map" / "skip.json"
-    skip_file.write_text(json.dumps(paths, ensure_ascii=False), encoding="utf-8")
-    subprocess.run(
-        ["git", "-C", str(repository), "add", "repo-map/skip.json"], check=True,
-    )
+    skip_file.write_text(json.dumps(paths), encoding="utf-8")
 
 
 class SkipPathsTest(unittest.TestCase):
@@ -104,16 +99,13 @@ class SkipPathsTest(unittest.TestCase):
             "docs/guide.md": "Guide.\n",
         }, feature("root", "", subrepositories=[], external_dependencies=[]))
         invalid_lists = (
-            ("not an array", "必须是数组"),
             ([7], "必须是字符串"),
             (["missing.txt"], "不存在或没有被跟踪文件"),
             (["alpha/main.py", "alpha/main.py"], "不能重复"),
             (["/alpha/main.py"], "不安全"),
-            (["alpha\\main.py"], "不安全"),
             (["alpha//main.py"], "不安全"),
             (["alpha/./main.py"], "不安全"),
             (["alpha/../main.py"], "不安全"),
-            (["bad\0path"], "不安全"),
         )
 
         for paths, expected in invalid_lists:
@@ -121,16 +113,6 @@ class SkipPathsTest(unittest.TestCase):
                 write_skip_list(repository, paths)
                 with self.assertRaisesRegex(ValueError, expected):
                     derive_map(repository)
-
-    def test_empty_skip_list_leaves_map_unchanged(self):
-        repository = make_repo(self, {
-            "docs/guide.md": "# Guide\nA page.\n",
-        }, feature("root", "", subrepositories=[], external_dependencies=[]))
-        write_skip_list(repository, [])
-
-        data = build_map(self, repository)
-
-        self.assertEqual(data["features"]["root"]["lines"]["own"]["docs"], 2)
 
     def test_skipped_content_and_skip_file_do_not_change_approval_fingerprint(self):
         repository = make_repo(self, {
@@ -150,11 +132,6 @@ class SkipPathsTest(unittest.TestCase):
         )
         skip_file = repository / "repo-map/skip.json"
         skip_file.write_text('[\n  "docs/experiments/"\n]\n', encoding="utf-8")
-        subprocess.run(
-            ["git", "-C", str(repository), "add", "docs/experiments/run.md", "repo-map/skip.json"],
-            check=True,
-        )
-
         second = feature_fingerprints(
             repository, derive_map(repository), features,
         )

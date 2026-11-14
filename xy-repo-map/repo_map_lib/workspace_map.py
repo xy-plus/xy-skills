@@ -2,26 +2,7 @@ import json
 from pathlib import Path
 
 from .features import is_feature_ancestor
-from .git_repository import ArgumentError
 from .map_data import build_map
-
-
-def _build_child_map(repository, relative_path):
-    child_path = repository / relative_path
-    if not child_path.exists():
-        raise ValueError(
-            f"子仓 {relative_path} 不存在；请到子仓所在的检出里运行 render-workspace"
-        )
-    feature_path = child_path / "repo-map" / "features.json"
-    if not feature_path.is_file():
-        raise ValueError(
-            f"子仓 {relative_path} 缺少 repo-map/features.json；"
-            "请先为它起草一份只有根功能的清单"
-        )
-    try:
-        return build_map(child_path)
-    except (ArgumentError, OSError, ValueError) as error:
-        raise ValueError(f"子仓 {relative_path} 的功能图检查失败：{error}") from error
 
 
 def _compose_maps(main_map, child_maps):
@@ -115,10 +96,20 @@ def build_workspace_map(repository):
         raise ValueError("没有登记子仓，用 render 出本仓的图")
 
     child_maps = []
-    seen = set()
-    for relative_path in registered:
-        if relative_path in seen:
-            continue
-        seen.add(relative_path)
-        child_maps.append((relative_path, _build_child_map(repository_root, relative_path)))
+    for relative_path in dict.fromkeys(registered):
+        child_path = repository_root / relative_path
+        if not child_path.exists():
+            raise ValueError(
+                f"子仓 {relative_path} 不存在；请到子仓所在的检出里运行 render-workspace"
+            )
+        if not (child_path / "repo-map" / "features.json").is_file():
+            raise ValueError(
+                f"子仓 {relative_path} 缺少 repo-map/features.json；"
+                "请先为它起草一份只有根功能的清单"
+            )
+        try:
+            child_map = build_map(child_path)
+        except (OSError, ValueError) as error:
+            raise ValueError(f"子仓 {relative_path} 的功能图检查失败：{error}") from error
+        child_maps.append((relative_path, child_map))
     return _compose_maps(main_map, child_maps)

@@ -1866,7 +1866,6 @@
               ],
               "entries": [
                 "xy-repo-map/repo_map_lib/render_command.py",
-                "xy-repo-map/repo_map_lib/render_page.py",
                 "xy-repo-map/repo_map_lib/embedded_json.py",
                 "xy-repo-map/repo_map_lib/templates/feature-tree.html",
                 "xy-repo-map/tests/test_render.py",
