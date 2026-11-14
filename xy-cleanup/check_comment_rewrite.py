@@ -23,6 +23,11 @@ TOOL_MARKERS = (
     "noqa", "type:", "pragma", "pylint:", "fmt:", "isort:", "shellcheck",
     "NOLINT", "clang-format", "prettier-ignore",
 )
+JUDGEMENT_FIELDS = {"inventory", "added"}
+INVENTORY_FIELDS = {
+    "id", "block", "lines", "original", "status", "rewritten", "impact", "why"
+}
+ADDED_FIELDS = {"text", "why"}
 FENCE = re.compile(r"\x60\x60\x60.*?\x60\x60\x60", re.DOTALL)
 DOCTEST_LINE = re.compile(r"(?m)^[ \t]*(?:>>> |\.\.\. )[^\r\n]*(?:\r\n|\r|\n|$)")
 
@@ -117,20 +122,12 @@ def _comment_block_spans(source, path):
     ]
 
 
-def _comment_blocks(source, path):
-    return [
-        {key: block[key] for key in ("id", "lines", "text")}
-        for block in _comment_block_spans(source, path)
-    ]
-
-
 def _blocks_command(arguments):
-    try:
-        source = _read_source(arguments.original)
-        blocks = _comment_blocks(source, arguments.original)
-    except (OSError, UnicodeError, ValueError) as error:
-        print(error)
-        return 2
+    source = _read_source(arguments.original)
+    blocks = [
+        {key: block[key] for key in ("id", "lines", "text")}
+        for block in _comment_block_spans(source, arguments.original)
+    ]
     print(json.dumps(blocks, ensure_ascii=False, indent=2))
     return 0
 
@@ -157,15 +154,15 @@ def _full_line_span(source, start, end):
     return line_start, line_end
 
 
-def _parse_blocks_file(path):
+def _parse_json_file(path, label):
     try:
         return json.loads(
             _read_source(path), object_pairs_hook=object_without_duplicate_keys
         )
     except (OSError, UnicodeError) as error:
-        raise OSError(f"无法读取块清单：{path}：{error}") from error
+        raise OSError(f"无法读取{label}：{path}：{error}") from error
     except (json.JSONDecodeError, ValueError) as error:
-        raise RewriteFormatError(f"块清单格式错误：{error}") from error
+        raise RewriteFormatError(f"{label}格式错误：{error}") from error
 
 
 def _prepare_edits(source, path, manifest):
@@ -256,10 +253,6 @@ def _annotation_texts(source, path, kind=None):
     return result
 
 
-def _annotation_blocks(source, path):
-    return [block["text"] for block in _comment_block_spans(source, path)]
-
-
 def _ordered_texts_present(required, available):
     text = "".join(available)
     cursor = 0
@@ -272,12 +265,12 @@ def _ordered_texts_present(required, available):
 
 
 def _protected_tool_comments(source, path):
-    protected = []
-    for _, token, value in _all_tokens(source, path):
-        if (_annotation_type(token) == "comment"
-                and any(marker in value for marker in TOOL_MARKERS)):
-            protected.append(value.rstrip("\r\n"))
-    return protected
+    return [
+        value.rstrip("\r\n")
+        for _, token, value in _all_tokens(source, path)
+        if _annotation_type(token) == "comment"
+        and any(marker in value for marker in TOOL_MARKERS)
+    ]
 
 
 def _examples(text):
@@ -290,29 +283,14 @@ def _examples(text):
 
 
 def _without_python_docstrings(tree):
-    class RemoveDocstrings(ast.NodeTransformer):
-        def _remove(self, node):
-            self.generic_visit(node)
-            body = getattr(node, "body", None)
-            if (body and isinstance(body[0], ast.Expr)
-                    and isinstance(body[0].value, ast.Constant)
-                    and isinstance(body[0].value.value, str)):
-                body.pop(0)
-            return node
-
-        def visit_Module(self, node):
-            return self._remove(node)
-
-        def visit_ClassDef(self, node):
-            return self._remove(node)
-
-        def visit_FunctionDef(self, node):
-            return self._remove(node)
-
-        def visit_AsyncFunctionDef(self, node):
-            return self._remove(node)
-
-    return RemoveDocstrings().visit(tree)
+    containers = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (isinstance(node, containers) and body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            body.pop(0)
+    return tree
 
 
 def _splice_problems(original, rewritten, path, insertions):
@@ -350,36 +328,17 @@ def _splice_command(arguments):
     if _same_file(arguments.original, arguments.output):
         print("--output 和 --original 是同一路径或同一文件")
         return 2
-    try:
-        source = _read_source(arguments.original)
-        manifest = _parse_blocks_file(arguments.blocks)
-        rewritten, problems = _splice_candidate(source, arguments.original, manifest)
-    except (OSError, UnicodeError, ValueError) as error:
-        print(error)
-        return 2
-    except RewriteFormatError as error:
-        print(error)
-        return 1
+    source = _read_source(arguments.original)
+    manifest = _parse_json_file(arguments.blocks, "块清单")
+    rewritten, problems = _splice_candidate(source, arguments.original, manifest)
     if problems:
         print("\n".join(problems))
         return 1
     try:
         Path(arguments.output).write_bytes(rewritten.encode("utf-8"))
     except OSError as error:
-        print(f"无法写入改写稿：{arguments.output}：{error}")
-        return 2
+        raise OSError(f"无法写入改写稿：{arguments.output}：{error}") from error
     return 0
-
-
-def _parse_judgement_file(path):
-    try:
-        return json.loads(
-            _read_source(path), object_pairs_hook=object_without_duplicate_keys
-        )
-    except (OSError, UnicodeError) as error:
-        raise OSError(f"无法读取评审 JSON：{path}：{error}") from error
-    except (json.JSONDecodeError, ValueError) as error:
-        raise RewriteFormatError(f"评审 JSON 格式错误：{error}") from error
 
 
 def _parse_line_range(value, where, problems):
@@ -430,8 +389,7 @@ def _text_occurs_in_line_range(block, text, line_range):
 
 def _check_judgement(judgement, original_blocks, rewrite_annotation_blocks):
     problems = []
-    if not _require_exact_keys(
-            judgement, {"inventory", "added"}, "评审 JSON", problems):
+    if not _require_exact_keys(judgement, JUDGEMENT_FIELDS, "评审 JSON", problems):
         return problems
     inventory = judgement.get("inventory")
     added = judgement.get("added")
@@ -445,12 +403,9 @@ def _check_judgement(judgement, original_blocks, rewrite_annotation_blocks):
     blocks_by_id = {block["id"]: block for block in original_blocks}
     inventory_ids = set()
     covered = {block["id"]: set() for block in original_blocks}
-    required_item_keys = {
-        "id", "block", "lines", "original", "status", "rewritten", "impact", "why"
-    }
     for index, item in enumerate(inventory):
         where = f"inventory[{index}]"
-        if not _require_exact_keys(item, required_item_keys, where, problems):
+        if not _require_exact_keys(item, INVENTORY_FIELDS, where, problems):
             continue
 
         item_id = item.get("id")
@@ -537,35 +492,30 @@ def _check_judgement(judgement, original_blocks, rewrite_annotation_blocks):
 
     for index, item in enumerate(added):
         where = f"added[{index}]"
-        if not _require_exact_keys(item, {"text", "why"}, where, problems):
+        if not _require_exact_keys(item, ADDED_FIELDS, where, problems):
             continue
-        if not _nonempty_string(item.get("text")):
-            problems.append(f"{where}.text 必须是非空字符串")
-        if not _nonempty_string(item.get("why")):
-            problems.append(f"{where}.why 必须是非空字符串")
+        for field in ("text", "why"):
+            if not _nonempty_string(item.get(field)):
+                problems.append(f"{where}.{field} 必须是非空字符串")
     if added:
         problems.append(f"added 非空：{len(added)} 条")
     return problems
 
 
 def _gate_command(arguments):
-    try:
-        original = _read_source(arguments.original)
-        rewrite_bytes = Path(arguments.rewrite).read_bytes()
-        rewritten = rewrite_bytes.decode("utf-8")
-        manifest = _parse_blocks_file(arguments.blocks)
-        judgement = _parse_judgement_file(arguments.judgement)
-        expected_rewrite, splice_problems = _splice_candidate(
-            original, arguments.original, manifest
-        )
-        original_blocks = _comment_block_spans(original, arguments.original)
-        rewrite_annotation_blocks = _annotation_blocks(rewritten, arguments.original)
-    except (OSError, UnicodeError, ValueError) as error:
-        print(error)
-        return 2
-    except RewriteFormatError as error:
-        print(error)
-        return 1
+    original = _read_source(arguments.original)
+    rewrite_bytes = Path(arguments.rewrite).read_bytes()
+    rewritten = rewrite_bytes.decode("utf-8")
+    manifest = _parse_json_file(arguments.blocks, "块清单")
+    judgement = _parse_json_file(arguments.judgement, "评审 JSON")
+    expected_rewrite, splice_problems = _splice_candidate(
+        original, arguments.original, manifest
+    )
+    original_blocks = _comment_block_spans(original, arguments.original)
+    rewrite_annotation_blocks = [
+        block["text"]
+        for block in _comment_block_spans(rewritten, arguments.original)
+    ]
     if splice_problems:
         print("\n".join(splice_problems))
         return 1
@@ -583,13 +533,19 @@ def _gate_command(arguments):
 
 def main(argv=None):
     arguments = parser().parse_args(argv)
-    if arguments.command == "blocks":
-        return _blocks_command(arguments)
-    if arguments.command == "splice":
-        return _splice_command(arguments)
-    if arguments.command == "gate":
-        return _gate_command(arguments)
-    raise AssertionError(f"未知命令：{arguments.command}")
+    commands = {
+        "blocks": _blocks_command,
+        "splice": _splice_command,
+        "gate": _gate_command,
+    }
+    try:
+        return commands[arguments.command](arguments)
+    except (OSError, UnicodeError, ValueError) as error:
+        print(error)
+        return 2
+    except RewriteFormatError as error:
+        print(error)
+        return 1
 
 
 if __name__ == "__main__":

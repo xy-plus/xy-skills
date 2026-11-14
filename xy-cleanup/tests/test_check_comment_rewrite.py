@@ -78,75 +78,58 @@ class CommentRewriteCommandTest(unittest.TestCase):
 
 
 class CommentBlockTest(CommentRewriteCommandTest):
-    def test_python_docstrings_comments_and_ordinary_strings_are_classified(self):
-        source = (
-            '"""module docs"""\n'
-            'VALUE = """ordinary string //"""\n'
-            "# first\n# second\n"
-            "value = 1  # trailing\n"
+    def test_language_lexers_classify_only_comment_blocks(self):
+        cases = (
+            (
+                "python docstrings, comments, and ordinary strings",
+                "sample.py",
+                '"""module docs"""\nVALUE = """ordinary string //"""\n'
+                "# first\n# second\nvalue = 1  # trailing\n",
+                [
+                    {"id": "1", "lines": "1-1", "text": '"""module docs"""'},
+                    {"id": "2", "lines": "3-4", "text": "# first\n# second"},
+                    {"id": "3", "lines": "5-5", "text": "# trailing"},
+                ],
+            ),
+            (
+                "Rust doc comments, block comments, and string contents",
+                "sample.rs",
+                "/// public docs\n//! module docs\n/* block docs */\n"
+                'let value = "// string";\n',
+                [
+                    {"id": "1", "lines": "1-1", "text": "/// public docs"},
+                    {"id": "2", "lines": "2-2", "text": "//! module docs"},
+                    {"id": "3", "lines": "3-3", "text": "/* block docs */"},
+                ],
+            ),
+            (
+                "C preprocessor directives",
+                "sample.c",
+                "#define SIZE 4\nint value; /* note */\n",
+                [{"id": "1", "lines": "2-2", "text": "/* note */"}],
+            ),
+            (
+                "shell shebang",
+                "sample.sh",
+                "#!/bin/sh\n# note\necho ok\n",
+                [{"id": "1", "lines": "2-2", "text": "# note"}],
+            ),
+            (
+                "HTML doctype",
+                "sample.html",
+                "<!DOCTYPE html>\n<!-- note -->\n<div>ok</div>\n",
+                [{"id": "1", "lines": "2-2", "text": "<!-- note -->"}],
+            ),
+            (
+                "YAML comments",
+                "sample.yaml",
+                "# note\nname: value\n",
+                [{"id": "1", "lines": "1-1", "text": "# note"}],
+            ),
         )
-        path = self.write_file("sample.py", source)
-
-        self.assertEqual(
-            self.blocks(path),
-            [
-                {"id": "1", "lines": "1-1", "text": '"""module docs"""'},
-                {"id": "2", "lines": "3-4", "text": "# first\n# second"},
-                {"id": "3", "lines": "5-5", "text": "# trailing"},
-            ],
-        )
-
-    def test_rust_doc_comments_block_comments_and_string_contents_are_classified(self):
-        source = (
-            "/// public docs\n"
-            "//! module docs\n"
-            "/* block docs */\n"
-            'let value = "// string";\n'
-        )
-        path = self.write_file("sample.rs", source)
-
-        self.assertEqual(
-            self.blocks(path),
-            [
-                {"id": "1", "lines": "1-1", "text": "/// public docs"},
-                {"id": "2", "lines": "2-2", "text": "//! module docs"},
-                {"id": "3", "lines": "3-3", "text": "/* block docs */"},
-            ],
-        )
-
-    def test_c_preprocessor_directives_are_not_comment_blocks(self):
-        path = self.write_file("sample.c", "#define SIZE 4\nint value; /* note */\n")
-
-        self.assertEqual(
-            self.blocks(path),
-            [{"id": "1", "lines": "2-2", "text": "/* note */"}],
-        )
-
-    def test_shell_shebang_is_code_but_later_comments_are_blocks(self):
-        path = self.write_file("sample.sh", "#!/bin/sh\n# note\necho ok\n")
-
-        self.assertEqual(
-            self.blocks(path),
-            [{"id": "1", "lines": "2-2", "text": "# note"}],
-        )
-
-    def test_html_comments_are_blocks_but_doctype_is_not(self):
-        path = self.write_file(
-            "sample.html", "<!DOCTYPE html>\n<!-- note -->\n<div>ok</div>\n"
-        )
-
-        self.assertEqual(
-            self.blocks(path),
-            [{"id": "1", "lines": "2-2", "text": "<!-- note -->"}],
-        )
-
-    def test_yaml_comments_are_blocks(self):
-        path = self.write_file("sample.yaml", "# note\nname: value\n")
-
-        self.assertEqual(
-            self.blocks(path),
-            [{"id": "1", "lines": "1-1", "text": "# note"}],
-        )
+        for label, filename, source, expected in cases:
+            with self.subTest(language=label):
+                self.assertEqual(self.blocks(self.write_file(filename, source)), expected)
 
     def test_same_line_docstring_and_comment_have_distinct_block_ids(self):
         path = self.write_file(
@@ -194,29 +177,18 @@ class CommentSpliceTest(CommentRewriteCommandTest):
             b"# short\r\nvalue =  1  # tail\r\nother = 2\r\n# remove this full line\r\n",
         )
 
-    def test_output_cannot_name_the_original_file(self):
-        original = self.write_file("sample.py", "# note\n")
-
-        result, _ = self.splice(
-            original, [{"id": "1", "text": "# shorter"}], original
-        )
-
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("同一", result.stdout)
-        self.assertEqual(original.read_text(encoding="utf-8"), "# note\n")
-
-    def test_output_cannot_name_a_hard_link_to_the_original_file(self):
+    def test_output_cannot_name_the_original_or_a_hard_link(self):
         original = self.write_file("sample.py", "# note\n")
         alias = self.directory / "alias.py"
         os.link(original, alias)
-
-        result, _ = self.splice(
-            original, [{"id": "1", "text": "# shorter"}], alias
-        )
-
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("同一", result.stdout)
-        self.assertEqual(original.read_text(encoding="utf-8"), "# note\n")
+        for label, output in (("same path", original), ("hard link", alias)):
+            with self.subTest(output=label):
+                result, _ = self.splice(
+                    original, [{"id": "1", "text": "# shorter"}], output
+                )
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("同一", result.stdout)
+                self.assertEqual(original.read_text(encoding="utf-8"), "# note\n")
 
     def test_same_line_docstring_and_comment_can_be_rewritten_independently(self):
         source = (
@@ -311,48 +283,38 @@ class CommentSpliceTest(CommentRewriteCommandTest):
         self.assertIn("工具注释", result.stdout)
         self.assertFalse(output.exists())
 
-    def test_fenced_code_example_in_docstring_must_remain_exact(self):
-        source = (
-            'def f():\n'
-            '    """\n'
-            '    ```python\n'
-            "    print('old')\n"
-            '    ```\n'
-            '    """\n'
-            '    return 1\n'
+    def test_docstring_code_examples_must_remain_exact(self):
+        fenced_source = (
+            'def f():\n    """\n    ```python\n    print(\'old\')\n'
+            '    ```\n    """\n    return 1\n'
         )
-        original = self.write_file("sample.py", source)
-        changed = source.replace("print('old')", "print('new')")
-        docstring = self.blocks(original)[0]["id"]
-
-        result, output = self.splice(
-            original, [{"id": docstring, "text": changed.split("    ", 1)[1].rstrip()}]
+        doctest_source = (
+            'def f():\n    """\n    >>> f()\n    1\n'
+            '    """\n    return 1\n'
         )
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("代码示例", result.stdout)
-        self.assertFalse(output.exists())
-
-    def test_doctest_lines_in_docstring_must_remain_exact(self):
-        source = (
-            'def f():\n'
-            '    """\n'
-            '    >>> f()\n'
-            '    1\n'
-            '    """\n'
-            '    return 1\n'
+        cases = (
+            (
+                "fenced example",
+                fenced_source,
+                fenced_source.replace("print('old')", "print('new')")
+                .split("    ", 1)[1].rstrip(),
+            ),
+            (
+                "doctest line",
+                doctest_source,
+                '"""\n    >>> changed()\n    1\n    """',
+            ),
         )
-        original = self.write_file("sample.py", source)
-        docstring = self.blocks(original)[0]["id"]
-        replacement = '"""\n    >>> changed()\n    1\n    """'
-
-        result, output = self.splice(
-            original, [{"id": docstring, "text": replacement}]
-        )
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("代码示例", result.stdout)
-        self.assertFalse(output.exists())
+        for label, source, replacement in cases:
+            with self.subTest(example=label):
+                original = self.write_file(f"{label}.py", source)
+                block_id = self.blocks(original)[0]["id"]
+                result, output = self.splice(
+                    original, [{"id": block_id, "text": replacement}]
+                )
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("代码示例", result.stdout)
+                self.assertFalse(output.exists())
 
 
 class CommentGateTest(CommentRewriteCommandTest):
@@ -393,6 +355,11 @@ class CommentGateTest(CommentRewriteCommandTest):
             ],
             "added": [],
         }
+
+    def assert_gate_rejected(self, original, rewrite, judgement, phrase, blocks=None):
+        result = self.gate(original, rewrite, judgement, blocks=blocks)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(phrase, result.stdout)
 
     def test_complete_review_with_nonimpactful_rewrites_passes(self):
         result = self.gate(self.original, self.rewrite, self.valid_judgement())
@@ -447,10 +414,7 @@ class CommentGateTest(CommentRewriteCommandTest):
             "added": [],
         }
 
-        result = self.gate(source, rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("lines", result.stdout)
+        self.assert_gate_rejected(source, rewrite, judgement, "lines")
 
     def test_gate_uses_original_lexer_when_rewrite_has_tmp_suffix(self):
         original = self.write_file("suffix-original.py", "# note\nvalue = 1\n")
@@ -487,37 +451,31 @@ class CommentGateTest(CommentRewriteCommandTest):
             "added": [],
         }
 
-        result = self.gate(source, rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("第 2 行", result.stdout)
+        self.assert_gate_rejected(source, rewrite, judgement, "第 2 行")
 
     def test_inventory_lines_cannot_extend_outside_the_assigned_block(self):
         judgement = self.valid_judgement()
         judgement["inventory"][0]["lines"] = "1-3"
 
-        result = self.gate(self.original, self.rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("block", result.stdout)
+        self.assert_gate_rejected(
+            self.original, self.rewrite, judgement, "block"
+        )
 
     def test_inventory_original_must_be_found_in_its_assigned_block(self):
         judgement = self.valid_judgement()
         judgement["inventory"][0]["original"] = "# original second"
 
-        result = self.gate(self.original, self.rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("original", result.stdout)
+        self.assert_gate_rejected(
+            self.original, self.rewrite, judgement, "original"
+        )
 
     def test_inventory_rewritten_must_be_found_in_rewrite_annotations(self):
         judgement = self.valid_judgement()
         judgement["inventory"][0]["rewritten"] = "# absent text"
 
-        result = self.gate(self.original, self.rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("rewritten", result.stdout)
+        self.assert_gate_rejected(
+            self.original, self.rewrite, judgement, "rewritten"
+        )
 
     def test_inventory_rewritten_cannot_be_assembled_across_separate_blocks(self):
         rewrite = self.write_file(
@@ -527,18 +485,12 @@ class CommentGateTest(CommentRewriteCommandTest):
         judgement["inventory"][0]["rewritten"] = "ab# c"
         judgement["inventory"][1]["rewritten"] = "# cd"
 
-        result = self.gate(self.original, rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("rewritten", result.stdout)
+        self.assert_gate_rejected(self.original, rewrite, judgement, "rewritten")
 
     def test_comment_blocks_cannot_be_omitted_from_inventory(self):
-        result = self.gate(
-            self.original, self.rewrite, {"inventory": [], "added": []}
+        self.assert_gate_rejected(
+            self.original, self.rewrite, {"inventory": [], "added": []}, "block"
         )
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("block", result.stdout)
 
     def test_impactful_loss_is_rejected(self):
         judgement = self.valid_judgement()
@@ -546,28 +498,21 @@ class CommentGateTest(CommentRewriteCommandTest):
             status="丢了", rewritten="", impact="有影响", why="调用方依赖该约束"
         )
 
-        result = self.gate(self.original, self.rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("有影响", result.stdout)
+        self.assert_gate_rejected(
+            self.original, self.rewrite, judgement, "有影响"
+        )
 
     def test_added_information_is_rejected(self):
         judgement = self.valid_judgement()
         judgement["added"].append({"text": "原文没有的新要求", "why": "猜测"})
 
-        result = self.gate(self.original, self.rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("added", result.stdout)
+        self.assert_gate_rejected(self.original, self.rewrite, judgement, "added")
 
     def test_inventory_ids_must_be_unique(self):
         judgement = self.valid_judgement()
         judgement["inventory"][1]["id"] = judgement["inventory"][0]["id"]
 
-        result = self.gate(self.original, self.rewrite, judgement)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("重复", result.stdout)
+        self.assert_gate_rejected(self.original, self.rewrite, judgement, "重复")
 
     def test_review_requires_exact_root_and_inventory_fields(self):
         cases = []
@@ -590,13 +535,10 @@ class CommentGateTest(CommentRewriteCommandTest):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
     def test_duplicate_json_keys_are_rejected(self):
-        result = self.gate(
+        self.assert_gate_rejected(
             self.original, self.rewrite,
-            '{"inventory":[],"inventory":[],"added":[]}',
+            '{"inventory":[],"inventory":[],"added":[]}', "重复键",
         )
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("重复键", result.stdout)
 
     def test_invalid_status_and_impact_values_are_rejected(self):
         for field, value in (("status", "maybe"), ("impact", "maybe")):
