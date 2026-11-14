@@ -1592,7 +1592,8 @@
                 }
               ],
               "entries": [
-                "xy-repo-map/repo_map_lib/ownership.py"
+                "xy-repo-map/repo_map_lib/ownership.py",
+                "xy-repo-map/tests/test_ownership.py"
               ],
               "children": []
             },
