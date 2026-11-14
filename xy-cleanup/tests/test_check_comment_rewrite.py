@@ -46,7 +46,24 @@ class CommentRewriteCommandTest(unittest.TestCase):
         )
         return result, Path(output)
 
-    def gate(self, original, rewrite, judgement):
+    def gate(self, original, rewrite, judgement, blocks=None):
+        if blocks is None:
+            original_result = self.run_command("blocks", "--original", original)
+            rewrite_result = self.run_command("blocks", "--original", rewrite)
+            if original_result.returncode == 0 and rewrite_result.returncode == 0:
+                original_blocks = json.loads(original_result.stdout)
+                rewrite_blocks = json.loads(rewrite_result.stdout)
+                blocks = [
+                    {"id": block["id"], "text": rewrite_blocks[index]["text"]}
+                    for index, block in enumerate(original_blocks)
+                    if index < len(rewrite_blocks)
+                ]
+            else:
+                blocks = []
+        blocks_path = self.directory / "gate-blocks.json"
+        blocks_path.write_text(
+            json.dumps(blocks, ensure_ascii=False), encoding="utf-8"
+        )
         judgement_path = self.directory / "judgement.json"
         if isinstance(judgement, str):
             judgement_path.write_text(judgement, encoding="utf-8")
@@ -56,7 +73,7 @@ class CommentRewriteCommandTest(unittest.TestCase):
             )
         return self.run_command(
             "gate", "--original", original, "--rewrite", rewrite,
-            "--judgement", judgement_path,
+            "--blocks", blocks_path, "--judgement", judgement_path,
         )
 
 
@@ -383,6 +400,79 @@ class CommentGateTest(CommentRewriteCommandTest):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stderr, "")
 
+    def test_gate_rejects_rewrite_with_code_manually_changed_after_splice(self):
+        blocks_path = self.write_file(
+            "gate-blocks.json",
+            json.dumps(
+                [{"id": "1", "text": "# first"}, {"id": "2", "text": "# second"}],
+                ensure_ascii=False,
+            ),
+        )
+        manual_rewrite = self.write_file(
+            "manual-rewrite.py", "# first\nvalue = 99\n# second\n"
+        )
+        judgement_path = self.write_file(
+            "manual-judgement.json",
+            json.dumps(self.valid_judgement(), ensure_ascii=False),
+        )
+
+        result = self.run_command(
+            "gate", "--original", self.original, "--rewrite", manual_rewrite,
+            "--blocks", blocks_path, "--judgement", judgement_path,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("拼接", result.stdout)
+
+    def test_inventory_original_must_be_inside_its_item_line_range(self):
+        source = self.write_file(
+            "line-range.py", "# first\n# second\nvalue = 1\n"
+        )
+        rewrite = self.write_file(
+            "line-range-rewrite.py", "# first\n# second\nvalue = 1\n"
+        )
+        judgement = {
+            "inventory": [
+                {
+                    "id": "I1", "block": "1", "lines": "1-1",
+                    "original": "# second", "status": "在",
+                    "rewritten": "# second", "impact": "", "why": "",
+                },
+                {
+                    "id": "I2", "block": "1", "lines": "2-2",
+                    "original": "# second", "status": "在",
+                    "rewritten": "# second", "impact": "", "why": "",
+                },
+            ],
+            "added": [],
+        }
+
+        result = self.gate(source, rewrite, judgement)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("lines", result.stdout)
+
+    def test_gate_uses_original_lexer_when_rewrite_has_tmp_suffix(self):
+        original = self.write_file("suffix-original.py", "# note\nvalue = 1\n")
+        rewrite = self.write_file("rewrite.tmp", "# note\nvalue = 1\n")
+        judgement = {
+            "inventory": [
+                {
+                    "id": "I1", "block": "1", "lines": "1-1",
+                    "original": "# note", "status": "在",
+                    "rewritten": "# note", "impact": "", "why": "",
+                }
+            ],
+            "added": [],
+        }
+
+        result = self.gate(
+            original, rewrite, judgement,
+            blocks=[{"id": "1", "text": "# note"}],
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_inventory_must_cover_each_nonempty_line_of_each_block(self):
         source = self.write_file("multiline.py", "# first\n# second\nvalue = 1\n")
         rewrite = self.write_file("multiline-rewrite.py", "# first\n# second\nvalue = 1\n")
@@ -612,6 +702,7 @@ class CommentRewriteDocumentationTest(unittest.TestCase):
             "注释改写", "功能直属的代码文件和测试文件", "repo-map/skip.json",
             "认不出语言", "check_comment_rewrite.py blocks", "块 id",
             "check_comment_rewrite.py splice", "check_comment_rewrite.py gate",
+            "gate --original <文件> --blocks <块清单>",
             "代码示例", "函数体只有一个文档串", "不进决定清单",
         ):
             with self.subTest(required=required):

@@ -46,6 +46,7 @@ def parser():
     gate = commands.add_parser("gate", help="核对独立评审结果")
     gate.add_argument("--original", required=True, help="未改写的原文件")
     gate.add_argument("--rewrite", required=True, help="改写稿")
+    gate.add_argument("--blocks", required=True, help="拼接改写稿所用的块清单 JSON")
     gate.add_argument("--judgement", required=True, help="评审 JSON")
 
     return result
@@ -339,6 +340,12 @@ def _splice_problems(original, rewritten, path, insertions):
     return problems
 
 
+def _splice_candidate(source, path, manifest):
+    edits = _prepare_edits(source, path, manifest)
+    rewritten, insertions = _splice_text(source, edits)
+    return rewritten, _splice_problems(source, rewritten, path, insertions)
+
+
 def _splice_command(arguments):
     if _same_file(arguments.original, arguments.output):
         print("--output 和 --original 是同一路径或同一文件")
@@ -346,11 +353,7 @@ def _splice_command(arguments):
     try:
         source = _read_source(arguments.original)
         manifest = _parse_blocks_file(arguments.blocks)
-        edits = _prepare_edits(source, arguments.original, manifest)
-        rewritten, insertions = _splice_text(source, edits)
-        problems = _splice_problems(
-            source, rewritten, arguments.original, insertions
-        )
+        rewritten, problems = _splice_candidate(source, arguments.original, manifest)
     except (OSError, UnicodeError, ValueError) as error:
         print(error)
         return 2
@@ -407,6 +410,22 @@ def _require_exact_keys(value, expected, where, problems):
 
 def _nonempty_string(value):
     return isinstance(value, str) and bool(value.strip())
+
+
+def _text_occurs_in_line_range(block, text, line_range):
+    block_start = int(block["lines"].split("-", 1)[0])
+    line_starts = _line_starts(block["text"])
+    cursor = 0
+    while True:
+        position = block["text"].find(text, cursor)
+        if position < 0:
+            return False
+        first_line = block_start + _line_number(position, line_starts) - 1
+        last_offset = position + len(text) - 1
+        last_line = block_start + _line_number(last_offset, line_starts) - 1
+        if line_range[0] <= first_line and last_line <= line_range[1]:
+            return True
+        cursor = position + 1
 
 
 def _check_judgement(judgement, original_blocks, rewrite_annotation_blocks):
@@ -466,8 +485,14 @@ def _check_judgement(judgement, original_blocks, rewrite_annotation_blocks):
         original_text = item.get("original")
         if not _nonempty_string(original_text):
             problems.append(f"{where}.original 必须是非空字符串")
-        elif block is not None and original_text not in block["text"]:
-            problems.append(f"{where}.original 找不到于 block {block_id} 原文")
+        elif block is not None:
+            if original_text not in block["text"]:
+                problems.append(f"{where}.original 找不到于 block {block_id} 原文")
+            elif (item_range is not None
+                    and not _text_occurs_in_line_range(block, original_text, item_range)):
+                problems.append(
+                    f"{where}.original 不在 lines {item['lines']} 指定的原文行内"
+                )
 
         status = item.get("status")
         if status not in ("在", "变了", "丢了"):
@@ -526,15 +551,26 @@ def _check_judgement(judgement, original_blocks, rewrite_annotation_blocks):
 def _gate_command(arguments):
     try:
         original = _read_source(arguments.original)
-        rewritten = _read_source(arguments.rewrite)
+        rewrite_bytes = Path(arguments.rewrite).read_bytes()
+        rewritten = rewrite_bytes.decode("utf-8")
+        manifest = _parse_blocks_file(arguments.blocks)
         judgement = _parse_judgement_file(arguments.judgement)
+        expected_rewrite, splice_problems = _splice_candidate(
+            original, arguments.original, manifest
+        )
         original_blocks = _comment_block_spans(original, arguments.original)
-        rewrite_annotation_blocks = _annotation_blocks(rewritten, arguments.rewrite)
+        rewrite_annotation_blocks = _annotation_blocks(rewritten, arguments.original)
     except (OSError, UnicodeError, ValueError) as error:
         print(error)
         return 2
     except RewriteFormatError as error:
         print(error)
+        return 1
+    if splice_problems:
+        print("\n".join(splice_problems))
+        return 1
+    if rewrite_bytes != expected_rewrite.encode("utf-8"):
+        print("改写稿字节与按块清单拼接结果不同")
         return 1
     problems = _check_judgement(
         judgement, original_blocks, rewrite_annotation_blocks
