@@ -27,7 +27,6 @@ JUDGEMENT_FIELDS = {"inventory", "added"}
 INVENTORY_FIELDS = {
     "id", "block", "lines", "original", "status", "rewritten", "impact", "why"
 }
-ADDED_FIELDS = {"text", "why"}
 FENCE = re.compile(r"\x60\x60\x60.*?\x60\x60\x60", re.DOTALL)
 DOCTEST_LINE = re.compile(r"(?m)^[ \t]*(?:>>> |\.\.\. )[^\r\n]*(?:\r\n|\r|\n|$)")
 
@@ -486,7 +485,7 @@ def _check_judgement(judgement, original_blocks, rewrite_annotation_blocks):
 
     for index, item in enumerate(added):
         where = f"added[{index}]"
-        if not _require_exact_keys(item, ADDED_FIELDS, where, problems):
+        if not _require_exact_keys(item, {"text", "why"}, where, problems):
             continue
         for field in ("text", "why"):
             if not _nonempty_string(item.get(field)):

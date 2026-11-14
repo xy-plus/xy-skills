@@ -356,8 +356,8 @@ class CommentGateTest(CommentRewriteCommandTest):
             "added": [],
         }
 
-    def assert_gate_rejected(self, original, rewrite, judgement, phrase, blocks=None):
-        result = self.gate(original, rewrite, judgement, blocks=blocks)
+    def assert_gate_rejected(self, original, rewrite, judgement, phrase):
+        result = self.gate(original, rewrite, judgement)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn(phrase, result.stdout)
 
