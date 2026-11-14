@@ -87,6 +87,23 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 清扫收尾时，`xy-cleanup` 将认可的功能指纹写入 `repo-map/approved.json`，供下次只审查有变化的功能。
 
+## 实际使用
+
+清扫判删时，按下面这些记录找某条规则、某段代码在实际使用中被用到、被触发或防住故障的证据：
+
+| 记录 | 位置 | 看什么 |
+|---|---|---|
+| 会话记录 | `~/.claude/projects/*/*.jsonl` | 加载了哪些 skill，跑了哪些脚本和命令、报了什么错，用户纠正过什么 |
+| 长目标契约 | `$RUNS_ROOT/*/*/xy-goal/` | 原话、事项、验收结论和 `links.md` |
+| 运行目录 | `$RUNS_ROOT/*/*/` | 审查报告、决定页面的回答、交接说明、子代理日志 |
+| 记忆 | `~/.claude/projects/*/memory/*.md` | 用户的纠正和偏好；只当线索，要追到会话记录原文 |
+| 已装的入口 | `~/.claude/CLAUDE.md` 的引入、`~/.claude/settings.json` 的 hook、`~/.claude/skills/` 下的软链、`~/.config/systemd/user/runs-cleaner.*` | 哪些 skill 和脚本会被自动加载、触发或定时运行 |
+| 清理日志 | `journalctl --user -u runs-cleaner` | 定期清理实际删了什么、拦下了什么 |
+| 发布的页面 | `xy-repo-map` 发布用的门户站点目录 | 功能图和决定页面的发布记录 |
+| 提交历史 | 本仓及用到这些 skill 的仓库的 `git log` | 修过哪些故障、为什么加了某条规则 |
+
+运行目录满 30 天未改动会被定期清理（见 `xy-runs`），更早的证据只能在会话记录、记忆和提交历史里找。
+
 ## 测试
 
 从仓库根目录依次运行：

@@ -9,7 +9,33 @@
     "from": "20261110 清扫决定页面第一页"
   },
   "directory": "",
-  "items": [],
+  "items": [
+    {
+      "id": "keep-workspaces-out",
+      "text": "开发用的隔离工作区和自动生成缓存不会混进仓库提交。",
+      "status": "起草"
+    },
+    {
+      "id": "license-reuse",
+      "text": "使用者可以按 MIT 条款使用、修改和再发布这套技能。",
+      "status": "起草"
+    },
+    {
+      "id": "review-changed-features",
+      "text": "清扫后记录各功能最近认可的状态，使后续可以只重审发生变化的功能。",
+      "status": "起草"
+    },
+    {
+      "id": "define-skill-map",
+      "text": "维护者可以按功能登记这套技能的目标、理由和组成，并据此生成和检查功能图。",
+      "status": "起草"
+    },
+    {
+      "id": "declare-skipped-content",
+      "text": "功能图和清扫能明确哪些仓库内容不参与统计与审查；没有排除项时也明确声明为空。",
+      "status": "起草"
+    }
+  ],
   "subrepositories": [],
   "external_dependencies": [
     "Claude Code",
@@ -46,7 +72,23 @@
             "from": "xy-iron-law/SKILL.md 第 1 条"
           },
           "directory": "xy-iron-law",
-          "items": [],
+          "items": [
+            {
+              "id": "fix-root-cause",
+              "text": "遇到问题先找本质原因并修正出错处，避免在别处叠加补救。",
+              "status": "起草"
+            },
+            {
+              "id": "make-misuse-difficult",
+              "text": "设计代码、接口和产品时，把关键约束做进设计，让常见误用难以发生。",
+              "status": "起草"
+            },
+            {
+              "id": "justify-each-entity",
+              "text": "每样保留的东西都说明删掉后哪项已定要求会失败，并检查能否用更小做法满足。",
+              "status": "起草"
+            }
+          ],
           "entries": [],
           "children": []
         },
@@ -61,7 +103,43 @@
             "from": "xy-repo-rules/SKILL.md 第 7 条"
           },
           "directory": "xy-repo-rules",
-          "items": [],
+          "items": [
+            {
+              "id": "readme-enables-setup",
+              "text": "任何人读完仓库说明后都能立即完成安装并开始使用。",
+              "status": "起草"
+            },
+            {
+              "id": "clear-names",
+              "text": "目录、文件和变量使用清楚易懂的名称，让使用者能找到正确的技能和操作入口。",
+              "status": "起草"
+            },
+            {
+              "id": "separate-responsibilities",
+              "text": "项目、目录和文件有清楚层级，各自承担明确职责，并复用合适的功能。",
+              "status": "起草"
+            },
+            {
+              "id": "docs-near-code",
+              "text": "说明尽量放在代码注释中，避免另开文档。",
+              "status": "起草"
+            },
+            {
+              "id": "encode-constraints",
+              "text": "尽可能把约束写进代码，使错误输入难以被误用。",
+              "status": "起草"
+            },
+            {
+              "id": "require-explicit-input",
+              "text": "重要操作的必要输入都明确提供，避免依赖容易误用的默认值。",
+              "status": "起草"
+            },
+            {
+              "id": "remove-unneeded-work",
+              "text": "积极删除或合并没有实际必要的代码和文档，避免仓库留下历史包袱。",
+              "status": "起草"
+            }
+          ],
           "entries": [],
           "children": []
         }
@@ -78,7 +156,133 @@
         "from": "20261110 清扫决定页面第一页"
       },
       "directory": "xy-workflow",
-      "items": [],
+      "items": [
+        {
+          "id": "load-prerequisite-skills",
+          "text": "讨论问题或可能改代码时按标准工作流程处理；先加载流程、目标跟踪、规模判断和需求澄清能力，再进行调查或讨论。",
+          "status": "起草"
+        },
+        {
+          "id": "pin-superpowers",
+          "text": "开工前确认 superpowers 只启用固定的 7.0.2 版本；不符时停止并提醒用户。",
+          "status": "起草"
+        },
+        {
+          "id": "use-versioned-sizing",
+          "text": "按固定版本的 brainstorming 原文判断任务规模，不叠加本地分档判据。",
+          "status": "起草"
+        },
+        {
+          "id": "announce-size",
+          "text": "决定任务规模后，向用户说明采用的档位和原因。",
+          "status": "起草"
+        },
+        {
+          "id": "continue-without-waiting",
+          "text": "除必须由用户决定的事项外，按已定流程持续推进，不因等待回复而中断。",
+          "status": "起草"
+        },
+        {
+          "id": "quick-task-path",
+          "text": "请求已提供快速任务所需信息时，跳过讨论、spec 编写和 spec 审查，但仍完成终审、全套测试和合入。",
+          "status": "起草"
+        },
+        {
+          "id": "spike-answer-only",
+          "text": "纯调查任务只交付答案，调查中产生的临时代码不并入产品。",
+          "status": "起草"
+        },
+        {
+          "id": "scale-spec-to-task",
+          "text": "小改动和项目都走完整阶段；小改动写简短规格，项目写完整规格。",
+          "status": "起草"
+        },
+        {
+          "id": "builder-check",
+          "text": "项目规格在实现前由构建者视角检查会改变计划的未决问题。",
+          "status": "起草"
+        },
+        {
+          "id": "track-work-contract",
+          "text": "每个长任务都用目标契约跟踪用户原话、待办事项和验收条件；没有契约时先建立。",
+          "status": "起草"
+        },
+        {
+          "id": "store-and-point-to-artifacts",
+          "text": "规格、审查报告和子代理说明放在任务运行目录，并登记可供续办者定位的产物指针。",
+          "status": "起草"
+        },
+        {
+          "id": "review-stage-gates",
+          "text": "规格审查和代码终审未通过时不得进入下一阶段。",
+          "status": "起草"
+        },
+        {
+          "id": "coordinate-separate-implementation",
+          "text": "编排者负责规格、任务拆分和集成；实现由工作子代理完成，并显式传递其不会自动继承的规则边界。",
+          "status": "起草"
+        },
+        {
+          "id": "trace-spec-requirements",
+          "text": "规格逐项说明要求来自用户原话，派方或作者延伸的内容还说明来源和证据。",
+          "status": "起草"
+        },
+        {
+          "id": "ask-only-visible-decisions",
+          "text": "会改变用户可见行为、用法或用户规则的决定交用户定，其余实现决定由派方或作者负责。",
+          "status": "起草"
+        },
+        {
+          "id": "complete-spec-boundaries",
+          "text": "规格说明任务拆分边界、验收标准、依赖和接口，并确保各部分合起来覆盖整体且互不重叠。",
+          "status": "起草"
+        },
+        {
+          "id": "validate-feature-map",
+          "text": "改动前先确认功能清单中已有的归属并校验清单；没有功能清单的仓库不做此项检查。",
+          "status": "起草"
+        },
+        {
+          "id": "limit-map-structure-changes",
+          "text": "功能的实质增删、合并和改名只在仓库清扫时进行；已有功能的入口或格式维护不额外打断用户。",
+          "status": "起草"
+        },
+        {
+          "id": "isolate-worktree-and-baseline",
+          "text": "代码在隔离工作区中实现，并在开始前确认依赖安装完成且测试基线干净。",
+          "status": "起草"
+        },
+        {
+          "id": "delegate-complete-briefs",
+          "text": "并行任务说明共同覆盖规格、互不重叠，并写清各自的边界、依赖和验收标准。",
+          "status": "起草"
+        },
+        {
+          "id": "report-incremental-work",
+          "text": "续跑报告只说明本轮增量，并记录本轮启动的临时进程和后台会话。",
+          "status": "起草"
+        },
+        {
+          "id": "preserve-lasting-decisions",
+          "text": "任务完成前把仍需长期遵守的要求和实现经验留在维护中的代码或文档。",
+          "status": "起草"
+        },
+        {
+          "id": "clean-resources-on-close",
+          "text": "任务接受或取消前清理本任务独占的临时进程、会话和工作区；仍被其他事项使用的资源保留并注明使用者，须长期保留的产物先移到长期位置并记录收尾结果。",
+          "status": "起草"
+        },
+        {
+          "id": "final-review-and-verification",
+          "text": "实现完成后更新到最新主分支，并通过独立终审和全套验证后才进入合入。",
+          "status": "起草"
+        },
+        {
+          "id": "fast-forward-and-push",
+          "text": "本地合入只允许快进到已审查提交，并在完成后推送主分支；不能快进时重新审查。",
+          "status": "起草"
+        }
+      ],
       "entries": [],
       "children": []
     },
@@ -107,7 +311,28 @@
             "from": "20261110 清扫决定页面第一页"
           },
           "directory": "sync-think",
-          "items": [],
+          "items": [
+            {
+              "id": "invoke-only-when-requested",
+              "text": "只有用户或明确的流程说明点名时才使用需求澄清能力，不自动触发。",
+              "status": "起草"
+            },
+            {
+              "id": "ask-only-user-decisions",
+              "text": "先检查仓库、上下文或可查资料，只把必须由用户决定的事项交给用户。",
+              "status": "起草"
+            },
+            {
+              "id": "one-recommended-question",
+              "text": "每次只用提问工具问一道，并说明背景、选项影响和代价，给出建议及理由。",
+              "status": "起草"
+            },
+            {
+              "id": "offer-no-action",
+              "text": "询问是否或能否做某事时，提供先不做的选项，建议不默认选择做。",
+              "status": "起草"
+            }
+          ],
           "entries": [],
           "children": []
         },
@@ -122,7 +347,218 @@
             "from": "20261110 清扫决定页面第一页 A6"
           },
           "directory": "xy-review",
-          "items": [],
+          "items": [
+            {
+              "id": "dual-role-review",
+              "text": "常规审查由主审找遗漏和错误、剃刀找多余项；研究审查只派主审。",
+              "status": "起草"
+            },
+            {
+              "id": "separate-review-context",
+              "text": "同一事项的主审和剃刀各用独立会话，同审多个对象时每个对象另开一对会话。",
+              "status": "起草"
+            },
+            {
+              "id": "shared-review-method",
+              "text": "其他工作流可以沿用主审、剃刀的职责和派法，并使用各自的报告格式和检查器。",
+              "status": "起草"
+            },
+            {
+              "id": "include-review-source",
+              "text": "派审时提供审查对象、原话、已审规格和现有实现位置，让审查者能对照原始依据。",
+              "status": "起草"
+            },
+            {
+              "id": "recover-short-answer-context",
+              "text": "审查短答时同时核对原题、选项原文、回答和原件位置。",
+              "status": "起草"
+            },
+            {
+              "id": "keep-scope-out-of-brief",
+              "text": "派审说明不替审查者预先下结论，范围判断写进送审规格。",
+              "status": "起草"
+            },
+            {
+              "id": "review-increment-with-code",
+              "text": "新增规格要求标为待审增量，并与相关代码在同一轮送审。",
+              "status": "起草"
+            },
+            {
+              "id": "formal-round-limits",
+              "text": "正式审查按连续分组和轮次归档，每组最多进行三轮。",
+              "status": "起草"
+            },
+            {
+              "id": "preserve-submitted-version",
+              "text": "每轮保存可定位的送审版本，供审查者和后续判因者复核。",
+              "status": "起草"
+            },
+            {
+              "id": "review-spec-splitting",
+              "text": "规格审查判断拆分是否足够清楚，并检查过度拆分和共享上下文损失。",
+              "status": "起草"
+            },
+            {
+              "id": "review-code-independently",
+              "text": "代码由主审和剃刀分别审查，双方都通过后才进入下一步。",
+              "status": "起草"
+            },
+            {
+              "id": "validate-feature-map",
+              "text": "被审仓有功能图时，审查前运行图检查，检查失败即阻断审查。",
+              "status": "起草"
+            },
+            {
+              "id": "trace-reasons-to-source",
+              "text": "新增或改动功能时核对理由引文和确认回答是否能从原件中找到。",
+              "status": "起草"
+            },
+            {
+              "id": "protect-report-destination",
+              "text": "写报告前确认路径和文件名符合轮次约定，目标已存在时不覆盖。",
+              "status": "起草"
+            },
+            {
+              "id": "keep-review-read-only",
+              "text": "审查者只读审查对象和工作树，不直接修改被审对象。",
+              "status": "起草"
+            },
+            {
+              "id": "use-only-upstream-evidence",
+              "text": "审查结论以用户原话和已审规格为上游，其他会话的转述回原件核实。",
+              "status": "起草"
+            },
+            {
+              "id": "compare-docs-with-code",
+              "text": "文档审查必须与实际代码互相核对。",
+              "status": "起草"
+            },
+            {
+              "id": "inspect-root-cause",
+              "text": "主审从用户真正要求和实际故障根源判断实现是否偏离，并查找更清楚的整体结构。",
+              "status": "起草"
+            },
+            {
+              "id": "check-misuse-paths",
+              "text": "主审检查正确用法是否容易执行，以及误用能否被设计挡住或当场报错。",
+              "status": "起草"
+            },
+            {
+              "id": "justify-retained-entities",
+              "text": "每项保留内容都说明它服务的已定要求、完成程度和实际收益依据。",
+              "status": "起草"
+            },
+            {
+              "id": "ask-on-partial-results",
+              "text": "部分完成、收益依据不足或会改变用户可见行为的事项交给用户决定。",
+              "status": "起草"
+            },
+            {
+              "id": "compare-cost-and-alternatives",
+              "text": "保留建议对照实际收益、维护代价以及不做或只改说明的较小做法。",
+              "status": "起草"
+            },
+            {
+              "id": "preserve-used-old-entities",
+              "text": "剃刀审查既有实现及其替代物，并从实际使用入口判断旧内容是否仍在用。",
+              "status": "起草"
+            },
+            {
+              "id": "let-tests-follow-behavior",
+              "text": "测试和说明跟随它们覆盖或描述的行为，不单独作为保留该行为的理由。",
+              "status": "起草"
+            },
+            {
+              "id": "reuse-existing-implementations",
+              "text": "逐项检查仓库、依赖和已有技能是否已有可复用实现，避免重复承担同一职责。",
+              "status": "起草"
+            },
+            {
+              "id": "reasons-not-proof-of-need",
+              "text": "用户原话说明目标，但不自动证明每项实现都有必要。",
+              "status": "起草"
+            },
+            {
+              "id": "gate-unapproved-increments",
+              "text": "待审规格增量须追溯原话和推导，增量被删时其实现不能通过。",
+              "status": "起草"
+            },
+            {
+              "id": "dont-retain-for-research",
+              "text": "研究阶段曾需要某项产出，不单独构成长期保留理由。",
+              "status": "起草"
+            },
+            {
+              "id": "check-all-repo-rules",
+              "text": "主审逐条对照仓库七条规范，记录每条是否发现问题。",
+              "status": "起草"
+            },
+            {
+              "id": "standard-reports-and-conclusion",
+              "text": "主审、剃刀和判因分别交结构固定的报告，结论与报告清单保持一致。",
+              "status": "起草"
+            },
+            {
+              "id": "exact-rule-quotes",
+              "text": "主审或剃刀引用铁律、仓库规范时逐字引用对应条款。",
+              "status": "起草"
+            },
+            {
+              "id": "verify-review-findings",
+              "text": "收到审查报告后核验发现和证据，成立后按决定实施，不成立时附依据回应。",
+              "status": "起草"
+            },
+            {
+              "id": "ask-on-visible-changes",
+              "text": "规格外改动若改变用户行为、用法或用户规则，先交用户决定；无来源支持的改动删除。",
+              "status": "起草"
+            },
+            {
+              "id": "implement-and-report-decisions",
+              "text": "按审查决定实施修改，并汇报删除、回应、待决定事项和行数变化。",
+              "status": "起草"
+            },
+            {
+              "id": "diagnose-after-third-failure",
+              "text": "正式审查第三轮仍不通过时，先判因再开下一组，不得开第四轮。",
+              "status": "起草"
+            },
+            {
+              "id": "audit-informal-loops",
+              "text": "非正式改测循环按每个目录最大的记录轮号计数，达到三轮且无有效判因时报告问题。",
+              "status": "起草"
+            },
+            {
+              "id": "classify-review-failures",
+              "text": "判因后按问题过大、同类反复、需求分歧或审查有误选择后续走法。",
+              "status": "起草"
+            },
+            {
+              "id": "user-split-decision",
+              "text": "拆分若改变用户行为、用法或用户规则，先由用户决定；纯实现拆分可按判因直接进行。",
+              "status": "起草"
+            },
+            {
+              "id": "diagnosis-content-not-machine-judged",
+              "text": "判因报告写出失败原因和后续行动；工具只查报告格式，不判定原因与证据是否成立。",
+              "status": "起草"
+            },
+            {
+              "id": "rerun-regression-cases",
+              "text": "审查规则修改后重跑固定案例，确认规则变化没有让既有审查结果退步。",
+              "status": "起草"
+            },
+            {
+              "id": "stop-hook-regression-case",
+              "text": "回归案例要求三次成对审查都把安装全局 Stop hook 的用户可见变化交给用户决定。",
+              "status": "起草"
+            },
+            {
+              "id": "duplicate-key-regression-case",
+              "text": "回归案例要求审查报告和决定输入拒绝重复 JSON 键，且复用已有的重复键检查。",
+              "status": "起草"
+            }
+          ],
           "entries": [
             "xy-review/SKILL.md"
           ],
@@ -138,7 +574,48 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "report-type-shape",
+                  "text": "按报告种类检查主审、剃刀和判因报告是否使用对应的固定字段结构。",
+                  "status": "起草"
+                },
+                {
+                  "id": "reject-invalid-fields",
+                  "text": "缺字段、多余字段、错误类型或必填空值会被报告为格式错误。",
+                  "status": "起草"
+                },
+                {
+                  "id": "reject-template-placeholders",
+                  "text": "提交报告时仍保留从模板复制的占位文字会被拒绝。",
+                  "status": "起草"
+                },
+                {
+                  "id": "reject-duplicate-json-keys",
+                  "text": "同一 JSON 对象重复出现同名字段时，报告不能静默采用后一个值。",
+                  "status": "起草"
+                },
+                {
+                  "id": "main-verdict-matches-findings",
+                  "text": "主审报告的结论须与偏离、规范问题和误用问题清单一致。",
+                  "status": "起草"
+                },
+                {
+                  "id": "razor-verdict-matches-deletions",
+                  "text": "剃刀报告的结论须与删除清单一致，且报告至少记录一项审查结果。",
+                  "status": "起草"
+                },
+                {
+                  "id": "diagnosis-action-format",
+                  "text": "判因报告须写出原因，并从规定的后续行动中选择至少一项且不得重复。",
+                  "status": "起草"
+                },
+                {
+                  "id": "report-check-cli-errors",
+                  "text": "无效用法、报告文件读取失败或报告内容无效时返回错误状态并指出原因。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-review/check.py"
               ],
@@ -155,7 +632,23 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L6"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "valid-rule-reference",
+                  "text": "引用铁律或仓库规范时，来源须指向存在的编号条款并使用可识别的来源格式。",
+                  "status": "起草"
+                },
+                {
+                  "id": "quote-exact-rule-text",
+                  "text": "规范引用的文字须是所标条款中的连续原文。",
+                  "status": "起草"
+                },
+                {
+                  "id": "fail-when-rule-source-missing",
+                  "text": "规范文件无法读取或没有编号条款时，检查器报错而不把引用当作通过。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-review/rule_references.py"
               ],
@@ -172,7 +665,38 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "audit-informal-report-rounds",
+                  "text": "非正式改测循环按各目录最大的记录轮号检查，达到三轮且缺少有效判因时报告问题。",
+                  "status": "起草"
+                },
+                {
+                  "id": "audit-cli-usage-errors",
+                  "text": "目录参数缺失或路径不是目录时以用法错误退出。",
+                  "status": "起草"
+                },
+                {
+                  "id": "formal-diagnosis-after-round-three",
+                  "text": "正式判因报告只有在该组有第三轮且第三轮至少一份审查不通过时才有效。",
+                  "status": "起草"
+                },
+                {
+                  "id": "formal-round-history-required",
+                  "text": "正式判因前须有三轮有效的主审和剃刀报告、每轮非空送审版本，以及失败轮的处理记录。",
+                  "status": "起草"
+                },
+                {
+                  "id": "next-group-requires-diagnosis",
+                  "text": "新开正式审查组前，上一组必须已有有效判因报告。",
+                  "status": "起草"
+                },
+                {
+                  "id": "round-three-is-soft-reminder",
+                  "text": "正式第三轮不通过时，检查器打印先判因的提醒，但该报告仍返回成功。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-review/audit.py"
               ],
@@ -191,7 +715,38 @@
             "from": "20261110 清扫决定页面第一页"
           },
           "directory": "xy-goal",
-          "items": [],
+          "items": [
+            {
+              "id": "xy-goal-explicit-activation",
+              "text": "只有我明确要求使用长目标契约时才启用；单纯提到名称不开始记录或提醒。",
+              "status": "起草"
+            },
+            {
+              "id": "xy-goal-supported-runtime",
+              "text": "在 Linux、Python 3.10 及以上且具备 Claude Code hooks 与定时器能力的环境中可使用长目标契约。",
+              "status": "起草"
+            },
+            {
+              "id": "xy-goal-project-isolation",
+              "text": "契约和待领原话归入当前项目的真实目录；根路径、项目软链接或会话归属有歧义时拒绝写入。",
+              "status": "起草"
+            },
+            {
+              "id": "xy-goal-atomic-updates",
+              "text": "多文件更新失败时恢复更新前的契约状态，避免任务与出处映射只更新一半。",
+              "status": "起草"
+            },
+            {
+              "id": "xy-goal-hook-failure-feedback",
+              "text": "记录 hook 出错时用户消息仍能进入会话，并明确提示原话未记入、已记入或文件可能残缺。",
+              "status": "起草"
+            },
+            {
+              "id": "xy-goal-inactive-expiry",
+              "text": "暂停提醒或未关闭的契约在 30 天无活动后清理；超过期限回来可能需要重新说明目标。",
+              "status": "起草"
+            }
+          ],
           "entries": [
             "xy-goal/README.md"
           ],
@@ -207,7 +762,33 @@
                 "from": "20261110 清扫决定页面第二页 R4"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "capture-quotes-main-prompts",
+                  "text": "主会话中我发出的每条消息都按原文编号保存；中途插话即使共用 prompt id 也不合并。",
+                  "status": "起草"
+                },
+                {
+                  "id": "capture-quotes-question-answers",
+                  "text": "选择题的问题、选项和我的回答都按原始内容保存，之后可以核对当时的决定。",
+                  "status": "起草"
+                },
+                {
+                  "id": "capture-quotes-precontract-inbox",
+                  "text": "开契约前的消息按顺序暂存并在开契约或接管时并入，触发开契约的首条消息也保留。",
+                  "status": "起草"
+                },
+                {
+                  "id": "capture-quotes-exclude-agent-input",
+                  "text": "子代理输入不混入我的原话记录，避免代理讨论被误当成用户要求。",
+                  "status": "起草"
+                },
+                {
+                  "id": "capture-quotes-corrupt-contract",
+                  "text": "契约损坏时仍保存新输入，避开已占用编号并暂缓分类，修复后再处理。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-goal/SKILL.md",
                 "xy-goal/goal.py"
@@ -225,7 +806,73 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json P1、P7"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "track-and-verify-source-links",
+                  "text": "每个开放事项都能追到一条或多条原话；同一条原话可以支撑多个事项。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-derived-evidence",
+                  "text": "由 AI 从原话延伸出的事项仍挂相关原话，并说明推导、不做的后果、收益和代价。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-checkable-state",
+                  "text": "每项在办事项记录可核验的完成条件、当前状态和下一步指针。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-criteria-source",
+                  "text": "修改完成条件必须有新的用户原话支撑，不能自行降低原要求。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-every-quote-disposition",
+                  "text": "每条原话都须关联事项或说明不跟进的原因；检查和关闭时不能遗留未处理原话，已挂事项的原话不能同时忽略。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-machine-dismissal",
+                  "text": "完整定时提示和完整后台通知保留原文但自动标为不跟进，关闭前再复核自动分类。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-current-view",
+                  "text": "查看进展时集中显示目标、开放事项及待处理原话编号，便于快速找到当前需要处理的工作。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-length-warning",
+                  "text": "在办清单或单项判据过长时提示压短，但不阻止继续记录。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-acceptance-record",
+                  "text": "事项按完成条件核验后保存验收结论和来源，完成记录仍可回查。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-cancellation-record",
+                  "text": "取消事项时保留撤销原话，或记录作者发起事项的取消原因，不删除未完成历史。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-relink",
+                  "text": "出处映射损坏时逐项修复无效关系、保留有效关系，并重新核验整份映射。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-reopen",
+                  "text": "已关闭结论站不住时可以重新打开原事项，保留出处继续推进和验收。",
+                  "status": "起草"
+                },
+                {
+                  "id": "track-and-verify-close-review",
+                  "text": "关闭前先完成所有开放事项并处理全部原话，再由新审查者对照原话和已关闭事项复核；解除绑定后仍保留记录供清理。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-goal/SKILL.md",
                 "xy-goal/goal.py"
@@ -243,7 +890,18 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "scheduled-review-half-hour-check",
+                  "text": "在办事项每半小时对照真实状态和完成条件检查，并能当场推进已具备条件的工作。",
+                  "status": "起草"
+                },
+                {
+                  "id": "scheduled-review-pause-for-user",
+                  "text": "只剩等待用户决定时暂停重复提醒，用户回复后或提醒过期后恢复检查并核对定时器。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-goal/SKILL.md",
                 "xy-goal/goal.py"
@@ -261,7 +919,18 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "contract-takeover-new-session",
+                  "text": "原会话结束后，新会话可以接手同一目标及其原话、事项和来源关系，继续未完成工作。",
+                  "status": "起草"
+                },
+                {
+                  "id": "contract-takeover-session-resume",
+                  "text": "同一会话恢复运行时只刷新会话归属，不改原话、事项或来源关系。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-goal/SKILL.md",
                 "xy-goal/goal.py"
@@ -283,7 +952,133 @@
         "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json L2"
       },
       "directory": "xy-handoff",
-      "items": [],
+      "items": [
+        {
+          "id": "one-main-task-per-session",
+          "text": "每个会话只承接一个大任务，任务跟踪工具只记录它下面的小任务，不再建立多层父子关系。",
+          "status": "起草"
+        },
+        {
+          "id": "assign-each-user-message",
+          "text": "每条新消息先判归属；当前任务的补充留在本会话，独立任务按独立标准另行处理。",
+          "status": "起草"
+        },
+        {
+          "id": "route-independent-tasks",
+          "text": "独立新任务按是否需要标准工作流程交给另一会话或单个代理；只有归属难以判断时才问用户。",
+          "status": "起草"
+        },
+        {
+          "id": "split-independent-work",
+          "text": "将可独立验收的任务拆给不同会话，并由本会话确定共用接口、边界和整体验收。",
+          "status": "起草"
+        },
+        {
+          "id": "reuse-responsible-session",
+          "text": "按职责交办任务前先检查已有会话，有匹配职责时优先复用。",
+          "status": "起草"
+        },
+        {
+          "id": "parallel-independent-handoffs",
+          "text": "并行交出的任务彼此独立；存在依赖时按先后顺序等待前项交付。",
+          "status": "起草"
+        },
+        {
+          "id": "handoff-ownership",
+          "text": "交出的会话由接手方负责其任务和会话生命周期，派方不擅自停止或删除。",
+          "status": "起草"
+        },
+        {
+          "id": "write-structured-handoff",
+          "text": "交接说明写清派方、任务、完成条件、其他责任、回复方式、用户原话、事实、待决定事项和边界；只写本任务特有规则，并明确共用接口。",
+          "status": "起草"
+        },
+        {
+          "id": "separate-subtask-and-independent-replies",
+          "text": "交接回复明确区分子任务回报派方和独立任务直接交付用户两种责任。",
+          "status": "起草"
+        },
+        {
+          "id": "carry-quotes-and-derived-evidence",
+          "text": "交接说明引用至少一条用户原话；派方延伸的要求同时写清来源、证据、收益与代价。",
+          "status": "起草"
+        },
+        {
+          "id": "check-handoff-before-start",
+          "text": "交接说明符合固定结构并通过检查后，接手会话才开始执行。",
+          "status": "起草"
+        },
+        {
+          "id": "place-work-near-task",
+          "text": "交接任务放在所属仓库的运行目录；与仓库无关时使用可信的临时位置。",
+          "status": "起草"
+        },
+        {
+          "id": "choose-session-names",
+          "text": "启动会话前检查已有会话名称，并为新会话选择必填、易识别且不重复的名称。",
+          "status": "起草"
+        },
+        {
+          "id": "launch-and-verify-session",
+          "text": "后台会话在不改变当前工作目录的前提下启动，并以实际启动结果核对会话身份和状态。",
+          "status": "起草"
+        },
+        {
+          "id": "record-session-identity",
+          "text": "交付记录写实际会话名称、身份标识、结果位置、恢复方式和回复类型，让派方能定位并恢复正确会话。",
+          "status": "起草"
+        },
+        {
+          "id": "wait-for-message-and-accept",
+          "text": "子任务登记在任务清单中；等待交接消息而不轮询，收到消息后逐项验收，不以产出文件代替完成通知。",
+          "status": "起草"
+        },
+        {
+          "id": "return-failed-work",
+          "text": "验收不通过时将问题交回原接手会话；通过后明确告知可清理。",
+          "status": "起草"
+        },
+        {
+          "id": "integrate-after-acceptance",
+          "text": "所有子任务都通过验收后再做任务间集成和整体验收。",
+          "status": "起草"
+        },
+        {
+          "id": "repair-original-session",
+          "text": "返工和补充任务回到原接手会话，并按实际状态恢复原会话，转交用户新要求时附上原话及来源。",
+          "status": "起草"
+        },
+        {
+          "id": "ask-dispatcher-first",
+          "text": "遇到疑问先问派方；只有派方无法决定时才询问用户，重大答复变化再同步派方。",
+          "status": "起草"
+        },
+        {
+          "id": "retain-active-session",
+          "text": "失败、卡住、等待用户、仍有未提交或未推送改动，或会话清理失败时，保留会话和恢复所需资源。",
+          "status": "起草"
+        },
+        {
+          "id": "report-before-close",
+          "text": "完成后先向用户报告结果，并明确说明会话是否可以关闭。",
+          "status": "起草"
+        },
+        {
+          "id": "subtask-waits-for-acceptance",
+          "text": "子任务会话向派方提交结论、交付位置和恢复方式后保持可恢复，直到派方验收通过并明确允许清理。",
+          "status": "起草"
+        },
+        {
+          "id": "independent-task-notify",
+          "text": "独立任务由接手会话直接向用户交付结果、交付位置和恢复方式，并保留该会话供用户恢复。",
+          "status": "起草"
+        },
+        {
+          "id": "stop-background-before-delete",
+          "text": "结束自身会话前先停止自己启动的后台任务，再清理自身会话。",
+          "status": "起草"
+        }
+      ],
       "entries": [
         "xy-handoff/SKILL.md"
       ],
@@ -299,7 +1094,38 @@
             "from": "20261110 清扫决定页面第一页"
           },
           "directory": null,
-          "items": [],
+          "items": [
+            {
+              "id": "reject-duplicate-keys",
+              "text": "交接说明拒绝重复字段，避免后出现的值静默覆盖前一项。",
+              "status": "起草"
+            },
+            {
+              "id": "validate-handoff-shape",
+              "text": "交接说明必须字段齐全、类型正确、内容非空且没有多余字段。",
+              "status": "起草"
+            },
+            {
+              "id": "require-original-quote",
+              "text": "交接说明必须至少引用一条用户原话，并提供对应来源。",
+              "status": "起草"
+            },
+            {
+              "id": "allow-empty-optional-lists",
+              "text": "没有事实、待用户决定事项或边界补充时，允许对应列表为空。",
+              "status": "起草"
+            },
+            {
+              "id": "limit-reply-values",
+              "text": "交接说明只接受子任务回报或独立任务交付两种回复方式。",
+              "status": "起草"
+            },
+            {
+              "id": "report-check-errors",
+              "text": "检查工具对调用方式、文件读取和 JSON 错误给出明确报告；合法说明安静通过。",
+              "status": "起草"
+            }
+          ],
           "entries": [
             "xy-handoff/check_handoff.py",
             "xy-handoff/test_check_handoff.py"
@@ -333,7 +1159,43 @@
             "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A17"
           },
           "directory": null,
-          "items": [],
+          "items": [
+            {
+              "id": "classify-destination",
+              "text": "工作产物按生命周期和所有者放进版本库、已注明的长期位置或运行目录；找不到长期位置时先问用户。",
+              "status": "起草"
+            },
+            {
+              "id": "isolate-run-dir",
+              "text": "事项按会话所属项目分组，在统一运行根下拥有独立目录，并用时间和简短英文主题辨认。",
+              "status": "起草"
+            },
+            {
+              "id": "keep-tool-paths",
+              "text": "以工具名命名的运行目录由对应工具管理，其他工作不向其中写入文件。",
+              "status": "起草"
+            },
+            {
+              "id": "share-run-context",
+              "text": "派子代理时，它能在同一事项的运行目录中读取材料并保存产物。",
+              "status": "起草"
+            },
+            {
+              "id": "expire-inactive-runs",
+              "text": "运行目录满 30 天未改动且本用户没有进程在用时才整项删除；空项目目录也须满 30 天。",
+              "status": "起草"
+            },
+            {
+              "id": "early-delete-safely",
+              "text": "确定作废的事项产物可提前删除；运行内软链仅在真实目标也属于运行根时按此规则处理，并须核对目标路径、活动进程、定时服务和其他会话依赖，且不删除运行根、项目根或整个 inbox。",
+              "status": "起草"
+            },
+            {
+              "id": "preserve-worktree-location",
+              "text": "Git 工作树留在仓库管理；harness 和各工具自管的位置不由运行目录规则搬动。",
+              "status": "起草"
+            }
+          ],
           "entries": [
             "xy-runs/SKILL.md"
           ],
@@ -350,7 +1212,138 @@
             "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A18"
           },
           "directory": null,
-          "items": [],
+          "items": [
+            {
+              "id": "linux-runtime",
+              "text": "清理器在提供 /proc 和 flock 的 Linux 环境中运行，并要求 Python 3.9 以上。",
+              "status": "起草"
+            },
+            {
+              "id": "require-mode-and-roots",
+              "text": "每次清理都必须明确选择预览或删除，并明确提供至少一个根目录。",
+              "status": "起草"
+            },
+            {
+              "id": "fixed-retention",
+              "text": "运行目录的保留期固定为 30 天，不提供缩短或延长天数的参数。",
+              "status": "起草"
+            },
+            {
+              "id": "preview-list",
+              "text": "预览模式只列出满足过期和未使用条件的候选项，不删除文件，也不清理回收目录或预览标记。",
+              "status": "起草"
+            },
+            {
+              "id": "delete-command",
+              "text": "删除模式整项移除所有符合期限和使用条件的运行目录，并报告每个成功删除项的原路径。",
+              "status": "起草"
+            },
+            {
+              "id": "json-lines",
+              "text": "预览和删除结果以每行一个转义完整的绝对路径记录，特殊文件名仍可无歧义解析。",
+              "status": "起草"
+            },
+            {
+              "id": "report-errors",
+              "text": "清理单项失败时报告错误并继续处理其他项；缺失根只告警，参数错误和执行错误有不同退出码。",
+              "status": "起草"
+            },
+            {
+              "id": "expand-root-patterns",
+              "text": "清理器能展开多个可重复、可嵌套的引号保护根目录模式；缺失根会告警并继续处理其他根。",
+              "status": "起草"
+            },
+            {
+              "id": "load-run-root",
+              "text": "定时服务每次从用户设置文件读取绝对运行根；未设置、非字符串、为空或不是绝对路径时，在启动删除前失败。",
+              "status": "起草"
+            },
+            {
+              "id": "literal-run-root",
+              "text": "运行根路径中的通配符字符按字面处理，只有清理层级追加的模式参与匹配。",
+              "status": "起草"
+            },
+            {
+              "id": "target-run-scopes",
+              "text": "定时清理只检查运行根及事项和会话目录，不进入工具配置或 harness 持久记忆；长期内容留在版本库或已注明的长期位置。",
+              "status": "起草"
+            },
+            {
+              "id": "preserve-flat-runs",
+              "text": "旧式平铺运行目录仍作为完整清理单位处理，不按新项目层级拆开删除。",
+              "status": "起草"
+            },
+            {
+              "id": "first-run-gate",
+              "text": "首次启用前必须预览并检查候选范围；只有当前运行根内的普通标记文件存在时，定时删除才会启动，换根后须重新预览。",
+              "status": "起草"
+            },
+            {
+              "id": "daily-catchup",
+              "text": "清理器每天自动运行，关机错过的执行会在下次启动时补跑。",
+              "status": "起草"
+            },
+            {
+              "id": "keep-user-manager-running",
+              "text": "用户未登录时，用户级定时器仍由持续运行的用户管理器执行。",
+              "status": "起草"
+            },
+            {
+              "id": "journal-output",
+              "text": "定时清理的标准输出和错误输出保存在用户 systemd 日志中，可核对运行结果和删除路径。",
+              "status": "起草"
+            },
+            {
+              "id": "age-whole-unit",
+              "text": "清理单位及其所有后代的修改时间和状态变更时间都早于保留期限后才算过期；只读访问不延长期限，刚移入的旧文件仍获得新的保留期。",
+              "status": "起草"
+            },
+            {
+              "id": "keep-unreadable-unit",
+              "text": "清理器无法读取任一后代时保留整个运行目录，不根据残缺扫描结果删除。",
+              "status": "起草"
+            },
+            {
+              "id": "protect-open-processes",
+              "text": "本用户进程的工作目录、根目录、可执行文件、打开的文件或目录句柄及映射文件引用运行目录时，该目录不列入候选也不删除。",
+              "status": "起草"
+            },
+            {
+              "id": "protect-process-arguments",
+              "text": "本用户进程的命令行包含运行目录完整路径或其后代路径时，目录仍视为在用；相邻前缀路径不算引用。",
+              "status": "起草"
+            },
+            {
+              "id": "declare-process-blind-spots",
+              "text": "进程占用判断只覆盖本用户且可读取的引用；其他账号不检查，主动隐藏引用的本用户进程若命令行也不含路径仍可能被清理。",
+              "status": "起草"
+            },
+            {
+              "id": "reject-root-races",
+              "text": "根目录或其路径组件被软链或其他目录替换时，清理器跳过并报告，不转而删除替换目标中的数据。",
+              "status": "起草"
+            },
+            {
+              "id": "unlink-run-symlinks",
+              "text": "运行目录中的软链只按链接自身时间判断，过期时只删除链接，不遍历或删除目标。",
+              "status": "起草"
+            },
+            {
+              "id": "coordinate-writers",
+              "text": "按运行目录写入的事项在清理期间仍可完成写入；遵循共同锁和目录句柄约定的写入者不会被清理器中途移走数据。",
+              "status": "起草"
+            },
+            {
+              "id": "recover-trash",
+              "text": "删除中断留下的回收项会在后续删除轮次继续清理，预览模式保持它们不变。",
+              "status": "起草"
+            },
+            {
+              "id": "install-systemd",
+              "text": "用户级 systemd 定时服务能从本机 xy-skills 安装位置调用清理器，并按每日定时配置启用。",
+              "status": "起草"
+            }
+          ],
           "entries": [
             "xy-runs/clean.py",
             "xy-runs/README.md",
@@ -385,7 +1378,43 @@
             "from": "20261031-002858-xy-skills-cleanup-skill 原话 5"
           },
           "directory": "xy-repo-map",
-          "items": [],
+          "items": [
+            {
+              "id": "map-data-output",
+              "text": "按仓库当前状态生成机器可读的功能图数据，供功能页面和清扫审查读取。",
+              "status": "起草"
+            },
+            {
+              "id": "check-arguments",
+              "text": "仓库检查命令必须接收明确给出的绝对 Git 仓根；参数错误与清单或仓库检查错误返回不同状态。",
+              "status": "起草"
+            },
+            {
+              "id": "subrepository-boundaries",
+              "text": "检查嵌套 Git 仓边界：拒绝不支持或登记不当的子仓，只把符合忽略规则且已登记的独立子仓排除在本仓图外。",
+              "status": "起草"
+            },
+            {
+              "id": "primary-checkout-name",
+              "text": "从链接工作树出图时，根功能仍使用主检出目录名。",
+              "status": "起草"
+            },
+            {
+              "id": "waiting-marker",
+              "text": "理由或条目尚未确认的功能显示“等你拍板”，同一功能只计一次。",
+              "status": "起草"
+            },
+            {
+              "id": "unimplemented-marker",
+              "text": "没有目录、子功能或入口的叶功能显示“还没实现”，并计入标记总数。",
+              "status": "起草"
+            },
+            {
+              "id": "unmapped-code-marker",
+              "text": "含子功能的目录功能若仍接收未细分的代码或测试，会显示“没归到功能的代码或测试”并计数。",
+              "status": "起草"
+            }
+          ],
           "entries": [
             "xy-repo-map/SKILL.md",
             "xy-repo-map/repo_map.py",
@@ -406,7 +1435,48 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "feature-record",
+                  "text": "每个功能必须按统一结构填写必需字段，使用全树唯一的有效标识，名称和要什么不得为空；根功能专属字段不得写在子功能上。",
+                  "status": "起草"
+                },
+                {
+                  "id": "why-source",
+                  "text": "每个功能的理由须说明理由文字及出处类型，并按原话、用户确认或未确认草稿填写相符的引用与来历。",
+                  "status": "起草"
+                },
+                {
+                  "id": "user-item-shape",
+                  "text": "每个功能条目必须有本功能内唯一的有效标识、一行非空文字和确认或起草状态。",
+                  "status": "起草"
+                },
+                {
+                  "id": "valid-json-input",
+                  "text": "功能清单缺失、无法解析或含重复键时，检查会报告错误而不静默采用冲突值。",
+                  "status": "起草"
+                },
+                {
+                  "id": "directory-scope",
+                  "text": "功能目录必须唯一、真实包含被跟踪文件并位于其目录祖先内；根功能代表仓库根目录。",
+                  "status": "起草"
+                },
+                {
+                  "id": "entry-scope",
+                  "text": "功能入口必须存在并含有被跟踪文件，且位于该功能最近的目录功能内。",
+                  "status": "起草"
+                },
+                {
+                  "id": "subrepository-field",
+                  "text": "只有根功能能登记独立子仓，登记项须是安全的仓内相对目录路径。",
+                  "status": "起草"
+                },
+                {
+                  "id": "external-dependency-field",
+                  "text": "仓外依赖名称只能由根功能声明，并且每个名称必须非空、首尾无空白且不含换行。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-repo-map/repo_map_lib/features.py",
                 "xy-repo-map/tests/test_feature_check.py"
@@ -424,7 +1494,43 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json P5"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "one-owner",
+                  "text": "每个被跟踪文件恰好归到一个功能，并记录其归属原因。",
+                  "status": "起草"
+                },
+                {
+                  "id": "leaf-directory",
+                  "text": "没有子功能的目录功能直接拥有其目录下的全部被跟踪文件。",
+                  "status": "起草"
+                },
+                {
+                  "id": "registered-owner",
+                  "text": "祖先和子功能同时登记同一文件时，该文件归给更具体的子功能。",
+                  "status": "起草"
+                },
+                {
+                  "id": "import-reach",
+                  "text": "未登记的非测试文件可沿功能入口的 Python 导入归属，但只在同一目录功能内传播，并在遇到无关功能入口时停止。",
+                  "status": "起草"
+                },
+                {
+                  "id": "tests-follow-code",
+                  "text": "未登记测试优先归给它直接导入或按限定文件名对应的被测代码；涉及多个功能时归到最近共同上级，没有匹配代码才回到测试所在目录功能。",
+                  "status": "起草"
+                },
+                {
+                  "id": "shared-owner",
+                  "text": "多个兄弟功能共同登记或导入的文件归到它们最近的共同上级，并标为共用。",
+                  "status": "起草"
+                },
+                {
+                  "id": "whole-fallback",
+                  "text": "没有被入口或导入关系细分的文件仍归到目录功能，并标示为整体归属。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-repo-map/repo_map_lib/ownership.py"
               ],
@@ -441,7 +1547,38 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L1"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "line-buckets",
+                  "text": "按功能分别输出代码、测试、文档和注释的直属及汇总行数，并将不计数的文件归为零行。",
+                  "status": "起草"
+                },
+                {
+                  "id": "documentation-characters",
+                  "text": "另外统计 Markdown 和代码文档注释中的非空白字符，不把普通代码、测试或普通注释算作文档字数。",
+                  "status": "起草"
+                },
+                {
+                  "id": "unsupported-source",
+                  "text": "发现已知但暂不支持计数的源代码文件时，检查会停止并列出路径，避免将代码误算成零行。",
+                  "status": "起草"
+                },
+                {
+                  "id": "non-text-inputs",
+                  "text": "符号链接、含 NUL 的文件和其他非统计文件不跟随或读取，均归为其他并计零行。",
+                  "status": "起草"
+                },
+                {
+                  "id": "invalid-encoding",
+                  "text": "普通文本含无效 UTF-8 字节时，仍按替代字符解码并继续统计和推导关系。",
+                  "status": "起草"
+                },
+                {
+                  "id": "read-failure",
+                  "text": "Git 跟踪的文本文件读取失败时，检查会停止并指出该文件路径，不静默漏算。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-repo-map/repo_map_lib/metrics.py"
               ],
@@ -458,7 +1595,28 @@
                 "from": "20261113-091419-xy-skills-cleanup-text 原话 3"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "required-skip-list",
+                  "text": "每个仓库都必须显式提供跳过名单；空名单表示没有路径要排除，缺少名单时检查会报错。",
+                  "status": "起草"
+                },
+                {
+                  "id": "safe-skip-paths",
+                  "text": "跳过项必须是安全、互不重复且确实含有被跟踪文件的仓内文件路径或目录路径。",
+                  "status": "起草"
+                },
+                {
+                  "id": "skip-content",
+                  "text": "名单命中的内容不计代码、测试、文档或文档字数，不读取其内容、不从中推导出站关系，也不参加清扫审查；未跳过文件指向它的关系仍保留。",
+                  "status": "起草"
+                },
+                {
+                  "id": "skip-approval-fingerprint",
+                  "text": "跳过内容及名单的格式变化不改变功能认可指纹，避免这些内容的改动触发重复清扫。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-repo-map/repo_map_lib/skip_paths.py",
                 "xy-repo-map/tests/test_skip_paths.py"
@@ -476,7 +1634,28 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json L7"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "python-import-links",
+                  "text": "仓内 Python 导入能够显示为功能之间的使用关系。",
+                  "status": "起草"
+                },
+                {
+                  "id": "file-path-mentions",
+                  "text": "代码或文档提到仓内文件位置时，功能图能够显示相应的关联。",
+                  "status": "起草"
+                },
+                {
+                  "id": "feature-name-mentions",
+                  "text": "代码或文档提到其他功能的唯一目录名时，功能图能够显示相应的关联。",
+                  "status": "起草"
+                },
+                {
+                  "id": "external-name-mentions",
+                  "text": "代码或文档提到仓库声明的外部依赖时，功能图能够显示该外部使用关系。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-repo-map/repo_map_lib/dependencies.py"
               ],
@@ -493,7 +1672,83 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json L7"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "standalone-map-output",
+                  "text": "功能图可作为离线单页查看，并附带同一张图的机器可读数据。",
+                  "status": "起草"
+                },
+                {
+                  "id": "safe-render-target",
+                  "text": "只有功能图校验成功且输出位置为空或不存在时才写出页面。",
+                  "status": "起草"
+                },
+                {
+                  "id": "phone-friendly-layout",
+                  "text": "功能图在手机屏幕上可读，页面内容和详情面板不会横向溢出。",
+                  "status": "起草"
+                },
+                {
+                  "id": "feature-tree-navigation",
+                  "text": "功能树默认显示根下两层，用户可以展开或收起分支并调整显示层级。",
+                  "status": "起草"
+                },
+                {
+                  "id": "feature-only-page",
+                  "text": "图页只呈现功能层信息，不展开具体实现文件清单。",
+                  "status": "起草"
+                },
+                {
+                  "id": "feature-context-details",
+                  "text": "点击功能节点可查看名称、上级路径、「要什么」以及理由和出处。",
+                  "status": "起草"
+                },
+                {
+                  "id": "feature-item-details",
+                  "text": "功能详情列出独立条目，并把尚待确认的条目标为「等你拍板」。",
+                  "status": "起草"
+                },
+                {
+                  "id": "repository-overview",
+                  "text": "页面汇总仓库总行数、功能数、代码测试文档注释构成和三种状态标记数量。",
+                  "status": "起草"
+                },
+                {
+                  "id": "feature-line-breakdown",
+                  "text": "每个功能显示占父功能比例的行数条，并分列代码、测试、文档和注释行数。",
+                  "status": "起草"
+                },
+                {
+                  "id": "dependency-navigation",
+                  "text": "功能节点和详情可查看它用到哪些功能、哪些功能使用它，并跳转到关联功能。",
+                  "status": "起草"
+                },
+                {
+                  "id": "external-use-labels",
+                  "text": "仓外依赖以「外部」标明，并且不会被误当成可点击的仓内功能。",
+                  "status": "起草"
+                },
+                {
+                  "id": "pending-decision-filter",
+                  "text": "筛选待决定项时只显示含待决定条目的功能及其上级，并隐藏其他功能和未细分部分。",
+                  "status": "起草"
+                },
+                {
+                  "id": "system-color-scheme",
+                  "text": "页面配色会跟随设备的明暗外观设置。",
+                  "status": "起草"
+                },
+                {
+                  "id": "accessible-tree-controls",
+                  "text": "辅助技术能够识别树控件的名称、展开状态、筛选状态和详情关闭操作。",
+                  "status": "起草"
+                },
+                {
+                  "id": "safe-map-text",
+                  "text": "仓库功能文本会作为普通文字显示，不会作为网页代码执行。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-repo-map/repo_map_lib/render_command.py",
                 "xy-repo-map/repo_map_lib/render_page.py",
@@ -515,7 +1770,23 @@
                 "from": "20261111-044910-xy-skills-cleanup-incremental 原话 47"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "combine-registered-repositories",
+                  "text": "一个工作区总图能够接合主仓和已登记子仓的功能树，并保留各仓层级与对应指标。",
+                  "status": "起草"
+                },
+                {
+                  "id": "cross-repository-dependencies",
+                  "text": "仓间名称唯一匹配的依赖显示为可点关系，未匹配或有歧义的名称仍标为外部。",
+                  "status": "起草"
+                },
+                {
+                  "id": "require-complete-repository-maps",
+                  "text": "没有登记子仓或任一子仓未检出、缺图或校验失败时，总图会停止并指出具体原因。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-repo-map/repo_map_lib/workspace_map.py",
                 "xy-repo-map/tests/test_workspace.py",
@@ -534,7 +1805,33 @@
                 "from": "20261110 清扫决定页面第一页"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "publish-review-page",
+                  "text": "功能图能够发布到用户的网页平台，并返回可打开的页面链接。",
+                  "status": "起草"
+                },
+                {
+                  "id": "stable-map-site-names",
+                  "text": "现状图使用稳定的仓库名称，工作区总图使用不同名称，方便分别返回对应页面。",
+                  "status": "起草"
+                },
+                {
+                  "id": "dated-cleanup-snapshots",
+                  "text": "清扫前和清扫后页面分别以本地日期和清扫阶段标识。",
+                  "status": "起草"
+                },
+                {
+                  "id": "explicit-publish-purpose",
+                  "text": "用户可分别选择发布现状图、清扫前图或清扫后图，三种用途产生不同的页面结果。",
+                  "status": "起草"
+                },
+                {
+                  "id": "reject-invalid-publication",
+                  "text": "只有包含可读数据、页面、根功能和仓库名称的完整功能图才能发布。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-repo-map/repo_map_lib/publish_command.py",
                 "xy-repo-map/tests/test_publish.py"
@@ -554,7 +1851,238 @@
             "from": "20261111-112959-quant-workspace-maps 原话 63、64"
           },
           "directory": "xy-cleanup",
-          "items": [],
+          "items": [
+            {
+              "id": "minimal-result",
+              "text": "实现、测试和文档只保留让功能图中已确认条目在实际使用中成立所必需的内容。",
+              "status": "起草"
+            },
+            {
+              "id": "explicit-scope",
+              "text": "每次清扫都明确仓库绝对路径和功能范围，范围为功能 id 列表或全部。",
+              "status": "起草"
+            },
+            {
+              "id": "map-update-scope",
+              "text": "画图、更新图或看图触发的清扫覆盖全图；用户指定局部范围时不得自行扩大范围。",
+              "status": "起草"
+            },
+            {
+              "id": "isolated-worktree",
+              "text": "清扫产生的修改在隔离工作树中完成。",
+              "status": "起草"
+            },
+            {
+              "id": "draft-missing-items",
+              "text": "缺少用户层面条目的功能在实体审查前先有待确认的条目草稿。",
+              "status": "起草"
+            },
+            {
+              "id": "unverified-reason-draft",
+              "text": "找不到可核实的理由原话或用户规范时，功能理由保持待确认状态。",
+              "status": "起草"
+            },
+            {
+              "id": "actual-use-judgment",
+              "text": "是否保留实体由它对实际使用的价值决定，代码调用、测试存在或文档描述本身不足以证明需要。",
+              "status": "起草"
+            },
+            {
+              "id": "usage-source-agreement",
+              "text": "用户能查到经确认的实际使用证据来源，来源约定未经请求不自行更改。",
+              "status": "起草"
+            },
+            {
+              "id": "skip-boundary",
+              "text": "不纳入清扫的内容有明确边界，边界变化由用户决定。",
+              "status": "起草"
+            },
+            {
+              "id": "before-map-visible",
+              "text": "用户在审查开始前能查看清扫前的功能图。",
+              "status": "起草"
+            },
+            {
+              "id": "test-baseline",
+              "text": "用户能比较清扫前后的全套测试结果并识别本次改动引入的回归。",
+              "status": "起草"
+            },
+            {
+              "id": "changed-feature-plan",
+              "text": "默认审查自上次认可后发生变化的功能，用户要求重审时覆盖所选范围内全部功能。",
+              "status": "起草"
+            },
+            {
+              "id": "two-review-roles",
+              "text": "每个纳入审查的功能分别获得主审和剃刀的独立结论。",
+              "status": "起草"
+            },
+            {
+              "id": "planned-feature-coverage",
+              "text": "主审和剃刀都覆盖计划列出的每个功能，包括被纳入的上级功能。",
+              "status": "起草"
+            },
+            {
+              "id": "review-evidence-pack",
+              "text": "审查者能查阅实际使用记录、历次决定和功能理由原件后再判断。",
+              "status": "起草"
+            },
+            {
+              "id": "orphan-findings",
+              "text": "落不到任何功能条目的实体作为孤儿发现交由用户决定。",
+              "status": "起草"
+            },
+            {
+              "id": "implementation-completeness",
+              "text": "审查能指出功能条目未实现及已有实现未入图的缺口，代码条目没有测试时视为未实现。",
+              "status": "起草"
+            },
+            {
+              "id": "reason-validity-review",
+              "text": "功能理由按其当前是否成立来审查，不因标为确认或原话就自动认可。",
+              "status": "起草"
+            },
+            {
+              "id": "structure-review",
+              "text": "审查能判断功能间的重叠、分组、措辞和粒度，并检查共用文件是否应按功能拆分。",
+              "status": "起草"
+            },
+            {
+              "id": "smallest-solution",
+              "text": "审查结论说明满足功能要求的最小方案、所需测试及现状中可删减或复用的部分。",
+              "status": "起草"
+            },
+            {
+              "id": "keep-proof",
+              "text": "每个保留的实体都说明服务哪条功能条目、如何满足它及其实现代价是否合理。",
+              "status": "起草"
+            },
+            {
+              "id": "rewrite-every-document",
+              "text": "每次清扫都为范围内每份直属文档提供逐段且比原文更短的改写稿。",
+              "status": "起草"
+            },
+            {
+              "id": "rewrite-preservation",
+              "text": "文档改写保留原有要求、约束、例外、术语、数字、代码、路径和命令，不添加原文没有的内容。",
+              "status": "起草"
+            },
+            {
+              "id": "line-level-review",
+              "text": "审查覆盖直属文件中每个未跳过的非空内容，并让每条保留结论对应单一可定位实体。",
+              "status": "起草"
+            },
+            {
+              "id": "duplicate-removal",
+              "text": "重复实现和重复测试按实际需要保留最小的一份，不因被调用或被测试覆盖而全部留下。",
+              "status": "起草"
+            },
+            {
+              "id": "todo-review",
+              "text": "直属 TODO 的每个非空行都经过必要性、精简和理由审查，删除或改写须交用户决定。",
+              "status": "起草"
+            },
+            {
+              "id": "keep-counter-review",
+              "text": "首轮剃刀提出保留的功能逐项接受新剃刀复审，并用删改副本和测试检查其必要性。",
+              "status": "起草"
+            },
+            {
+              "id": "no-deletion-quota",
+              "text": "清扫不设最低删减数量，只有复审后仍成立的发现才作为可删项。",
+              "status": "起草"
+            },
+            {
+              "id": "complete-review-reports",
+              "text": "每个审查角色都提交能逐项核对功能结论、实体范围、复审结果和发现的报告。",
+              "status": "起草"
+            },
+            {
+              "id": "machine-report-check",
+              "text": "报告范围和格式在进入决定阶段前通过机器校验。",
+              "status": "起草"
+            },
+            {
+              "id": "item-level-decisions",
+              "text": "待决定事项以功能条目为单位供用户选择，不把未确认的行为改动直接实施。",
+              "status": "起草"
+            },
+            {
+              "id": "decision-evidence",
+              "text": "每项决定都有编号、说明、适配的选项、建议及其证据，意见相反时同时展示双方理由。",
+              "status": "起草"
+            },
+            {
+              "id": "no-action-option",
+              "text": "询问用户是否采取行动时提供暂不采取的选项。",
+              "status": "起草"
+            },
+            {
+              "id": "draft-reason-gate",
+              "text": "功能理由仍待确认时不审查该功能的具体保留实体，用户确认理由后再继续。",
+              "status": "起草"
+            },
+            {
+              "id": "rewrite-user-choice",
+              "text": "文档改写提议能逐段对照原文，并由用户分别决定采用、拒绝或修改。",
+              "status": "起草"
+            },
+            {
+              "id": "recheck-new-findings",
+              "text": "复审对首轮结论提出的新发现继续交用户决定，并保留双方理由。",
+              "status": "起草"
+            },
+            {
+              "id": "decision-answer-record",
+              "text": "用户提交的每项决定和补充说明都能留作可引用的原始记录，含义不清时先询问。",
+              "status": "起草"
+            },
+            {
+              "id": "decision-directed-changes",
+              "text": "只有行为不变且报告标为直接实施的改动直接执行，其他改动按用户选择实施。",
+              "status": "起草"
+            },
+            {
+              "id": "confirm-draft-items",
+              "text": "用户确认的起草条目在功能图中改为已确认状态。",
+              "status": "起草"
+            },
+            {
+              "id": "delete-only-supporting-implementation",
+              "text": "用户决定删除功能条目时，同时删除只为该条目存在的实现。",
+              "status": "起草"
+            },
+            {
+              "id": "add-decided-orphan",
+              "text": "用户决定保留孤儿时，将对应功能条目补入功能图并标为已确认。",
+              "status": "起草"
+            },
+            {
+              "id": "final-requirement-review",
+              "text": "实施后的最终审查逐项核对用户要求、约束和例外是否保留。",
+              "status": "起草"
+            },
+            {
+              "id": "approval-record-after-review",
+              "text": "清扫终审通过后才记录本次认可的功能状态。",
+              "status": "起草"
+            },
+            {
+              "id": "clear-pending-markers",
+              "text": "清扫完成时范围内没有待确认条目，其他未实现或未细分标记清零或按用户决定列明。",
+              "status": "起草"
+            },
+            {
+              "id": "after-cleanup-report",
+              "text": "用户收到清扫后的功能图、前后行数和标记变化、测试结果及遗留问题。",
+              "status": "起草"
+            },
+            {
+              "id": "review-misses-regression",
+              "text": "修改清扫审查规则后，用此前漏审的问题验证新规则仍能发现它们。",
+              "status": "起草"
+            }
+          ],
           "entries": [
             "xy-cleanup/SKILL.md",
             "xy-cleanup/review-misses.md"
@@ -571,7 +2099,73 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A7"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "explicit-run-context",
+                  "text": "使用者每次明确选定仓库、功能范围、审查方式和报告；目标或输入无效时检查拒绝继续。",
+                  "status": "起草"
+                },
+                {
+                  "id": "report-structure",
+                  "text": "主审、剃刀和剃刀复审报告都必须提供各自完整、有效且与当前仓库匹配的内容。",
+                  "status": "起草"
+                },
+                {
+                  "id": "duplicate-json-keys",
+                  "text": "报告中的 JSON 键不能重复，否则拒绝读取，避免后写值悄悄覆盖前值。",
+                  "status": "起草"
+                },
+                {
+                  "id": "feature-report-coverage",
+                  "text": "审查范围里的每个功能在主审和剃刀报告中各出现一次；允许同一角色拆成多份报告，但缺失、重复或越界时拒收。",
+                  "status": "起草"
+                },
+                {
+                  "id": "finding-decisions",
+                  "text": "审查提议必须有有效目标、逐字规范依据、证据、收益和代价，并按提议类别及行为影响使用允许的决定。",
+                  "status": "起草"
+                },
+                {
+                  "id": "todo-review-and-ask",
+                  "text": "未跳过的直属 TODO 每个非空行都要有完整、互不重叠的审查说明；删改 TODO 或整功能删除、合并连带 TODO 时，受影响的行必须逐项交用户决定。",
+                  "status": "起草"
+                },
+                {
+                  "id": "smallest-estimate",
+                  "text": "剃刀给出最小做法和代码、文档、注释、测试行数估算；若估计比现状少，就提出功能级删除、合并或重构。",
+                  "status": "起草"
+                },
+                {
+                  "id": "keep-tied-to-item",
+                  "text": "每条保留记录逐字引用一个存在的功能条目；理由尚未确认的功能不得提交保留记录，其他保留项须说明实体如何满足条目及保留代价。",
+                  "status": "起草"
+                },
+                {
+                  "id": "keep-line-coverage",
+                  "text": "保留项把未跳过的直属代码、测试和文档每个非空行纳入审查；范围不重叠，每条只覆盖一个实体，删除提议与保留范围不能相冲突。",
+                  "status": "起草"
+                },
+                {
+                  "id": "duplicate-copy-reference",
+                  "text": "代码、测试或文档中出现六个含字母数字的重复行且累计至少四十个字母数字时，保留说明必须指出另一份位置。",
+                  "status": "起草"
+                },
+                {
+                  "id": "distinct-keep-reasons",
+                  "text": "不同保留实体必须分别说明做到要求的方式和保留成本，不能逐字重复使用同一句理由。",
+                  "status": "起草"
+                },
+                {
+                  "id": "recheck-every-keep",
+                  "text": "首轮剃刀留下任何实体的功能都要逐条复审；每条结论都附实体范围外的有效证据，判为站不住时必须有对应发现。",
+                  "status": "起草"
+                },
+                {
+                  "id": "document-rewrite-coverage",
+                  "text": "未跳过的直属文档改写须按顺序完整覆盖所有非空行、保留原有代码片段；缩短后须对整份文档提出对应提议。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-cleanup/check_reports.py",
                 "xy-cleanup/tests/test_check_reports.py"
@@ -589,7 +2183,93 @@
                 "from": "20261110-070411-xy-skills-repo-map-cleanup-redesign 原话 61"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "collect-decisions",
+                  "text": "把多项待决定事项按组放在同一网页；每题预选建议、提供独立选项和自填说明，提交时以自填内容为准。",
+                  "status": "起草"
+                },
+                {
+                  "id": "summarize-edits",
+                  "text": "显示题目总数、偏离建议或已写说明的题数，并高亮这些题，便于复核改过的回答。",
+                  "status": "起草"
+                },
+                {
+                  "id": "preview-rewrites",
+                  "text": "逐段显示文档改写的原文、新写法和行号，折叠未改段，并汇总改写前后的非空白字数。",
+                  "status": "起草"
+                },
+                {
+                  "id": "save-drafts",
+                  "text": "在浏览器可保存时自动保存本页尚未提交的选项和说明，刷新或重开页面后恢复。",
+                  "status": "起草"
+                },
+                {
+                  "id": "warn-storage-failure",
+                  "text": "浏览器不能读取或保存草稿时明确提醒用户，但仍允许继续填写并提交。",
+                  "status": "起草"
+                },
+                {
+                  "id": "retry-submit",
+                  "text": "提交失败时保留当前填写并允许重试；提交成功后锁定答案并清除本页草稿。",
+                  "status": "起草"
+                },
+                {
+                  "id": "reject-duplicate-json",
+                  "text": "拒绝决定清单或提交回答中的重复 JSON 键，避免后一个值静默覆盖前一个。",
+                  "status": "起草"
+                },
+                {
+                  "id": "validate-question-list",
+                  "text": "只接受字段、类型和文字齐全的决定清单；每题编号唯一、至少有两个不同选项，且建议项必须属于选项。",
+                  "status": "起草"
+                },
+                {
+                  "id": "validate-comparison-blocks",
+                  "text": "只接受路径一致、行号递增且互不重叠的文档对照段，避免把改写显示到错误位置。",
+                  "status": "起草"
+                },
+                {
+                  "id": "validate-answer-set",
+                  "text": "只接受本页每题各有一个有效选项、没有多余题目且说明为文字的完整回答；格式错误时不生成回答文件。",
+                  "status": "起草"
+                },
+                {
+                  "id": "save-answer-file",
+                  "text": "只把完整回答写入尚不存在且可安全写入的指定文件；失败时不覆盖旧文件或留下半份回答。",
+                  "status": "起草"
+                },
+                {
+                  "id": "require-explicit-inputs",
+                  "text": "发布时必须明确提供决定清单、平台站点名和新的回答文件路径；缺少任一输入就不启动页面。",
+                  "status": "起草"
+                },
+                {
+                  "id": "mount-and-clean-page",
+                  "text": "把决定页挂到指定平台并返回可打开链接，等待一份有效回答；提交、挂载失败或中断后清理本次服务和挂载。",
+                  "status": "起草"
+                },
+                {
+                  "id": "bound-page-requests",
+                  "text": "拒绝非支持路由、分块或超限请求，并在半截请求停滞时断开，避免异常连接卡住唯一的答题服务。",
+                  "status": "起草"
+                },
+                {
+                  "id": "escape-decision-content",
+                  "text": "把题目和说明作为纯文本安全嵌入并显示，不让其中的 HTML 或脚本改变页面行为。",
+                  "status": "起草"
+                },
+                {
+                  "id": "phone-layout",
+                  "text": "让决定页在手机窄屏上排版，不横向溢出，并保持选项和说明文字可读。",
+                  "status": "起草"
+                },
+                {
+                  "id": "follow-system-theme",
+                  "text": "页面配色跟随浏览器的系统深色或浅色主题。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-cleanup/decision_page.py",
                 "xy-cleanup/templates/decision-page.html",
@@ -609,7 +2289,38 @@
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L9"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "review-changed-features",
+                  "text": "重复清扫时按每个功能的清单内容和直属未跳过跟踪文件独立比较认可指纹，只列出从未认可或认可后变过的功能。",
+                  "status": "起草"
+                },
+                {
+                  "id": "choose-review-scope",
+                  "text": "每次明确指定仓库和审查范围，可选一个或多个功能或全部；选上级功能时连同所有子功能，重复或未知范围会先报错。",
+                  "status": "起草"
+                },
+                {
+                  "id": "force-full-review",
+                  "text": "用户要求重审时，可忽略认可指纹变化筛选并重新列出所选范围内的全部功能。",
+                  "status": "起草"
+                },
+                {
+                  "id": "record-approved-state",
+                  "text": "审查完成后保存本次范围内功能的认可指纹，保留范围外仍有效的记录，并移除功能图中已不存在的编号。",
+                  "status": "起草"
+                },
+                {
+                  "id": "block-draft-approval",
+                  "text": "功能理由或任一功能条目仍是起草状态时，拒绝把该功能记录为已认可。",
+                  "status": "起草"
+                },
+                {
+                  "id": "validate-approval-record",
+                  "text": "认可记录必须是仓库内有效的普通 JSON 文件，键不重复且每个指纹格式正确；损坏或指向仓外时明确报错。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
                 "xy-cleanup/approvals.py",
                 "xy-cleanup/tests/test_approvals.py"
@@ -649,7 +2360,73 @@
         "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L10"
       },
       "directory": null,
-      "items": [],
+      "items": [
+        {
+          "id": "install-skill-set",
+          "text": "使用者可以将仓库里的技能安装到 Claude Code 的个人技能目录并直接调用。",
+          "status": "起草"
+        },
+        {
+          "id": "install-pinned-plugin",
+          "text": "使用者可以安装与工作流程匹配的固定版本 superpowers，并停用会自动更新的其他来源版本。",
+          "status": "起草"
+        },
+        {
+          "id": "configure-run-storage",
+          "text": "使用者可以为长期任务配置统一的运行目录，让临时产物保存在稳定位置。",
+          "status": "起草"
+        },
+        {
+          "id": "capture-user-messages",
+          "text": "使用者消息和提问工具的选择题回答能自动逐字保存，并可在建立目标契约时接续先前消息。",
+          "status": "起草"
+        },
+        {
+          "id": "load-global-rules",
+          "text": "每个会话开始时自动加载运行目录、交接、铁律和仓库规范，并按标准工作流程处理相应任务。",
+          "status": "起草"
+        },
+        {
+          "id": "show-required-integrations",
+          "text": "使用者能查明工作流程、目标跟踪和交接功能所需的插件、技能与 Claude Code 能力。",
+          "status": "起草"
+        },
+        {
+          "id": "install-run-cleaner",
+          "text": "使用者可以安装按配置范围定期清理过期运行目录的服务。",
+          "status": "起草"
+        },
+        {
+          "id": "add-new-skills",
+          "text": "维护者可以新增独立技能，并在安装时只暴露能直接加载的技能入口。",
+          "status": "起草"
+        },
+        {
+          "id": "maintain-feature-map",
+          "text": "已有功能清单的仓库在每次改动时维护功能归属并校验清单。",
+          "status": "起草"
+        },
+        {
+          "id": "record-feature-approvals",
+          "text": "清扫完成后记录用户认可的功能状态，使后续重审只覆盖发生变化的功能。",
+          "status": "起草"
+        },
+        {
+          "id": "run-complete-test-suite",
+          "text": "使用者能从仓库说明找到并运行覆盖各子项目的完整测试套件。",
+          "status": "起草"
+        },
+        {
+          "id": "require-browser-tests",
+          "text": "浏览器测试必须配置 Playwright 和 Chromium；环境缺失时明确失败，不静默跳过。",
+          "status": "起草"
+        },
+        {
+          "id": "check-review-regressions",
+          "text": "修改清扫或审查规则后，按记录的漏审案例做回归对照。",
+          "status": "起草"
+        }
+      ],
       "entries": [
         "README.md"
       ],
