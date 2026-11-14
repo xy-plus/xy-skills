@@ -546,7 +546,7 @@
         {
           "id": "xy-cleanup",
           "title": "仓库清扫",
-          "what": "默认只审变更过的功能，清理代码、测试、文档和 TODO；不改写 TODO 或跳过名单里的文档。文档改写稿保留原要求和约束的同时更短；由报告检查器校验。",
+          "what": "默认只审变更过的功能，清理代码、测试、文档和 TODO；不改写 TODO 或跳过名单里的文档。文档改写稿保留原要求和约束的同时更短；由报告检查器校验。改完代码后改写代码注释。",
           "why": {
             "text": "仓库写久了会积累冗余和不必要的代码；更新功能图时要按相关范围找出能删的地方清理掉。",
             "source": "原话",
@@ -613,6 +613,24 @@
               "entries": [
                 "xy-cleanup/approvals.py",
                 "xy-cleanup/tests/test_approvals.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "comment-rewrite",
+              "title": "改写代码注释",
+              "what": "清扫改完代码后，按块压短各语言代码文件和测试文件的注释和文档串：只换注释块的文字，代码字节原样不动，给工具看的注释和注释里的代码示例不动；每份改写由新开的评审按完整信息清单核对，没有丢失对读代码改代码有影响的信息才直接用；认不出语言的文件不改。",
+              "why": {
+                "text": "盲评通过后直接使用注释改写稿，避免用户逐块确认；有影响的信息丢失时不采用。",
+                "source": "确认",
+                "quote": "",
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261114-105306-xy-skills-code-comment-rewrite/xy-goal/quotes/15.md"
+              },
+              "directory": null,
+              "items": [],
+              "entries": [
+                "xy-cleanup/check_comment_rewrite.py",
+                "xy-cleanup/tests/test_check_comment_rewrite.py"
               ],
               "children": []
             }

@@ -102,6 +102,12 @@ python3 -B -m unittest discover -s xy-repo-map/tests -p 'test_*.py'
 XY_REPO_MAP_CHROMIUM=/path/to/chrome python3 -B -m unittest discover -s xy-repo-map/tests -p 'browser_*_test.py'
 ```
 
+注释改写检查器依赖 Pygments。安装：
+
+```bash
+python3 -m pip install Pygments
+```
+
 浏览器测试需要 Python Playwright 和 Chromium。创建独立环境并安装依赖：
 
 ```bash
