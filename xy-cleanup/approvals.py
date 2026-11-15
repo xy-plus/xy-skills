@@ -38,9 +38,9 @@ def parser():
     plan.add_argument("--review", required=True, choices=("变过的", "全部"),
                       help="筛选变过的功能，或重审全部功能")
 
-    record = commands.add_parser("record", help="记录范围内功能的认可指纹")
+    record = commands.add_parser("record", help="记录列出功能的认可指纹")
     record.add_argument("--repo", required=True, help="仓根的绝对路径")
-    record.add_argument("--scope", required=True, nargs="+", help="功能 id 列表，或单独写 全部")
+    record.add_argument("--features", required=True, nargs="+", help="功能 id 列表，或单独写 全部")
     record.add_argument(
         "--kept-markers", required=True, nargs="+",
         help="本次询问后决定保留的 功能-id:标记名 列表，没有就写 无",
@@ -63,15 +63,15 @@ def _scope_features(data, scope):
     return list(dict.fromkeys(result))
 
 
-def validate_scope(data, scope):
+def validate_scope(data, scope, option_name="--scope"):
     if "全部" in scope and scope != ["全部"]:
-        raise ArgumentError("--scope 使用 全部 时不能再列功能 id")
+        raise ArgumentError(f"{option_name} 使用 全部 时不能再列功能 id")
     if scope != ["全部"] and len(scope) != len(set(scope)):
-        raise ArgumentError("--scope 不能重复列出功能 id")
+        raise ArgumentError(f"{option_name} 不能重复列出功能 id")
     unknown = [feature_id for feature_id in scope
                if feature_id not in data["features"] and feature_id != "全部"]
     if unknown:
-        raise ArgumentError("--scope 中有未知功能 id：" + ", ".join(unknown))
+        raise ArgumentError(f"{option_name} 中有未知功能 id：" + ", ".join(unknown))
 
 
 def _require_approval_path_in_repository(repository, path):
@@ -228,10 +228,10 @@ def _validate_kept_markers(data, selected, kept_markers):
     raise ValueError("\n".join(differences))
 
 
-def _record(repository, data, feature_values, fingerprints, records, scope,
+def _record(repository, data, feature_values, fingerprints, records, features,
             kept_markers):
     approved_path = repository / APPROVED_RELATIVE_PATH
-    selected = _scope_features(data, scope)
+    selected = features
     drafts = [
         feature_id for feature_id in selected
         if feature_values[feature_id]["why"]["source"] == "起草"
@@ -276,8 +276,10 @@ def main(argv):
         print(str(error))
         return 1
 
+    scope = options.scope if options.command == "plan" else options.features
+    scope_option = "--scope" if options.command == "plan" else "--features"
     try:
-        validate_scope(data, options.scope)
+        validate_scope(data, scope, scope_option)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
         return 2
@@ -285,7 +287,12 @@ def main(argv):
     try:
         records = read_approvals(repository, repository / APPROVED_RELATIVE_PATH)
         values, _ = feature_values(repository)
-        selected = _scope_features(data, options.scope)
+        selected = (
+            _scope_features(data, options.scope)
+            if options.command == "plan"
+            else list(data["features"]) if options.features == ["全部"]
+            else list(options.features)
+        )
         selected_values = {feature_id: values[feature_id] for feature_id in selected}
         fingerprints = feature_fingerprints(repository, data, selected_values)
         if options.command == "plan":
@@ -293,7 +300,7 @@ def main(argv):
         else:
             print(_record(
                 repository, data, values, fingerprints, records,
-                options.scope, options.kept_markers,
+                selected, options.kept_markers,
             ))
     except (OSError, UnicodeError, ValueError) as error:
         print(str(error))

@@ -38,7 +38,7 @@ class ApprovalPlanTest(unittest.TestCase):
 
     def record(self, scope=("全部",), kept_markers=("无",)):
         return self.run_approvals(
-            "record", "--repo", str(self.repository), "--scope", *scope,
+            "record", "--repo", str(self.repository), "--features", *scope,
             "--kept-markers", *kept_markers,
         )
 
@@ -111,9 +111,42 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(plan.returncode, 0, plan.stdout + plan.stderr)
         self.assertEqual(plan.stdout, "范围内没有变过的功能（范围内 3 个）\n")
 
-    def test_record_requires_kept_markers(self):
+    def test_recording_parent_does_not_include_children(self):
+        result = self.record(("root",))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(set(records), {"root"})
+
+    def test_record_features_all_records_every_feature(self):
+        result = self.record(("全部",))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(set(records), {"root", "alpha", "beta"})
+
+    def test_record_rejects_unknown_feature_ids_with_exit_two(self):
+        result = self.record(("missing",))
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("missing", result.stdout + result.stderr)
+        self.assertFalse((self.repository / "repo-map" / "approved.json").exists())
+
+    def test_record_does_not_accept_legacy_scope_option(self):
         result = self.run_approvals(
             "record", "--repo", str(self.repository), "--scope", "alpha",
+            "--kept-markers", "无",
+        )
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_record_requires_kept_markers(self):
+        result = self.run_approvals(
+            "record", "--repo", str(self.repository), "--features", "alpha",
         )
 
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -161,7 +194,7 @@ class ApprovalPlanTest(unittest.TestCase):
         ]))
 
         result = self.run_approvals(
-            "record", "--repo", str(temporary_repo), "--scope", "alpha",
+            "record", "--repo", str(temporary_repo), "--features", "alpha",
             "--kept-markers", "alpha:等你拍板",
         )
 
@@ -358,7 +391,7 @@ class ApprovalPlanTest(unittest.TestCase):
             feature("alpha", "alpha", source="起草"),
         ]))
         result = self.run_approvals(
-            "record", "--repo", str(temporary_repo), "--scope", "alpha",
+            "record", "--repo", str(temporary_repo), "--features", "alpha",
             "--kept-markers", "无",
         )
 
@@ -424,7 +457,7 @@ class ApprovalPlanTest(unittest.TestCase):
         for arguments in (
             ("plan", "--repo", str(self.repository), "--scope", "全部", "alpha",
              "--review", "变过的"),
-            ("record", "--repo", str(self.repository), "--scope", "alpha", "alpha",
+            ("record", "--repo", str(self.repository), "--features", "alpha", "alpha",
              "--kept-markers", "无"),
             ("plan", "--repo", str(self.repository), "--scope", "missing",
              "--review", "变过的"),

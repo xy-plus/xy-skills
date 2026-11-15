@@ -2757,7 +2757,8 @@ class CheckReportsTest(unittest.TestCase):
     def test_changed_review_uses_the_approval_plan_for_report_coverage(self):
         recorded = subprocess.run(
             ["python3", "-B", str(ROOT / "xy-cleanup" / "approvals.py"),
-             "record", "--repo", str(self.repository), "--scope", "全部"],
+             "record", "--repo", str(self.repository), "--features", "全部",
+             "--kept-markers", "无"],
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
