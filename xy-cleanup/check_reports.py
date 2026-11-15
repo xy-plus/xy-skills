@@ -676,12 +676,10 @@ def _usage_source_ranges(repository):
     # A table row, list item, or paragraph is one declared source; table rows take
     # precedence because each row in the current README names a distinct record.
     tables = []
-    table_lines = set()
     for table in _markdown_tables(text):
         table_header = table["start"] - 1
         if body_start <= table_header and table["end"] <= section_end:
             tables.append(table)
-            table_lines.update(line_number - 1 for line_number, _cells in table["rows"])
     if tables:
         return [
             f"README.md:{line_number}-{line_number}"
@@ -701,7 +699,7 @@ def _usage_source_ranges(repository):
             following = list_items[item_index + 1] if item_index + 1 < len(list_items) else section_end
             end = start
             for index in range(start + 1, following):
-                if (index in code_lines or index in table_lines or not lines[index].strip()
+                if (index in code_lines or not lines[index].strip()
                         or MARKDOWN_HEADING.match(lines[index])):
                     break
                 end = index
@@ -715,7 +713,6 @@ def _usage_source_ranges(repository):
         line = lines[index]
         structural = (
             index in code_lines
-            or index in table_lines
             or not line.strip()
             or MARKDOWN_HEADING.match(line)
         )
@@ -738,11 +735,8 @@ def _usage_line_range(value):
     match = re.fullmatch(r"([1-9][0-9]*)-([1-9][0-9]*)", value)
     if match is None:
         return None
-    try:
-        start_line, end_line = (int(part) for part in match.groups())
-    except ValueError:
-        return None
-    if start_line < 1 or start_line > end_line:
+    start_line, end_line = (int(part) for part in match.groups())
+    if start_line > end_line:
         return None
     return start_line, end_line
 

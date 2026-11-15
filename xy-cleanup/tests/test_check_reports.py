@@ -659,6 +659,32 @@ class CheckReportsTest(unittest.TestCase):
         self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
         self.run_check_and_assert("没有 ran 为 true 的场景时 files 必须是空对象")
 
+    def test_usage_missed_ranges_reject_adjacency_but_allow_executed_gap(self):
+        self.add_tracked_file("alpha/main.py", "first = 1\nsecond = 2\nthird = 3\n")
+        self.set_measured_usage(missed=("1-1", "2-2"))
+
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [razor_keep_item("alpha", "alpha/main.py:1-3")]
+        self.write_reports(report("主审", self.repository), razor)
+        self.run_check_and_assert("相邻的 missed 行应合并成一个范围")
+
+        self.set_measured_usage(missed=("1-1", "3-3"))
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"] = [razor_keep_item("alpha", "alpha/main.py:1-3")]
+        alpha["usage_candidates"] = [
+            {
+                "lines": f"alpha/main.py:{line_range}",
+                "verdict": "用到",
+                "evidence": "参考 README.md:1",
+            }
+            for line_range in ("1-1", "3-3")
+        ]
+        self.write_reports(report("主审", self.repository), razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_every_direct_code_file_must_be_measured_or_unmeasured(self):
         self.usage_coverage["unmeasured"] = [
             item for item in self.usage_coverage["unmeasured"]
