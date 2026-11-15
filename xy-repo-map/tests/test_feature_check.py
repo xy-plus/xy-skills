@@ -350,6 +350,34 @@ class FeatureCheckTest(unittest.TestCase):
                 self.assertIn(f"根功能的 {expected}", output)
                 self.assertNotIn("Traceback", output)
 
+    def test_answers_json_references_use_json_answer_keys(self):
+        for origin in (
+            "/run/decisions/answers.json#answers.L7",
+            "/run/decisions/answers.json#answers.P1,answers.P7",
+            "/run/decisions/answers.json#answers.L7（说明）",
+            "用户原话.md 第 7 行",
+        ):
+            with self.subTest(origin=origin):
+                root = feature("root", "", subrepositories=[], external_dependencies=[], source="确认")
+                root["why"]["from"] = origin
+                self.set_features(root)
+                result = self.check()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        for origin in (
+            "/run/decisions/answers.json L7",
+            "/run/decisions/answers.json#L7",
+        ):
+            with self.subTest(origin=origin):
+                root = feature("root", "", subrepositories=[], external_dependencies=[], source="确认")
+                root["why"]["from"] = origin
+                self.set_features(root)
+                result = self.check()
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 1, output)
+                self.assertIn("root", output)
+                self.assertIn("answers.json", output)
+
     def test_requires_the_root_to_cover_the_repository(self):
         self.set_features(feature("root", "pkg", subrepositories=[], external_dependencies=[]))
         result = self.check()

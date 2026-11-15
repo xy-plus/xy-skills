@@ -669,7 +669,7 @@
                 "text": "审查者容易凭印象转述规范，一转述就可能走样。",
                 "source": "确认",
                 "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L6"
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L6"
               },
               "directory": null,
               "items": [
@@ -823,7 +823,7 @@
                 "text": "事情做没做完，要对着我的原话核，不能凭 AI 自己说。",
                 "source": "确认",
                 "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json P1、P7"
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json#answers.P1,answers.P7"
               },
               "directory": null,
               "items": [
@@ -1551,7 +1551,7 @@
                 "text": "行数要算到功能头上，先得知道每个文件是谁的。",
                 "source": "确认",
                 "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json P5"
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json#answers.P5"
               },
               "directory": null,
               "items": [
@@ -1605,7 +1605,7 @@
                 "text": "审核时要看每个功能花了多少行，判断配不配得上它的理由、哪里能删。",
                 "source": "确认",
                 "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L1"
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L1"
               },
               "directory": null,
               "items": [
@@ -1692,7 +1692,7 @@
                 "text": "有些功能和规范会被许多地方依赖，但关系不容易看出来。",
                 "source": "确认",
                 "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json 的决定 L7（选「按建议改」，题面同目录 decisions.json 的 L7）"
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json#answers.L7（选「按建议改」，题面同目录 decisions.json 的 L7）"
               },
               "directory": null,
               "items": [
@@ -1730,7 +1730,7 @@
                 "text": "功能图用于审核仓库，看实际功能是否与图相符。",
                 "source": "确认",
                 "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json 的决定 L7（选「按建议改」，题面同目录 decisions.json 的 L7）"
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json#answers.L7（选「按建议改」，题面同目录 decisions.json 的 L7）"
               },
               "directory": null,
               "items": [
@@ -2431,7 +2431,7 @@
                 "text": "重复清扫时，没变的功能不用重审；大仓库每次全审太慢。",
                 "source": "确认",
                 "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L9"
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L9"
               },
               "directory": null,
               "items": [
@@ -2502,7 +2502,7 @@
         "text": "装这套 skill 要软链、设环境变量、合并 hook、装定时器，漏一步就不工作，得有照着做就能装好的说明。",
         "source": "确认",
         "quote": "",
-        "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json L10"
+        "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L10"
       },
       "directory": null,
       "items": [

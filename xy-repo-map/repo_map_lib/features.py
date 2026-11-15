@@ -12,6 +12,9 @@ FEATURE_KEYS = {"id", "title", "what", "why", "directory", "items", "entries", "
 WHY_KEYS = {"text", "source", "quote", "from"}
 ITEM_KEYS = {"id", "text", "status"}
 FEATURE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
+ANSWERS_JSON_REF = re.compile(
+    r"^.+/answers\.json#answers\.[A-Za-z0-9_-]+(?:,answers\.[A-Za-z0-9_-]+)*(?:（[^（）]*）)?$"
+)
 
 
 def feature_chain(feature_id, features):
@@ -154,6 +157,9 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
         for key in ("quote", "from"):
             if key in why and not isinstance(why[key], str):
                 errors.append(f"{label}的 why.{key} 必须是字符串")
+        origin = why.get("from")
+        if isinstance(origin, str) and "answers.json" in origin and not ANSWERS_JSON_REF.fullmatch(origin):
+            errors.append(f"功能 {value.get('id')} 的 why.from 中 answers.json 必须引用 JSON 回答键：{origin!r}")
 
     directory = value.get("directory")
     if directory is not None and not _safe_relative_path(directory, False) and directory != "":
