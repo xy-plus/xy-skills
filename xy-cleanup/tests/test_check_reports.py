@@ -661,6 +661,47 @@ class CheckReportsTest(unittest.TestCase):
 
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_list_item_fenced_code_tables_do_not_trigger_cross_block_error(self):
+        original = (
+            "- ```md\n  | Stage | Action |\n  |---|---|\n"
+            "  | Plan | Draft |\n  ```\n"
+        )
+        lines = original.splitlines()
+        rewrites = [
+            {"lines": "alpha/guide.md:1-3", "text": "\n".join(lines[:3])},
+            {"lines": "alpha/guide.md:4-5", "text": "\n".join(lines[3:])},
+        ]
+
+        result = self.check_guide_rewrites(original, rewrites)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_single_column_trailing_pipe_table_rejects_a_deleted_data_row(self):
+        original = "Stage |\n---|\nPlan |\nReview |\n"
+        rewritten = "Stage |\n---|\nReview |\n"
+
+        result = self.check_guide_rewrites(
+            original, [{"lines": "alpha/guide.md:1-4", "text": rewritten}],
+        )
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("Markdown 表格", output)
+        self.assertIn("alpha/guide.md:1-4", output)
+
+    def test_single_column_trailing_pipe_table_rejects_a_missing_first_cell(self):
+        original = "Stage |\n---|\nPlan |\n"
+        rewritten = " |\n---|\n |\n"
+
+        result = self.check_guide_rewrites(
+            original, [{"lines": "alpha/guide.md:1-3", "text": rewritten}],
+        )
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("Markdown 表格", output)
+        self.assertIn("alpha/guide.md:1-3", output)
+
     def test_rewrite_keeps_each_backtick_span_verbatim(self):
         self.add_tracked_file("alpha/guide.md", "Run `tool --flag` now.\n")
         razor = report("剃刀", self.repository)

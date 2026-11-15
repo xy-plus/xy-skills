@@ -145,39 +145,21 @@ def _markdown_cells(line):
     cells.append(line[start:])
     if separators[0] == 0:
         cells.pop(0)
-    if separators[-1] == len(line) - 1 and separators[-1] != separators[0]:
+    if separators[-1] == len(line) - 1:
         cells.pop()
+    if not cells:
+        cells = [""]
     return [cell.strip() for cell in cells]
 
 
 def _markdown_tables(text):
     lines = text.splitlines()
-    code_lines = [False] * len(lines)
-    fence_character = None
-    fence_length = 0
-    for index, line in enumerate(lines):
-        if fence_character is not None:
-            code_lines[index] = True
-            closing = re.match(r"^ {0,3}(`+|~+)[ \t]*$", line)
-            if (closing is not None and closing.group(1)[0] == fence_character
-                    and len(closing.group(1)) >= fence_length):
-                fence_character = None
-                fence_length = 0
-            continue
-        # Four-space indents are Markdown code; shorter leading whitespace is table indentation.
-        if line.startswith("    ") or line.startswith("\t"):
-            code_lines[index] = True
-            continue
-        opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
-        if opening is not None:
-            code_lines[index] = True
-            fence_character = opening.group(1)[0]
-            fence_length = len(opening.group(1))
+    code_lines = _markdown_code_lines(lines, set())
 
     tables = []
     index = 1
     while index < len(lines):
-        if code_lines[index] or code_lines[index - 1]:
+        if index in code_lines or index - 1 in code_lines:
             index += 1
             continue
         divider_cells = _markdown_cells(lines[index])
@@ -190,7 +172,7 @@ def _markdown_tables(text):
         rows = [(index, header_cells), (index + 1, divider_cells)]
         next_line = index + 1
         while next_line < len(lines):
-            if code_lines[next_line] or not lines[next_line].strip():
+            if next_line in code_lines or not lines[next_line].strip():
                 break
             cells = _markdown_cells(lines[next_line])
             if cells is None:
@@ -896,42 +878,55 @@ def _strip_markdown_quote_prefixes(text):
         remaining = remaining[quote.end():]
 
 
+def _markdown_code_lines(file_lines, excluded_lines):
+    code_lines = set()
+    fence_character = None
+    fence_length = 0
+    for index, line in enumerate(file_lines):
+        if index in excluded_lines:
+            continue
+        text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+        container_text = _strip_markdown_container_prefixes(text)
+        if fence_character is not None:
+            code_lines.add(index)
+            closing = re.match(r"^ {0,3}(`+|~+)[ \t]*$", container_text)
+            if (closing is not None and closing.group(1)[0] == fence_character
+                    and len(closing.group(1)) >= fence_length):
+                fence_character = None
+                fence_length = 0
+            continue
+        # Four-space indents are Markdown code; shorter leading whitespace is table indentation.
+        if container_text.startswith("    ") or container_text.startswith("\t"):
+            code_lines.add(index)
+            continue
+        opening = re.match(r"^ {0,3}(`{3,}|~{3,})", container_text)
+        if opening is not None:
+            code_lines.add(index)
+            fence_character = opening.group(1)[0]
+            fence_length = len(opening.group(1))
+    return code_lines
+
+
 def _markdown_heading_lines(file_lines):
     headings = set()
     texts = [
         line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
         for line in file_lines
     ]
-    hidden_lines = set()
+    yaml_header_lines = set()
     yaml_header_end = None
     if texts and texts[0].strip() == "---":
         yaml_header_end = next(
             (index for index in range(1, len(texts)) if texts[index].strip() == "---"),
             None,
         )
-    fence_character = None
-    fence_length = 0
+        if yaml_header_end is not None:
+            yaml_header_lines.update(range(yaml_header_end + 1))
+    hidden_lines = yaml_header_lines | _markdown_code_lines(texts, yaml_header_lines)
     for index, text in enumerate(texts):
-        if yaml_header_end is not None and index <= yaml_header_end:
-            hidden_lines.add(index)
+        if index in hidden_lines:
             continue
         container_text = _strip_markdown_container_prefixes(text)
-        fence = re.match(r"^ {0,3}(`{3,}|~{3,})", container_text)
-        if fence_character is not None:
-            hidden_lines.add(index)
-            closing = re.match(
-                r"^ {0,3}(`{3,}|~{3,})[ \t]*$", container_text,
-            )
-            if (closing is not None and closing.group(1)[0] == fence_character
-                    and len(closing.group(1)) >= fence_length):
-                fence_character = None
-                fence_length = 0
-            continue
-        if fence is not None:
-            hidden_lines.add(index)
-            fence_character = fence.group(1)[0]
-            fence_length = len(fence.group(1))
-            continue
         if MARKDOWN_HEADING.match(container_text):
             headings.add(index + 1)
 
