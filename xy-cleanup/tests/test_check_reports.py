@@ -1151,6 +1151,23 @@ class CheckReportsTest(unittest.TestCase):
         self.write_test_candidates()
         self.assert_candidate_error("mutants 不能为空")
 
+    def test_invalid_mutant_id_is_reported_without_crashing(self):
+        row = {"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}
+        source = "def test_one():\n    assert True\n"
+        function = {"file": "alpha/test_api.py", "line": 1,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]}
+        self.add_pytest_measurement(
+            source, [row], [row], functions={"alpha/test_api.py:1::test_one": function},
+        )
+        self.test_candidates["mutants"][0]["id"] = []
+        self.write_test_candidates()
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("id 必须是非空字符串", result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_candidates_are_recomputed_with_noncandidate_witnesses(self):
         source = "def test_small():\n    assert True\n\ndef test_large():\n    assert True\n"
         rows = [

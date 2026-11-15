@@ -1794,12 +1794,10 @@ def _nextest_list_items(listing, root, label, problems):
             test_id = f"{root}::{binary_id}::{test_name}"
             items.append({
                 "test_id": test_id,
-                "binary_id": binary_id,
                 "name": test_name,
                 "function_id": test_id,
                 "function_name": test_name.rsplit("::", 1)[-1],
                 "runner": "nextest",
-                "ignored": reason == "ignored",
             })
     return items
 
@@ -1878,27 +1876,20 @@ def _test_functions_for_features(data, repository, expected_features, skip_paths
     return paths
 
 
-def _source_line_range(value, label, repository, tracked_files, problems,
-                       allow_single):
-    parsed = _parse_line_range(value, allow_single_line=allow_single)
-    if parsed is None:
-        problems.append(f"{label} 必须写成文件:行号或 文件:起始行-结束行：{value}")
+def _source_line_range(value, label, field, repository, tracked_files,
+                       lines_by_file, problems, allow_single):
+    line_range, errors = _checked_line_range(
+        value, label, field, repository, tracked_files, lines_by_file,
+        allow_single_line=allow_single,
+    )
+    problems.extend(errors)
+    if line_range is None:
         return None
-    path, start, end = parsed
-    if path not in tracked_files:
-        problems.append(f"{label} 必须指向仓内跟踪文件：{path}")
-        return None
-    file_lines = _read_file_lines(Path(repository) / path)
-    if file_lines is None:
-        problems.append(f"{label} 无法读取：{path}")
-        return None
-    if start < 1 or start > end or end > len(file_lines):
-        problems.append(f"{label} 行范围无效：{path}:{start}-{end}")
-        return None
+    path, _start, _end = line_range
     if file_category_with_skip(repository, path, []) != "code":
-        problems.append(f"{label} 必须覆盖非测试代码文件：{path}")
+        problems.append(f"{label}.{field} 必须覆盖非测试代码文件：{path}")
         return None
-    return path, start, end
+    return line_range
 
 
 def _expand_line_ranges(ranges):
@@ -1924,6 +1915,7 @@ def _validate_test_candidates(document, document_path, repository, data,
     all_items = {}
     function_items = {}
     item_results = {}
+    source_lines_by_file = {}
     for run_index, run in enumerate(runs):
         label = f"test-candidates.runs[{run_index}]"
         if not isinstance(run, dict):
@@ -1987,7 +1979,6 @@ def _validate_test_candidates(document, document_path, repository, data,
                 )
                 if item is None:
                     continue
-                identity = item["identity"]
                 if item["test_id"] in all_items or item["test_id"] in listed_by_identity:
                     problems.append(f"{label}.list 测试项重复：{item['test_id']}")
                     continue
@@ -2119,7 +2110,8 @@ def _validate_test_candidates(document, document_path, repository, data,
         if item_problems or not isinstance(mutant, dict):
             continue
         mutant_id = mutant.get("id")
-        if not _nonempty(mutant_id):
+        mutant_id_is_valid = _nonempty(mutant_id)
+        if not mutant_id_is_valid:
             problems.append(f"{label}.id 必须是非空字符串")
         elif mutant_id in mutant_ids:
             problems.append(f"变异 id 重复：{mutant_id}")
@@ -2128,10 +2120,10 @@ def _validate_test_candidates(document, document_path, repository, data,
         if not _nonempty(mutant.get("change")):
             problems.append(f"{label}.change 必须是非空字符串")
         location = _source_line_range(
-            mutant.get("location"), f"{label}.location", repository,
-            tracked_files, problems, allow_single=True,
+            mutant.get("location"), label, "location", repository,
+            tracked_files, source_lines_by_file, problems, allow_single=True,
         )
-        if location is not None:
+        if location is not None and mutant_id_is_valid:
             mutant_locations[mutant_id] = location
     if len(mutants) > generated_mutants:
         problems.append("test-candidates.mutants 数量不能多于 generated_mutants")
@@ -2236,8 +2228,8 @@ def _validate_test_candidates(document, document_path, repository, data,
         cover_ranges = []
         for index, item in enumerate(covers):
             parsed = _source_line_range(
-                item, f"{label}.covers[{index}]", repository,
-                tracked_files, problems, allow_single=False,
+                item, label, f"covers[{index}]", repository,
+                tracked_files, source_lines_by_file, problems, allow_single=False,
             )
             if parsed is not None:
                 cover_ranges.append(parsed)
@@ -2865,6 +2857,25 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     return problems
 
 
+def _read_required_json(path_value, option_name):
+    path = Path(path_value)
+    if not path.is_file():
+        print(
+            f"{option_name} 必须指向已有文件：{path}",
+            file=sys.stderr,
+        )
+        return None, path, 2
+    try:
+        document = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
+        print(f"无法读取 {option_name.lstrip('-')} {path}：{error}")
+        return None, path, 1
+    return document, path, 0
+
+
 def main(argv):
     try:
         options = parser().parse_args(argv[1:])
@@ -2893,37 +2904,16 @@ def main(argv):
         print(str(error), file=sys.stderr)
         return 2
 
-    usage_coverage_path = Path(options.usage_coverage)
-    if not usage_coverage_path.is_file():
-        print(
-            "--usage-coverage 必须指向已有文件：" + str(usage_coverage_path),
-            file=sys.stderr,
-        )
-        return 2
-    try:
-        usage_coverage = json.loads(
-            usage_coverage_path.read_text(encoding="utf-8"),
-            object_pairs_hook=object_without_duplicate_keys,
-        )
-    except (OSError, UnicodeError, ValueError) as error:
-        print(f"无法读取 usage-coverage {usage_coverage_path}：{error}")
-        return 1
-
-    test_candidates_path = Path(options.test_candidates)
-    if not test_candidates_path.is_file():
-        print(
-            "--test-candidates 必须指向已有文件：" + str(test_candidates_path),
-            file=sys.stderr,
-        )
-        return 2
-    try:
-        test_candidates = json.loads(
-            test_candidates_path.read_text(encoding="utf-8"),
-            object_pairs_hook=object_without_duplicate_keys,
-        )
-    except (OSError, UnicodeError, ValueError) as error:
-        print(f"无法读取 test-candidates {test_candidates_path}：{error}")
-        return 1
+    usage_coverage, _usage_coverage_path, error_code = _read_required_json(
+        options.usage_coverage, "--usage-coverage",
+    )
+    if error_code:
+        return error_code
+    test_candidates, test_candidates_path, error_code = _read_required_json(
+        options.test_candidates, "--test-candidates",
+    )
+    if error_code:
+        return error_code
 
     report_paths = [Path(path) for path in options.reports]
     missing = [path for path in report_paths if not path.is_file()]

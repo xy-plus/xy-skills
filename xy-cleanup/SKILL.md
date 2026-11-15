@@ -20,7 +20,7 @@ description: 按功能范围审查仓库，让代码相对功能清单最小，�
 
 功能清单格式及 `check`、`render`、`publish` 命令与参数见 `xy-repo-map`，本 skill 不重复定义。
 
-审查前在副本里另派子代理为本次范围产出 `test-candidates.json`。Python（含 unittest 写法）用 pytest：先以 `pytest --setup-plan -q -o addopts= --junitxml=<list> -o junit_family=xunit1` 在同一 rootdir 生成完整清单和 JUnit，并保存终端输出；不加 `-k`、`-m`、`--deselect` 等筛选参数。实际运行另出 JUnit。Rust 用 cargo-nextest：以 `cargo nextest list --message-format json` 生成完整清单；仓库配置了 default-filter 时加 `--ignore-default-filter`；运行时设置 `report-skipped = "all"` 并生成 JUnit。需要的工具装在副本环境，如 `pip install pytest coverage`、`cargo install cargo-nextest --locked`、`rustup component add llvm-tools-preview`；装不上就把对应文件记入 `unmeasured_files` 并说明原因。
+审查前在副本里另派子代理为本次范围产出 `test-candidates.json`。Python（含 unittest 写法）用 pytest：先以 `pytest --setup-plan -q -o addopts= --junitxml=<list> -o junit_family=xunit1` 在同一 rootdir 生成完整清单和 JUnit，并保存终端输出；不加 `-k`、`-m`、`--deselect` 等筛选参数。实际运行另出 JUnit。Rust 用 cargo-nextest：以 `cargo nextest list --message-format json` 生成完整清单；仓库配置了 default-filter 时加 `--ignore-default-filter`；运行时生成 JUnit。需要的工具装在副本环境，如 `pip install pytest coverage`、`cargo install cargo-nextest --locked`、`rustup component add llvm-tools-preview`；装不上就把对应文件记入 `unmeasured_files` 并说明原因。
 
 每个测试项分别统计非测试代码覆盖。Python 用 coverage.py 按测试项记录上下文；Rust 测试二进制用 `-C instrument-coverage` 插桩，按 nextest 测试名为每个测试进程设置 `LLVM_PROFILE_FILE`，再用 `llvm-profdata merge`、`llvm-cov export` 汇总。子进程执行的行归到启动它的测试项；归属不准时把启动子进程的函数记入 `unmeasured_functions`。抽样变异逐个运行，每个变异都跑完全部测试、不提前停止，并记录哪些测试项失败（即杀死变异）。其他运行器或语言的测试文件记入 `unmeasured_files`；量不了的文件和函数都写原因，不得将未测结果记成空覆盖。
 
@@ -175,7 +175,7 @@ description: 按功能范围审查仓库，让代码相对功能清单最小，�
 
 剃刀报告每个功能对象必须有 `usage_candidates` 数组。每条候选恰有 `lines`、`verdict`、`evidence`：对 `files` 中每个 `missed` 范围恰好一条 `lines` 为 `路径:起始行-结束行` 的候选；`verdict` 只能是「用到」或「删」。判「用到」时 `evidence` 必须引用本范围以外的有效仓内位置；判「删」时必须有与候选范围重叠的发现，或本功能 id 的「删除」「合并」发现。不得添加不对应 missed 范围的候选。检查器逐项核对 README 来源、场景字段、覆盖文件完整性、未测文件原因和上述候选判定。
 
-审查子代理另交 `test-candidates.json`，顶层键恰为 `runs`、`unmeasured_files`、`generated_mutants`、`mutants`、`functions`、`unmeasured_functions`、`candidates`。`runs` 可按不同 `root` 重复 runner；pytest 项恰有 `runner`、`root`、`command`、`junit`、`list`、`list_log`，nextest 项恰有 `runner`、`root`、`command`、`junit`、`list`。`root` 是仓内目录，其他产物路径相对 JSON 所在目录；`command` 写实际执行的收集或测试命令。pytest 的 `list` 是完整收集 JUnit，`list_log` 最后一个非空行去掉两边 `=` 和空白后须以 `no tests ran` 开头且不含 `deselected` 或 `error`；nextest 的 `list` 是完整 JSON 测试清单，所有二进制的 `status` 须为 `listed`，测试 `filter-match` 只能是 `matches` 或原因 `ignored`。JUnit 测试套件名是 binary id、用例名是测试路径；pytest 按 `classname`、`name`、`file`、`line` 精确核对完整清单与 JUnit，nextest 按测试路径核对。每个 `runs` 项的 JUnit 来自按测试项测量覆盖的运行。nextest 启用 `report-skipped = "all"`，被过滤但标为 ignored 的测试项不算筛选遗漏。
+审查子代理另交 `test-candidates.json`，顶层键恰为 `runs`、`unmeasured_files`、`generated_mutants`、`mutants`、`functions`、`unmeasured_functions`、`candidates`。`runs` 可按不同 `root` 重复 runner；pytest 项恰有 `runner`、`root`、`command`、`junit`、`list`、`list_log`，nextest 项恰有 `runner`、`root`、`command`、`junit`、`list`。`root` 是仓内目录，其他产物路径相对 JSON 所在目录；`command` 写在副本里实际跑测试、产出这份 `junit` 的那条命令。pytest 的 `list` 是完整收集 JUnit，`list_log` 最后一个非空行去掉两边 `=` 和空白后须以 `no tests ran` 开头且不含 `deselected` 或 `error`；nextest 的 `list` 是完整 JSON 测试清单，所有二进制的 `status` 须为 `listed`，测试 `filter-match` 只能是 `matches` 或原因 `ignored`。JUnit 测试套件名是 binary id、用例名是测试路径；pytest 按 `classname`、`name`、`file`、`line` 精确核对完整清单与 JUnit，nextest 按测试路径核对。每个 `runs` 项的 JUnit 来自按测试项测量覆盖的运行。
 
 ```json
 {
