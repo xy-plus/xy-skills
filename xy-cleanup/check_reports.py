@@ -257,6 +257,24 @@ def _validate_rewrite_table_structure(path, original_text, blocks, label):
     return problems
 
 
+def _validate_empty_feature_items(data, expected_features):
+    problems = []
+    for feature_id in expected_features:
+        feature = data["features"].get(feature_id)
+        if feature is None or feature.get("items") != []:
+            continue
+        direct_files = {
+            path
+            for group_paths in feature["files"].values()
+            for path in group_paths
+        }
+        # A fileless parent only groups children; leaf items still describe its own goal.
+        if feature.get("children") and not direct_files:
+            continue
+        problems.append(f"功能 {feature_id} 条目为空，须先起草")
+    return problems
+
+
 def _validate_rewrites(rewrites, label, repository, document_files, findings):
     problems = []
     if not isinstance(rewrites, list):
@@ -1647,6 +1665,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                      usage_coverage, carry_over_findings):
     """Return all structural, coverage, decision, and rule-quote problems."""
     problems = []
+    problems.extend(_validate_empty_feature_items(data, expected_features))
     counts = {role: {} for role in ROLES}
     recheck_counts = {}
     required_rechecks = set(carry_over_findings)

@@ -2798,11 +2798,69 @@ class CheckReportsTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(expected, result.stdout)
 
+    def _prepare_empty_items_group(self, gamma_items, gamma_directory=None,
+                                   group_directory=None, direct_file=None):
+        if direct_file is not None:
+            self.add_tracked_file(*direct_file)
+        root_path = self.repository / "repo-map" / "features.json"
+        root = json.loads(root_path.read_text(encoding="utf-8"))
+        root["children"].append(feature(
+            "group", group_directory, children=[
+                feature("gamma", gamma_directory, items=gamma_items),
+            ],
+        ))
+        root_path.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repository), "add", "-A"], check=True)
+        feature_ids = ("group", "gamma")
+        main = report("主审", self.repository, feature_ids)
+        razor = report("剃刀", self.repository, feature_ids)
+        if direct_file is not None and direct_file[0] == "group/TODO.md":
+            for review in main["features"] + razor["features"]:
+                if review["feature"] == "group":
+                    review["todo_items"] = [todo_item("group/TODO.md:1-1")]
+        self.write_reports(main, razor)
+
+    def test_feature_with_direct_files_cannot_have_empty_items(self):
+        self._prepare_empty_items_group(
+            [], gamma_directory="gamma", direct_file=("gamma/guide.md", "Gamma guide.\n"),
+        )
+        result = self.run_check(scope=("group",))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("条目为空，须先起草", result.stdout)
+        self.assertIn("gamma", result.stdout)
+
+    def test_fileless_parent_with_children_can_have_empty_items(self):
+        item = [{"id": "core", "text": "提供 gamma 功能。", "status": "确认"}]
+        self._prepare_empty_items_group(item)
+        result = self.run_check(scope=("group",))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_empty_unimplemented_leaf_without_files_requires_items(self):
+        self._prepare_empty_items_group([])
+        result = self.run_check(scope=("group",))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("条目为空，须先起草", result.stdout)
+        self.assertIn("gamma", result.stdout)
+
+    def test_fileless_parent_with_direct_todo_cannot_have_empty_items(self):
+        item = [{"id": "core", "text": "提供 gamma 功能。", "status": "确认"}]
+        self._prepare_empty_items_group(
+            item, group_directory="group", direct_file=("group/TODO.md", "待办事项。\n"),
+        )
+        result = self.run_check(scope=("group",))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("条目为空，须先起草", result.stdout)
+        self.assertIn("group", result.stdout)
+
     def test_a_parent_scope_expands_to_its_finest_features(self):
         root_path = self.repository / "repo-map" / "features.json"
         root = json.loads(root_path.read_text(encoding="utf-8"))
         root["children"].append(feature("group", None, children=[
-            feature("gamma", None, entries=[]), feature("delta", None, entries=[]),
+            feature("gamma", None, entries=[], items=[{
+                "id": "core", "text": "提供 gamma 功能。", "status": "确认",
+            }]), feature("delta", None, entries=[], items=[{
+                "id": "core", "text": "提供 delta 功能。", "status": "确认",
+            }]),
         ]))
         root_path.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
         subprocess.run(["git", "-C", str(self.repository), "add", "-A"], check=True)
