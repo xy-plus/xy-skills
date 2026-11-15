@@ -63,7 +63,7 @@ def _scope_features(data, scope):
     return list(dict.fromkeys(result))
 
 
-def validate_scope(data, scope, option_name="--scope"):
+def validate_scope(data, scope, option_name):
     if "全部" in scope and scope != ["全部"]:
         raise ArgumentError(f"{option_name} 使用 全部 时不能再列功能 id")
     if scope != ["全部"] and len(scope) != len(set(scope)):

@@ -263,13 +263,11 @@ def _validate_empty_feature_items(data, expected_features):
         feature = data["features"].get(feature_id)
         if feature is None or feature.get("items") != []:
             continue
-        direct_files = {
-            path
-            for group_paths in feature["files"].values()
-            for path in group_paths
-        }
+        has_direct_files = any(
+            any(group_paths) for group_paths in feature["files"].values()
+        )
         # A fileless parent only groups children; leaf items still describe its own goal.
-        if feature.get("children") and not direct_files:
+        if feature.get("children") and not has_direct_files:
             continue
         problems.append(f"功能 {feature_id} 条目为空，须先起草")
     return problems
@@ -1232,10 +1230,7 @@ def _read_carry_over_findings(report_paths, expected_features):
                     problems.append(f"carry-over 报告重复列出旧发现：{reference}")
                     continue
                 seen_references.add(reference)
-                findings_by_feature.setdefault(feature_id, []).append({
-                    "old": reference,
-                    "target": finding["target"],
-                })
+                findings_by_feature.setdefault(feature_id, []).append({"old": reference})
     return findings_by_feature, problems
 
 
@@ -1917,7 +1912,6 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     f"{feature_label} 的功能 {feature_id}",
                     finding_ranges,
                     feature_targets,
-                    orphan_targets_by_feature.get(feature_id, []),
                 ))
                 if feature_id in carry_over_findings and "carried" in review:
                     problems.extend(_validate_carried(
@@ -1956,13 +1950,13 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     location_patterns = (
         _tracked_location_patterns(tracked_files) if pending_recheck_verdicts else []
     )
-    for (feature_id, verdicts, label, finding_ranges, feature_targets,
-         orphan_lines) in pending_recheck_verdicts:
+    for (feature_id, verdicts, label, finding_ranges,
+         feature_targets) in pending_recheck_verdicts:
         problems.extend(_validate_recheck_verdicts(
             verdicts,
             label,
             razor_keep_lines.get(feature_id, []),
-            orphan_lines,
+            orphan_targets_by_feature.get(feature_id, []),
             finding_ranges,
             feature_targets,
             repository,
@@ -2017,7 +2011,7 @@ def main(argv):
 
     scope = options.scope
     try:
-        validate_scope(data, scope)
+        validate_scope(data, scope, "--scope")
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
         return 2

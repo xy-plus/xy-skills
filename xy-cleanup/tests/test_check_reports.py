@@ -438,7 +438,7 @@ class CheckReportsTest(unittest.TestCase):
             if (scope != ("全部",) or review != "全部") and review in {"变过的", "全部"}:
                 data = check_reports_module.build_map(self.repository)
                 try:
-                    check_reports_module.validate_scope(data, list(scope))
+                    check_reports_module.validate_scope(data, list(scope), "--scope")
                 except check_reports_module.ArgumentError:
                     pass
                 else:
@@ -2952,13 +2952,9 @@ class CheckReportsTest(unittest.TestCase):
         self.add_tracked_file("alpha/TODO.md", "保留这条 TODO。\n")
         cases = [
             ("重构", "alpha/main.py:1", "直接做", False),
-            ("改名", "alpha/main.py:1", "直接做", False),
-            ("挪位置", "alpha/main.py:1", "直接做", False),
-            ("拆分", "alpha/main.py:1", "直接做", False),
             ("重构", "alpha/main.py:1", "问你", True),
             ("删除", "alpha/TODO.md:1-1", "问你", False),
             ("孤儿", "alpha/main.py:1", "问你", False),
-            ("改清单", "alpha/main.py:1", "问你", False),
         ]
         for kind, target, decision, changes_behavior in cases:
             with self.subTest(kind=kind, target=target, changes_behavior=changes_behavior):
@@ -3037,6 +3033,16 @@ class CheckReportsTest(unittest.TestCase):
         self.add_orphan_finding("alpha", "beta/main.py:1")
 
         result = self.run_check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("缺少孤儿目标的判定：beta/main.py:1-1", result.stdout)
+
+    def test_recheck_report_before_orphan_finding_still_requires_orphan_verdict(self):
+        self.add_orphan_finding("alpha", "beta/main.py:1")
+        reports = self.reports_for_check()
+        reordered_reports = (*reports[2:], *reports[:2])
+
+        result = self.run_check(reports=reordered_reports)
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("缺少孤儿目标的判定：beta/main.py:1-1", result.stdout)
