@@ -1630,7 +1630,10 @@ def _validate_keep_items(items, label, repository, feature, features, keep_files
             file_lines = lines_by_file[path]
             if file_lines is not None:
                 covered_ranges[path] = [(1, len(file_lines))]
-    for _finding, target_range in finding_ranges:
+    for finding, target_range in finding_ranges:
+        if finding.get("kind") not in {"删除", "合并", "孤儿"}:
+            continue
+        # 删除和合并会移除目标；孤儿没有可引用条目，去留由复审试删和用户决定。
         path, start_line, end_line = target_range
         if path in keep_files:
             covered_ranges.setdefault(path, []).append((start_line, end_line))
