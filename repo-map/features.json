@@ -2008,6 +2008,11 @@
               "status": "确认"
             },
             {
+              "id": "usage-coverage-candidates",
+              "text": "审查前按实际使用记录在副本里短跑并统计覆盖，实际使用中没执行到的代码交剃刀逐条判用到或删。",
+              "status": "确认"
+            },
+            {
               "id": "skip-boundary",
               "text": "不纳入清扫的内容有明确边界，边界变化由用户决定。",
               "status": "确认"
@@ -2283,6 +2288,11 @@
                 {
                   "id": "rewrite-table-structure",
                   "text": "文档改写不丢表格：每块的表格行数、各行列数和首格与原文一致。",
+                  "status": "确认"
+                },
+                {
+                  "id": "usage-candidate-verdicts",
+                  "text": "实际使用中没执行到的每段代码在剃刀报告里恰有一条判定；判用到须引范围外的有效位置，判删须有对应发现。",
                   "status": "确认"
                 }
               ],

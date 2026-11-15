@@ -74,6 +74,7 @@ def review_feature(feature_id, role, own_lines=None):
             "lines": own_lines or {"code": 0, "docs": 0, "comments": 0, "tests": 0},
         },
         "rewrites": [],
+        "usage_candidates": [],
         "keep": keep,
     }
 
@@ -102,6 +103,26 @@ def report(role, repository, feature_ids=("root", "alpha", "beta")):
                 for group_paths in data["features"][feature_id]["files"].values()
                 for path in group_paths
             }
+            if feature_id == data["root"]:
+                readme_lines = (Path(repository) / "README.md").read_bytes().splitlines()
+                heading_lines = sorted(
+                    check_reports_module._markdown_heading_lines(readme_lines) or ()
+                )
+                boundaries = sorted({1, *heading_lines})
+                root_ranges = []
+                for index, start in enumerate(boundaries):
+                    end = (
+                        boundaries[index + 1] - 1
+                        if index + 1 < len(boundaries) else len(readme_lines)
+                    )
+                    if start <= end and any(
+                        line.strip() for line in readme_lines[start - 1:end]
+                    ):
+                        root_ranges.append(f"README.md:{start}-{end}")
+                current["keep"] = [
+                    razor_keep_item("root", lines=line_range)
+                    for line_range in root_ranges
+                ]
             current["rewrites"] = [
                 block
                 for path in sorted(direct_files)
@@ -202,7 +223,24 @@ class CheckReportsTest(unittest.TestCase):
         self.main_path = self.directory / "main.json"
         self.razor_path = self.directory / "razor.json"
         self.recheck_path = self.directory / "recheck.json"
+        self.usage_coverage_path = self.directory / "usage-coverage.json"
         self.recheck_paths = []
+        self.add_tracked_file(
+            "README.md",
+            "Demo.\n\n## 实际使用\n\n本地场景说明。\n",
+        )
+        self.usage_coverage = {
+            "sources": [{
+                "source": "README.md:5-5",
+                "scenarios": [],
+                "why_none": "本地场景说明不能推出可运行的实际使用命令。",
+            }],
+            "files": {},
+            "unmeasured": [
+                {"path": "alpha/main.py", "why": "没有可安全运行的场景。"},
+                {"path": "beta/main.py", "why": "没有可安全运行的场景。"},
+            ],
+        }
         self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
 
     def write_reports(self, main, razor):
@@ -257,6 +295,9 @@ class CheckReportsTest(unittest.TestCase):
             self.clear_recheck_reports()
         self.main_path.write_text(json.dumps(main, ensure_ascii=False), encoding="utf-8")
         self.razor_path.write_text(json.dumps(razor, ensure_ascii=False), encoding="utf-8")
+        self.usage_coverage_path.write_text(
+            json.dumps(self.usage_coverage, ensure_ascii=False), encoding="utf-8",
+        )
 
     def write_recheck_reports(self, reports):
         self.clear_recheck_reports()
@@ -308,6 +349,13 @@ class CheckReportsTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         subprocess.run(["git", "-C", str(self.repository), "add", relative_path], check=True)
+        if (hasattr(self, "usage_coverage")
+                and file_category_with_skip(self.repository, relative_path, []) == "code"
+                and all(item.get("path") != relative_path
+                        for item in self.usage_coverage["unmeasured"])):
+            self.usage_coverage["unmeasured"].append({
+                "path": relative_path, "why": "没有可安全运行的场景。",
+            })
 
     def check_guide_rewrites(self, original, rewrites):
         self.add_tracked_file("alpha/guide.md", original)
@@ -375,12 +423,62 @@ class CheckReportsTest(unittest.TestCase):
                     review["findings"] = findings_by_feature[feature_id]
         self.write_reports(main, razor)
 
-    def run_check(self, scope=("全部",), reports=None, review="全部"):
+    def run_check(self, scope=("全部",), reports=None, review="全部",
+                  usage_coverage=True):
         paths = self.reports_for_check() if reports is None else reports
         arguments = ["python3", "-B", str(COMMAND), "--repo", str(self.repository),
                      "--scope", *scope]
         if review is not None:
             arguments.extend(("--review", review))
+        if usage_coverage:
+            coverage_path = self.usage_coverage_path
+            if (scope != ("全部",) or review != "全部") and review in {"变过的", "全部"}:
+                data = check_reports_module.build_map(self.repository)
+                try:
+                    check_reports_module.validate_scope(data, list(scope))
+                except check_reports_module.ArgumentError:
+                    pass
+                else:
+                    records = check_reports_module.read_approvals(
+                        self.repository,
+                        self.repository / check_reports_module.APPROVED_RELATIVE_PATH,
+                    )
+                    values, _ = check_reports_module.feature_values(self.repository)
+                    fingerprints = check_reports_module.feature_fingerprints(
+                        self.repository, data, values,
+                    )
+                    expected = {
+                        feature_id
+                        for feature_id, _reason in check_reports_module.review_features(
+                            data, fingerprints, records, list(scope), review,
+                        )
+                    }
+                    direct_code_files = set()
+                    skip_paths = read_skip_paths(self.repository, tracked_paths(self.repository))
+                    for feature_id in expected:
+                        feature_data = data["features"][feature_id]
+                        direct_code_files.update(
+                            path
+                            for paths_for_group in feature_data["files"].values()
+                            for path in paths_for_group
+                            if file_category_with_skip(
+                                self.repository, path, skip_paths,
+                            ) == "code"
+                        )
+                    coverage = json.loads(json.dumps(self.usage_coverage))
+                    coverage["files"] = {
+                        path: value for path, value in coverage["files"].items()
+                        if path in direct_code_files
+                    }
+                    coverage["unmeasured"] = [
+                        item for item in coverage["unmeasured"]
+                        if item["path"] in direct_code_files
+                    ]
+                    coverage_path = self.directory / "scoped-usage-coverage.json"
+                    coverage_path.write_text(
+                        json.dumps(coverage, ensure_ascii=False), encoding="utf-8",
+                    )
+            arguments.extend(("--usage-coverage", str(coverage_path)))
         arguments.extend(("--reports", *paths))
         return subprocess.run(
             arguments,
@@ -396,6 +494,224 @@ class CheckReportsTest(unittest.TestCase):
     def test_accepts_complete_reports_for_each_role(self):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def set_measured_usage(self, missed=("1-1",)):
+        self.usage_coverage = {
+            "sources": [{
+                "source": "README.md:5-5",
+                "scenarios": [{
+                    "command": "python3 demo.py",
+                    "ran": True,
+                    "why_not": "",
+                }],
+                "why_none": "",
+            }],
+            "files": {
+                "alpha/main.py": {"missed": list(missed)},
+                "beta/main.py": {"missed": []},
+            },
+            "unmeasured": [],
+        }
+
+    def set_missed_candidate(self, verdict="用到", evidence="参考 README.md:1"):
+        self.set_measured_usage()
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["usage_candidates"] = [{
+            "lines": "alpha/main.py:1-1",
+            "verdict": verdict,
+            "evidence": evidence,
+        }]
+        return razor
+
+    def write_source_fixture(self, text, sources):
+        self.add_tracked_file("README.md", text)
+        self.usage_coverage = {
+            "sources": sources,
+            "files": {},
+            "unmeasured": [
+                {"path": "alpha/main.py", "why": "没有可安全运行的场景。"},
+                {"path": "beta/main.py", "why": "没有可安全运行的场景。"},
+            ],
+        }
+
+    def test_usage_candidate_requires_one_entry_for_each_missed_range(self):
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        self.set_measured_usage()
+        alpha["usage_candidates"] = []
+        self.write_reports(report("主审", self.repository), razor)
+        self.run_check_and_assert("usage_candidates 缺少实际使用候选")
+
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        candidate = {
+            "lines": "alpha/main.py:1-1",
+            "verdict": "用到",
+            "evidence": "参考 README.md:1",
+        }
+        alpha["usage_candidates"] = [candidate, candidate.copy()]
+        self.write_reports(report("主审", self.repository), razor)
+        self.run_check_and_assert("usage_candidates 的候选必须恰有一条")
+
+    def test_usage_candidate_used_verdict_needs_valid_external_evidence(self):
+        razor = self.set_missed_candidate(evidence="用户确实会调用这个功能")
+        self.write_reports(report("主审", self.repository), razor)
+        self.run_check_and_assert("evidence 必须引至少一处有效位置")
+
+    def test_usage_candidate_delete_verdict_needs_a_matching_finding(self):
+        razor = self.set_missed_candidate(verdict="删")
+        self.write_reports(report("主审", self.repository), razor)
+        self.run_check_and_assert("判删须有重叠发现或功能级删除、合并发现")
+
+    def test_usage_candidate_delete_verdict_accepts_overlapping_finding(self):
+        razor = self.set_missed_candidate(verdict="删")
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["findings"] = [finding()]
+        self.write_reports(report("主审", self.repository), razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_usage_candidates_reject_entries_outside_missed_ranges(self):
+        self.set_measured_usage(missed=())
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["usage_candidates"] = [{
+            "lines": "alpha/main.py:1-1",
+            "verdict": "用到",
+            "evidence": "参考 README.md:1",
+        }]
+        self.write_reports(report("主审", self.repository), razor)
+        self.run_check_and_assert("usage_candidates 多出不在 usage-coverage missed 里的候选")
+
+    def test_usage_sources_match_readme_tables_lists_and_paragraphs(self):
+        cases = (
+            (
+                "# Demo\n\n## 实际使用\n\n| 来源 | 说明 |\n| --- | --- |\n| one | first |\n| two | second |\n",
+                ("README.md:7-7", "README.md:8-8"),
+            ),
+            (
+                "# Demo\n\n## 实际使用\n- first source\n- second source\n",
+                ("README.md:4-4", "README.md:5-5"),
+            ),
+            (
+                "# Demo\n\n## 实际使用\nfirst paragraph\n\nsecond paragraph\n",
+                ("README.md:4-4", "README.md:6-6"),
+            ),
+            (
+                "# Demo\n\n实际使用\n---\nfirst paragraph\n\nsecond paragraph\n",
+                ("README.md:5-5", "README.md:7-7"),
+            ),
+        )
+        for readme, expected in cases:
+            with self.subTest(expected=expected):
+                self.write_source_fixture(readme, [
+                    {"source": source, "scenarios": [], "why_none": "无法推出可运行场景。"}
+                    for source in expected
+                ])
+                self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+                result = self.run_check()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+                invalid_sources = (
+                    [
+                        {"source": expected[0], "scenarios": [], "why_none": "无法推出可运行场景。"}
+                    ],
+                    [
+                        {"source": f"README.md:{expected[0].split(':')[1].split('-')[0]}-"
+                         f"{expected[1].split(':')[1].split('-')[1]}",
+                         "scenarios": [], "why_none": "无法推出可运行场景。"}
+                    ],
+                    [
+                        *[
+                            {"source": source, "scenarios": [], "why_none": "无法推出可运行场景。"}
+                            for source in expected
+                        ],
+                        {"source": "README.md:1-1", "scenarios": [],
+                         "why_none": "多出的来源。"},
+                    ],
+                )
+                for sources in invalid_sources:
+                    self.write_source_fixture(readme, sources)
+                    self.write_reports(report("主审", self.repository),
+                                       report("剃刀", self.repository))
+                    result = self.run_check()
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("sources", result.stdout)
+
+    def test_usage_sources_require_readme_actual_usage_section(self):
+        self.write_source_fixture("# Demo\n\nNo usage section.\n", [])
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        self.run_check_and_assert("README.md 缺少「实际使用」一节")
+
+    def test_usage_source_scenarios_and_why_none_must_agree(self):
+        for scenarios, why_none in (([], ""), ([{
+            "command": "python3 demo.py", "ran": False, "why_not": "副本缺少配置。",
+        }], "仍填写 why_none。")):
+            with self.subTest(scenarios=scenarios, why_none=why_none):
+                self.usage_coverage["sources"][0]["scenarios"] = scenarios
+                self.usage_coverage["sources"][0]["why_none"] = why_none
+                self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+                self.run_check_and_assert("scenarios" + (" 为空时" if not scenarios else " 非空时"))
+
+    def test_usage_files_must_be_empty_when_no_scenario_ran(self):
+        self.usage_coverage["files"] = {"alpha/main.py": {"missed": ["1-1"]}}
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        self.run_check_and_assert("没有 ran 为 true 的场景时 files 必须是空对象")
+
+    def test_every_direct_code_file_must_be_measured_or_unmeasured(self):
+        self.usage_coverage["unmeasured"] = [
+            item for item in self.usage_coverage["unmeasured"]
+            if item["path"] != "alpha/main.py"
+        ]
+        self.write_reports(report("主审", self.repository), report("剃刀", self.repository))
+        self.run_check_and_assert("直属代码文件必须恰好出现在 files 或 unmeasured")
+
+    def test_usage_coverage_is_required_and_must_be_readable_json(self):
+        result = self.run_check(usage_coverage=False)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--usage-coverage", result.stderr)
+
+        self.usage_coverage_path.write_text("{bad json", encoding="utf-8")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("usage-coverage", result.stdout + result.stderr)
+
+    def test_usage_coverage_requires_an_existing_file_and_exact_top_level_shape(self):
+        self.usage_coverage_path.unlink()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--usage-coverage 必须指向已有文件", result.stderr)
+
+        self.usage_coverage_path.write_text("[]", encoding="utf-8")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("usage-coverage必须是对象", result.stdout)
+
+    def test_usage_candidate_fields_and_verdict_are_restricted(self):
+        self.set_measured_usage()
+        razor = report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["usage_candidates"] = [{
+            "lines": "alpha/main.py:1-1",
+            "verdict": "用到",
+            "evidence": "",
+            "extra": True,
+        }]
+        self.write_reports(report("主审", self.repository), razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("多余字段 extra", result.stdout)
+
+        alpha["usage_candidates"] = [{
+            "lines": "alpha/main.py:1-1",
+            "verdict": "keep",
+            "evidence": "",
+        }]
+        self.write_reports(report("主审", self.repository), razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("verdict 只能是 用到 或 删", result.stdout)
 
     def test_razor_requires_rewrites_for_each_direct_document(self):
         razor = report("剃刀", self.repository)
@@ -1026,6 +1342,7 @@ class CheckReportsTest(unittest.TestCase):
                 set(data["features"]),
                 self.reports_for_check(),
                 tracked_files,
+                self.usage_coverage,
             )
 
         self.assertTrue(any("跳过名单" in problem for problem in problems), problems)
@@ -1409,6 +1726,7 @@ class CheckReportsTest(unittest.TestCase):
                 set(data["features"]),
                 self.reports_for_check(),
                 tracked_files,
+                self.usage_coverage,
             )
 
         scan.assert_not_called()

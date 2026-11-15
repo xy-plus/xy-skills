@@ -37,7 +37,8 @@ FEATURE_KEYS = {
         "feature", "what_true", "why_holds", "structure", "todo_items", "findings",
     },
     "剃刀": {
-        "feature", "necessity", "smallest", "rewrites", "keep", "todo_items", "findings",
+        "feature", "necessity", "smallest", "rewrites", "usage_candidates", "keep",
+        "todo_items", "findings",
     },
     "剃刀复审": {"feature", "verdicts", "findings"},
 }
@@ -67,6 +68,7 @@ def parser():
         "--review", required=True, choices=("变过的", "全部"),
         help="按认可记录筛选变过的功能，或重审全部功能",
     )
+    result.add_argument("--usage-coverage", required=True, help="usage-coverage.json 路径")
     result.add_argument("--reports", required=True, nargs="+", help="JSON 审查报告路径")
     return result
 
@@ -628,6 +630,288 @@ def _tracked_location_patterns(tracked_files):
     ]
 
 
+def _usage_source_ranges(repository):
+    readme_path = Path(repository) / "README.md"
+    try:
+        text = readme_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        return [], [f"无法读取 README.md 的「实际使用」来源：{error}"]
+
+    lines = text.splitlines()
+    code_lines = _markdown_code_lines(lines, set())
+    headings = []
+    for index, line in enumerate(lines):
+        if index in code_lines:
+            continue
+        heading = re.match(r"^ {0,3}(#{1,6})(?:[ \t]+|$)(.*)$", line)
+        if heading is not None:
+            title = re.sub(r"[ \t]+#+[ \t]*$", "", heading.group(2)).strip()
+            headings.append((index, len(heading.group(1)), title, index))
+    for index in range(len(lines) - 1):
+        if index in code_lines or index + 1 in code_lines:
+            continue
+        title = lines[index].strip()
+        underline = lines[index + 1]
+        if (not title or MARKDOWN_HEADING.match(lines[index])
+                or not SETEXT_UNDERLINE.fullmatch(underline)):
+            continue
+        level = 1 if underline.lstrip().startswith("=") else 2
+        headings.append((index, level, title, index + 1))
+    headings.sort(key=lambda item: item[0])
+
+    section = next(
+        (heading for heading in headings if "实际使用" in heading[2]),
+        None,
+    )
+    if section is None:
+        return [], ["README.md 缺少「实际使用」一节"]
+    heading_index, heading_level, _title, heading_end = section
+    section_end = next(
+        (index for index, level, _title, _end in headings
+         if index > heading_index and level <= heading_level),
+        len(lines),
+    )
+    body_start = heading_end + 1
+
+    # A table row, list item, or paragraph is one declared source; table rows take
+    # precedence because each row in the current README names a distinct record.
+    tables = []
+    table_lines = set()
+    for table in _markdown_tables(text):
+        table_header = table["start"] - 1
+        if body_start <= table_header and table["end"] <= section_end:
+            tables.append(table)
+            table_lines.update(line_number - 1 for line_number, _cells in table["rows"])
+    if tables:
+        return [
+            f"README.md:{line_number}-{line_number}"
+            for table in tables
+            for line_number, _cells in table["rows"][2:]
+        ], []
+
+    list_items = []
+    for index in range(body_start, section_end):
+        if index in code_lines:
+            continue
+        if re.match(r"^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])(?:[ \t]+|$)", lines[index]):
+            list_items.append(index)
+    if list_items:
+        sources = []
+        for item_index, start in enumerate(list_items):
+            following = list_items[item_index + 1] if item_index + 1 < len(list_items) else section_end
+            end = start
+            for index in range(start + 1, following):
+                if (index in code_lines or index in table_lines or not lines[index].strip()
+                        or MARKDOWN_HEADING.match(lines[index])):
+                    break
+                end = index
+            sources.append(f"README.md:{start + 1}-{end + 1}")
+        return sources, []
+
+    sources = []
+    paragraph_start = None
+    paragraph_end = None
+    for index in range(body_start, section_end):
+        line = lines[index]
+        structural = (
+            index in code_lines
+            or index in table_lines
+            or not line.strip()
+            or MARKDOWN_HEADING.match(line)
+        )
+        if structural:
+            if paragraph_start is not None:
+                sources.append(f"README.md:{paragraph_start + 1}-{paragraph_end + 1}")
+                paragraph_start = paragraph_end = None
+            continue
+        if paragraph_start is None:
+            paragraph_start = index
+        paragraph_end = index
+    if paragraph_start is not None:
+        sources.append(f"README.md:{paragraph_start + 1}-{paragraph_end + 1}")
+    return sources, []
+
+
+def _usage_line_range(value):
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"([1-9][0-9]*)-([1-9][0-9]*)", value)
+    if match is None:
+        return None
+    try:
+        start_line, end_line = (int(part) for part in match.groups())
+    except ValueError:
+        return None
+    if start_line < 1 or start_line > end_line:
+        return None
+    return start_line, end_line
+
+
+def _direct_code_files(data, feature_ids, repository, tracked_files):
+    skip_paths = read_skip_paths(repository, tracked_files)
+    code_files = set()
+    for feature_id in feature_ids:
+        feature_data = data["features"].get(feature_id)
+        if feature_data is None:
+            continue
+        for paths in feature_data["files"].values():
+            code_files.update(
+                path for path in paths
+                if file_category_with_skip(repository, path, skip_paths) == "code"
+            )
+    return code_files
+
+
+def _validate_usage_coverage(coverage, data, repository, feature_ids, tracked_files):
+    label = "usage-coverage"
+    problems = _field_errors(coverage, {"sources", "files", "unmeasured"}, label)
+    if not isinstance(coverage, dict):
+        return problems
+
+    expected_sources, source_problems = _usage_source_ranges(repository)
+    problems.extend(source_problems)
+    sources = coverage.get("sources")
+    if not isinstance(sources, list):
+        problems.append(f"{label}.sources 必须是数组")
+        sources = []
+    if len(sources) < len(expected_sources):
+        problems.append(
+            f"{label}.sources 缺少 README.md「实际使用」来源：应有 {len(expected_sources)} 条，实有 {len(sources)} 条"
+        )
+    elif len(sources) > len(expected_sources):
+        problems.append(
+            f"{label}.sources 多出 README.md「实际使用」来源：应有 {len(expected_sources)} 条，实有 {len(sources)} 条"
+        )
+
+    any_scenario_ran = False
+    for index, source in enumerate(sources):
+        source_label = f"{label}.sources[{index}]"
+        item_problems = _field_errors(
+            source, {"source", "scenarios", "why_none"}, source_label,
+        )
+        problems.extend(item_problems)
+        if item_problems or not isinstance(source, dict):
+            continue
+        source_value = source.get("source")
+        if not isinstance(source_value, str):
+            problems.append(f"{source_label}.source 必须是字符串")
+        elif index >= len(expected_sources):
+            problems.append(f"{source_label}.source 没有对应的 README.md 来源：{source_value}")
+        elif source_value != expected_sources[index]:
+            problems.append(
+                f"{source_label}.source 必须恰好对应 {expected_sources[index]}，实际为 {source_value}"
+            )
+
+        scenarios = source.get("scenarios")
+        if not isinstance(scenarios, list):
+            problems.append(f"{source_label}.scenarios 必须是数组")
+            scenarios = []
+        why_none = source.get("why_none")
+        if not isinstance(why_none, str):
+            problems.append(f"{source_label}.why_none 必须是字符串")
+        elif not scenarios and not why_none.strip():
+            problems.append(f"{source_label} 的 scenarios 为空时 why_none 必须说明原因")
+        elif scenarios and why_none != "":
+            problems.append(f"{source_label} 的 scenarios 非空时 why_none 必须为空字符串")
+
+        for scenario_index, scenario in enumerate(scenarios):
+            scenario_label = f"{source_label}.scenarios[{scenario_index}]"
+            scenario_problems = _field_errors(
+                scenario, {"command", "ran", "why_not"}, scenario_label,
+            )
+            problems.extend(scenario_problems)
+            if scenario_problems or not isinstance(scenario, dict):
+                continue
+            if not _nonempty(scenario.get("command")):
+                problems.append(f"{scenario_label}.command 必须是非空字符串")
+            ran = scenario.get("ran")
+            why_not = scenario.get("why_not")
+            if type(ran) is not bool:
+                problems.append(f"{scenario_label}.ran 必须是布尔值")
+            elif ran:
+                any_scenario_ran = True
+                if why_not != "":
+                    problems.append(f"{scenario_label}.ran 为 true 时 why_not 必须为空字符串")
+            elif not _nonempty(why_not):
+                problems.append(f"{scenario_label}.ran 为 false 时 why_not 必须说明原因")
+
+    code_files = _direct_code_files(data, feature_ids, repository, tracked_files)
+    files = coverage.get("files")
+    if not isinstance(files, dict):
+        problems.append(f"{label}.files 必须是对象")
+        files = {}
+    if not any_scenario_ran and files:
+        # Without a successful run there is no observation that can establish missed lines.
+        problems.append(f"没有 ran 为 true 的场景时 files 必须是空对象")
+
+    for path, file_entry in files.items():
+        file_label = f"{label}.files[{path}]"
+        if path not in code_files:
+            problems.append(f"{file_label} 不属于本次审查范围内的直属代码文件")
+        entry_problems = _field_errors(file_entry, {"missed"}, file_label)
+        problems.extend(entry_problems)
+        if entry_problems or not isinstance(file_entry, dict):
+            continue
+        missed = file_entry.get("missed")
+        if not isinstance(missed, list):
+            problems.append(f"{file_label}.missed 必须是数组")
+            continue
+        file_lines = (
+            _read_file_lines(Path(repository) / path) if path in code_files else None
+        )
+        previous_end = None
+        for range_index, line_range in enumerate(missed):
+            range_label = f"{file_label}.missed[{range_index}]"
+            parsed = _usage_line_range(line_range)
+            if parsed is None:
+                problems.append(f"{range_label} 必须写成有效的 起始行-结束行：{line_range!r}")
+                continue
+            start_line, end_line = parsed
+            if file_lines is None or end_line > len(file_lines):
+                count = 0 if file_lines is None else len(file_lines)
+                problems.append(f"{range_label} 超出文件范围：{path}:{line_range}（共 {count} 行）")
+                continue
+            if previous_end is not None and start_line <= previous_end + 1:
+                problems.append(
+                    f"{range_label} 必须按行序排列，且相邻的 missed 行应合并成一个范围"
+                )
+            previous_end = end_line
+
+    unmeasured = coverage.get("unmeasured")
+    if not isinstance(unmeasured, list):
+        problems.append(f"{label}.unmeasured 必须是数组")
+        unmeasured = []
+    unmeasured_paths = []
+    for index, item in enumerate(unmeasured):
+        item_label = f"{label}.unmeasured[{index}]"
+        item_problems = _field_errors(item, {"path", "why"}, item_label)
+        problems.extend(item_problems)
+        if item_problems or not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or not path:
+            problems.append(f"{item_label}.path 必须是非空字符串")
+            continue
+        if path not in code_files:
+            problems.append(f"{item_label}.path 不属于本次审查范围内的直属代码文件：{path}")
+        if not _nonempty(item.get("why")):
+            problems.append(f"{item_label}.why 必须是非空字符串")
+        unmeasured_paths.append(path)
+    for path in sorted(set(unmeasured_paths)):
+        if unmeasured_paths.count(path) > 1:
+            problems.append(f"{label}.unmeasured 重复文件：{path}")
+
+    measured_paths = set(files)
+    unmeasured_set = set(unmeasured_paths)
+    for path in sorted(code_files):
+        count = (path in measured_paths) + (path in unmeasured_set)
+        if count != 1:
+            problems.append(
+                f"直属代码文件必须恰好出现在 files 或 unmeasured：{path}"
+            )
+    return problems
+
+
 def _has_external_evidence_location(evidence, verdict_range, label, repository,
                                     tracked_files, lines_by_file, location_patterns):
     own_path, own_start, own_end = verdict_range
@@ -648,6 +932,92 @@ def _has_external_evidence_location(evidence, verdict_range, label, repository,
             if not overlaps_own_lines:
                 return True
     return False
+
+
+def _validate_usage_candidates(items, label, feature_id, direct_code_files,
+                               usage_files, finding_ranges, feature_targets,
+                               repository, tracked_files, lines_by_file,
+                               location_patterns):
+    if not isinstance(items, list):
+        return [f"{label}.usage_candidates 必须是数组"]
+
+    problems = []
+    expected_ranges = set()
+    for path in direct_code_files:
+        entry = usage_files.get(path)
+        missed = entry.get("missed") if isinstance(entry, dict) else None
+        if not isinstance(missed, list):
+            continue
+        for line_range in missed:
+            if _usage_line_range(line_range) is not None:
+                expected_ranges.add(f"{path}:{line_range}")
+
+    seen_ranges = {}
+    for index, item in enumerate(items):
+        item_label = f"{label}.usage_candidates[{index}]"
+        item_problems = _field_errors(
+            item, {"lines", "verdict", "evidence"}, item_label,
+        )
+        problems.extend(item_problems)
+        if item_problems or not isinstance(item, dict):
+            continue
+        lines = item.get("lines")
+        if not isinstance(lines, str) or not _nonempty(lines):
+            problems.append(f"{item_label}.lines 必须是非空字符串")
+            continue
+        seen_ranges[lines] = seen_ranges.get(lines, 0) + 1
+        if lines not in expected_ranges:
+            problems.append(
+                f"{label}.usage_candidates 多出不在 usage-coverage missed 里的候选：{lines}"
+            )
+
+        verdict = item.get("verdict")
+        if not isinstance(verdict, str) or verdict not in {"用到", "删"}:
+            problems.append(f"{item_label}.verdict 只能是 用到 或 删")
+        candidate_range = _parse_line_range(lines, allow_single_line=False)
+        evidence = item.get("evidence")
+        if not isinstance(evidence, str):
+            problems.append(f"{item_label}.evidence 必须是字符串")
+        elif verdict == "用到":
+            if (not _nonempty(evidence) or candidate_range is None
+                    or not _has_external_evidence_location(
+                        evidence,
+                        candidate_range,
+                        item_label,
+                        repository,
+                        tracked_files,
+                        lines_by_file,
+                        location_patterns,
+                    )):
+                problems.append(
+                    f"{item_label}.evidence 必须引至少一处有效位置（本候选行范围以外）：{lines}"
+                )
+        elif verdict == "删" and candidate_range is not None:
+            path, start_line, end_line = candidate_range
+            overlaps_finding = any(
+                path == finding_range[0]
+                and start_line <= finding_range[2]
+                and finding_range[1] <= end_line
+                for _finding, finding_range in finding_ranges
+            )
+            feature_reduction = any(
+                finding.get("kind") in {"删除", "合并"}
+                for finding in feature_targets
+            )
+            if not overlaps_finding and not feature_reduction:
+                problems.append(
+                    f"{item_label} 判删须有重叠发现或功能级删除、合并发现：{lines}"
+                )
+
+    for lines in sorted(expected_ranges):
+        count = seen_ranges.get(lines, 0)
+        if count == 0:
+            problems.append(f"{label}.usage_candidates 缺少实际使用候选：{lines}")
+        elif count > 1:
+            problems.append(
+                f"{label}.usage_candidates 的候选必须恰有一条：{lines}（实际 {count} 条）"
+            )
+    return problems
 
 
 def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
@@ -1108,7 +1478,8 @@ def _cost_mentions_duplicate_location(cost, duplicate_ranges, label,
     return False
 
 
-def validate_reports(data, repository, expected_features, report_paths, tracked_files):
+def validate_reports(data, repository, expected_features, report_paths, tracked_files,
+                     usage_coverage):
     """Return all structural, coverage, decision, and rule-quote problems."""
     problems = []
     counts = {role: {} for role in ROLES}
@@ -1120,6 +1491,13 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     duplicate_windows = None
     pending_recheck_verdicts = []
     evidence_lines_by_file = {}
+    usage_files = (
+        usage_coverage.get("files", {})
+        if isinstance(usage_coverage, dict)
+        and isinstance(usage_coverage.get("files"), dict)
+        else {}
+    )
+    usage_location_patterns = _tracked_location_patterns(tracked_files)
     skip_paths = read_skip_paths(repository, tracked_files)
     tracked_todo_files = {
         path for path in tracked_files
@@ -1285,6 +1663,25 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                 elif target == feature_id:
                     feature_targets.append(finding)
 
+            if role == "剃刀" and feature_data is not None:
+                direct_code_files = {
+                    path for path in direct_files
+                    if file_category_with_skip(repository, path, skip_paths) == "code"
+                }
+                problems.extend(_validate_usage_candidates(
+                    review.get("usage_candidates"),
+                    feature_label,
+                    feature_id,
+                    direct_code_files,
+                    usage_files,
+                    finding_ranges,
+                    feature_targets,
+                    repository,
+                    tracked_files,
+                    evidence_lines_by_file,
+                    usage_location_patterns,
+                ))
+
             # 复审发现目标只能是本功能 id 或 keep 覆盖文件，写不出 TODO 行发现。
             if role in ("主审", "剃刀") and feature_data is not None:
                 problems.extend(_validate_feature_todo_reduction(
@@ -1401,6 +1798,22 @@ def main(argv):
         print(str(error), file=sys.stderr)
         return 2
 
+    usage_coverage_path = Path(options.usage_coverage)
+    if not usage_coverage_path.is_file():
+        print(
+            "--usage-coverage 必须指向已有文件：" + str(usage_coverage_path),
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        usage_coverage = json.loads(
+            usage_coverage_path.read_text(encoding="utf-8"),
+            object_pairs_hook=object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
+        print(f"无法读取 usage-coverage {usage_coverage_path}：{error}")
+        return 1
+
     report_paths = [Path(path) for path in options.reports]
     missing = [path for path in report_paths if not path.is_file()]
     if missing:
@@ -1421,9 +1834,13 @@ def main(argv):
         print(str(error))
         return 1
 
-    problems = validate_reports(
-        data, repository, expected, report_paths, set(tracked_paths(repository))
+    tracked_files = set(tracked_paths(repository))
+    problems = _validate_usage_coverage(
+        usage_coverage, data, repository, expected, tracked_files,
     )
+    problems.extend(validate_reports(
+        data, repository, expected, report_paths, tracked_files, usage_coverage,
+    ))
     if problems:
         print("\n".join(problems))
         return 1
