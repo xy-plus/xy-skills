@@ -223,6 +223,7 @@ class CheckReportsTest(unittest.TestCase):
         self.main_path = self.directory / "main.json"
         self.razor_path = self.directory / "razor.json"
         self.recheck_path = self.directory / "recheck.json"
+        self.carry_over_path = self.directory / "previous-razor.json"
         self.usage_coverage_path = self.directory / "usage-coverage.json"
         self.recheck_paths = []
         self.add_tracked_file(
@@ -424,12 +425,14 @@ class CheckReportsTest(unittest.TestCase):
         self.write_reports(main, razor)
 
     def run_check(self, scope=("全部",), reports=None, review="全部",
-                  usage_coverage=True):
+                  usage_coverage=True, carry_over=("无",)):
         paths = self.reports_for_check() if reports is None else reports
         arguments = ["python3", "-B", str(COMMAND), "--repo", str(self.repository),
                      "--scope", *scope]
         if review is not None:
             arguments.extend(("--review", review))
+        if carry_over is not None:
+            arguments.extend(("--carry-over", *carry_over))
         if usage_coverage:
             coverage_path = self.usage_coverage_path
             if (scope != ("全部",) or review != "全部") and review in {"变过的", "全部"}:
@@ -485,8 +488,11 @@ class CheckReportsTest(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
 
-    def run_check_and_assert(self, message, scope=("全部",), reports=None, review="全部"):
-        result = self.run_check(scope=scope, reports=reports, review=review)
+    def run_check_and_assert(self, message, scope=("全部",), reports=None, review="全部",
+                             carry_over=("无",)):
+        result = self.run_check(
+            scope=scope, reports=reports, review=review, carry_over=carry_over,
+        )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn(message, result.stdout)
         return result
@@ -494,6 +500,139 @@ class CheckReportsTest(unittest.TestCase):
     def test_accepts_complete_reports_for_each_role(self):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_carry_over_argument_is_required(self):
+        result = self.run_check(carry_over=None)
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--carry-over", result.stderr)
+
+    def prepare_carried_finding(self):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        alpha_main = main["features"][1]
+        alpha_razor = razor["features"][1]
+        alpha_razor["keep"] = []
+        razor_finding = finding("删除", False, "直接做")
+        razor_finding["target"] = "alpha"
+        alpha_razor["findings"] = [razor_finding]
+        current_finding = finding("重构", True, "问你")
+        current_finding["target"] = "alpha/main.py:1"
+        alpha_main["findings"] = [current_finding]
+        self.write_reports(main, razor)
+
+        previous = report("剃刀", self.repository, ("alpha",))
+        previous["features"][0]["findings"] = [finding()]
+        self.carry_over_path.write_text(
+            json.dumps(previous, ensure_ascii=False), encoding="utf-8",
+        )
+        carried = {
+            "old": f"{self.carry_over_path}#alpha#1",
+            "verdict": "仍成立",
+            "target": "alpha/main.py:1",
+            "evidence": "核对了 README.md:5 的实际使用记录。",
+        }
+        review = recheck_report(self.repository, ["alpha"], keep_lines=[])
+        recheck_finding = finding("重构", True, "问你")
+        recheck_finding["target"] = "alpha/main.py:1"
+        review["features"][0]["findings"] = [recheck_finding]
+        review["features"][0]["carried"] = [carried]
+        self.write_recheck_reports([*self.read_recheck_reports(), review])
+        return carried
+
+    def test_carried_finding_adds_its_feature_to_required_rechecks(self):
+        self.prepare_carried_finding()
+
+        result = self.run_check(carry_over=(str(self.carry_over_path),))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_carry_over_uses_the_explicit_scope_even_when_plan_skips_a_feature(self):
+        main = report("主审", self.repository, ())
+        razor = report("剃刀", self.repository, ())
+        self.write_reports(main, razor)
+        data = check_reports_module.build_map(self.repository)
+        values, _ = check_reports_module.feature_values(self.repository)
+        fingerprints = check_reports_module.feature_fingerprints(
+            self.repository, data, values,
+        )
+        (self.repository / "repo-map" / "approved.json").write_text(
+            json.dumps({"alpha": fingerprints["alpha"]}), encoding="utf-8",
+        )
+
+        previous = report("剃刀", self.repository, ("alpha",))
+        previous["features"][0]["findings"] = [finding()]
+        self.carry_over_path.write_text(
+            json.dumps(previous, ensure_ascii=False), encoding="utf-8",
+        )
+        carried = {
+            "old": f"{self.carry_over_path}#alpha#1",
+            "verdict": "仍成立",
+            "target": "alpha/main.py:1",
+            "evidence": "核对了 README.md:5 的实际使用记录。",
+        }
+        recheck = recheck_report(self.repository, ["alpha"], keep_lines=[])
+        recheck["features"][0]["findings"] = [finding()]
+        recheck["features"][0]["carried"] = [carried]
+        self.write_recheck_reports([recheck])
+
+        result = self.run_check(
+            scope=("alpha",), review="变过的",
+            carry_over=(str(self.carry_over_path),),
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_carry_over_rejects_missing_previous_findings(self):
+        self.prepare_carried_finding()
+        review = self.read_recheck_for_feature("alpha")
+        review["features"][0]["carried"] = []
+        self.write_recheck_reports([*self.read_recheck_reports()[:-1], review])
+
+        self.run_check_and_assert(
+            "carried 缺少上一轮发现", carry_over=(str(self.carry_over_path),),
+        )
+
+    def test_carry_over_rejects_duplicate_previous_findings(self):
+        carried = self.prepare_carried_finding()
+        review = self.read_recheck_for_feature("alpha")
+        review["features"][0]["carried"].append(dict(carried))
+        self.write_recheck_reports([*self.read_recheck_reports()[:-1], review])
+
+        self.run_check_and_assert(
+            "carried 重复上一轮发现", carry_over=(str(self.carry_over_path),),
+        )
+
+    def test_carry_over_rejects_an_old_reference_that_does_not_match(self):
+        carried = self.prepare_carried_finding()
+        review = self.read_recheck_for_feature("alpha")
+        review["features"][0]["carried"][0]["old"] = (
+            f"{self.carry_over_path}#alpha#2"
+        )
+        self.write_recheck_reports([*self.read_recheck_reports()[:-1], review])
+
+        self.run_check_and_assert(
+            "对不上上一轮发现", carry_over=(str(self.carry_over_path),),
+        )
+
+    def test_still_valid_carried_finding_needs_a_matching_current_finding(self):
+        carried = self.prepare_carried_finding()
+        carried["target"] = "beta/main.py:1"
+        review = self.read_recheck_for_feature("alpha")
+        review["features"][0]["carried"] = [carried]
+        self.write_recheck_reports([*self.read_recheck_reports()[:-1], review])
+
+        self.run_check_and_assert(
+            "carried[0].target 必须对应同一份复审报告中的发现",
+            carry_over=(str(self.carry_over_path),),
+        )
+
+    def test_no_carry_over_rejects_carried_fields(self):
+        review = self.read_recheck_for_feature("alpha")
+        review["features"][0]["carried"] = []
+        self.write_recheck_reports([*self.read_recheck_reports()[:-1], review])
+
+        self.run_check_and_assert("有多余字段 carried")
 
     def set_measured_usage(self, missed=("1-1",)):
         self.usage_coverage = {
@@ -1369,6 +1508,7 @@ class CheckReportsTest(unittest.TestCase):
                 self.reports_for_check(),
                 tracked_files,
                 self.usage_coverage,
+                {},
             )
 
         self.assertTrue(any("跳过名单" in problem for problem in problems), problems)
@@ -1753,6 +1893,7 @@ class CheckReportsTest(unittest.TestCase):
                 self.reports_for_check(),
                 tracked_files,
                 self.usage_coverage,
+                {},
             )
 
         scan.assert_not_called()

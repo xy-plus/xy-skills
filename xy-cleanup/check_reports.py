@@ -51,6 +51,7 @@ TODO_ITEM_KEYS = {"lines", "needed", "smaller", "why_holds"}
 KEEP_ITEM_KEYS = {"lines", "requirement", "achieved", "cost"}
 REWRITE_KEYS = {"lines", "text"}
 RECHECK_VERDICT_KEYS = {"lines", "attempt", "evidence", "verdict"}
+CARRIED_KEYS = {"old", "verdict", "target", "evidence"}
 ROLES = {"主审", "剃刀"}
 REPORT_ROLES = ROLES | {"剃刀复审"}
 KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "孤儿", "其他"}
@@ -69,6 +70,10 @@ def parser():
         help="按认可记录筛选变过的功能，或重审全部功能",
     )
     result.add_argument("--usage-coverage", required=True, help="usage-coverage.json 路径")
+    result.add_argument(
+        "--carry-over", required=True, nargs="+",
+        help="上一轮未实施且未由用户决定的报告路径，或单独写 无",
+    )
     result.add_argument("--reports", required=True, nargs="+", help="JSON 审查报告路径")
     return result
 
@@ -1100,6 +1105,102 @@ def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
     return problems
 
 
+def _read_carry_over_findings(report_paths, expected_features):
+    findings_by_feature = {}
+    problems = []
+    seen_references = set()
+    for report_path in report_paths:
+        try:
+            document = json.loads(
+                Path(report_path).read_text(encoding="utf-8"),
+                object_pairs_hook=object_without_duplicate_keys,
+            )
+        except (OSError, UnicodeError, ValueError) as error:
+            problems.append(f"无法读取 carry-over 报告 {report_path}：{error}")
+            continue
+        label = f"carry-over 报告 {report_path}"
+        if not isinstance(document, dict) or not isinstance(document.get("features"), list):
+            problems.append(f"{label} 必须是含 features 数组的对象")
+            continue
+        for feature_index, review in enumerate(document["features"]):
+            feature_label = f"{label} 的 features[{feature_index}]"
+            if not isinstance(review, dict):
+                problems.append(f"{feature_label}必须是对象")
+                continue
+            feature_id = review.get("feature")
+            if feature_id not in expected_features:
+                continue
+            findings = review.get("findings")
+            if not isinstance(findings, list):
+                problems.append(f"{feature_label}.findings 必须是数组")
+                continue
+            for finding_index, finding in enumerate(findings, start=1):
+                if not isinstance(finding, dict) or not _nonempty(finding.get("target")):
+                    problems.append(
+                        f"{feature_label}.findings[{finding_index - 1}] 必须有非空 target"
+                    )
+                    continue
+                reference = f"{report_path}#{feature_id}#{finding_index}"
+                if reference in seen_references:
+                    problems.append(f"carry-over 报告重复列出旧发现：{reference}")
+                    continue
+                seen_references.add(reference)
+                findings_by_feature.setdefault(feature_id, []).append({
+                    "old": reference,
+                    "target": finding["target"],
+                })
+    return findings_by_feature, problems
+
+
+def _validate_carried(items, label, previous_findings, recheck_findings):
+    if not isinstance(items, list):
+        return [f"{label}.carried 必须是数组"]
+
+    problems = []
+    previous_by_reference = {item["old"]: item for item in previous_findings}
+    counts = {}
+    current_targets = {
+        finding.get("target")
+        for finding in recheck_findings
+        if isinstance(finding, dict) and isinstance(finding.get("target"), str)
+    }
+    for index, item in enumerate(items):
+        item_label = f"{label}.carried[{index}]"
+        item_problems = _field_errors(item, CARRIED_KEYS, item_label)
+        problems.extend(item_problems)
+        if item_problems or not isinstance(item, dict):
+            continue
+        old = item["old"]
+        if not isinstance(old, str) or old not in previous_by_reference:
+            problems.append(f"{item_label}.old 对不上上一轮发现：{old!r}")
+        else:
+            counts[old] = counts.get(old, 0) + 1
+            if counts[old] > 1:
+                problems.append(f"{label}.carried 重复上一轮发现：{old}")
+
+        verdict = item["verdict"]
+        if not isinstance(verdict, str) or verdict not in {"仍成立", "不成立"}:
+            problems.append(f"{item_label}.verdict 只能是 仍成立 或 不成立")
+        target = item["target"]
+        if verdict == "仍成立":
+            if not _nonempty(target):
+                problems.append(f"{item_label}.target 在 verdict 为 仍成立 时必须非空")
+            elif target not in current_targets:
+                problems.append(
+                    f"{item_label}.target 必须对应同一份复审报告中的发现：{target}"
+                )
+        elif verdict == "不成立" and target != "":
+            problems.append(f"{item_label}.target 在 verdict 为 不成立 时必须是空字符串")
+        if not _nonempty(item["evidence"]):
+            problems.append(f"{item_label}.evidence 必须是非空字符串")
+
+    for reference in previous_by_reference:
+        count = counts.get(reference, 0)
+        if count == 0:
+            problems.append(f"{label}.carried 缺少上一轮发现：{reference}")
+    return problems
+
+
 def _read_file_lines(file_path):
     """Read lines using the same byte and symlink rules as file:line targets."""
     try:
@@ -1474,12 +1575,12 @@ def _cost_mentions_duplicate_location(cost, duplicate_ranges, label,
 
 
 def validate_reports(data, repository, expected_features, report_paths, tracked_files,
-                     usage_coverage):
+                     usage_coverage, carry_over_findings):
     """Return all structural, coverage, decision, and rule-quote problems."""
     problems = []
     counts = {role: {} for role in ROLES}
     recheck_counts = {}
-    required_rechecks = set()
+    required_rechecks = set(carry_over_findings)
     recheck_report_seen = False
     razor_keep_lines = {}
     razor_keep_reasons = {}
@@ -1531,10 +1632,13 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             if not isinstance(review, dict):
                 problems.append(f"{feature_label}必须是对象")
                 continue
+            feature_id = review.get("feature")
             role_keys = FEATURE_KEYS.get(role) if isinstance(role, str) else None
             if role_keys is not None:
+                if (role == "剃刀复审" and isinstance(feature_id, str)
+                        and feature_id in carry_over_findings):
+                    role_keys = role_keys | {"carried"}
                 problems.extend(_field_errors(review, role_keys, feature_label))
-            feature_id = review.get("feature")
             if not isinstance(feature_id, str) or feature_id not in data["features"]:
                 problems.append(f"{feature_label}.feature 不在功能清单中：{feature_id!r}")
             elif isinstance(role, str) and role in ROLES and feature_id not in expected_features:
@@ -1706,6 +1810,13 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     finding_ranges,
                     feature_targets,
                 ))
+                if feature_id in carry_over_findings and "carried" in review:
+                    problems.extend(_validate_carried(
+                        review["carried"],
+                        feature_label,
+                        carry_over_findings[feature_id],
+                        findings,
+                    ))
 
             if role == "剃刀" and feature_data is not None:
                 keep_items = review.get("keep")
@@ -1776,6 +1887,11 @@ def main(argv):
     except SystemExit as error:
         return int(error.code)
 
+    if "无" in options.carry_over and options.carry_over != ["无"]:
+        print("--carry-over 使用 无 时不能再列报告路径", file=sys.stderr)
+        return 2
+    carry_over_paths = [] if options.carry_over == ["无"] else options.carry_over
+
     try:
         repository = Path(options.repo)
         data = build_map(repository)
@@ -1814,6 +1930,14 @@ def main(argv):
     if missing:
         print("--reports 必须全部指向已有文件：" + ", ".join(map(str, missing)), file=sys.stderr)
         return 2
+    missing_carry_over = [Path(path) for path in carry_over_paths if not Path(path).is_file()]
+    if missing_carry_over:
+        print(
+            "--carry-over 必须全部指向已有文件："
+            + ", ".join(map(str, missing_carry_over)),
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         records = read_approvals(repository, repository / APPROVED_RELATIVE_PATH)
@@ -1825,17 +1949,28 @@ def main(argv):
                 data, fingerprints, records, scope, options.review
             )
         ]
+        scope_features = [
+            feature_id
+            for feature_id, _reason in review_features(
+                data, fingerprints, records, scope, "全部",
+            )
+        ]
     except (OSError, UnicodeError, ValueError) as error:
         print(str(error))
         return 1
 
     tracked_files = set(tracked_paths(repository))
+    carry_over_findings, carry_over_problems = _read_carry_over_findings(
+        carry_over_paths, scope_features,
+    )
     problems = _validate_usage_coverage(
         usage_coverage, data, repository, expected, tracked_files,
     )
     problems.extend(validate_reports(
         data, repository, expected, report_paths, tracked_files, usage_coverage,
+        carry_over_findings,
     ))
+    problems.extend(carry_over_problems)
     if problems:
         print("\n".join(problems))
         return 1
