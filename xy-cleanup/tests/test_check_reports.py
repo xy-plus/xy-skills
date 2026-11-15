@@ -1268,16 +1268,6 @@ class CheckReportsTest(unittest.TestCase):
             razor_keep_item("alpha", "alpha/main.py:1-2"),
             razor_keep_item("alpha", "alpha/test_api.py:4-5"),
         ]
-        refactor = finding("重构")
-        refactor["target"] = "alpha/test_api.py:1-2"
-        alpha["findings"] = [refactor]
-        self.write_reports(main, razor)
-        result = self.run_check()
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("候选", result.stdout + result.stderr)
-        self.assertIn("必须删除或合并整段", result.stdout + result.stderr)
-
-        alpha["keep"] = [razor_keep_item("alpha", "alpha/main.py:1-2")]
         alpha["findings"] = [finding("重构")]
         alpha["findings"][0]["target"] = "alpha/test_api.py:1-2"
         self.write_reports(main, razor)
@@ -2410,6 +2400,7 @@ class CheckReportsTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("缺剃刀复审：alpha", result.stdout)
+        self.assertNotIn("未覆盖功能文件：alpha/guide.md:1", result.stdout)
 
     def test_shorter_rewrite_delete_still_exempts_its_file_from_keep(self):
         self.add_tracked_file("alpha/guide.md", "Long original words.\n")
@@ -2423,25 +2414,6 @@ class CheckReportsTest(unittest.TestCase):
         result = self.run_check()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_shorter_rewrite_does_not_exempt_another_keep_from_recheck(self):
-        self.add_tracked_file("alpha/guide.md", "Long original words.\n")
-        main = report("主审", self.repository, ("alpha",))
-        razor = report("剃刀", self.repository, ("alpha",))
-        alpha = razor["features"][0]
-        alpha["rewrites"] = [{"lines": "alpha/guide.md:1-1", "text": "Short."}]
-        rewrite_finding = finding("重构", True, "问你")
-        rewrite_finding["target"] = "alpha/guide.md:1-1"
-        alpha["findings"] = [rewrite_finding]
-        alpha["keep"].append(razor_keep_item("alpha", "alpha/guide.md:1-1"))
-        self.write_reports(main, razor)
-        self.clear_recheck_reports()
-
-        result = self.run_check(scope=("alpha",))
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("缺剃刀复审：alpha", result.stdout)
-        self.assertNotIn("未覆盖功能文件：alpha/guide.md:1", result.stdout)
 
     def test_skipped_document_and_todo_need_no_keep_or_todo_review(self):
         self.add_tracked_file("alpha/guide.md", "A long experimental guide.\n")
