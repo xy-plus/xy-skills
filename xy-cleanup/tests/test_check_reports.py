@@ -1466,7 +1466,7 @@ class CheckReportsTest(unittest.TestCase):
                     kind, target = candidate
                     proposal = finding(
                         kind, changes_behavior=False,
-                        decision="直接做" if kind in {"删除", "合并"} else "问你",
+                        decision="直接做",
                     )
                     proposal["target"] = target
                     alpha["findings"] = [proposal]
@@ -1982,7 +1982,7 @@ class CheckReportsTest(unittest.TestCase):
             finding("删除", False, "直接做"),
             finding("合并", False, "直接做"),
             finding("删除", True, "问你"),
-            finding("重构", False, "问你"),
+            finding("重构", False, "直接做"),
         ]
         for item in valid:
             with self.subTest(kind=item["kind"], behavior=item["changes_behavior"]):
@@ -2002,7 +2002,7 @@ class CheckReportsTest(unittest.TestCase):
         invalid = [
             finding("删除", False, "问你"),
             finding("删除", True, "直接做"),
-            finding("重构", False, "直接做"),
+            finding("重构", False, "问你"),
         ]
         for item in invalid:
             with self.subTest(kind=item["kind"], behavior=item["changes_behavior"],
@@ -2715,13 +2715,17 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("kind", result.stdout)
 
-    def test_direct_decision_is_only_for_nonbehavioral_delete_or_merge(self):
+    def test_direct_decision_follows_behavior_and_change_kind(self):
         valid = [
             finding("删除", False, "直接做"),
             finding("合并", False, "直接做"),
             finding("删除", True, "问你"),
-            finding("重构", False, "问你"),
+            finding("重构", False, "直接做"),
+            finding("改名", False, "直接做"),
+            finding("挪位置", False, "直接做"),
+            finding("拆分", False, "直接做"),
             finding("改清单", True, "问你"),
+            finding("改清单", False, "问你"),
         ]
         for item in valid:
             with self.subTest(kind=item["kind"], changes=item["changes_behavior"], decision=item["decision"]):
@@ -2734,7 +2738,7 @@ class CheckReportsTest(unittest.TestCase):
         invalid = [
             finding("删除", False, "问你"),
             finding("删除", True, "直接做"),
-            finding("重构", False, "直接做"),
+            finding("重构", False, "问你"),
             finding("改清单", False, "直接做"),
         ]
         for item in invalid:
@@ -2743,6 +2747,32 @@ class CheckReportsTest(unittest.TestCase):
                 main["features"][0]["findings"] = [item]
                 self.write_reports(main, report("剃刀", self.repository))
                 self.assertEqual(self.run_check().returncode, 1)
+
+    def test_nonbehavioral_internal_changes_are_direct_unless_user_decision_is_required(self):
+        self.add_tracked_file("alpha/TODO.md", "保留这条 TODO。\n")
+        cases = [
+            ("重构", "alpha/main.py:1", "直接做", False),
+            ("改名", "alpha/main.py:1", "直接做", False),
+            ("挪位置", "alpha/main.py:1", "直接做", False),
+            ("拆分", "alpha/main.py:1", "直接做", False),
+            ("重构", "alpha/main.py:1", "问你", True),
+            ("删除", "alpha/TODO.md:1-1", "问你", False),
+            ("孤儿", "alpha/main.py:1", "问你", False),
+            ("改清单", "alpha/main.py:1", "问你", False),
+        ]
+        for kind, target, decision, changes_behavior in cases:
+            with self.subTest(kind=kind, target=target, changes_behavior=changes_behavior):
+                main, razor = report("主审", self.repository), report("剃刀", self.repository)
+                item = finding(kind, changes_behavior, decision)
+                item["target"] = target
+                main["features"][1]["findings"] = [item]
+                main["features"][1]["todo_items"] = [todo_item("alpha/TODO.md:1-1")]
+                razor["features"][1]["todo_items"] = [todo_item("alpha/TODO.md:1-1")]
+                self.write_reports(main, razor)
+
+                result = self.run_check()
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_accepts_an_orphan_finding_that_asks_the_user(self):
         main = report("主审", self.repository)

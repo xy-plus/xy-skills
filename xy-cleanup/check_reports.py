@@ -601,9 +601,10 @@ def _validate_finding(finding, label, tracked_todo_files,
                     f"{label}.decision 功能级删除或合并会影响直属 TODO，必须是 问你"
                 )
         else:
-            must_do_directly = kind in {"删除", "合并"} and not changes_behavior
+            # Behavior-preserving internal changes are authorized directly; public usage changes and listed exceptions remain user decisions.
+            must_do_directly = not changes_behavior and kind not in {"孤儿", "改清单"}
             if (decision == "直接做") != must_do_directly:
-                problems.append(f"{label}.decision 行为不变的删除或合并必须是 直接做；其余必须是 问你")
+                problems.append(f"{label}.decision 行为不变且非孤儿或改清单的改动必须是 直接做；其余必须是 问你")
 
     basis = finding["basis"]
     problems.extend(_field_errors(basis, BASIS_KEYS, f"{label}.basis"))
