@@ -1020,9 +1020,59 @@ def _validate_usage_candidates(items, label, feature_id, direct_code_files,
     return problems
 
 
-def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
-                               feature_targets, repository, tracked_files,
-                               lines_by_file, location_patterns):
+def _validate_orphan_nonstanding(lines, label, repository, usage_coverage,
+                                 skip_paths):
+    line_range = _parse_line_range(lines, allow_single_line=False)
+    if line_range is None:
+        return [f"{label} 孤儿 verdict.lines 必须是有效文件范围：{lines}"]
+    path, start_line, end_line = line_range
+    category = file_category_with_skip(repository, path, skip_paths)
+    if category in {"tests", "docs"}:
+        return []
+    if category != "code":
+        return [f"{label} 孤儿目标不是代码、测试或文档文件，不能判站不住：{path}"]
+
+    files = usage_coverage.get("files", {}) if isinstance(usage_coverage, dict) else {}
+    unmeasured = usage_coverage.get("unmeasured", []) if isinstance(usage_coverage, dict) else []
+    reason = next((
+        item.get("why") for item in unmeasured
+        if isinstance(item, dict) and item.get("path") == path
+    ), None) if isinstance(unmeasured, list) else None
+    if reason is not None:
+        return [
+            f"{label} 孤儿目标所在代码文件 {path} 在 usage-coverage.unmeasured 中，"
+            f"不能判站不住（{reason}）"
+        ]
+    if not isinstance(files, dict) or path not in files:
+        return [
+            f"{label} 孤儿目标所在代码文件未列入 usage-coverage.files，不能判站不住：{path}"
+        ]
+    entry = files[path]
+    missed = entry.get("missed") if isinstance(entry, dict) else None
+    if not isinstance(missed, list):
+        return [
+            f"{label} 孤儿目标所在代码文件缺少有效的 usage-coverage.files[{path}].missed"
+        ]
+    # README actual-use scenarios give executed lines practical value; unmeasured code cannot prove absence of use.
+    missed_ranges = [
+        parsed for item in missed
+        if (parsed := _usage_line_range(item)) is not None
+    ]
+    executed_lines = [
+        line for line in range(start_line, end_line + 1)
+        if not any(start <= line <= end for start, end in missed_ranges)
+    ]
+    return [
+        f"{label} 孤儿目标站不住的行必须全在 usage-coverage 的 missed 范围内；"
+        f"{path}:{line} 未落在 usage-coverage 的 missed 范围"
+        for line in executed_lines
+    ]
+
+
+def _validate_recheck_verdicts(verdicts, label, keep_lines, orphan_lines,
+                               finding_ranges, feature_targets, repository,
+                               tracked_files, lines_by_file, location_patterns,
+                               usage_coverage, skip_paths):
     if not isinstance(verdicts, list):
         return [f"{label}.verdicts 必须是数组"]
 
@@ -1038,7 +1088,9 @@ def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
 
         lines = verdict["lines"]
         if not isinstance(lines, str):
-            problems.append(f"{verdict_label}.lines 必须与首轮 keep 的 lines 完全相同的字符串")
+            problems.append(
+                f"{verdict_label}.lines 必须与首轮 keep 或孤儿目标的范围完全相同的字符串"
+            )
         else:
             verdict_counts[lines] = verdict_counts.get(lines, 0) + 1
         if not _nonempty(verdict["attempt"]):
@@ -1071,19 +1123,36 @@ def _validate_recheck_verdicts(verdicts, label, keep_lines, finding_ranges,
     keep_counts = {}
     for lines in keep_lines:
         keep_counts[lines] = keep_counts.get(lines, 0) + 1
-    for lines, expected_count in keep_counts.items():
+    orphan_counts = {}
+    for lines in orphan_lines:
+        orphan_counts[lines] = orphan_counts.get(lines, 0) + 1
+    for lines in keep_counts.keys() | orphan_counts.keys():
         actual_count = verdict_counts.get(lines, 0)
-        if actual_count < expected_count:
+        keep_count = keep_counts.get(lines, 0)
+        orphan_count = orphan_counts.get(lines, 0)
+        if actual_count < keep_count:
             problems.append(
-                f"{label}.verdicts 缺少 keep 的判定：{lines}（应有 {expected_count} 条，实有 {actual_count} 条）"
+                f"{label}.verdicts 缺少 keep 的判定：{lines}（应有 {keep_count} 条，实有 {actual_count} 条）"
             )
-        elif actual_count > expected_count:
+        if orphan_count:
+            if actual_count < keep_count + orphan_count:
+                problems.append(
+                    f"{label}.verdicts 缺少孤儿目标的判定：{lines}"
+                )
+            elif actual_count > keep_count + orphan_count:
+                problems.append(f"{label}.verdicts 重复判定孤儿目标：{lines}")
+        elif actual_count > keep_count:
             problems.append(f"{label}.verdicts 重复判定 keep：{lines}")
-    for lines in verdict_counts:
-        if lines not in keep_counts:
-            problems.append(f"{label}.verdicts 多出不在 keep 里的判定：{lines}")
+    for lines in verdict_counts.keys() - (keep_counts.keys() | orphan_counts.keys()):
+        problems.append(f"{label}.verdicts 多出不在 keep 或孤儿目标里的判定：{lines}")
 
     for lines, verdict_label in nonstanding:
+        if lines in orphan_counts:
+            # An orphan discovery is itself the finding; usage evidence, not overlap, decides deletion.
+            problems.extend(_validate_orphan_nonstanding(
+                lines, verdict_label, repository, usage_coverage, skip_paths,
+            ))
+            continue
         verdict_range = _parse_line_range(lines, allow_single_line=False)
         overlaps_finding = False
         feature_reduction = any(
@@ -1583,6 +1652,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
     required_rechecks = set(carry_over_findings)
     recheck_report_seen = False
     razor_keep_lines = {}
+    orphan_targets_by_feature = {}
     razor_keep_reasons = {}
     duplicate_windows = None
     pending_recheck_verdicts = []
@@ -1727,6 +1797,12 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
             feature_targets = []
             for finding_index, finding in enumerate(findings):
                 finding_label = f"{feature_label}.findings[{finding_index}]"
+                if (isinstance(role, str) and role in ROLES
+                        and isinstance(feature_id, str)
+                        and feature_id in expected_features
+                        and isinstance(finding, dict)
+                        and finding.get("kind") == "孤儿"):
+                    required_rechecks.add(feature_id)
                 problems.extend(_validate_finding(
                     finding, finding_label, tracked_todo_files,
                     feature_id=feature_id,
@@ -1761,6 +1837,19 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     finding_ranges.append((finding, target_range))
                 elif target == feature_id:
                     feature_targets.append(finding)
+                if (isinstance(role, str) and role in ROLES
+                        and isinstance(feature_id, str)
+                        and feature_id in expected_features
+                        and finding.get("kind") == "孤儿"):
+                    if target_range is None:
+                        problems.append(
+                            f"{finding_label}.target 孤儿目标必须是文件:行号或 文件:起始行-结束行"
+                        )
+                    else:
+                        path, start_line, end_line = target_range
+                        orphan_targets_by_feature.setdefault(feature_id, []).append(
+                            f"{path}:{start_line}-{end_line}"
+                        )
 
             if role == "剃刀" and feature_data is not None:
                 direct_code_files = {
@@ -1809,6 +1898,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     f"{feature_label} 的功能 {feature_id}",
                     finding_ranges,
                     feature_targets,
+                    orphan_targets_by_feature.get(feature_id, []),
                 ))
                 if feature_id in carry_over_findings and "carried" in review:
                     problems.extend(_validate_carried(
@@ -1843,21 +1933,25 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     # 每个保留了实体的功能都要有独立复审挑战，不按删减多少设门槛。
                     required_rechecks.add(feature_id)
 
-    # Requiring one verdict per keep prevents reviewers from skipping items and returning an empty report.
+    # Requiring verdicts for keeps and orphan targets prevents skipped review work.
     location_patterns = (
         _tracked_location_patterns(tracked_files) if pending_recheck_verdicts else []
     )
-    for feature_id, verdicts, label, finding_ranges, feature_targets in pending_recheck_verdicts:
+    for (feature_id, verdicts, label, finding_ranges, feature_targets,
+         orphan_lines) in pending_recheck_verdicts:
         problems.extend(_validate_recheck_verdicts(
             verdicts,
             label,
             razor_keep_lines.get(feature_id, []),
+            orphan_lines,
             finding_ranges,
             feature_targets,
             repository,
             tracked_files,
             evidence_lines_by_file,
             location_patterns,
+            usage_coverage,
+            skip_paths,
         ))
 
     for role in sorted(ROLES):

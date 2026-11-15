@@ -2910,6 +2910,8 @@ class CheckReportsTest(unittest.TestCase):
                 main["features"][1]["todo_items"] = [todo_item("alpha/TODO.md:1-1")]
                 razor["features"][1]["todo_items"] = [todo_item("alpha/TODO.md:1-1")]
                 self.write_reports(main, razor)
+                if kind == "孤儿":
+                    self.add_orphan_verdict("alpha", "alpha/main.py:1-1")
 
                 result = self.run_check()
 
@@ -2919,6 +2921,7 @@ class CheckReportsTest(unittest.TestCase):
         main = report("主审", self.repository)
         main["features"][0]["findings"] = [finding("孤儿", True, "问你")]
         self.write_reports(main, report("剃刀", self.repository))
+        self.add_orphan_verdict("root", "alpha/main.py:1-1")
 
         result = self.run_check()
 
@@ -2934,6 +2937,128 @@ class CheckReportsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("kind 不是允许的类型", result.stdout)
         self.assertIn("decision", result.stdout)
+
+    def add_orphan_finding(self, feature_id, target, role="主审", keep=True):
+        main = report("主审", self.repository)
+        razor = report("剃刀", self.repository)
+        if not keep:
+            next(item for item in razor["features"]
+                 if item["feature"] == feature_id)["keep"] = []
+        document = main if role == "主审" else razor
+        feature_review = next(
+            item for item in document["features"] if item["feature"] == feature_id
+        )
+        orphan = finding("孤儿", False, "问你")
+        orphan["target"] = target
+        feature_review["findings"] = [orphan]
+        self.write_reports(main, razor)
+
+    def add_orphan_verdict(self, feature_id, lines, verdict="站得住"):
+        parsed = check_reports_module._parse_line_range(
+            lines, allow_single_line=True,
+        )
+        if parsed is not None:
+            path, start, end = parsed
+            lines = f"{path}:{start}-{end}"
+        rechecks = self.read_recheck_reports()
+        review = next(
+            document for document in rechecks
+            if document["features"][0]["feature"] == feature_id
+        )
+        review["features"][0]["verdicts"].append(recheck_verdict(
+            lines,
+            verdict=verdict,
+            attempt=(
+                f"在副本删除 {lines}，运行 `python3 -B -m unittest`，结果为退出码 0。"
+            ),
+        ))
+        self.write_recheck_reports(rechecks)
+
+    def test_orphan_target_requires_exactly_one_verdict(self):
+        self.add_orphan_finding("alpha", "beta/main.py:1")
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("缺少孤儿目标的判定：beta/main.py:1-1", result.stdout)
+
+    def test_orphan_target_rejects_an_extra_verdict(self):
+        self.add_orphan_finding("alpha", "beta/main.py:1")
+        self.add_orphan_verdict("alpha", "beta/main.py:1-1")
+        self.add_orphan_verdict("alpha", "beta/main.py:1-1")
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("重复判定孤儿目标：beta/main.py:1-1", result.stdout)
+
+    def test_orphan_verdict_lines_must_match_the_orphan_target(self):
+        self.add_orphan_finding("alpha", "beta/main.py:1")
+        self.add_orphan_verdict("alpha", "README.md:5-5")
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("多出不在 keep 或孤儿目标里的判定：README.md:5-5", result.stdout)
+        self.assertIn("缺少孤儿目标的判定：beta/main.py:1-1", result.stdout)
+
+    def test_orphan_only_feature_without_keep_is_still_required_to_recheck(self):
+        self.add_orphan_finding("alpha", "alpha/main.py:1", role="剃刀", keep=False)
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("缺剃刀复审：alpha", result.stdout)
+
+    def test_orphan_nonstanding_test_target_needs_no_overlapping_finding(self):
+        self.add_tracked_file("tests/test_orphan.py", "value = 1\n")
+        self.add_orphan_finding("root", "tests/test_orphan.py:1", role="剃刀")
+        self.add_orphan_verdict("root", "tests/test_orphan.py:1-1", "站不住")
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_orphan_nonstanding_document_target_needs_no_overlapping_finding(self):
+        self.add_orphan_finding("root", "README.md:5", role="主审")
+        self.add_orphan_verdict("root", "README.md:5-5", "站不住")
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_orphan_nonstanding_code_target_must_be_in_missed_ranges(self):
+        self.set_measured_usage(missed=())
+        self.add_orphan_finding("alpha", "beta/main.py:1")
+        self.add_orphan_verdict("alpha", "beta/main.py:1-1", "站不住")
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("beta/main.py:1 未落在 usage-coverage 的 missed 范围", result.stdout)
+
+    def test_orphan_nonstanding_unmeasured_code_target_is_rejected(self):
+        self.add_orphan_finding("alpha", "beta/main.py:1")
+        self.add_orphan_verdict("alpha", "beta/main.py:1-1", "站不住")
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("beta/main.py 在 usage-coverage.unmeasured 中", result.stdout)
+
+    def test_orphan_nonstanding_code_target_fully_missed_is_allowed_without_another_finding(self):
+        self.set_measured_usage()
+        main = report("主审", self.repository)
+        razor = self.set_missed_candidate()
+        orphan = finding("孤儿", False, "问你")
+        orphan["target"] = "alpha/main.py:1"
+        next(item for item in main["features"] if item["feature"] == "alpha")["findings"] = [orphan]
+        self.write_reports(main, razor)
+        self.add_orphan_verdict("alpha", "alpha/main.py:1-1", "站不住")
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_basis_must_match_a_local_rule_quote(self):
         main = report("主审", self.repository)
