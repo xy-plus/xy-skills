@@ -36,9 +36,10 @@ class ApprovalPlanTest(unittest.TestCase):
             "--review", review,
         )
 
-    def record(self, scope=("全部",)):
+    def record(self, scope=("全部",), kept_markers=("无",)):
         return self.run_approvals(
             "record", "--repo", str(self.repository), "--scope", *scope,
+            "--kept-markers", *kept_markers,
         )
 
     def set_item_status(self, feature_id, status):
@@ -109,6 +110,64 @@ class ApprovalPlanTest(unittest.TestCase):
         plan = self.plan()
         self.assertEqual(plan.returncode, 0, plan.stdout + plan.stderr)
         self.assertEqual(plan.stdout, "范围内没有变过的功能（范围内 3 个）\n")
+
+    def test_record_requires_kept_markers(self):
+        result = self.run_approvals(
+            "record", "--repo", str(self.repository), "--scope", "alpha",
+        )
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--kept-markers", result.stderr)
+
+    def test_record_rejects_a_graph_marker_that_was_not_listed(self):
+        path = self.repository / "unmapped.py"
+        path.write_text("value = 3\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.repository), "add", "unmapped.py"], check=True,
+        )
+
+        result = self.record()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("功能图有但 --kept-markers 未列", result.stdout)
+        self.assertIn("root:没归到功能的代码或测试", result.stdout)
+        self.assertFalse((self.repository / "repo-map" / "approved.json").exists())
+
+    def test_record_rejects_a_listed_marker_missing_from_the_graph(self):
+        result = self.record(kept_markers=("alpha:还没实现",))
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("--kept-markers 有但功能图没有", result.stdout)
+        self.assertIn("alpha:还没实现", result.stdout)
+        self.assertFalse((self.repository / "repo-map" / "approved.json").exists())
+
+    def test_record_accepts_the_exact_markers_for_the_scope(self):
+        path = self.repository / "unmapped.py"
+        path.write_text("value = 3\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.repository), "add", "unmapped.py"], check=True,
+        )
+
+        result = self.record(kept_markers=("root:没归到功能的代码或测试",))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_record_cannot_keep_the_pending_decision_marker(self):
+        temporary_repo = make_repo(self, {
+            "README.md": "Demo.\n",
+            "alpha/main.py": "value = 1\n",
+        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("alpha", "alpha", source="起草"),
+        ]))
+
+        result = self.run_approvals(
+            "record", "--repo", str(temporary_repo), "--scope", "alpha",
+            "--kept-markers", "alpha:等你拍板",
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("仍是 起草", result.stdout)
+        self.assertFalse((temporary_repo / "repo-map" / "approved.json").exists())
 
     def test_plan_rejects_approved_paths_that_are_not_regular_files(self):
         approved_path = self.repository / "repo-map" / "approved.json"
@@ -300,6 +359,7 @@ class ApprovalPlanTest(unittest.TestCase):
         ]))
         result = self.run_approvals(
             "record", "--repo", str(temporary_repo), "--scope", "alpha",
+            "--kept-markers", "无",
         )
 
         self.assertEqual(result.returncode, 1)
@@ -364,7 +424,8 @@ class ApprovalPlanTest(unittest.TestCase):
         for arguments in (
             ("plan", "--repo", str(self.repository), "--scope", "全部", "alpha",
              "--review", "变过的"),
-            ("record", "--repo", str(self.repository), "--scope", "alpha", "alpha"),
+            ("record", "--repo", str(self.repository), "--scope", "alpha", "alpha",
+             "--kept-markers", "无"),
             ("plan", "--repo", str(self.repository), "--scope", "missing",
              "--review", "变过的"),
         ):

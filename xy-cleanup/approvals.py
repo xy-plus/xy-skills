@@ -12,6 +12,7 @@ import tempfile
 REPOSITORY = Path(__file__).resolve().parents[1]
 APPROVED_RELATIVE_PATH = "repo-map/approved.json"
 APPROVED_VALUE = re.compile(r"^[0-9a-f]{64}$")
+KEPT_MARKER_NAMES = {"还没实现", "没归到功能的代码或测试"}
 sys.path.insert(0, str(REPOSITORY / "xy-repo-map"))
 from repo_map_lib.features import load_features  # noqa: E402
 from repo_map_lib.git_repository import ArgumentError, tracked_paths  # noqa: E402
@@ -40,6 +41,10 @@ def parser():
     record = commands.add_parser("record", help="记录范围内功能的认可指纹")
     record.add_argument("--repo", required=True, help="仓根的绝对路径")
     record.add_argument("--scope", required=True, nargs="+", help="功能 id 列表，或单独写 全部")
+    record.add_argument(
+        "--kept-markers", required=True, nargs="+",
+        help="本次询问后决定保留的 功能-id:标记名 列表，没有就写 无",
+    )
     return result
 
 
@@ -169,7 +174,62 @@ def _plan(data, fingerprints, records, scope, review):
     return "\n".join(lines)
 
 
-def _record(repository, data, feature_values, fingerprints, records, scope):
+def _validate_kept_markers(data, selected, kept_markers):
+    invalid = []
+    supplied = []
+    if kept_markers == ["无"]:
+        pass
+    elif "无" in kept_markers:
+        invalid.append("无不能与标记一起使用")
+    else:
+        for value in kept_markers:
+            feature_id, separator, marker = value.partition(":")
+            if (not separator or not feature_id
+                    or marker not in KEPT_MARKER_NAMES):
+                invalid.append(value)
+            else:
+                supplied.append((feature_id, marker))
+
+    expected = {
+        (feature_id, marker)
+        for feature_id in selected
+        for marker in data["features"][feature_id]["markers"]
+    }
+    actual = set(supplied)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    repeated = sorted(
+        item for item in actual if supplied.count(item) > 1
+    )
+    if not invalid and not missing and not extra and not repeated:
+        return
+
+    differences = ["拒绝记录：功能图标记与 --kept-markers 不一致"]
+    if missing:
+        differences.append(
+            "功能图有但 --kept-markers 未列："
+            + ", ".join(f"{feature_id}:{marker}" for feature_id, marker in missing)
+        )
+    if extra:
+        differences.append(
+            "--kept-markers 有但功能图没有："
+            + ", ".join(f"{feature_id}:{marker}" for feature_id, marker in extra)
+        )
+    if repeated:
+        differences.append(
+            "--kept-markers 重复列出："
+            + ", ".join(f"{feature_id}:{marker}" for feature_id, marker in repeated)
+        )
+    if invalid:
+        differences.append(
+            "--kept-markers 只能写 功能-id:还没实现、功能-id:没归到功能的代码或测试，或单独写 无："
+            + ", ".join(invalid)
+        )
+    raise ValueError("\n".join(differences))
+
+
+def _record(repository, data, feature_values, fingerprints, records, scope,
+            kept_markers):
     approved_path = repository / APPROVED_RELATIVE_PATH
     selected = _scope_features(data, scope)
     drafts = [
@@ -182,6 +242,7 @@ def _record(repository, data, feature_values, fingerprints, records, scope):
             "拒绝记录：这些功能的 why.source 或 items.status 仍是 起草："
             + ", ".join(drafts)
         )
+    _validate_kept_markers(data, selected, kept_markers)
 
     selected_set = set(selected)
     updated = {
@@ -230,7 +291,10 @@ def main(argv):
         if options.command == "plan":
             print(_plan(data, fingerprints, records, options.scope, options.review))
         else:
-            print(_record(repository, data, values, fingerprints, records, options.scope))
+            print(_record(
+                repository, data, values, fingerprints, records,
+                options.scope, options.kept_markers,
+            ))
     except (OSError, UnicodeError, ValueError) as error:
         print(str(error))
         return 1
