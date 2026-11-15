@@ -13,12 +13,16 @@ description: 按功能范围审查仓库，让代码相对功能清单最小，�
 | 阶段 | 做什么 |
 |---|---|
 | 算图 | 缺少 `repo-map/features.json` 时按仓库现状起草清单；`why` 无法在用户原话或规范中核实时标 `起草`，功能粒度按人的需要定。README 没有「实际使用」时，按现状拟定记录来源（如部署记录、维护中的 baseline、会话和契约记录、运行目录）及跳过名单，在同一审查前决定页请用户确认或修改一次；确认后写入 README「实际使用」，之后只按用户要求修改，审查按其内容找证据。范围内 `items` 为 `[]` 的功能，按 `xy-repo-map` 条目格式起草、标 `status: 起草` 并写入清单；有子功能且没有任何直属文件的上级除外。直属文件按 `map-data.json` 的 `files` 各组计算，TODO 也算。这类上级只作分组，没有直属实体可判，结果由子功能代表；没有子功能的未实现叶功能仍须记录自己的目标。`check` 通过后再审查，剃刀 `keep` 可引用这些条目。缺 `repo-map/skip.json` 时按目录拟定跳过名单；首次建功能清单时一并创建。`check` 通过后用 `render` 生成清扫前图、用 `publish --as 清扫前` 发布并给用户链接。按 README 跑全套测试，记下命令、结果和失败项作为行为基线。再运行 `approvals.py plan`；用户要求重审时用 `--review 全部`，否则用 `--review 变过的`。 |
-| 审查 | 按 `xy-review` 定义的主审、剃刀角色和派法，审 `plan` 列出的每个功能（含上级），分别填表并逐条审直属 TODO。派审前另派子代理，逐条读 README「实际使用」来源，推出可在副本短跑的实际场景（每条来源可有零个、一个或多个；如维护中的 baseline 可推出短回测，会话记录未必能推出可运行命令），短跑并统计非测试代码覆盖；Python 用 coverage.py 并统计子进程，Rust 用 llvm-tools。只有确认不碰真实账户、不写生产数据库、不部署服务才运行；真实数据只读、产出写入副本、可用时用 dry-run。确认不了就不跑，记 `ran: false` 和原因。生成 `usage-coverage.json` 交剃刀逐段判断未执行到的代码。派审时提供 README「实际使用」、本仓历次清扫决定原件及范围内功能 `why.from` 原件；重做一轮时，还要把上轮未实施且未由用户决定的报告交给复审者；找不到须注明。未映射到条目的实体记「孤儿」发现，交用户决定，不添清单。首轮剃刀有 `keep` 或任一首轮报告有孤儿发现的功能逐个另派新剃刀复审：逐条推翻 `keep` 并挑战 `smallest`（实体是否必要、是否做到、能否用更小做法或现成内容替代），在副本删除实现并跑测试、看测试执行位置、查同分支或同断言的用例及重复规则；孤儿目标逐条在副本删除并跑测试，在 `attempt` 写明测试命令和结果。孤儿判「站得住」表示删除会使测试或实际使用出错，或实际使用本来就用到，建议补条目；判「站不住」表示删除不影响使用，建议删除。只有目标是测试或文档，或目标是代码且每行都在 `usage-coverage.json` 对应文件的 `missed` 范围内，孤儿才能判「站不住」；实际使用执行到目标行或文件在 `unmeasured` 中都不能这样判。孤儿目标本身就是发现，不另写重叠发现；每条结论都须附实体范围外的有效证据。检查器列出待复审功能；复审无新发现才算无可删项，不设删减数量。主审还读完整清单和 `map-data.json`，检查范围内重叠、分组、措辞、粒度，以及条目未实现或实现漏入图；代码条目无测试即未实现。复审也挑战 `keep`：删除会使条目不成立的交用户决定；目标不在 TODO 文件、不是会影响直属 TODO 的功能级删除或合并、`changes_behavior` 为 `false` 且类型不是「孤儿」「改清单」时「直接做」，其余「问你」。审查、找删减、判理由由审查子代理做；编排者只派审、核证、汇总决定并按选择实施，不补结论、不另写基准；有疑问续派审查者。 |
+| 审查 | 按 `xy-review` 定义的主审、剃刀角色和派法，审 `plan` 列出的每个功能（含上级），分别填表并逐条审直属 TODO；派审前先另派子代理产出 `test-candidates.json`，再派子代理逐条读 README「实际使用」来源，推出可在副本短跑的实际场景（每条来源可有零个、一个或多个；如维护中的 baseline 可推出短回测，会话记录未必能推出可运行命令），短跑并统计非测试代码覆盖；Python 用 coverage.py 并统计子进程，Rust 用 llvm-tools。只有确认不碰真实账户、不写生产数据库、不部署服务才运行；真实数据只读、产出写入副本、可用时用 dry-run。确认不了就不跑，记 `ran: false` 和原因。生成 `usage-coverage.json` 交剃刀逐段判断未执行到的代码。派审时提供 README「实际使用」、本仓历次清扫决定原件及范围内功能 `why.from` 原件；重做一轮时，还要把上轮未实施且未由用户决定的报告交给复审者；找不到须注明。未映射到条目的实体记「孤儿」发现，交用户决定，不添清单。首轮剃刀有 `keep` 或任一首轮报告有孤儿发现的功能逐个另派新剃刀复审：逐条推翻 `keep` 并挑战 `smallest`（实体是否必要、是否做到、能否用更小做法或现成内容替代），在副本删除实现并跑测试、看测试执行位置、查同分支或同断言的用例及重复规则；孤儿目标逐条在副本删除并跑测试，在 `attempt` 写明测试命令和结果。孤儿判「站得住」表示删除会使测试或实际使用出错，或实际使用本来就用到，建议补条目；判「站不住」表示删除不影响使用，建议删除。只有目标是测试或文档，或目标是代码且每行都在 `usage-coverage.json` 对应文件的 `missed` 范围内，孤儿才能判「站不住」；实际使用执行到目标行或文件在 `unmeasured` 中都不能这样判。孤儿目标本身就是发现，不另写重叠发现；每条结论都须附实体范围外的有效证据。检查器列出待复审功能；复审无新发现才算无可删项，不设删减数量。主审还读完整清单和 `map-data.json`，检查范围内重叠、分组、措辞、粒度，以及条目未实现或实现漏入图；代码条目无测试即未实现。复审也挑战 `keep`：删除会使条目不成立的交用户决定；目标不在 TODO 文件、不是会影响直属 TODO 的功能级删除或合并、`changes_behavior` 为 `false` 且类型不是「孤儿」「改清单」时「直接做」，其余「问你」。审查、找删减、判理由由审查子代理做；编排者只派审、核证、汇总决定并按选择实施，不补结论、不另写基准；有疑问续派审查者。 |
 | 询问 | 将待决定事项汇总成清单，每项写编号、标题、说明、适配的选项、建议及来源，均据报告。用户决定条目层面的事项，以及会改变用法或对外的行为改动、孤儿是否补图、改功能清单。建议按判删标准给证据；孤儿决定项写复审试删的测试命令和结果，建议照判定给；两报告相反时列双方理由。问是否行动须提供「先不做」。每份文档改写单列一项，带 `compare` 逐块对照，选项为「用改写稿」「不用」「按我写的改」，建议照剃刀报告。用户让 AI 代选时，只核对要求是否保留及字数是否减少，不因原文是用户规则而直接否决。理由来源为「起草」的功能本轮不逐实体审；用户确认或改写后先更新理由（确认标「确认」，改写记原话，均写回答出处），再派剃刀逐实体审，以便检查器按已确认理由核对覆盖与复审范围。复审发现须反驳首轮剃刀的 `keep`、`smallest` 或发现，双方理由都写入清单；新发现再问。后台运行 `decision_page.py ask` 并发送链接；退出码 0 后读取回答文件，留在事项目录作决定原件。 |
 | 修改 | 按报告实施决定：「直接做」直接实施，「问你」只按用户选择。`changes_behavior` 为 `true` 时，表示对外行为或用法改变；对外命令、选项、脚本或文件名、入口和用法有任何变化都算 `true`。其他改动只有在目标不在 TODO 文件、不是会影响直属 TODO 的功能级删除或合并且类型不是「孤儿」「改清单」时，才标为「直接做」。用户确认的起草条目标为「确认」；用户决定删除条目时连同专属实现一起删除；决定补图的孤儿写成「确认」条目。选「用改写稿」时逐块替换原文并照改备注；终审前按下方「注释改写」步骤处理本次范围内的代码和测试，再由主审逐项核对要求、约束和例外。按 `xy-workflow` 实施并终审；终审通过、合入前按 `plan` 列出的本轮实际审过功能运行 `approvals.py record`，使用 `--features` 逐项列出功能 id（只记列出项、不递归；单独 `全部` 表示清单全部功能），`plan --scope` 仍递归；`--kept-markers` 只列询问阶段用户决定保留的标记，汇报照抄该列；将 `repo-map/approved.json` 与改动一并提交。 |
 | 汇报 | 用 `render` 和 `publish --as 清扫后` 发布清扫后图，再用 `publish --as 当前` 更新固定站点。对比顶层功能的代码、测试、文档、注释行数及标记数量；汇报全仓前后总行数、净减与比例、根功能 `doc_chars.total` 前后值与净减/比例，以及测试结果和遗留问题。 |
 
 功能清单格式及 `check`、`render`、`publish` 命令与参数见 `xy-repo-map`，本 skill 不重复定义。
+
+审查前在副本里另派子代理为本次范围产出 `test-candidates.json`。Python（含 unittest 写法）用 pytest：先以 `pytest --setup-plan -q -o addopts= --junitxml=<list> -o junit_family=xunit1` 在同一 rootdir 生成完整清单和 JUnit，并保存终端输出；不加 `-k`、`-m`、`--deselect` 等筛选参数。实际运行另出 JUnit。Rust 用 cargo-nextest：以 `cargo nextest list --message-format json` 生成完整清单；仓库配置了 default-filter 时加 `--ignore-default-filter`；运行时设置 `report-skipped = "all"` 并生成 JUnit。需要的工具装在副本环境，如 `pip install pytest coverage`、`cargo install cargo-nextest --locked`、`rustup component add llvm-tools-preview`；装不上就把对应文件记入 `unmeasured_files` 并说明原因。
+
+每个测试项分别统计非测试代码覆盖。Python 用 coverage.py 按测试项记录上下文；Rust 测试二进制用 `-C instrument-coverage` 插桩，按 nextest 测试名为每个测试进程设置 `LLVM_PROFILE_FILE`，再用 `llvm-profdata merge`、`llvm-cov export` 汇总。子进程执行的行归到启动它的测试项；归属不准时把启动子进程的函数记入 `unmeasured_functions`。抽样变异逐个运行，每个变异都跑完全部测试、不提前停止，并记录哪些测试项失败（即杀死变异）。其他运行器或语言的测试文件记入 `unmeasured_files`；量不了的文件和函数都写原因，不得将未测结果记成空覆盖。
 
 ### 注释改写
 
@@ -171,6 +175,36 @@ description: 按功能范围审查仓库，让代码相对功能清单最小，�
 
 剃刀报告每个功能对象必须有 `usage_candidates` 数组。每条候选恰有 `lines`、`verdict`、`evidence`：对 `files` 中每个 `missed` 范围恰好一条 `lines` 为 `路径:起始行-结束行` 的候选；`verdict` 只能是「用到」或「删」。判「用到」时 `evidence` 必须引用本范围以外的有效仓内位置；判「删」时必须有与候选范围重叠的发现，或本功能 id 的「删除」「合并」发现。不得添加不对应 missed 范围的候选。检查器逐项核对 README 来源、场景字段、覆盖文件完整性、未测文件原因和上述候选判定。
 
+审查子代理另交 `test-candidates.json`，顶层键恰为 `runs`、`unmeasured_files`、`generated_mutants`、`mutants`、`functions`、`unmeasured_functions`、`candidates`。`runs` 可按不同 `root` 重复 runner；pytest 项恰有 `runner`、`root`、`command`、`junit`、`list`、`list_log`，nextest 项恰有 `runner`、`root`、`command`、`junit`、`list`。`root` 是仓内目录，其他产物路径相对 JSON 所在目录；`command` 写实际执行的收集或测试命令。pytest 的 `list` 是完整收集 JUnit，`list_log` 最后一个非空行去掉两边 `=` 和空白后须以 `no tests ran` 开头且不含 `deselected` 或 `error`；nextest 的 `list` 是完整 JSON 测试清单，所有二进制的 `status` 须为 `listed`，测试 `filter-match` 只能是 `matches` 或原因 `ignored`。JUnit 测试套件名是 binary id、用例名是测试路径；pytest 按 `classname`、`name`、`file`、`line` 精确核对完整清单与 JUnit，nextest 按测试路径核对。每个 `runs` 项的 JUnit 来自按测试项测量覆盖的运行。nextest 启用 `report-skipped = "all"`，被过滤但标为 ignored 的测试项不算筛选遗漏。
+
+```json
+{
+  "runs": [
+    {"runner": "pytest", "root": ".", "command": "pytest -q", "junit": "artifacts/pytest-run.xml", "list": "artifacts/pytest-list.xml", "list_log": "artifacts/pytest-list.log"},
+    {"runner": "nextest", "root": "rust", "command": "cargo nextest run", "junit": "artifacts/nextest-run.xml", "list": "artifacts/nextest-list.json"}
+  ],
+  "unmeasured_files": [{"path": "tests/test_remote.py", "why": "副本没有可用的测试运行器。"}],
+  "generated_mutants": 12,
+  "mutants": [{"id": "m-1", "location": "src/api.py:24", "change": "将比较符替换为等号。"}],
+  "functions": {
+    "tests/test_api.py:18::test_create": {"file": "tests/test_api.py", "line": 18, "covers": ["src/api.py:20-25"], "kills": ["m-1"]},
+    "tests/test_api.py:22::test_create_alt": {"file": "tests/test_api.py", "line": 22, "covers": ["src/api.py:20-25"], "kills": ["m-1"]}
+  },
+  "unmeasured_functions": [{"id": "tests/test_api.py:31::test_remote", "file": "tests/test_api.py", "why": "副本里访问真实账户的用例未运行。"}],
+  "candidates": [{"function": "tests/test_api.py:18::test_create", "covered_by": ["tests/test_api.py:22::test_create_alt"]}]
+}
+```
+
+`functions` 以函数 id 为键，值恰有 `file`、`line`、`covers`、`kills`。pytest 测试项 id 按 `<文件>::<classname>::<name>` 推出，函数 id 按 `<文件>:<line>::<去掉参数后缀的 name>` 推出；JUnit 的 `file` 相对 `root`，`line` 从 0 起，写入 JSON 时加 1 对齐源文件行号。参数化实例及继承方法若来自同一文件同一声明行，合并为一个函数。nextest 的测试项和函数 id 都是 `<root>::<binary-id>::<test path>`，`file`、`line` 必须指向源代码里的测试函数声明，且上方紧邻测试属性。`covers` 是本函数实际覆盖的非测试代码行段，`kills` 是本函数单独运行时杀死的变异 id。每个变异项恰有 `id`、`location`、`change`；`generated_mutants` 记录生成数，`mutants` 只记录抽样并跑完所有测试的变异，超时或没跑完的不算。测试函数本身的行不能记作覆盖或变异位置。
+
+`unmeasured_files` 项恰有 `path`、`why`；`unmeasured_functions` 项恰有 `id`、`file`、`why`。JUnit 缺项、测试失败、忽略或有非系统输出以外的子节点时，该函数必须记为未量测；无法识别完整函数范围的候选函数也须先转为未量测，再重算候选。每个范围内直属测试文件及含测试属性的 Rust 源文件，恰好要有函数记录或 `unmeasured_files` 记录。完整函数范围包括 Python 的装饰器和函数体；Rust 范围从连续的属性/文档注释开始，到函数末尾闭合大括号。
+
+`candidates` 项恰有 `function`、`covered_by`。先按覆盖代码行数降序、函数 id 升序排列已量测函数；如果其余尚未选择的函数合起来覆盖该函数所有 `covers` 行并杀死所有 `kills` 变异，该函数就是候选。每选出一个候选就从后续见证集合移除，再继续计算。清单必须与检查器重算结果完全一致；`covered_by` 只列已量测且非候选的函数，并且这些函数合起来要覆盖候选的所有代码行和变异。候选不能互相作见证，因为逐个移除候选后，证据仍须由留下的测试提供。
+
+剃刀须逐个回应每个候选：要么「删除」或「合并」发现完整覆盖候选测试函数，要么用其 `keep` 说明保留完整函数。保留时 `keep.lines` 覆盖完整函数范围，`cost` 写出所有 `covered_by` 测试函数的有效定义位置；逐项列出的见证应共同解释候选的覆盖与变异证据。检查器沿用 `cost` 的重复位置引用校验。部分删除/合并不能回应候选；「重构」等其他发现只说明实现调整，不能说明该测试函数是否保留，因此不算回应。
+
+检查器不重跑测试，只核清单、JUnit、覆盖行和变异结果之间的一致性，并信任这些产物来自同一副本及同一 `root`。它从 pytest 的终端统计行和 nextest 的 `filter-match` 核验清单未被筛选；pytest 规范筛选（`-k`、`-m`、配置和调用 `pytest_deselected` 的钩子）会反映在统计行中。若钩子静默地从收集结果移除测试，检查器看不到这些项；整份未被收集的直属文件会由文件级检查发现。`root` 由产出者填写，检查器只核拼出的文件存在。检查器看不到子进程执行行是否归到正确的测试项。nextest 的函数文件和行号由产出者填写，检查器只核该行确有对应测试声明和属性；完整函数范围按 rustfmt 缩进识别，不符合格式的候选无法识别，必须记量不了。变异是抽样的，`generated_mutants` 和 `mutants` 数量由剃刀与用户查看；检查器不评估样本是否充分。剃刀按断言语义判断测试是否重复，不重新计算候选的覆盖包含关系。未量测项不得推断为没有覆盖或没有杀死变异。
+
 ```json
 {
   "role": "剃刀复审",
@@ -223,6 +257,7 @@ python3 <xy-cleanup目录>/check_reports.py \
   --review 变过的 \
   --usage-coverage <usage-coverage.json> \
   --carry-over 无 \
+  --test-candidates <test-candidates.json> \
   --reports <主审报告.json> <剃刀报告.json>
 ```
 

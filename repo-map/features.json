@@ -2201,6 +2201,11 @@
               "id": "review-misses-regression",
               "text": "修改清扫审查规则后，用此前漏审的问题验证新规则仍能发现它们。",
               "status": "确认"
+            },
+            {
+              "id": "redundant-test-candidates",
+              "text": "审查前列出覆盖的代码和杀死的变异都被其余测试函数包含的 Python 和 Rust 测试函数，交剃刀逐条判是否真重复。",
+              "status": "确认"
             }
           ],
           "entries": [
@@ -2293,6 +2298,11 @@
                 {
                   "id": "usage-candidate-verdicts",
                   "text": "实际使用中没执行到的每段代码在剃刀报告里恰有一条判定；判用到须引范围外的有效位置，判删须有对应发现。",
+                  "status": "确认"
+                },
+                {
+                  "id": "test-candidate-reference",
+                  "text": "冗余测试候选要么被删除或合并发现覆盖，要么保留说明写出覆盖它的另一个测试函数的位置。",
                   "status": "确认"
                 }
               ],

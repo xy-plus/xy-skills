@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
 
@@ -225,6 +226,17 @@ class CheckReportsTest(unittest.TestCase):
         self.recheck_path = self.directory / "recheck.json"
         self.carry_over_path = self.directory / "previous-razor.json"
         self.usage_coverage_path = self.directory / "usage-coverage.json"
+        self.test_candidates_path = self.directory / "test-candidates.json"
+        self.test_candidates = {
+            "runs": [],
+            "unmeasured_files": [],
+            "generated_mutants": 0,
+            "mutants": [],
+            "functions": {},
+            "unmeasured_functions": [],
+            "candidates": [],
+        }
+        self.write_test_candidates()
         self.recheck_paths = []
         self.add_tracked_file(
             "README.md",
@@ -312,6 +324,167 @@ class CheckReportsTest(unittest.TestCase):
             path.unlink(missing_ok=True)
         self.recheck_path.unlink(missing_ok=True)
         self.recheck_paths = []
+
+    def write_test_candidates(self):
+        self.test_candidates_path.write_text(
+            json.dumps(self.test_candidates, ensure_ascii=False), encoding="utf-8",
+        )
+
+    def add_pytest_measurement(self, source, listed, results, functions=None,
+                               unmeasured_functions=None, candidates=None,
+                               list_log="no tests ran in 0.02s\n", root="alpha"):
+        test_path = f"{root}/test_api.py"
+        self.add_tracked_file(test_path, source)
+        self.add_tracked_file("alpha/main.py", "first = 1\nsecond = 2\n")
+        artifacts = self.directory / "candidate-artifacts"
+        artifacts.mkdir(exist_ok=True)
+
+        def write_junit(name, cases):
+            document = ET.Element("testsuites")
+            suite = ET.SubElement(document, "testsuite")
+            for case in cases:
+                testcase = ET.SubElement(
+                    suite, "testcase",
+                    {key: str(case[key]) for key in ("classname", "name", "file", "line")
+                     if key in case},
+                )
+                for child in case.get("children", []):
+                    ET.SubElement(testcase, child)
+            path = artifacts / name
+            ET.ElementTree(document).write(path, encoding="utf-8", xml_declaration=True)
+            return path
+
+        list_path = write_junit("pytest-list.xml", listed)
+        junit_path = write_junit("pytest-run.xml", results)
+        log_path = artifacts / "pytest-list.log"
+        log_path.write_text(list_log, encoding="utf-8")
+        self.test_candidates = {
+            "runs": [{
+                "runner": "pytest", "root": root, "command": "pytest -q",
+                "junit": str(junit_path.relative_to(self.directory)),
+                "list": str(list_path.relative_to(self.directory)),
+                "list_log": str(log_path.relative_to(self.directory)),
+            }],
+            "unmeasured_files": [],
+            "generated_mutants": 2,
+            "mutants": [
+                {"id": "mutant-1", "location": "alpha/main.py:1", "change": "first = 0"},
+                {"id": "mutant-2", "location": "alpha/main.py:2", "change": "second = 0"},
+            ],
+            "functions": {} if functions is None else functions,
+            "unmeasured_functions": (
+                [] if unmeasured_functions is None else unmeasured_functions
+            ),
+            "candidates": [] if candidates is None else candidates,
+        }
+        self.write_test_candidates()
+        main, razor = report("主审", self.repository), report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"][0]["lines"] = "alpha/main.py:1-2"
+        definitions = {
+            line for line, content in enumerate(source.splitlines(), start=1)
+            if content.lstrip().startswith(("def ", "async def "))
+        }
+        source_lines = source.splitlines()
+        for line in sorted(definitions):
+            start = line
+            while start > 1 and source_lines[start - 2].lstrip().startswith("@"):
+                start -= 1
+            end = line
+            while end < len(source_lines) and source_lines[end].startswith((" ", "\t")):
+                end += 1
+            alpha["keep"].append(razor_keep_item("alpha", f"{test_path}:{start}-{end}"))
+        for candidate in self.test_candidates["candidates"]:
+            candidate_function = self.test_candidates["functions"].get(candidate["function"], {})
+            for keep in alpha["keep"]:
+                parsed = check_reports_module._parse_line_range(keep.get("lines"), False)
+                if (parsed is None or parsed[0] != candidate_function.get("file")
+                        or parsed[1] != candidate_function.get("line")):
+                    continue
+                for witness_id in candidate.get("covered_by", []):
+                    witness = self.test_candidates["functions"].get(witness_id, {})
+                    if witness.get("file") and witness.get("line"):
+                        keep["cost"] += (
+                            f" 断言检查的行为仍需保留，覆盖证据见 {witness['file']}:{witness['line']}。"
+                        )
+        self.write_reports(main, razor)
+        return test_path
+
+    def add_nextest_measurement(self, source, list_document, result_cases,
+                                functions=None, unmeasured_functions=None,
+                                candidates=None, test_path="alpha/tests.rs"):
+        self.add_tracked_file(test_path, source)
+        self.add_tracked_file("alpha/main.py", "first = 1\nsecond = 2\n")
+        artifacts = self.directory / "candidate-artifacts"
+        artifacts.mkdir(exist_ok=True)
+        list_path = artifacts / "nextest-list.json"
+        list_path.write_text(json.dumps(list_document), encoding="utf-8")
+        junit_path = artifacts / "nextest-run.xml"
+        document = ET.Element("testsuites")
+        for suite_name, cases in result_cases.items():
+            suite = ET.SubElement(document, "testsuite", {"name": suite_name})
+            for case in cases:
+                testcase = ET.SubElement(suite, "testcase", {"name": case["name"]})
+                for child in case.get("children", []):
+                    ET.SubElement(testcase, child)
+        ET.ElementTree(document).write(junit_path, encoding="utf-8", xml_declaration=True)
+        self.test_candidates = {
+            "runs": [{
+                "runner": "nextest", "root": "alpha", "command": "cargo nextest run",
+                "junit": str(junit_path.relative_to(self.directory)),
+                "list": str(list_path.relative_to(self.directory)),
+            }],
+            "unmeasured_files": [],
+            "generated_mutants": 2,
+            "mutants": [
+                {"id": "mutant-1", "location": "alpha/main.py:1", "change": "first = 0"},
+                {"id": "mutant-2", "location": "alpha/main.py:2", "change": "second = 0"},
+            ],
+            "functions": {} if functions is None else functions,
+            "unmeasured_functions": (
+                [] if unmeasured_functions is None else unmeasured_functions
+            ),
+            "candidates": [] if candidates is None else candidates,
+        }
+        self.write_test_candidates()
+        main, razor = report("主审", self.repository), report("剃刀", self.repository)
+        alpha = next(item for item in razor["features"] if item["feature"] == "alpha")
+        alpha["keep"][0]["lines"] = "alpha/main.py:1-2"
+        lines = source.splitlines()
+        for number, content in enumerate(lines, start=1):
+            if content.startswith("fn ") or content.startswith("async fn "):
+                end = number
+                while end < len(lines) and (
+                    lines[end].startswith((" ", "\t")) or lines[end].strip() == "}"
+                ):
+                    end += 1
+                start = number - 1
+                while start > 0 and (lines[start - 1].lstrip().startswith(("#[", "///"))):
+                    start -= 1
+                alpha["keep"].append(
+                    razor_keep_item("alpha", f"{test_path}:{start + 1}-{end}"),
+                )
+        for candidate in self.test_candidates["candidates"]:
+            candidate_function = self.test_candidates["functions"].get(candidate["function"], {})
+            for keep in alpha["keep"]:
+                parsed = check_reports_module._parse_line_range(keep.get("lines"), False)
+                if (parsed is None or parsed[0] != candidate_function.get("file")
+                        or parsed[1] > candidate_function.get("line", 0)
+                        or parsed[2] < candidate_function.get("line", 0)):
+                    continue
+                for witness_id in candidate.get("covered_by", []):
+                    witness = self.test_candidates["functions"].get(witness_id, {})
+                    if witness.get("file") and witness.get("line"):
+                        keep["cost"] += (
+                            f" 断言检查的行为仍需保留，覆盖证据见 {witness['file']}:{witness['line']}。"
+                        )
+        self.write_reports(main, razor)
+        return test_path
+
+    def assert_candidate_error(self, expected):
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(expected, result.stdout + result.stderr)
 
     def read_recheck_reports(self):
         return [
@@ -425,7 +598,7 @@ class CheckReportsTest(unittest.TestCase):
         self.write_reports(main, razor)
 
     def run_check(self, scope=("全部",), reports=None, review="全部",
-                  usage_coverage=True, carry_over=("无",)):
+                  usage_coverage=True, carry_over=("无",), with_test_candidates=True):
         paths = self.reports_for_check() if reports is None else reports
         arguments = ["python3", "-B", str(COMMAND), "--repo", str(self.repository),
                      "--scope", *scope]
@@ -433,6 +606,8 @@ class CheckReportsTest(unittest.TestCase):
             arguments.extend(("--review", review))
         if carry_over is not None:
             arguments.extend(("--carry-over", *carry_over))
+        if with_test_candidates:
+            arguments.extend(("--test-candidates", str(self.test_candidates_path)))
         if usage_coverage:
             coverage_path = self.usage_coverage_path
             if (scope != ("全部",) or review != "全部") and review in {"变过的", "全部"}:
@@ -482,6 +657,8 @@ class CheckReportsTest(unittest.TestCase):
                         json.dumps(coverage, ensure_ascii=False), encoding="utf-8",
                     )
             arguments.extend(("--usage-coverage", str(coverage_path)))
+        if with_test_candidates:
+            arguments.extend(("--test-candidates", str(self.test_candidates_path)))
         arguments.extend(("--reports", *paths))
         return subprocess.run(
             arguments,
@@ -633,6 +810,751 @@ class CheckReportsTest(unittest.TestCase):
         self.write_recheck_reports([*self.read_recheck_reports()[:-1], review])
 
         self.run_check_and_assert("有多余字段 carried")
+    def test_test_candidates_argument_is_required(self):
+        result = self.run_check(with_test_candidates=False)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--test-candidates", result.stderr)
+
+    def test_test_candidates_file_and_top_level_shape_are_required(self):
+        self.test_candidates_path.unlink()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--test-candidates", result.stderr)
+
+        self.test_candidates = []
+        self.write_test_candidates()
+        self.assert_candidate_error("test-candidates必须是对象")
+
+        self.test_candidates = {
+            "runs": [], "unmeasured_files": [], "generated_mutants": 0,
+            "mutants": [], "functions": {}, "unmeasured_functions": [],
+            "candidates": [], "extra": True,
+        }
+        self.write_test_candidates()
+        self.assert_candidate_error("有多余字段 extra")
+
+    def test_empty_runs_require_each_direct_test_file_to_be_unmeasured(self):
+        self.add_tracked_file("alpha/test_api.py", "def test_one():\n    assert True\n")
+        main, razor, alpha = reports_for_feature(self.repository, "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-1"),
+            razor_keep_item("alpha", "alpha/test_api.py:1-2"),
+        ]
+        self.write_reports(main, razor)
+        self.assert_candidate_error("test_api.py")
+
+        self.test_candidates["unmeasured_files"] = [{
+            "path": "alpha/test_api.py", "why": "副本没有该测试运行器。",
+        }]
+        self.write_test_candidates()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_runs_can_cover_multiple_roots_with_the_same_runner(self):
+        self.add_pytest_measurement("", [], [])
+        self.test_candidates["unmeasured_files"] = [{
+            "path": "alpha/test_api.py", "why": "副本没有该测试运行器。",
+        }]
+        second_root = self.repository / "alpha" / "alternate-tests"
+        second_root.mkdir(parents=True)
+        artifacts = self.directory / "candidate-artifacts"
+        list_path = artifacts / "pytest-list-second.xml"
+        junit_path = artifacts / "pytest-run-second.xml"
+        for path in (list_path, junit_path):
+            ET.ElementTree(ET.Element("testsuites")).write(
+                path, encoding="utf-8", xml_declaration=True,
+            )
+        log_path = artifacts / "pytest-list-second.log"
+        log_path.write_text("no tests ran in 0.01s\n", encoding="utf-8")
+        self.test_candidates["runs"].append({
+            "runner": "pytest", "root": "alpha/alternate-tests",
+            "command": "pytest -q", "junit": str(junit_path.relative_to(self.directory)),
+            "list": str(list_path.relative_to(self.directory)),
+            "list_log": str(log_path.relative_to(self.directory)),
+        })
+        self.write_test_candidates()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_pytest_list_log_and_junit_fields_are_validated(self):
+        rows = [{"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}]
+        source = "def test_one():\n    assert True\n"
+        for log, message in (
+            ("1 deselected in 0.02s\n", "deselected"),
+            ("error collecting tests\n", "error"),
+            ("1 passed in 0.02s\n", "no tests ran"),
+        ):
+            with self.subTest(log=log):
+                self.add_pytest_measurement(source, rows, rows, list_log=log)
+                self.assert_candidate_error(message)
+
+        self.add_pytest_measurement(source, rows, [{**rows[0], "line": "1"}])
+        self.assert_candidate_error("junit")
+
+    def test_nextest_list_rejects_filtered_binary_and_expression_but_keeps_ignored(self):
+        source = "#[test]\nfn test_one() {\n    assert!(true);\n}\n"
+        ignored = {
+            "rust-suites": {"api": {
+                "status": "listed",
+                "testcases": {
+                    "test_one": {"ignored": True,
+                                 "filter-match": {"status": "filtered-out", "reason": "ignored"}},
+                },
+            }},
+        }
+        self.add_nextest_measurement(source, ignored, {})
+        self.test_candidates["unmeasured_functions"] = [{
+            "id": "alpha::api::test_one", "file": "alpha/tests.rs", "why": "被 ignore 跳过。",
+        }]
+        self.write_test_candidates()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.test_candidates["unmeasured_functions"] = []
+        self.test_candidates["functions"] = {"alpha::api::test_one": {
+            "file": "alpha/tests.rs", "line": 2,
+            "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+        }}
+        self.write_test_candidates()
+        self.assert_candidate_error("必须量不了")
+
+        for suites, expected in (
+            ({"api": {"status": "filtered", "testcases": {}}}, "status"),
+            ({"api": {"status": "listed", "testcases": {
+                "test_one": {"ignored": False,
+                             "filter-match": {"status": "filtered-out", "reason": "expression"}},
+            }}}, "expression"),
+        ):
+            with self.subTest(expected=expected):
+                listing = {"rust-suites": suites}
+                self.add_nextest_measurement(source, listing, {})
+                self.test_candidates["unmeasured_functions"] = [{
+                    "id": "alpha::api::test_one", "file": "alpha/tests.rs", "why": "没运行。",
+                }]
+                self.write_test_candidates()
+                self.assert_candidate_error(expected)
+
+    def test_runner_list_fields_are_exact(self):
+        rows = [{"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}]
+        self.add_pytest_measurement("def test_one():\n    assert True\n", rows, rows)
+        del self.test_candidates["runs"][0]["list"]
+        self.write_test_candidates()
+        self.assert_candidate_error("list")
+
+        nextest_list = {"rust-suites": {"api": {"status": "listed", "testcases": {}}}}
+        self.add_nextest_measurement("", nextest_list, {})
+        self.test_candidates["runs"][0]["list_log"] = "bad"
+        self.write_test_candidates()
+        self.assert_candidate_error("list_log")
+
+    def test_test_items_and_function_inventory_must_match_the_collection(self):
+        rows = [{"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}]
+        source = "def test_one():\n    assert True\n"
+        self.add_pytest_measurement(source, rows, [{**rows[0], "classname": "different"}])
+        self.assert_candidate_error("全集")
+
+        for listing, results, expected in (
+            (rows + rows, rows, "重复"),
+            (rows, rows + rows, "重复"),
+        ):
+            with self.subTest(expected=expected, result_count=len(results)):
+                self.add_pytest_measurement(source, listing, results)
+                self.assert_candidate_error("重复")
+
+        self.add_pytest_measurement(source, rows, rows)
+        self.test_candidates["unmeasured_functions"] = [{
+            "id": "extra", "file": "alpha/test_api.py", "why": "多余。",
+        }]
+        self.write_test_candidates()
+        self.assert_candidate_error("函数")
+
+    def test_pytest_testcase_requires_file_line_and_existing_root_file(self):
+        row = {"classname": "test_api", "name": "test_one", "line": "0"}
+        self.add_pytest_measurement(
+            "def test_one():\n    assert True\n", [row], [row],
+        )
+        self.assert_candidate_error("file")
+
+        row = {"classname": "test_api", "name": "test_one", "file": "missing.py", "line": "0"}
+        self.add_pytest_measurement("def test_one():\n    assert True\n", [row], [row])
+        self.assert_candidate_error("不存在")
+
+    def test_parameterized_and_inherited_items_share_one_function_and_missing_one_excludes_it(self):
+        source = "def test_case(value):\n    assert value\n"
+        listed = [
+            {"classname": "TestFirst", "name": "test_case[one]", "file": "test_api.py", "line": "0"},
+            {"classname": "TestFirst", "name": "test_case[two]", "file": "test_api.py", "line": "0"},
+            {"classname": "TestSecond", "name": "test_case[one]", "file": "test_api.py", "line": "0"},
+        ]
+        self.add_pytest_measurement(source, listed, listed[:-1])
+        self.test_candidates["unmeasured_functions"] = [{
+            "id": "alpha/test_api.py:1::test_case", "file": "alpha/test_api.py",
+            "why": "一个继承用例没运行。",
+        }]
+        self.write_test_candidates()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        function_id = "alpha/test_api.py:1::test_case"
+        self.test_candidates["functions"][function_id] = {
+            "file": "alpha/test_api.py", "line": 1,
+            "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+        }
+        self.test_candidates["unmeasured_functions"] = []
+        self.write_test_candidates()
+        self.assert_candidate_error("量不了")
+
+    def test_pytest_function_location_must_match_the_discovered_declaration(self):
+        row = {"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}
+        self.add_pytest_measurement(
+            "@staticmethod\ndef test_one():\n    assert True\n", [row], [row],
+            functions={"alpha/test_api.py:1::test_one": {
+                "file": "alpha/test_api.py", "line": 2,
+                "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+            }},
+        )
+        self.assert_candidate_error("line")
+
+        self.add_pytest_measurement(
+            "@staticmethod\ndef test_one():\n    assert True\n", [row], [row],
+            functions={"alpha/test_api.py:1::test_one": {
+                "file": "alpha/test_api.py", "line": 1,
+                "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+            }},
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_nextest_functions_need_matching_fn_and_test_attribute(self):
+        listing = {"rust-suites": {"api": {"status": "listed", "testcases": {
+            "tests::test_one": {"ignored": False, "filter-match": {"status": "matches"}},
+        }}}}
+        for source, message in (
+            ("#[tokio::test]\nasync fn test_one() {\n}\n", None),
+            ("fn not_test_one() {\n}\n", "fn"),
+            ("fn test_one() {\n}\n", "Rust 测试属性"),
+        ):
+            with self.subTest(message=message):
+                function_line = 2 if source.startswith("#[tokio::test]") else 1
+                self.add_nextest_measurement(
+                    source, listing, {"api": [{"name": "tests::test_one"}]},
+                    functions={"alpha::api::tests::test_one": {
+                        "file": "alpha/tests.rs", "line": function_line,
+                        "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+                    }},
+                )
+                if message is None:
+                    result = self.run_check()
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assert_candidate_error(message)
+
+    def test_candidate_ranges_include_decorators_and_rust_attributes(self):
+        row = {"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}
+        self.add_pytest_measurement(
+            "@staticmethod\ndef test_one():\n    assert True\n", [row], [row],
+            functions={"alpha/test_api.py:1::test_one": {
+                "file": "alpha/test_api.py", "line": 1,
+                "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+            }},
+        )
+        self.test_candidates["unmeasured_files"] = []
+        self.test_candidates["functions"]["alpha/test_api.py:1::test_one"]["covers"] = []
+        self.write_test_candidates()
+        self.assert_candidate_error("covers")
+
+        subprocess.run(
+            ["git", "-C", str(self.repository), "rm", "-q", "-f", "alpha/test_api.py"],
+            check=True,
+        )
+        rust_source = "/// docs\n#[test]\nfn test_one() {\n}\n"
+        listing = {"rust-suites": {"api": {"status": "listed", "testcases": {
+            "test_one": {"ignored": False, "filter-match": {"status": "matches"}},
+        }}}}
+        self.add_nextest_measurement(rust_source, listing, {"api": [{"name": "test_one"}]},
+                                     functions={"alpha::api::test_one": {
+                                         "file": "alpha/tests.rs", "line": 3,
+                                         "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+                                     }})
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.add_nextest_measurement(
+            "#[test]\nfn test_one() {\n}\nnot_formatted();\n", listing,
+            {"api": [{"name": "test_one"}]},
+            functions={"alpha::api::test_one": {
+                "file": "alpha/tests.rs", "line": 2,
+                "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+            }},
+            candidates=[{"function": "alpha::api::test_one", "covered_by": ["x"]}],
+        )
+        self.assert_candidate_error("candidates")
+
+    def test_only_incomplete_functions_are_unmeasured(self):
+        source = "def test_first():\n    assert True\n\ndef test_second():\n    assert True\n"
+        first = {"classname": "test_api", "name": "test_first", "file": "test_api.py", "line": "0"}
+        second = {"classname": "test_api", "name": "test_second", "file": "test_api.py", "line": "3"}
+        self.add_pytest_measurement(source, [first, second], [first, {**second, "children": ["skipped"]}],
+                                    functions={"alpha/test_api.py:1::test_first": {
+                                        "file": "alpha/test_api.py", "line": 1,
+                                        "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+                                    }})
+        self.test_candidates["unmeasured_functions"] = [{
+            "id": "alpha/test_api.py:4::test_second", "file": "alpha/test_api.py",
+            "why": "运行结果 skipped。",
+        }]
+        self.write_test_candidates()
+        self.assertEqual(self.run_check().returncode, 0)
+
+        self.test_candidates["functions"]["alpha/test_api.py:4::test_second"] = {
+            "file": "alpha/test_api.py", "line": 4,
+            "covers": ["alpha/main.py:2-2"], "kills": ["mutant-2"],
+        }
+        self.test_candidates["unmeasured_functions"] = []
+        self.write_test_candidates()
+        self.assert_candidate_error("量不了")
+
+    def test_direct_test_files_need_function_or_unmeasured_file_record(self):
+        source = "def test_one():\n    assert True\n"
+        row = {"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}
+        self.add_pytest_measurement(source, [row], [row])
+        self.test_candidates["unmeasured_files"] = [{"path": "alpha/test_api.py", "why": "没测。"}]
+        self.write_test_candidates()
+        self.assert_candidate_error("同时")
+
+        self.test_candidates["unmeasured_files"] = []
+        self.test_candidates["functions"] = {}
+        self.test_candidates["unmeasured_functions"] = []
+        self.write_test_candidates()
+        self.assert_candidate_error("test_api.py")
+
+    def test_measured_functions_need_nonempty_coverage_and_known_mutants(self):
+        row = {"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}
+        source = "def test_one():\n    assert True\n"
+        function = {"file": "alpha/test_api.py", "line": 1,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]}
+        for mutation, expected in (
+            ({"covers": []}, "covers"),
+            ({"kills": ["missing"]}, "mutants"),
+        ):
+            with self.subTest(expected=expected):
+                values = {**function, **mutation}
+                self.add_pytest_measurement(
+                    source, [row], [row], functions={"alpha/test_api.py:1::test_one": values},
+                )
+                self.assert_candidate_error(expected)
+
+        self.add_pytest_measurement(source, [row], [row],
+                                    functions={"alpha/test_api.py:1::test_one": function})
+        self.test_candidates["mutants"] = []
+        self.test_candidates["generated_mutants"] = 0
+        self.write_test_candidates()
+        self.assert_candidate_error("mutants 不能为空")
+
+    def test_candidates_are_recomputed_with_noncandidate_witnesses(self):
+        source = "def test_small():\n    assert True\n\ndef test_large():\n    assert True\n"
+        rows = [
+            {"classname": "test_api", "name": "test_small", "file": "test_api.py", "line": "0"},
+            {"classname": "test_api", "name": "test_large", "file": "test_api.py", "line": "3"},
+        ]
+        small = "alpha/test_api.py:1::test_small"
+        large = "alpha/test_api.py:4::test_large"
+        functions = {
+            small: {"file": "alpha/test_api.py", "line": 1,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+            large: {"file": "alpha/test_api.py", "line": 4,
+                    "covers": ["alpha/main.py:1-2"], "kills": ["mutant-1", "mutant-2"]},
+        }
+        self.add_pytest_measurement(source, rows, rows, functions=functions,
+                                    candidates=[{"function": small, "covered_by": [large]}])
+        self.assertEqual(self.run_check().returncode, 0)
+
+        equal_functions = {
+            small: {"file": "alpha/test_api.py", "line": 1,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+            large: {"file": "alpha/test_api.py", "line": 4,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+        }
+        self.add_pytest_measurement(
+            source, rows, rows, functions=equal_functions,
+            candidates=[{"function": small, "covered_by": [large]}],
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        for candidates, expected in (
+            ([{"function": large, "covered_by": [small]}], "candidates"),
+            ([], "candidates"),
+            ([{"function": small, "covered_by": []}], "covered_by"),
+            ([{"function": small, "covered_by": [small]}], "候选"),
+        ):
+            with self.subTest(candidates=candidates):
+                self.test_candidates["candidates"] = candidates
+                self.write_test_candidates()
+                self.assert_candidate_error(expected)
+
+    def test_razor_must_cover_candidate_as_whole_and_name_a_witness(self):
+        source = "def test_small():\n    assert True\n\ndef test_large():\n    assert True\n"
+        rows = [
+            {"classname": "test_api", "name": "test_small", "file": "test_api.py", "line": "0"},
+            {"classname": "test_api", "name": "test_large", "file": "test_api.py", "line": "3"},
+        ]
+        small = "alpha/test_api.py:1::test_small"
+        large = "alpha/test_api.py:4::test_large"
+        functions = {
+            small: {"file": "alpha/test_api.py", "line": 1,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+            large: {"file": "alpha/test_api.py", "line": 4,
+                    "covers": ["alpha/main.py:1-2"], "kills": ["mutant-1", "mutant-2"]},
+        }
+        self.add_pytest_measurement(source, rows, rows, functions=functions,
+                                    candidates=[{"function": small, "covered_by": [large]}])
+        main, razor, alpha = reports_for_feature(self.repository, "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:1-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:4-5"),
+        ]
+        self.write_reports(main, razor)
+        self.assert_candidate_error("keep.cost")
+
+        alpha["keep"][1]["cost"] += " 覆盖它的测试在 alpha/test_api.py:4。"
+        self.write_reports(main, razor)
+        self.assertEqual(self.run_check().returncode, 0)
+
+        alpha["findings"] = [finding("删除")]
+        alpha["findings"][0]["target"] = "alpha/test_api.py:1"
+        self.write_reports(main, razor)
+        self.assert_candidate_error("完整范围")
+
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:1-1"),
+            razor_keep_item("alpha", "alpha/test_api.py:4-5"),
+        ]
+        alpha["findings"] = [finding("重构")]
+        alpha["findings"][0]["target"] = "alpha/test_api.py:2-2"
+        self.write_reports(main, razor)
+        self.assert_candidate_error("完整范围")
+
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:4-5"),
+        ]
+        alpha["findings"] = [finding("删除")]
+        alpha["findings"][0]["target"] = "alpha/test_api.py:1-2"
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        alpha["keep"] = [razor_keep_item("alpha", "alpha/main.py:1-2")]
+        alpha["findings"] = [finding("重构")]
+        alpha["findings"][0]["target"] = "alpha/test_api.py:1-2"
+        self.write_reports(main, razor)
+        self.assert_candidate_error("候选")
+
+    def test_missing_runner_artifacts_and_unexpected_nextest_fields_are_rejected(self):
+        row = {"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}
+        self.add_pytest_measurement("def test_one():\n    assert True\n", [row], [row])
+        del self.test_candidates["runs"][0]["list_log"]
+        self.write_test_candidates()
+        self.assert_candidate_error("list_log")
+
+        self.add_nextest_measurement("", {"rust-suites": {}}, {})
+        del self.test_candidates["runs"][0]["list"]
+        self.write_test_candidates()
+        self.assert_candidate_error("list")
+
+        self.add_nextest_measurement("", {"rust-suites": {}}, {})
+        self.test_candidates["runs"][0]["list_log"] = "unexpected"
+        self.write_test_candidates()
+        self.assert_candidate_error("list_log")
+
+    def test_pytest_run_must_match_each_list_attribute_and_function_set(self):
+        row = {"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}
+        source = "def test_one():\n    assert True\n"
+        for field, value in (("classname", "other"), ("name", "other"),
+                             ("file", "main.py"), ("line", "1")):
+            with self.subTest(field=field):
+                self.add_pytest_measurement(source, [row], [{**row, field: value}])
+                self.assert_candidate_error("全集")
+
+        for functions, unmeasured, expected in (
+            ({}, [], "函数"),
+            ({}, [{"id": "extra", "file": "alpha/test_api.py", "why": "额外。"}], "函数"),
+            ({"alpha/test_api.py:1::test_one": {
+                "file": "alpha/test_api.py", "line": 1,
+                "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+            }}, [{"id": "alpha/test_api.py:1::test_one", "file": "alpha/test_api.py",
+                  "why": "重复。"}], "重叠"),
+        ):
+            with self.subTest(expected=expected, functions=list(functions)):
+                self.add_pytest_measurement(source, [row], [row], functions=functions,
+                                            unmeasured_functions=unmeasured)
+                self.assert_candidate_error(expected)
+
+        row_without_line = {key: value for key, value in row.items() if key != "line"}
+        self.add_pytest_measurement(source, [row_without_line], [row_without_line])
+        self.assert_candidate_error("line")
+
+    def test_pytest_unittest_method_and_decorated_range_start_at_first_decorator(self):
+        source = (
+            "import unittest\n"
+            "class Checks(unittest.TestCase):\n"
+            "    @staticmethod\n"
+            "    def test_one():\n"
+            "        assert True\n"
+        )
+        row = {"classname": "Checks", "name": "test_one", "file": "test_api.py", "line": "2"}
+        function = {"file": "alpha/test_api.py", "line": 3,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]}
+        self.add_pytest_measurement(
+            source, [row], [row], functions={"alpha/test_api.py:3::test_one": function},
+        )
+        main, razor, alpha = reports_for_feature(self.repository, "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:1-1"),
+            razor_keep_item("alpha", "alpha/test_api.py:2-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:3-5"),
+        ]
+        self.write_reports(main, razor)
+        self.assertEqual(self.run_check().returncode, 0)
+
+        self.test_candidates["functions"]["alpha/test_api.py:3::test_one"]["file"] = "alpha/main.py"
+        self.write_test_candidates()
+        self.assert_candidate_error("file")
+
+        wrong_name = {"classname": "test_api", "name": "test_other",
+                      "file": "test_api.py", "line": "0"}
+        large_row = {"classname": "test_api", "name": "test_large",
+                     "file": "test_api.py", "line": "3"}
+        self.add_pytest_measurement(
+            "def test_one():\n    assert True\n\ndef test_large():\n    assert True\n",
+            [wrong_name, large_row], [wrong_name, large_row],
+            functions={
+                "alpha/test_api.py:1::test_other": {
+                    "file": "alpha/test_api.py", "line": 1,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+                },
+                "alpha/test_api.py:4::test_large": {
+                    "file": "alpha/test_api.py", "line": 4,
+                    "covers": ["alpha/main.py:1-2"], "kills": ["mutant-1", "mutant-2"],
+                },
+            }, candidates=[{"function": "alpha/test_api.py:1::test_other",
+                            "covered_by": ["alpha/test_api.py:4::test_large"]}],
+        )
+        self.assert_candidate_error("完整函数范围无法识别")
+
+    def test_unittest_candidate_range_includes_its_first_decorator(self):
+        source = (
+            "import unittest\n"
+            "class Checks(unittest.TestCase):\n"
+            "    @staticmethod\n"
+            "    def test_small():\n"
+            "        assert True\n"
+            "\n"
+            "    @staticmethod\n"
+            "    def test_large():\n"
+            "        assert True\n"
+        )
+        rows = [
+            {"classname": "Checks", "name": "test_small", "file": "test_api.py", "line": "2"},
+            {"classname": "Checks", "name": "test_large", "file": "test_api.py", "line": "6"},
+        ]
+        small, large = "alpha/test_api.py:3::test_small", "alpha/test_api.py:7::test_large"
+        functions = {
+            small: {"file": "alpha/test_api.py", "line": 3,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+            large: {"file": "alpha/test_api.py", "line": 7,
+                    "covers": ["alpha/main.py:1-2"], "kills": ["mutant-1", "mutant-2"]},
+        }
+        self.add_pytest_measurement(
+            source, rows, rows, functions=functions,
+            candidates=[{"function": small, "covered_by": [large]}],
+        )
+        main, razor, alpha = reports_for_feature(self.repository, "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:1-1"),
+            razor_keep_item("alpha", "alpha/test_api.py:2-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:3-5"),
+            razor_keep_item("alpha", "alpha/test_api.py:7-9"),
+        ]
+        alpha["keep"][3]["cost"] += "非重复断言的见证在 alpha/test_api.py:7。"
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        alpha["keep"][3]["lines"] = "alpha/test_api.py:4-5"
+        self.write_reports(main, razor)
+        self.assert_candidate_error("完整范围")
+
+    def test_nextest_function_file_line_pairs_are_unique_and_source_is_checked(self):
+        source = "#[test]\nfn test_one() {\n}\n"
+        item = {"ignored": False, "filter-match": {"status": "matches"}}
+        listing = {"rust-suites": {
+            "api": {"status": "listed", "testcases": {"tests::test_one": item}},
+            "other": {"status": "listed", "testcases": {"tests::test_one": item}},
+        }}
+        functions = {
+            "alpha::api::tests::test_one": {"file": "alpha/tests.rs", "line": 2,
+                                     "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+            "alpha::other::tests::test_one": {"file": "alpha/tests.rs", "line": 2,
+                                     "covers": ["alpha/main.py:2-2"], "kills": ["mutant-2"]},
+        }
+        self.add_nextest_measurement(source, listing, {
+            "api": [{"name": "tests::test_one"}],
+            "other": [{"name": "tests::test_one"}],
+        }, functions=functions)
+        self.assert_candidate_error("相同")
+
+    def test_failed_or_ignored_test_functions_are_unmeasured_and_inline_test_files_are_counted(self):
+        source = "def test_one():\n    assert True\n"
+        row = {"classname": "test_api", "name": "test_one", "file": "test_api.py", "line": "0"}
+        self.add_pytest_measurement(source, [row], [{**row, "children": ["failure"]}])
+        self.test_candidates["unmeasured_functions"] = [{
+            "id": "alpha/test_api.py:1::test_one", "file": "alpha/test_api.py", "why": "失败。",
+        }]
+        self.write_test_candidates()
+        self.assertEqual(self.run_check().returncode, 0)
+
+        self.add_tracked_file("alpha/inline.rs", "#[test]\nfn inline_test() {}\n")
+        main, razor, alpha = reports_for_feature(self.repository, "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-2"),
+            razor_keep_item("alpha", "alpha/test_api.py:1-2"),
+            razor_keep_item("alpha", "alpha/inline.rs:1-2"),
+        ]
+        self.write_reports(main, razor)
+        self.write_test_candidates()
+        self.assert_candidate_error("inline.rs")
+
+        self.test_candidates["unmeasured_files"] = [{"path": "alpha/inline.rs", "why": "宏测试无法定位。"}]
+        self.write_test_candidates()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_candidate_witness_must_cover_all_candidate_lines_and_mutants(self):
+        source = (
+            "def test_small():\n    assert True\n\n"
+            "def test_first():\n    assert True\n\n"
+            "def test_second():\n    assert True\n"
+        )
+        rows = [
+            {"classname": "test_api", "name": "test_small", "file": "test_api.py", "line": "0"},
+            {"classname": "test_api", "name": "test_first", "file": "test_api.py", "line": "3"},
+            {"classname": "test_api", "name": "test_second", "file": "test_api.py", "line": "6"},
+        ]
+        small = "alpha/test_api.py:1::test_small"
+        first = "alpha/test_api.py:4::test_first"
+        second = "alpha/test_api.py:7::test_second"
+        functions = {
+            small: {"file": "alpha/test_api.py", "line": 1,
+                    "covers": ["alpha/main.py:1-2"], "kills": ["mutant-1", "mutant-2"]},
+            first: {"file": "alpha/test_api.py", "line": 4,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+            second: {"file": "alpha/test_api.py", "line": 7,
+                     "covers": ["alpha/main.py:2-2"], "kills": ["mutant-2"]},
+        }
+        self.add_pytest_measurement(
+            source, rows, rows, functions=functions,
+            candidates=[{"function": small, "covered_by": [first]}],
+        )
+        self.assert_candidate_error("covered_by 合起来")
+
+        self.add_pytest_measurement(source, rows, rows, functions=functions,
+                                    candidates=[{"function": small, "covered_by": [first, second]}])
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rust_inline_candidate_requires_full_function_keep_or_reduction(self):
+        source = (
+            "/// documentation\n#[test]\nfn test_small() {\n}\n\n"
+            "#[test]\nfn test_large() {\n}\n"
+        )
+        listing = {"rust-suites": {"api": {"status": "listed", "testcases": {
+            "test_small": {"ignored": False, "filter-match": {"status": "matches"}},
+            "test_large": {"ignored": False, "filter-match": {"status": "matches"}},
+        }}}}
+        small, large = "alpha::api::test_small", "alpha::api::test_large"
+        functions = {
+            small: {"file": "alpha/inline.rs", "line": 3,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+            large: {"file": "alpha/inline.rs", "line": 7,
+                    "covers": ["alpha/main.py:1-2"], "kills": ["mutant-1", "mutant-2"]},
+        }
+        self.add_nextest_measurement(
+            source, listing, {"api": [{"name": "test_small"}, {"name": "test_large"}]},
+            functions=functions, candidates=[{"function": small, "covered_by": [large]}],
+            test_path="alpha/inline.rs",
+        )
+        main, razor, alpha = reports_for_feature(self.repository, "alpha")
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-2"),
+            razor_keep_item("alpha", "alpha/inline.rs:1-2"),
+            razor_keep_item("alpha", "alpha/inline.rs:6-8"),
+        ]
+        alpha["findings"] = [finding("删除")]
+        alpha["findings"][0]["target"] = "alpha/inline.rs:3-4"
+        self.write_reports(main, razor)
+        self.assert_candidate_error("完整范围")
+
+        alpha["keep"] = [
+            razor_keep_item("alpha", "alpha/main.py:1-2"),
+            razor_keep_item("alpha", "alpha/inline.rs:1-4"),
+            razor_keep_item("alpha", "alpha/inline.rs:6-8"),
+        ]
+        alpha["findings"] = []
+        alpha["keep"][1]["cost"] += "见证位置 alpha/inline.rs:7。"
+        self.write_reports(main, razor)
+        self.assertEqual(self.run_check().returncode, 0)
+
+    def test_nextest_range_rejects_misformatted_close_and_accepts_full_feature_reduction(self):
+        source = "#[test]\nfn test_small() {\n    body();\n }\n#[test]\nfn test_large() {\n}\n"
+        listing = {"rust-suites": {"api": {"status": "listed", "testcases": {
+            "test_small": {"ignored": False, "filter-match": {"status": "matches"}},
+            "test_large": {"ignored": False, "filter-match": {"status": "matches"}},
+        }}}}
+        small, large = "alpha::api::test_small", "alpha::api::test_large"
+        functions = {
+            small: {"file": "alpha/tests.rs", "line": 2,
+                    "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"]},
+            large: {"file": "alpha/tests.rs", "line": 6,
+                    "covers": ["alpha/main.py:1-2"], "kills": ["mutant-1", "mutant-2"]},
+        }
+        self.add_nextest_measurement(
+            source, listing, {"api": [{"name": "test_small"}, {"name": "test_large"}]},
+            functions=functions, candidates=[{"function": small, "covered_by": [large]}],
+        )
+        self.assert_candidate_error("范围")
+
+        self.test_candidates["functions"].pop(small)
+        self.test_candidates["unmeasured_functions"] = [{
+            "id": small, "file": "alpha/tests.rs", "why": "Rust 函数范围没有按 rustfmt 缩进。",
+        }]
+        self.test_candidates["candidates"] = []
+        self.write_test_candidates()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        source = "#[test]\nfn test_small() {\n}\n#[test]\nfn test_large() {\n}\n"
+        functions[small] = {
+            "file": "alpha/tests.rs", "line": 2,
+            "covers": ["alpha/main.py:1-1"], "kills": ["mutant-1"],
+        }
+        functions[large]["line"] = 5
+        self.add_nextest_measurement(
+            source, listing, {"api": [{"name": "test_small"}, {"name": "test_large"}]},
+            functions=functions, candidates=[{"function": small, "covered_by": [large]}],
+        )
+        main, razor, alpha = reports_for_feature(self.repository, "alpha")
+        alpha["keep"] = [razor_keep_item("alpha", "alpha/main.py:1-2")]
+        alpha["findings"] = [finding("合并")]
+        alpha["findings"][0]["target"] = "alpha"
+        self.write_reports(main, razor)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def set_measured_usage(self, missed=("1-1",)):
         self.usage_coverage = {
@@ -1509,6 +2431,7 @@ class CheckReportsTest(unittest.TestCase):
                 tracked_files,
                 self.usage_coverage,
                 {},
+                [],
             )
 
         self.assertTrue(any("跳过名单" in problem for problem in problems), problems)
@@ -1894,6 +2817,7 @@ class CheckReportsTest(unittest.TestCase):
                 tracked_files,
                 self.usage_coverage,
                 {},
+                [],
             )
 
         scan.assert_not_called()
@@ -3077,6 +4001,10 @@ class CheckReportsTest(unittest.TestCase):
 
     def test_orphan_nonstanding_test_target_needs_no_overlapping_finding(self):
         self.add_tracked_file("tests/test_orphan.py", "value = 1\n")
+        self.test_candidates["unmeasured_files"].append({
+            "path": "tests/test_orphan.py", "why": "这个孤儿测试文件没有运行测试运行器。",
+        })
+        self.write_test_candidates()
         self.add_orphan_finding("root", "tests/test_orphan.py:1", role="剃刀")
         self.add_orphan_verdict("root", "tests/test_orphan.py:1-1", "站不住")
 

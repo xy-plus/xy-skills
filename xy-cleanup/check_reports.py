@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import xml.etree.ElementTree as ET
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -52,6 +53,14 @@ KEEP_ITEM_KEYS = {"lines", "requirement", "achieved", "cost"}
 REWRITE_KEYS = {"lines", "text"}
 RECHECK_VERDICT_KEYS = {"lines", "attempt", "evidence", "verdict"}
 CARRIED_KEYS = {"old", "verdict", "target", "evidence"}
+TEST_CANDIDATE_KEYS = {
+    "runs", "unmeasured_files", "generated_mutants", "mutants", "functions",
+    "unmeasured_functions", "candidates",
+}
+TEST_RUN_KEYS = {
+    "pytest": {"runner", "root", "command", "junit", "list", "list_log"},
+    "nextest": {"runner", "root", "command", "junit", "list"},
+}
 ROLES = {"主审", "剃刀"}
 REPORT_ROLES = ROLES | {"剃刀复审"}
 KINDS = {"删除", "合并", "改名", "挪位置", "拆分", "重构", "修根因", "加约束", "改清单", "孤儿", "其他"}
@@ -74,6 +83,7 @@ def parser():
         "--carry-over", required=True, nargs="+",
         help="上一轮未实施且未由用户决定的报告路径，或单独写 无",
     )
+    result.add_argument("--test-candidates", required=True, help="test-candidates.json 路径")
     result.add_argument("--reports", required=True, nargs="+", help="JSON 审查报告路径")
     return result
 
@@ -1656,8 +1666,863 @@ def _cost_mentions_duplicate_location(cost, duplicate_ranges, label,
     return False
 
 
+def _candidate_artifact_path(value, label, base_directory, problems):
+    if not _nonempty(value):
+        problems.append(f"{label} 必须是相对路径字符串")
+        return None
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        problems.append(f"{label} 必须是相对路径且不能越出 JSON 所在目录：{value}")
+        return None
+    path = (base_directory / relative).resolve()
+    try:
+        path.relative_to(base_directory.resolve())
+    except ValueError:
+        problems.append(f"{label} 必须留在 JSON 所在目录内：{value}")
+        return None
+    if not path.is_file():
+        problems.append(f"{label} 必须指向已有文件：{value}")
+        return None
+    return path
+
+
+def _candidate_repository_path(value, label, repository, problems, allow_root):
+    if not _nonempty(value):
+        problems.append(f"{label} 必须是仓内相对路径")
+        return None
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        problems.append(f"{label} 必须是仓内相对路径：{value}")
+        return None
+    if value == "." and allow_root:
+        path = Path(repository).resolve()
+        normalized = "."
+    else:
+        path = (Path(repository) / relative).resolve()
+        normalized = relative.as_posix()
+    try:
+        path.relative_to(Path(repository).resolve())
+    except ValueError:
+        problems.append(f"{label} 必须留在仓内：{value}")
+        return None
+    if not path.exists():
+        problems.append(f"{label} 指向的路径不存在：{value}")
+        return None
+    return normalized
+
+
+def _candidate_xml_cases(path, label, problems):
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as error:
+        problems.append(f"{label} 不是可读的 JUnit XML：{error}")
+        return []
+    return [node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "testcase"]
+
+
+def _pytest_case(case, root, repository, label, problems):
+    values = {}
+    for key in ("classname", "name", "file", "line"):
+        value = case.get(key)
+        if not _nonempty(value):
+            problems.append(f"{label} 缺少 {key}")
+        else:
+            values[key] = value
+    if not all(key in values for key in ("classname", "name", "file", "line")):
+        return None
+    if not values["line"].isascii() or not values["line"].isdecimal():
+        problems.append(f"{label}.line 必须是从 0 开始的非负整数：{values['line']}")
+        return None
+    file_path = Path(values["file"])
+    if file_path.is_absolute() or ".." in file_path.parts:
+        problems.append(f"{label}.file 必须相对 root：{values['file']}")
+        return None
+    full_path = Path(values["file"]) if root == "." else Path(root) / file_path
+    full_path = full_path.as_posix()
+    if not (Path(repository) / full_path).is_file():
+        problems.append(f"{label}.file 拼入 root 后在仓里不存在：{full_path}")
+        return None
+    values["path"] = full_path
+    values["test_id"] = f"{full_path}::{values['classname']}::{values['name']}"
+    # pytest JUnit reports zero-based lines; function IDs and source locations are one-based.
+    values["function_line"] = int(values["line"]) + 1
+    values["function_name"] = values["name"].split("[", 1)[0]
+    values["function_id"] = (
+        f"{full_path}:{values['function_line']}::{values['function_name']}"
+    )
+    values["identity"] = tuple(values[key] for key in ("classname", "name", "path", "line"))
+    values["element"] = case
+    return values
+
+
+def _nextest_list_items(listing, root, label, problems):
+    suites = listing.get("rust-suites") if isinstance(listing, dict) else None
+    if not isinstance(suites, dict):
+        problems.append(f"{label}.rust-suites 必须是按二进制 id 索引的对象")
+        return []
+    items = []
+    for binary_id, suite in suites.items():
+        suite_label = f"{label}.rust-suites[{binary_id}]"
+        if not isinstance(binary_id, str) or not _nonempty(binary_id):
+            problems.append(f"{suite_label} 二进制 id 必须是非空字符串")
+            continue
+        if not isinstance(suite, dict):
+            problems.append(f"{suite_label} 必须是对象")
+            continue
+        if suite.get("status") != "listed":
+            problems.append(f"{suite_label}.status 必须是 listed")
+        testcases = suite.get("testcases")
+        if not isinstance(testcases, dict):
+            problems.append(f"{suite_label}.testcases 必须是对象")
+            continue
+        for test_name, testcase in testcases.items():
+            testcase_label = f"{suite_label}.testcases[{test_name}]"
+            if not isinstance(test_name, str) or not _nonempty(test_name):
+                problems.append(f"{testcase_label} 测试路径必须是非空字符串")
+                continue
+            if not isinstance(testcase, dict):
+                problems.append(f"{testcase_label} 必须是对象")
+                continue
+            filter_match = testcase.get("filter-match")
+            status = filter_match.get("status") if isinstance(filter_match, dict) else None
+            reason = filter_match.get("reason") if isinstance(filter_match, dict) else None
+            if status != "matches" and reason != "ignored":
+                problems.append(
+                    f"{testcase_label} 不能因筛选排除测试（filter-match={reason or status!r}）"
+                )
+                continue
+            test_id = f"{root}::{binary_id}::{test_name}"
+            items.append({
+                "test_id": test_id,
+                "binary_id": binary_id,
+                "name": test_name,
+                "function_id": test_id,
+                "function_name": test_name.rsplit("::", 1)[-1],
+                "runner": "nextest",
+                "ignored": reason == "ignored",
+            })
+    return items
+
+
+def _rust_test_attribute(lines, line_number):
+    index = line_number - 2
+    while index >= 0 and lines[index].strip().startswith("#["):
+        if re.fullmatch(r"#\[(?:[A-Za-z_]\w*::)*test(?:\s*\([^]]*\))?\]", lines[index].strip()):
+            return True
+        index -= 1
+    return False
+
+
+def _rust_test_range(lines, line_number):
+    start = line_number
+    index = line_number - 2
+    while index >= 0 and lines[index].strip().startswith(("#[", "///")):
+        start = index + 1
+        index -= 1
+    function_indent = len(lines[line_number - 1]) - len(lines[line_number - 1].lstrip())
+    for index in range(line_number, len(lines)):
+        line = lines[index]
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= function_indent:
+            if line.strip() == "}":
+                return start, index + 1
+            return None
+    return None
+
+
+def _python_test_range(path, file_lines, line_number, function_name):
+    source = b"\n".join(
+        line if isinstance(line, bytes) else str(line).encode("utf-8")
+        for line in file_lines
+    )
+    try:
+        tree = ast.parse(source, filename=path)
+    except (SyntaxError, ValueError, UnicodeDecodeError):
+        return None
+    matching = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != function_name:
+            continue
+        start = min([node.lineno, *(decorator.lineno for decorator in node.decorator_list)])
+        if start == line_number:
+            matching.append((start, node.end_lineno or node.lineno))
+    return matching[0] if len(matching) == 1 else None
+
+
+def _test_functions_for_features(data, repository, expected_features, skip_paths):
+    paths = set()
+    for feature_id in expected_features:
+        feature = data["features"][feature_id]
+        direct_files = {
+            path for values in feature["files"].values() for path in values
+        }
+        for path in direct_files:
+            if is_skipped_path(path, skip_paths):
+                continue
+            category = file_category_with_skip(repository, path, skip_paths)
+            if category == "tests":
+                paths.add(path)
+            elif Path(path).suffix == ".rs" and category == "code":
+                lines = _read_file_lines(Path(repository) / path)
+                if lines and any(
+                    re.fullmatch(r"#\[(?:[A-Za-z_]\w*::)*test(?:\s*\([^]]*\))?\]",
+                                 line.decode("utf-8", errors="replace").strip()
+                                 if isinstance(line, bytes) else str(line).strip())
+                    for line in lines
+                ):
+                    paths.add(path)
+    return paths
+
+
+def _source_line_range(value, label, repository, tracked_files, problems,
+                       allow_single):
+    parsed = _parse_line_range(value, allow_single_line=allow_single)
+    if parsed is None:
+        problems.append(f"{label} 必须写成文件:行号或 文件:起始行-结束行：{value}")
+        return None
+    path, start, end = parsed
+    if path not in tracked_files:
+        problems.append(f"{label} 必须指向仓内跟踪文件：{path}")
+        return None
+    file_lines = _read_file_lines(Path(repository) / path)
+    if file_lines is None:
+        problems.append(f"{label} 无法读取：{path}")
+        return None
+    if start < 1 or start > end or end > len(file_lines):
+        problems.append(f"{label} 行范围无效：{path}:{start}-{end}")
+        return None
+    if file_category_with_skip(repository, path, []) != "code":
+        problems.append(f"{label} 必须覆盖非测试代码文件：{path}")
+        return None
+    return path, start, end
+
+
+def _expand_line_ranges(ranges):
+    return {
+        (path, line)
+        for path, start, end in ranges
+        for line in range(start, end + 1)
+    }
+
+
+def _validate_test_candidates(document, document_path, repository, data,
+                              expected_features, tracked_files):
+    """Validate test collection evidence and return ranges used by razor review."""
+    problems = _field_errors(document, TEST_CANDIDATE_KEYS, "test-candidates")
+    if not isinstance(document, dict):
+        return problems, []
+
+    base_directory = Path(document_path).resolve().parent
+    runs = document.get("runs")
+    if not isinstance(runs, list):
+        problems.append("test-candidates.runs 必须是数组")
+        runs = []
+    all_items = {}
+    function_items = {}
+    item_results = {}
+    for run_index, run in enumerate(runs):
+        label = f"test-candidates.runs[{run_index}]"
+        if not isinstance(run, dict):
+            problems.append(f"{label} 必须是对象")
+            continue
+        runner = run.get("runner")
+        if not isinstance(runner, str) or runner not in TEST_RUN_KEYS:
+            problems.append(f"{label}.runner 只能是 pytest 或 nextest")
+            continue
+        problems.extend(_field_errors(run, TEST_RUN_KEYS[runner], label))
+        root = _candidate_repository_path(
+            run.get("root"), f"{label}.root", repository, problems, allow_root=True,
+        )
+        if root is None:
+            continue
+        root_directory = Path(repository) if root == "." else Path(repository) / root
+        if not root_directory.is_dir():
+            problems.append(f"{label}.root 必须指向仓内目录：{root}")
+            continue
+        if not _nonempty(run.get("command")):
+            problems.append(f"{label}.command 必须是非空字符串")
+        list_path = _candidate_artifact_path(
+            run.get("list"), f"{label}.list", base_directory, problems,
+        )
+        junit_path = _candidate_artifact_path(
+            run.get("junit"), f"{label}.junit", base_directory, problems,
+        )
+        if runner == "pytest":
+            log_path = _candidate_artifact_path(
+                run.get("list_log"), f"{label}.list_log", base_directory, problems,
+            )
+            if log_path is not None:
+                try:
+                    log = log_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeError) as error:
+                    problems.append(f"{label}.list_log 无法读取：{error}")
+                else:
+                    last_line = next((line for line in reversed(log.splitlines()) if line.strip()), "")
+                    summary = last_line.strip("= \t\r\n").strip()
+                    lowered = summary.lower()
+                    if (not lowered.startswith("no tests ran")
+                            or "deselected" in lowered or "error" in lowered):
+                        problems.append(
+                            f"{label}.list_log 最后一个非空行必须表示 no tests ran，且没有 deselected/error："
+                            f"{summary}"
+                        )
+            list_cases = (
+                _candidate_xml_cases(list_path, f"{label}.list", problems)
+                if list_path is not None else []
+            )
+            run_cases = (
+                _candidate_xml_cases(junit_path, f"{label}.junit", problems)
+                if junit_path is not None else []
+            )
+            listed_by_identity = {}
+            run_by_identity = {}
+            for case_index, testcase in enumerate(list_cases):
+                item = _pytest_case(
+                    testcase, root, repository,
+                    f"{label}.list testcase[{case_index}]", problems,
+                )
+                if item is None:
+                    continue
+                identity = item["identity"]
+                if item["test_id"] in all_items or item["test_id"] in listed_by_identity:
+                    problems.append(f"{label}.list 测试项重复：{item['test_id']}")
+                    continue
+                listed_by_identity[item["test_id"]] = item
+                all_items[item["test_id"]] = item
+                function = function_items.setdefault(item["function_id"], {
+                    "id": item["function_id"], "runner": runner,
+                    "file": item["path"], "line": item["function_line"],
+                    "name": item["function_name"], "items": set(),
+                })
+                if function["file"] != item["path"] or function["line"] != item["function_line"]:
+                    problems.append(f"测试函数身份冲突：{item['function_id']}")
+                function["items"].add(item["test_id"])
+            for case_index, testcase in enumerate(run_cases):
+                item = _pytest_case(
+                    testcase, root, repository,
+                    f"{label}.junit testcase[{case_index}]", problems,
+                )
+                if item is None:
+                    continue
+                if item["test_id"] in run_by_identity:
+                    problems.append(f"{label}.junit 测试项重复：{item['test_id']}")
+                    continue
+                run_by_identity[item["test_id"]] = item
+                listed = listed_by_identity.get(item["test_id"])
+                if listed is None or listed["identity"] != item["identity"]:
+                    problems.append(f"{label}.junit 测试项在完整全集里没有完全相同的一项：{item['test_id']}")
+                    continue
+                item_results[item["test_id"]] = testcase
+        else:
+            if list_path is not None:
+                try:
+                    listing = json.loads(
+                        list_path.read_text(encoding="utf-8"),
+                        object_pairs_hook=object_without_duplicate_keys,
+                    )
+                except (OSError, UnicodeError, ValueError) as error:
+                    problems.append(f"{label}.list 无法读取 nextest JSON：{error}")
+                    listing = None
+            else:
+                listing = None
+            listed_items = _nextest_list_items(listing, root, f"{label}.list", problems)
+            listed_by_identity = {}
+            for item in listed_items:
+                if item["test_id"] in all_items or item["test_id"] in listed_by_identity:
+                    problems.append(f"{label}.list 测试项重复：{item['test_id']}")
+                    continue
+                listed_by_identity[item["test_id"]] = item
+                all_items[item["test_id"]] = item
+                function_items[item["function_id"]] = {
+                    "id": item["function_id"], "runner": runner,
+                    "file": None, "line": None, "name": item["function_name"],
+                    "items": {item["test_id"]},
+                }
+            if junit_path is not None:
+                try:
+                    junit_root = ET.parse(junit_path).getroot()
+                except (OSError, ET.ParseError):
+                    junit_root = None
+                run_by_identity = {}
+                if junit_root is not None:
+                    for suite in junit_root.iter():
+                        if suite.tag.rsplit("}", 1)[-1] != "testsuite":
+                            continue
+                        binary_id = suite.get("name")
+                        for testcase in suite:
+                            if testcase.tag.rsplit("}", 1)[-1] != "testcase":
+                                continue
+                            test_name = testcase.get("name")
+                            if not _nonempty(binary_id) or not _nonempty(test_name):
+                                problems.append(f"{label}.junit testcase 必须有 testsuite.name 和 testcase.name")
+                                continue
+                            test_id = f"{root}::{binary_id}::{test_name}"
+                            if test_id in run_by_identity:
+                                problems.append(f"{label}.junit 测试项重复：{test_id}")
+                                continue
+                            run_by_identity[test_id] = testcase
+                            if test_id not in listed_by_identity:
+                                problems.append(f"{label}.junit 测试项不在完整全集里：{test_id}")
+                                continue
+                            item_results[test_id] = testcase
+
+    # Any missing or failed parameter/inheritance instance makes its source function unmeasured.
+    must_be_unmeasured = set()
+    for function_id, function in function_items.items():
+        for test_id in function["items"]:
+            result = item_results.get(test_id)
+            if result is None or any(
+                child.tag.rsplit("}", 1)[-1] not in {"system-out", "system-err", "properties"}
+                for child in result
+            ):
+                must_be_unmeasured.add(function_id)
+
+    unmeasured_files = document.get("unmeasured_files")
+    if not isinstance(unmeasured_files, list):
+        problems.append("test-candidates.unmeasured_files 必须是数组")
+        unmeasured_files = []
+    unmeasured_file_paths = set()
+    for index, item in enumerate(unmeasured_files):
+        label = f"test-candidates.unmeasured_files[{index}]"
+        item_problems = _field_errors(item, {"path", "why"}, label)
+        problems.extend(item_problems)
+        if item_problems or not isinstance(item, dict):
+            continue
+        path = _candidate_repository_path(
+            item.get("path"), f"{label}.path", repository, problems, allow_root=False,
+        )
+        if path is not None:
+            if path in unmeasured_file_paths:
+                problems.append(f"unmeasured_files 文件重复：{path}")
+            unmeasured_file_paths.add(path)
+        if not _nonempty(item.get("why")):
+            problems.append(f"{label}.why 必须是非空字符串")
+
+    generated_mutants = document.get("generated_mutants")
+    if not isinstance(generated_mutants, int) or isinstance(generated_mutants, bool) or generated_mutants < 0:
+        problems.append("test-candidates.generated_mutants 必须是非负整数")
+        generated_mutants = 0
+    mutants = document.get("mutants")
+    if not isinstance(mutants, list):
+        problems.append("test-candidates.mutants 必须是数组")
+        mutants = []
+    mutant_ids = set()
+    mutant_locations = {}
+    for index, mutant in enumerate(mutants):
+        label = f"test-candidates.mutants[{index}]"
+        item_problems = _field_errors(mutant, {"id", "location", "change"}, label)
+        problems.extend(item_problems)
+        if item_problems or not isinstance(mutant, dict):
+            continue
+        mutant_id = mutant.get("id")
+        if not _nonempty(mutant_id):
+            problems.append(f"{label}.id 必须是非空字符串")
+        elif mutant_id in mutant_ids:
+            problems.append(f"变异 id 重复：{mutant_id}")
+        else:
+            mutant_ids.add(mutant_id)
+        if not _nonempty(mutant.get("change")):
+            problems.append(f"{label}.change 必须是非空字符串")
+        location = _source_line_range(
+            mutant.get("location"), f"{label}.location", repository,
+            tracked_files, problems, allow_single=True,
+        )
+        if location is not None:
+            mutant_locations[mutant_id] = location
+    if len(mutants) > generated_mutants:
+        problems.append("test-candidates.mutants 数量不能多于 generated_mutants")
+
+    functions = document.get("functions")
+    if not isinstance(functions, dict):
+        problems.append("test-candidates.functions 必须是对象")
+        functions = {}
+    unmeasured_functions = document.get("unmeasured_functions")
+    if not isinstance(unmeasured_functions, list):
+        problems.append("test-candidates.unmeasured_functions 必须是数组")
+        unmeasured_functions = []
+    unmeasured_by_id = {}
+    for index, item in enumerate(unmeasured_functions):
+        label = f"test-candidates.unmeasured_functions[{index}]"
+        item_problems = _field_errors(item, {"id", "file", "why"}, label)
+        problems.extend(item_problems)
+        if item_problems or not isinstance(item, dict):
+            continue
+        function_id = item.get("id")
+        if not _nonempty(function_id):
+            problems.append(f"{label}.id 必须是非空字符串")
+        elif function_id in unmeasured_by_id:
+            problems.append(f"量不了函数重复：{function_id}")
+        else:
+            unmeasured_by_id[function_id] = item
+        if not _nonempty(item.get("why")):
+            problems.append(f"{label}.why 必须是非空字符串")
+
+    expected_ids = set(function_items)
+    measured_ids = set(functions)
+    unmeasured_ids = set(unmeasured_by_id)
+    if measured_ids & unmeasured_ids:
+        problems.append("functions 和 unmeasured_functions 的函数不能重叠")
+    if measured_ids | unmeasured_ids != expected_ids:
+        missing = sorted(expected_ids - measured_ids - unmeasured_ids)
+        extra = sorted((measured_ids | unmeasured_ids) - expected_ids)
+        if missing:
+            problems.append(f"test-candidates 函数清单缺少函数：{', '.join(missing)}")
+        if extra:
+            problems.append(f"test-candidates 函数清单多出函数：{', '.join(extra)}")
+    for function_id in sorted(must_be_unmeasured & measured_ids):
+        problems.append(
+            f"测试项未运行或没通过，函数必须量不了并记在 unmeasured_functions：{function_id}"
+        )
+
+    function_ranges = {}
+    measured_covers = {}
+    measured_kills = {}
+    duplicate_nextest_source = {}
+    for function_id, function_data in functions.items():
+        label = f"test-candidates.functions[{function_id}]"
+        field_problems = _field_errors(
+            function_data, {"file", "line", "covers", "kills"}, label,
+        )
+        problems.extend(field_problems)
+        if field_problems or not isinstance(function_data, dict):
+            continue
+        derived = function_items.get(function_id)
+        file_path = _candidate_repository_path(
+            function_data.get("file"), f"{label}.file", repository, problems,
+            allow_root=False,
+        )
+        line_number = function_data.get("line")
+        if not isinstance(line_number, int) or isinstance(line_number, bool) or line_number < 1:
+            problems.append(f"{label}.line 必须是正整数")
+            line_number = None
+        if derived is not None and derived["runner"] == "pytest":
+            if file_path != derived["file"]:
+                problems.append(f"{label}.file 必须等于从 pytest 全集推出的位置：{derived['file']}")
+            if line_number != derived["line"]:
+                problems.append(f"{label}.line 必须等于 pytest JUnit line 加 1：{derived['line']}")
+        elif derived is not None and derived["runner"] == "nextest":
+            if file_path is not None:
+                derived["file"] = file_path
+            if file_path is not None and line_number is not None:
+                source_lines = _read_file_lines(Path(repository) / file_path)
+                if source_lines is not None:
+                    decoded = [line.decode("utf-8", errors="replace") if isinstance(line, bytes)
+                               else str(line) for line in source_lines]
+                    name = derived["name"]
+                    source_line = decoded[line_number - 1] if line_number <= len(decoded) else ""
+                    if line_number > len(decoded) or not re.search(
+                        rf"\bfn\s+{re.escape(name)}(?=[(<])", source_line,
+                    ):
+                        problems.append(f"{label}.line 必须是 fn {name}( 或 fn {name}< 所在行")
+                    elif not _rust_test_attribute(decoded, line_number):
+                        problems.append(f"{label}.line 上方必须紧挨 Rust 测试属性 #[test] 或 #[路径::test]")
+                    else:
+                        source_key = (file_path, line_number)
+                        if source_key in duplicate_nextest_source:
+                            problems.append(
+                                f"两个已测 nextest 函数不能使用相同 file、line："
+                                f"{file_path}:{line_number}"
+                            )
+                        duplicate_nextest_source[source_key] = function_id
+                        function_ranges[function_id] = _rust_test_range(decoded, line_number)
+        covers = function_data.get("covers")
+        if not isinstance(covers, list) or not covers:
+            problems.append(f"{label}.covers 必须是非空数组")
+            covers = []
+        cover_ranges = []
+        for index, item in enumerate(covers):
+            parsed = _source_line_range(
+                item, f"{label}.covers[{index}]", repository,
+                tracked_files, problems, allow_single=False,
+            )
+            if parsed is not None:
+                cover_ranges.append(parsed)
+        cover_lines = _expand_line_ranges(cover_ranges)
+        if len(cover_lines) != sum(end - start + 1 for _path, start, end in cover_ranges):
+            problems.append(f"{label}.covers 不能重复包含同一代码行")
+        measured_covers[function_id] = cover_lines
+        kills = function_data.get("kills")
+        if not isinstance(kills, list):
+            problems.append(f"{label}.kills 必须是数组")
+            kills = []
+        if len(set(kill for kill in kills if isinstance(kill, str))) != len(kills):
+            problems.append(f"{label}.kills 不能重复变异 id")
+        for mutant_id in kills:
+            if not isinstance(mutant_id, str) or mutant_id not in mutant_ids:
+                problems.append(f"{label}.kills 引用了 mutants 中不存在的 id：{mutant_id}")
+        measured_kills[function_id] = set(kill for kill in kills if isinstance(kill, str))
+        if derived is not None and derived["runner"] == "pytest" and file_path is not None:
+            lines = _read_file_lines(Path(repository) / file_path)
+            if lines is not None:
+                function_ranges[function_id] = _python_test_range(
+                    file_path, lines, derived["line"], derived["name"],
+                )
+
+    for function_id, item in unmeasured_by_id.items():
+        derived = function_items.get(function_id)
+        path = _candidate_repository_path(
+            item.get("file"), f"unmeasured_functions[{function_id}].file",
+            repository, problems, allow_root=False,
+        )
+        if derived is not None and derived["runner"] == "pytest" and path != derived["file"]:
+            problems.append(
+                f"unmeasured_functions[{function_id}].file 必须等于 pytest 全集位置：{derived['file']}"
+            )
+        if derived is not None and derived["runner"] == "nextest" and path is not None:
+            derived["file"] = path
+
+    if functions and not mutants:
+        problems.append("有已测函数时 mutants 不能为空")
+
+    skip_paths = read_skip_paths(repository, tracked_files)
+    test_files = _test_functions_for_features(data, repository, expected_features, skip_paths)
+    all_direct_functions = {}
+    for function_id, derived in function_items.items():
+        measured_function = functions.get(function_id)
+        measured_file = (
+            measured_function.get("file") if isinstance(measured_function, dict) else None
+        )
+        function_file = measured_file or derived["file"]
+        if function_file is None and function_id in unmeasured_by_id:
+            function_file = unmeasured_by_id[function_id].get("file")
+        if isinstance(function_file, str):
+            all_direct_functions.setdefault(function_file, []).append(function_id)
+            if function_file not in test_files:
+                problems.append(
+                    f"函数 {function_id} 的 file 必须是本次范围内的直属测试文件：{function_file}"
+                )
+    for path in sorted(unmeasured_file_paths):
+        if path not in test_files:
+            problems.append(f"unmeasured_files.path 不是范围内的直属测试文件：{path}")
+        if all_direct_functions.get(path):
+            problems.append(f"测试文件不能同时有函数记录和 unmeasured_files：{path}")
+    for path in sorted(test_files):
+        has_functions = bool(all_direct_functions.get(path))
+        has_unmeasured = path in unmeasured_file_paths
+        if has_functions == has_unmeasured:
+            problems.append(
+                f"直属测试文件 {path} 必须恰好有函数记录或 unmeasured_files 原因"
+            )
+
+    for function_id, cover_lines in measured_covers.items():
+        for other_id, source_range in function_ranges.items():
+            if source_range is None:
+                continue
+            other_file = function_items.get(other_id, {}).get("file")
+            if other_file is not None and any(
+                path == other_file and source_range[0] <= line <= source_range[1]
+                for path, line in cover_lines
+            ):
+                problems.append(
+                    f"functions[{function_id}].covers 不能包含测试函数 {other_id} 自身的行"
+                )
+    test_source_lines = {
+        (function_items[function_id]["file"], line)
+        for function_id, source_range in function_ranges.items()
+        if source_range is not None and function_items.get(function_id, {}).get("file") is not None
+        for line in range(source_range[0], source_range[1] + 1)
+    }
+    for mutant_id, location in mutant_locations.items():
+        if location is not None and any(
+            (location[0], line) in test_source_lines
+            for line in range(location[1], location[2] + 1)
+        ):
+            problems.append(f"mutants[{mutant_id}].location 不能指向测试函数自身的行")
+
+    candidate_rows = document.get("candidates")
+    if not isinstance(candidate_rows, list):
+        problems.append("test-candidates.candidates 必须是数组")
+        candidate_rows = []
+    ordered_functions = sorted(
+        measured_ids,
+        key=lambda function_id: (-len(measured_covers.get(function_id, set())), function_id),
+    )
+    computed_candidates = []
+    selected_candidate_ids = set()
+    for function_id in ordered_functions:
+        # Once selected, a candidate cannot witness a later candidate: all surviving tests
+        # must still contain the evidence after every candidate is removed.
+        witnesses = [
+            other_id for other_id in ordered_functions
+            if other_id != function_id and other_id not in selected_candidate_ids
+        ]
+        covered_lines = set().union(*(measured_covers.get(item, set()) for item in witnesses))
+        killed_mutants = set().union(*(measured_kills.get(item, set()) for item in witnesses))
+        if (measured_covers.get(function_id, set()) <= covered_lines
+                and measured_kills.get(function_id, set()) <= killed_mutants):
+            selected_candidate_ids.add(function_id)
+            computed_candidates.append(function_id)
+
+    candidate_info_by_id = {}
+    seen_candidates = set()
+    supplied_candidate_ids = {
+        row.get("function") for row in candidate_rows
+        if isinstance(row, dict) and isinstance(row.get("function"), str)
+    }
+    if supplied_candidate_ids != set(computed_candidates):
+        problems.append("candidates 函数集合必须与检查器重算结果完全一致")
+    for index, row in enumerate(candidate_rows):
+        label = f"test-candidates.candidates[{index}]"
+        field_problems = _field_errors(row, {"function", "covered_by"}, label)
+        problems.extend(field_problems)
+        if field_problems or not isinstance(row, dict):
+            continue
+        function_id = row.get("function")
+        if not _nonempty(function_id):
+            problems.append(f"{label}.function 必须是非空字符串")
+            continue
+        if function_id in seen_candidates:
+            problems.append(f"候选函数重复：{function_id}")
+        seen_candidates.add(function_id)
+        if not isinstance(function_id, str) or function_id not in functions:
+            problems.append(f"候选必须引用已测函数：{function_id}")
+        if not isinstance(function_id, str) or function_id not in selected_candidate_ids:
+            continue
+        derived = function_items.get(function_id)
+        function_data = functions.get(function_id)
+        covered_by = row.get("covered_by")
+        if not isinstance(covered_by, list) or not covered_by:
+            problems.append(f"{label}.covered_by 必须是非空数组")
+            covered_by = []
+        if len(set(value for value in covered_by if isinstance(value, str))) != len(covered_by):
+            problems.append(f"{label}.covered_by 不能重复函数 id")
+        witness_ids = []
+        for witness_id in covered_by:
+            if not isinstance(witness_id, str):
+                problems.append(f"{label}.covered_by 的函数 id 必须是字符串")
+                continue
+            if witness_id in selected_candidate_ids:
+                problems.append(f"{label}.covered_by 不能包含候选函数：{witness_id}")
+            if witness_id not in functions:
+                problems.append(f"{label}.covered_by 必须引用已测函数：{witness_id}")
+            else:
+                witness_ids.append(witness_id)
+        witness_lines = set().union(*(measured_covers.get(item, set()) for item in witness_ids))
+        witness_kills = set().union(*(measured_kills.get(item, set()) for item in witness_ids))
+        if not measured_covers.get(function_id, set()) <= witness_lines:
+            problems.append(f"{label}.covered_by 合起来没有包含候选 covers")
+        if not measured_kills.get(function_id, set()) <= witness_kills:
+            problems.append(f"{label}.covered_by 合起来没有包含候选 kills")
+        if derived is not None and function_data is not None:
+            file_path = function_data.get("file")
+            line_number = function_data.get("line")
+            full_range = function_ranges.get(function_id)
+            if file_path is not None and line_number is not None and full_range is None:
+                problems.append(
+                    f"候选 {function_id} 的完整函数范围无法识别；将它改记 unmeasured_functions 后重算候选"
+                )
+            elif full_range is not None:
+                candidate_info_by_id[function_id] = {
+                    "function": function_id, "file": file_path,
+                    "start": full_range[0], "end": full_range[1],
+                    "covered_by": witness_ids,
+                    "witness_locations": [
+                        (functions[witness_id]["file"], functions[witness_id]["line"])
+                        for witness_id in witness_ids
+                        if isinstance(functions.get(witness_id), dict)
+                        and isinstance(functions[witness_id].get("file"), str)
+                        and isinstance(functions[witness_id].get("line"), int)
+                        and not isinstance(functions[witness_id].get("line"), bool)
+                    ],
+                }
+
+    return problems, list(candidate_info_by_id.values())
+
+
+def _validate_razor_test_candidates(candidates, review, feature_id, direct_files,
+                                    keep_files, finding_ranges, feature_targets,
+                                    repository, tracked_files, label):
+    problems = []
+    if not candidates:
+        return problems
+    keep_items = review.get("keep") if isinstance(review.get("keep"), list) else []
+    keep_ranges = []
+    for item in keep_items:
+        if not isinstance(item, dict):
+            continue
+        parsed = _parse_line_range(item.get("lines"), allow_single_line=False)
+        if parsed is not None:
+            keep_ranges.append((parsed, item))
+    range_reductions = [
+        (finding, location) for finding, location in finding_ranges
+        if finding.get("kind") in {"删除", "合并"}
+    ]
+    for candidate in candidates:
+        path = candidate["file"]
+        start, end = candidate["start"], candidate["end"]
+        if path not in direct_files or path not in keep_files:
+            continue
+        candidate_label = f"候选 {candidate['function']} 的完整范围 {path}:{start}-{end}"
+        witness_ranges = [
+            (path, line, line) for path, line in candidate.get("witness_locations", [])
+        ]
+        witness_positions = []
+        for witness_file, witness_line in candidate.get("witness_locations", []):
+            witness_positions.append(f"{witness_file}:{witness_line}")
+        # A whole-function deletion or merge is an explicit answer, including a feature-level one.
+        if any(finding.get("kind") in {"删除", "合并"} for finding in feature_targets):
+            continue
+        fully_reduced = any(
+            location[0] == path and location[1] <= start and location[2] >= end
+            for _finding, location in range_reductions
+        )
+        if fully_reduced:
+            continue
+        overlapping_reduction = any(
+            location[0] == path and location[1] <= end and start <= location[2]
+            for _finding, location in range_reductions
+        )
+        overlapping_keep = [
+            (line_range, item) for line_range, item in keep_ranges
+            if line_range[0] == path and line_range[1] <= end and start <= line_range[2]
+        ]
+        file_lines = _read_file_lines(Path(repository) / path) or []
+        decoded = [line.decode("utf-8", errors="replace") if isinstance(line, bytes)
+                   else str(line) for line in file_lines]
+        kept_whole = all(
+            not decoded[line_number - 1].strip()
+            or any(
+                line_range[0] == path and line_range[1] <= line_number <= line_range[2]
+                for line_range, _item in keep_ranges
+            )
+            for line_number in range(start, end + 1)
+        )
+        # A refactor or any other finding cannot answer whether this test function itself stays.
+        if not overlapping_reduction and kept_whole and overlapping_keep:
+            costs_ok = True
+            for _line_range, item in overlapping_keep:
+                if not _cost_mentions_duplicate_location(
+                    item.get("cost"), witness_ranges, candidate_label,
+                    repository, tracked_files,
+                ):
+                    costs_ok = False
+                    break
+            if costs_ok:
+                continue
+        action = "删除或合并整段，或完整保留并说明见证位置"
+        witnesses = ", ".join(witness_positions) or "无法识别的见证定义行"
+        if overlapping_reduction:
+            problems.append(f"{candidate_label} 不能只由部分删除/合并或重构发现覆盖；见证：{witnesses}")
+        elif not overlapping_keep or not kept_whole:
+            problems.append(f"{candidate_label} 必须{action}；见证：{witnesses}")
+        elif not all(
+            _cost_mentions_duplicate_location(
+                item.get("cost"), witness_ranges, candidate_label,
+                repository, tracked_files,
+            ) for _line_range, item in overlapping_keep
+        ):
+            problems.append(f"{candidate_label} 的每条 keep.cost 都必须写出有效见证位置：{witnesses}")
+        else:
+            problems.append(f"{candidate_label} 的响应不完整；见证：{witnesses}")
+    return problems
+
+
 def validate_reports(data, repository, expected_features, report_paths, tracked_files,
-                     usage_coverage, carry_over_findings):
+                     usage_coverage, carry_over_findings, test_candidate_ranges):
     """Return all structural, coverage, decision, and rule-quote problems."""
     problems = []
     problems.extend(_validate_empty_feature_items(data, expected_features))
@@ -1940,6 +2805,18 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     duplicate_windows if duplicate_windows is not None else {},
                     tracked_files,
                 ))
+                problems.extend(_validate_razor_test_candidates(
+                    test_candidate_ranges,
+                    review,
+                    feature_id,
+                    direct_files,
+                    keep_files,
+                    finding_ranges,
+                    feature_targets,
+                    repository,
+                    tracked_files,
+                    f"报告 {label} 的功能 {feature_id}",
+                ))
                 if (isinstance(feature_id, str)
                         and feature_id in expected_features
                         and has_keep_items):
@@ -2032,6 +2909,22 @@ def main(argv):
         print(f"无法读取 usage-coverage {usage_coverage_path}：{error}")
         return 1
 
+    test_candidates_path = Path(options.test_candidates)
+    if not test_candidates_path.is_file():
+        print(
+            "--test-candidates 必须指向已有文件：" + str(test_candidates_path),
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        test_candidates = json.loads(
+            test_candidates_path.read_text(encoding="utf-8"),
+            object_pairs_hook=object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
+        print(f"无法读取 test-candidates {test_candidates_path}：{error}")
+        return 1
+
     report_paths = [Path(path) for path in options.reports]
     missing = [path for path in report_paths if not path.is_file()]
     if missing:
@@ -2073,9 +2966,19 @@ def main(argv):
     problems = _validate_usage_coverage(
         usage_coverage, data, repository, expected, tracked_files,
     )
+    candidate_problems, test_candidate_ranges = _validate_test_candidates(
+        test_candidates,
+        test_candidates_path,
+        repository,
+        data,
+        expected,
+        tracked_files,
+    )
+    problems.extend(candidate_problems)
     problems.extend(validate_reports(
         data, repository, expected, report_paths, tracked_files, usage_coverage,
         carry_over_findings,
+        test_candidate_ranges,
     ))
     problems.extend(carry_over_problems)
     if problems:
