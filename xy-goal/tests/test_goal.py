@@ -988,13 +988,12 @@ class GoalTests(unittest.TestCase):
             "parentUuid": "turn",
             "type": "user",
             "promptId": "withdrawn-prompt",
-            "isSidechain": False,
             "timestamp": "2026-10-24T09:00:00.000Z",
             "origin_kind": "human",
             "content": "中性测试正文",
         })
         self.assertTrue(all(set(record) <= {
-            "uuid", "parentUuid", "type", "promptId", "isSidechain", "timestamp", "origin_kind", "content",
+            "uuid", "parentUuid", "type", "promptId", "timestamp", "origin_kind", "content",
         } for record in records))
         self.assertEqual(len(records), 7, "无 UUID 的附件、请求和队列记录不进入判定列表")
 
@@ -1055,6 +1054,33 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(output, "")
         self.assertIn("原话 1 还没处理", errors)
+        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "")
+
+    def test_check_keeps_ancestor_quote_pending_when_nested_user_message_is_answered(self):
+        contract = self.open_goal("nested-answer")
+        first = contract / "quotes" / "1.md"
+        second = contract / "quotes" / "2.md"
+        first.write_text("中性父消息", encoding="utf-8")
+        second.write_text("中性子消息", encoding="utf-8")
+        self.set_quote_mtime(first, "2026-10-24T09:00:00.000Z", 5)
+        self.set_quote_mtime(second, "2026-10-24T09:00:00.000Z", 20)
+        records = self.withdrawn_transcript(content="中性父消息")
+        withdrawn_index = next(index for index, record in enumerate(records)
+                               if record.get("uuid") == "withdrawn")
+        records.insert(withdrawn_index + 1, self.transcript_record(
+            "user", uuid="nested-user", parent="withdrawn", timestamp="2026-10-24T09:00:15.000Z",
+            prompt_id="nested-prompt", origin="human", content="中性子消息"))
+        records.insert(withdrawn_index + 2, self.transcript_record(
+            "assistant", uuid="nested-answer", parent="nested-user",
+            timestamp="2026-10-24T09:00:16.000Z", role="assistant"))
+        self.write_transcript(records)
+
+        code, output, errors = self.command("check")
+
+        self.assertEqual(code, 1)
+        self.assertEqual(output, "")
+        self.assertIn("原话 1 还没处理", errors)
+        self.assertIn("原话 2 还没处理", errors)
         self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "")
 
     def test_check_does_not_match_an_old_quote_when_hook_missed_withdrawn_message(self):

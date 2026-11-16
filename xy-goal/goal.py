@@ -516,7 +516,7 @@ def read_session_transcript(session_id):
             if (source.get("isSidechain") or not isinstance(uuid, str) or not uuid
                     or any(char in uuid for char in LINE_BREAKS)):
                 continue
-            record = {"uuid": uuid, "isSidechain": False}
+            record = {"uuid": uuid}
             for field in ("parentUuid", "type", "timestamp"):
                 value = source.get(field)
                 if isinstance(value, str):
@@ -589,12 +589,8 @@ def withdrawn_quote_dismissals(contract, transcript):
         if record.get("type") != "assistant" or not possible_withdrawals:
             continue
         parent = record.get("parentUuid")
-        seen = set()
-        while isinstance(parent, str) and parent in rows_by_uuid and parent not in seen and parent not in answered:
-            if parent in possible_withdrawals:
-                answered.add(parent)
-                break
-            seen.add(parent)
+        while isinstance(parent, str) and parent in rows_by_uuid and parent not in answered:
+            answered.add(parent)
             parent = rows_by_uuid[parent].get("parentUuid")
 
     possible = {}
