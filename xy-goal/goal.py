@@ -498,20 +498,42 @@ def require_project_directory(root, project):
 def read_session_transcript(session_id):
     project = session_project(session_id)
     path = Path.home() / ".claude" / "projects" / project / f"{session_id}.jsonl"
-    contents = path.read_bytes()
-    rows = contents.split(b"\n")
-    # Claude Code appends JSONL: an unterminated last row may still be in flight.
-    if rows:
-        rows.pop()
     records = []
-    for line_number, row in enumerate(rows, start=1):
-        try:
-            record = json.loads(row.decode("utf-8"))
-            if not isinstance(record, dict):
-                raise ValueError("记录不是对象")
-        except (UnicodeError, ValueError) as error:
-            raise GoalError(f"会话记录第 {line_number} 行无法解析：{error}") from error
-        records.append(record)
+    # 逐行解析并立即丢弃无关字段，避免把数百 MB 的会话记录整体载入内存。
+    # Claude Code 正在追加的末行没有 LF，跳过它；此前每行都必须完整且可解析。
+    with path.open("rb") as transcript:
+        for line_number, row in enumerate(transcript, start=1):
+            if not row.endswith(b"\n"):
+                break
+            try:
+                source = json.loads(row.decode("utf-8"))
+                if not isinstance(source, dict):
+                    raise ValueError("记录不是对象")
+            except (UnicodeError, ValueError) as error:
+                raise GoalError(f"会话记录第 {line_number} 行无法解析：{error}") from error
+
+            uuid = source.get("uuid")
+            if (source.get("isSidechain") or not isinstance(uuid, str) or not uuid
+                    or any(char in uuid for char in LINE_BREAKS)):
+                continue
+            record = {"uuid": uuid, "isSidechain": False}
+            for field in ("parentUuid", "type", "timestamp"):
+                value = source.get(field)
+                if isinstance(value, str):
+                    record[field] = value
+            prompt_id = source.get("promptId")
+            if "promptId" in source and (isinstance(prompt_id, str) or prompt_id is None):
+                record["promptId"] = prompt_id
+            origin = source.get("origin")
+            if isinstance(origin, dict):
+                kind = origin.get("kind")
+                if isinstance(kind, str):
+                    record["origin_kind"] = kind
+            message = source.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if source.get("type") == "user" and isinstance(content, str):
+                record["content"] = content
+            records.append(record)
     return records
 
 
@@ -529,38 +551,25 @@ def transcript_time(record):
 
 
 def withdrawn_quote_dismissals(contract, transcript):
-    # Mark only a human user message with text and a parent, no assistant descendant,
-    # followed by a same-parent record from a different promptId. The missing assistant
-    # descendant rules out answered-and-rewound messages. A different-prompt sibling
-    # shows the conversation continued from W's parent; the changed promptId rules out
-    # same-turn queued input or tool results. Non-assistant children such as attachments
-    # do not count as replies.
+    # 撤回消息须同时符合三点：人工 user 文本有父节点；沿 parentUuid 没有 assistant 后代；之后有同父、promptId 不同的记录。
+    # 同父而不同 promptId 表明对话从 W 的父节点继续，排除同轮排队插话和 tool_result；assistant 后代表示已获回复，之后回退也可能已产生事项。
+    # 附件等非 assistant 子节点不算回复。
     #
-    # Pair W with the first later user record N that has string content. Hooks write each
-    # quote after its prompt timestamp and before the next prompt is submitted, so exact
-    # text plus quote mtime in [W.timestamp, N.timestamp) identifies W's own quote. Requiring
-    # one matching quote avoids guessing between repeated text; an already handled quote
-    # is left alone. This timing also excludes older missed-hook quotes and later resends.
-    records = [record for record in transcript
-               if not record.get("isSidechain") and isinstance(record.get("uuid"), str)
-               and record["uuid"] and not any(char in record["uuid"] for char in LINE_BREAKS)]
+    # N 是 W 之后第一条 content 为字符串的 user 记录。hook 在 W 的提交时间之后写原话文件、N 提交前完成；正文全等且 mtime 落在 [W.timestamp, N.timestamp) 才能配对。
+    # 窗口内必须恰好一条原话；旧的漏记同文原话和之后重发的原话都在窗口外，已处理的原话不改。
+    records = transcript
     rows_by_uuid = {}
+    duplicated_uuids = set()
     for record in records:
-        rows_by_uuid.setdefault(record["uuid"], []).append(record)
-    duplicated_uuids = {uuid for uuid, rows in rows_by_uuid.items() if len(rows) != 1}
-    records = [record for record in records if record["uuid"] not in duplicated_uuids]
-    rows_by_uuid = {record["uuid"]: record for record in records}
-
-    answered = set()
-    for record in records:
-        if record.get("type") != "assistant":
-            continue
-        parent = record.get("parentUuid")
-        seen = set()
-        while isinstance(parent, str) and parent in rows_by_uuid and parent not in seen and parent not in answered:
-            answered.add(parent)
-            seen.add(parent)
-            parent = rows_by_uuid[parent].get("parentUuid")
+        uuid = record["uuid"]
+        if uuid in rows_by_uuid:
+            duplicated_uuids.add(uuid)
+        else:
+            rows_by_uuid[uuid] = record
+    if duplicated_uuids:
+        records = [record for record in records if record["uuid"] not in duplicated_uuids]
+        for uuid in duplicated_uuids:
+            rows_by_uuid.pop(uuid, None)
 
     quote_numbers = {}
     quote_times = {}
@@ -568,16 +577,34 @@ def withdrawn_quote_dismissals(contract, transcript):
         quote_numbers.setdefault(text, []).append(number)
         quote_times[number] = (contract.path / "quotes" / f"{number}.md").stat().st_mtime
 
+    possible_withdrawals = {
+        record["uuid"] for record in records
+        if record.get("type") == "user" and record.get("origin_kind") == "human"
+        and isinstance(record.get("content"), str)
+        and isinstance(record.get("parentUuid"), str) and record["parentUuid"]
+        and record["content"] in quote_numbers
+    }
+    answered = set()
+    for record in records:
+        if record.get("type") != "assistant" or not possible_withdrawals:
+            continue
+        parent = record.get("parentUuid")
+        seen = set()
+        while isinstance(parent, str) and parent in rows_by_uuid and parent not in seen and parent not in answered:
+            if parent in possible_withdrawals:
+                answered.add(parent)
+                break
+            seen.add(parent)
+            parent = rows_by_uuid[parent].get("parentUuid")
+
     possible = {}
     for index, withdrawn in enumerate(records):
         if withdrawn.get("type") != "user":
             continue
-        origin = withdrawn.get("origin")
-        message = withdrawn.get("message")
         parent = withdrawn.get("parentUuid")
-        content = message.get("content") if isinstance(message, dict) else None
-        if (not isinstance(origin, dict) or origin.get("kind") != "human"
-                or not isinstance(content, str) or not isinstance(parent, str) or not parent
+        content = withdrawn.get("content")
+        if (withdrawn.get("origin_kind") != "human" or not isinstance(content, str)
+                or not isinstance(parent, str) or not parent
                 or withdrawn["uuid"] in answered or content not in quote_numbers):
             continue
 
@@ -588,9 +615,8 @@ def withdrawn_quote_dismissals(contract, transcript):
             if (later.get("parentUuid") == parent
                     and later.get("promptId") != withdrawn.get("promptId")):
                 has_new_prompt_sibling = True
-            message = later.get("message")
             if (next_user is None and later.get("type") == "user"
-                    and isinstance(message, dict) and isinstance(message.get("content"), str)):
+                    and isinstance(later.get("content"), str)):
                 next_user = later
             if has_new_prompt_sibling and next_user is not None:
                 break

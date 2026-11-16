@@ -977,6 +977,27 @@ class GoalTests(unittest.TestCase):
                          "1 不必跟进 自动：已撤回（会话记录 withdrawn）\n")
         self.assertEqual((quote.read_bytes(), quote.stat().st_mtime_ns), before)
 
+    def test_session_reader_keeps_only_withdrawal_fields(self):
+        self.write_transcript(self.withdrawn_transcript())
+
+        records = goal.read_session_transcript(self.session)
+
+        withdrawn = next(record for record in records if record.get("uuid") == "withdrawn")
+        self.assertEqual(withdrawn, {
+            "uuid": "withdrawn",
+            "parentUuid": "turn",
+            "type": "user",
+            "promptId": "withdrawn-prompt",
+            "isSidechain": False,
+            "timestamp": "2026-10-24T09:00:00.000Z",
+            "origin_kind": "human",
+            "content": "中性测试正文",
+        })
+        self.assertTrue(all(set(record) <= {
+            "uuid", "parentUuid", "type", "promptId", "isSidechain", "timestamp", "origin_kind", "content",
+        } for record in records))
+        self.assertEqual(len(records), 7, "无 UUID 的附件、请求和队列记录不进入判定列表")
+
     def test_check_dismisses_withdrawn_prompt_with_non_assistant_attachment_child(self):
         contract = self.open_goal("withdrawn-attachment")
         quote = contract / "quotes" / "1.md"
@@ -1169,14 +1190,14 @@ class GoalTests(unittest.TestCase):
                         b'{"type": "api-request"', b'\xff', 1))
 
                 if problem == "read-error":
-                    read_bytes = Path.read_bytes
+                    open_file = Path.open
 
-                    def fail_transcript(path):
+                    def fail_transcript(path, *arguments, **keywords):
                         if path == transcript:
                             raise OSError("记录不可读")
-                        return read_bytes(path)
+                        return open_file(path, *arguments, **keywords)
 
-                    with mock.patch.object(Path, "read_bytes", fail_transcript):
+                    with mock.patch.object(Path, "open", fail_transcript):
                         code, output, errors = self.command("check")
                 else:
                     code, output, errors = self.command("check")
