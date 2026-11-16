@@ -34,7 +34,7 @@ python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" check
 
 `open`、`adopt` 必须在 Claude Code 的 Bash 工具里运行并显式传 `--claude-pid "$PPID"`。Bash 的 `$PPID` 就是本会话 claude 进程号；可在同一 Bash 用 `echo "$PPID"` 核对并直接展开。脚本核实该正整数 PID 是本次调用进程的祖先，否则拒绝并说明用法；不能抄其他会话的 PID 接管。
 
-只在 `$RUNS_ROOT/-*/*/xy-goal/goal.md` 中按会话 id 查契约，不查回收目录。项目名取会话记录的父目录：hook 用输入的 `transcript_path` 定位 inbox；`open` 和新会话 `adopt` 用 `CLAUDE_CODE_SESSION_ID` 在 `~/.claude/projects/*/<会话号>.jsonl` 查找。必须恰好一份，否则报错且不建目录；已有契约的命令和同会话 `adopt` 不查记录。
+只在 `$RUNS_ROOT/-*/*/xy-goal/goal.md` 中按会话 id 查契约，不查回收目录。项目名取会话记录的父目录：hook 用输入的 `transcript_path` 定位 inbox；`open` 和新会话 `adopt` 用 `CLAUDE_CODE_SESSION_ID` 在 `~/.claude/projects/*/<会话号>.jsonl` 查找。必须恰好一份，否则报错且不建目录；除 `check` 外，已有契约的命令和同会话 `adopt` 不查记录。
 
 每个会话仅一份契约：`open` 仅限本会话还没有契约；`adopt` 可供新会话接管，或同会话恢复时刷新 PID（见「换会话接管」）；其他 agent 命令须恰好一份。重复绑定报错，不猜。标题等字段用 JSON 字符串保存，保留换行和引号，按物理 LF 分行；原话正文不编码。
 
@@ -76,7 +76,7 @@ python3 <本 skill 目录>/goal.py --root "$RUNS_ROOT" reopen <T>
 
 `relink` 仅用于当前校验失败且 links.md、quotes/ 都可读的契约；健康契约用 `update` 挂出处。不带参数只清理坏行；事项与 `--source` 必须同时给，事项须为编号合法的开放事项，原话编号须先查 quotes/ 且全部存在。逐条打印丢弃行及原因，保留合格映射并添加给定出处，只写 links.md。写后整体校验：通过时打印「修复完成：<路径>」并退出 0；仍有错误时向 stderr 报告、退出 1，已写修复保留，可继续对下一个事项用 `relink`。
 
-`show` 只列目标、开放事项（每项四行：标题、判据、出处、状态和指针）及未处理原话编号，不列原话全文或已关闭事项。单项四行超 300 字或全文超 5000 字时在末尾提示压短；提示是软约束，不阻止写入。`check` 只查本契约并逐条报未处理原话；通过退出 0，有问题退出 1，直接读输出，不用管道截取。
+`show` 只列目标、开放事项（每项四行：标题、判据、出处、状态和指针）及未处理原话编号，不列原话全文或已关闭事项。单项四行超 300 字或全文超 5000 字时在末尾提示压短；提示是软约束，不阻止写入。`check` 只查本契约；有未处理原话时先按本会话记录把已撤回原话标为不必跟进，再逐条报未处理原话；通过退出 0，有问题退出 1，直接读输出，不用管道截取。
 
 ## 定时自查
 

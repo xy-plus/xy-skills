@@ -495,6 +495,124 @@ def require_project_directory(root, project):
         raise GoalError(f"项目目录必须是根目录下的真实目录，不能是软链接：{project}")
 
 
+def read_session_transcript(session_id):
+    project = session_project(session_id)
+    path = Path.home() / ".claude" / "projects" / project / f"{session_id}.jsonl"
+    contents = path.read_bytes()
+    rows = contents.split(b"\n")
+    # Claude Code appends JSONL: an unterminated last row may still be in flight.
+    if rows:
+        rows.pop()
+    records = []
+    for line_number, row in enumerate(rows, start=1):
+        try:
+            record = json.loads(row.decode("utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("记录不是对象")
+        except (UnicodeError, ValueError) as error:
+            raise GoalError(f"会话记录第 {line_number} 行无法解析：{error}") from error
+        records.append(record)
+    return records
+
+
+def transcript_time(record):
+    value = record.get("timestamp")
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.utcoffset() is None:
+        return None
+    return parsed.timestamp()
+
+
+def withdrawn_quote_dismissals(contract, transcript):
+    # Mark only a human user message with text and a parent, no assistant descendant,
+    # followed by a same-parent record from a different promptId. The missing assistant
+    # descendant rules out answered-and-rewound messages. A different-prompt sibling
+    # shows the conversation continued from W's parent; the changed promptId rules out
+    # same-turn queued input or tool results. Non-assistant children such as attachments
+    # do not count as replies.
+    #
+    # Pair W with the first later user record N that has string content. Hooks write each
+    # quote after its prompt timestamp and before the next prompt is submitted, so exact
+    # text plus quote mtime in [W.timestamp, N.timestamp) identifies W's own quote. Requiring
+    # one matching quote avoids guessing between repeated text; an already handled quote
+    # is left alone. This timing also excludes older missed-hook quotes and later resends.
+    records = [record for record in transcript
+               if not record.get("isSidechain") and isinstance(record.get("uuid"), str)
+               and record["uuid"] and not any(char in record["uuid"] for char in LINE_BREAKS)]
+    rows_by_uuid = {}
+    for record in records:
+        rows_by_uuid.setdefault(record["uuid"], []).append(record)
+    duplicated_uuids = {uuid for uuid, rows in rows_by_uuid.items() if len(rows) != 1}
+    records = [record for record in records if record["uuid"] not in duplicated_uuids]
+    rows_by_uuid = {record["uuid"]: record for record in records}
+
+    answered = set()
+    for record in records:
+        if record.get("type") != "assistant":
+            continue
+        parent = record.get("parentUuid")
+        seen = set()
+        while isinstance(parent, str) and parent in rows_by_uuid and parent not in seen and parent not in answered:
+            answered.add(parent)
+            seen.add(parent)
+            parent = rows_by_uuid[parent].get("parentUuid")
+
+    quote_numbers = {}
+    quote_times = {}
+    for number, text in contract.quotes.items():
+        quote_numbers.setdefault(text, []).append(number)
+        quote_times[number] = (contract.path / "quotes" / f"{number}.md").stat().st_mtime
+
+    possible = {}
+    for index, withdrawn in enumerate(records):
+        if withdrawn.get("type") != "user":
+            continue
+        origin = withdrawn.get("origin")
+        message = withdrawn.get("message")
+        parent = withdrawn.get("parentUuid")
+        content = message.get("content") if isinstance(message, dict) else None
+        if (not isinstance(origin, dict) or origin.get("kind") != "human"
+                or not isinstance(content, str) or not isinstance(parent, str) or not parent
+                or withdrawn["uuid"] in answered or content not in quote_numbers):
+            continue
+
+        has_new_prompt_sibling = False
+        next_user = None
+        for later_index in range(index + 1, len(records)):
+            later = records[later_index]
+            if (later.get("parentUuid") == parent
+                    and later.get("promptId") != withdrawn.get("promptId")):
+                has_new_prompt_sibling = True
+            message = later.get("message")
+            if (next_user is None and later.get("type") == "user"
+                    and isinstance(message, dict) and isinstance(message.get("content"), str)):
+                next_user = later
+            if has_new_prompt_sibling and next_user is not None:
+                break
+        if not has_new_prompt_sibling:
+            continue
+        if next_user is None:
+            continue
+        start, end = transcript_time(withdrawn), transcript_time(next_user)
+        if start is None or end is None:
+            continue
+
+        matches = [number for number in quote_numbers[content]
+                   if start <= quote_times[number] < end]
+        if len(matches) == 1:
+            possible.setdefault(matches[0], set()).add(withdrawn["uuid"])
+
+    handled = {number for number, _ in contract.links} | contract.dismissed.keys()
+    return {number: f"自动：已撤回（会话记录 {next(iter(uuids))}）"
+            for number, uuids in possible.items()
+            if number not in handled and len(uuids) == 1}
+
+
 def session_project(session_id):
     projects = Path.home() / ".claude" / "projects"
     records = [path for path in projects.glob(f"*/{glob.escape(session_id)}.jsonl") if path.is_file()]
@@ -803,6 +921,18 @@ def execute(options, *, root, session_id, claude_pid, now):
         contract.show()
     elif options.command == "check":
         pending = contract.pending()
+        if pending:
+            try:
+                automatic = withdrawn_quote_dismissals(
+                    contract, read_session_transcript(session_id))
+            except (GoalError, OSError) as error:
+                print(f"提示：未做撤回对账：{error}", file=sys.stderr)
+            else:
+                if automatic:
+                    contract.dismissed.update(automatic)
+                    write_files({contract.path / "links.md": encode_links(
+                        contract.links, contract.dismissed)}, [])
+            pending = contract.pending()
         if pending:
             for number in pending:
                 print(f"{contract.path / 'quotes' / f'{number}.md'}: 原话 {number} 还没处理", file=sys.stderr)
