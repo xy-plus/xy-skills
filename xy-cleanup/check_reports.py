@@ -594,10 +594,22 @@ def _validate_feature_todo_reduction(feature_id, feature_targets, finding_ranges
 
 
 def _validate_finding(finding, label, tracked_todo_files,
-                      feature_id, direct_todo_files):
-    problems = _field_errors(finding, FINDING_KEYS, label)
+                      feature_id, direct_todo_files, features):
+    kind = finding.get("kind") if isinstance(finding, dict) else None
+    target = finding.get("target") if isinstance(finding, dict) else None
+    requires_requirement = (
+        isinstance(kind, str)
+        and kind in {"删除", "合并"}
+        and _parse_line_range(target, allow_single_line=True) is not None
+    )
+    expected_keys = FINDING_KEYS | {"requirement"} if requires_requirement else FINDING_KEYS
+    problems = _field_errors(finding, expected_keys, label)
     if problems:
         return problems
+    if requires_requirement:
+        problems.extend(_validate_requirement(
+            finding["requirement"], f"{label}.requirement", features,
+        ))
     for key in ("target", "problem", "proposal", "evidence", "benefit", "cost"):
         if not _nonempty(finding[key]):
             problems.append(f"{label}.{key} 必须是非空字符串")
@@ -615,9 +627,21 @@ def _validate_finding(finding, label, tracked_todo_files,
             and decision in DECISIONS and isinstance(kind, str) and kind in KINDS):
         target_range = _parse_line_range(finding["target"], allow_single_line=True)
         target_is_todo = target_range is not None and target_range[0] in tracked_todo_files
-        target_is_feature_todo_reduction = (
-            finding["target"] == feature_id
-            and bool(direct_todo_files)
+        feature_targets = {feature_id} if isinstance(feature_id, str) else set()
+        pending_children = list(
+            features.get(feature_id, {}).get("children", [])
+            if isinstance(feature_id, str) else []
+        )
+        while pending_children:
+            child_id = pending_children.pop()
+            if child_id in feature_targets:
+                continue
+            feature_targets.add(child_id)
+            pending_children.extend(features.get(child_id, {}).get("children", []))
+        # Feature reductions change the feature graph and remove the item context needed to justify them.
+        target_is_feature_reduction = (
+            isinstance(finding["target"], str)
+            and finding["target"] in feature_targets
             and kind in {"删除", "合并"}
         )
         if target_is_todo:
@@ -626,10 +650,10 @@ def _validate_finding(finding, label, tracked_todo_files,
                 problems.append(
                     f"{label}.decision 目标在 TODO 文件 {finding['target']} 时必须是 问你"
                 )
-        elif target_is_feature_todo_reduction:
+        elif target_is_feature_reduction:
             if decision != "问你":
                 problems.append(
-                    f"{label}.decision 功能级删除或合并会影响直属 TODO，必须是 问你"
+                    f"{label}.decision 功能级删除或合并必须是 问你"
                 )
         else:
             # Behavior-preserving internal changes are authorized directly; public usage changes and listed exceptions remain user decisions.
@@ -2681,6 +2705,7 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     finding, finding_label, tracked_todo_files,
                     feature_id=feature_id,
                     direct_todo_files=direct_todo_files,
+                    features=data["features"],
                 ))
                 if not isinstance(finding, dict) or not _nonempty(finding.get("target")):
                     continue

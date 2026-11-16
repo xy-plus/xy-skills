@@ -188,7 +188,7 @@ def recheck_report(repository, feature_ids, keep_lines=None):
 
 
 def finding(kind="重构", changes_behavior=True, decision="问你", basis=None):
-    return {
+    item = {
         "kind": kind,
         "target": "alpha/main.py:1",
         "problem": "实现重复。",
@@ -200,6 +200,12 @@ def finding(kind="重构", changes_behavior=True, decision="问你", basis=None)
         "benefit": "减少重复代码。",
         "cost": "需要调整调用。",
     }
+    if kind in {"删除", "合并"}:
+        item["requirement"] = {
+            "source": "alpha:core",
+            "text": "提供 alpha 功能。",
+        }
+    return item
 
 
 def todo_item(lines):
@@ -511,8 +517,9 @@ class CheckReportsTest(unittest.TestCase):
         for feature_id, kind in (("root", "删除"), ("beta", "合并")):
             item = next(entry for entry in razor["features"] if entry["feature"] == feature_id)
             item["keep"] = []
-            removal = finding(kind, False, "直接做")
+            removal = finding(kind, False, "问你")
             removal["target"] = feature_id
+            removal.pop("requirement", None)
             item["findings"] = [removal]
         alpha = next(entry for entry in razor["features"] if entry["feature"] == "alpha")
         alpha["findings"] = [finding("重构", True, "问你")]
@@ -690,8 +697,9 @@ class CheckReportsTest(unittest.TestCase):
         alpha_main = main["features"][1]
         alpha_razor = razor["features"][1]
         alpha_razor["keep"] = []
-        razor_finding = finding("删除", False, "直接做")
+        razor_finding = finding("删除", False, "问你")
         razor_finding["target"] = "alpha"
+        razor_finding.pop("requirement", None)
         alpha_razor["findings"] = [razor_finding]
         current_finding = finding("重构", True, "问你")
         current_finding["target"] = "alpha/main.py:1"
@@ -1570,8 +1578,10 @@ class CheckReportsTest(unittest.TestCase):
         )
         main, razor, alpha = reports_for_feature(self.repository, "alpha")
         alpha["keep"] = [razor_keep_item("alpha", "alpha/main.py:1-2")]
-        alpha["findings"] = [finding("合并")]
-        alpha["findings"][0]["target"] = "alpha"
+        reduction = finding("合并", False, "问你")
+        reduction["target"] = "alpha"
+        reduction.pop("requirement", None)
+        alpha["findings"] = [reduction]
         self.write_reports(main, razor)
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -2569,11 +2579,16 @@ class CheckReportsTest(unittest.TestCase):
                     alpha["smallest"]["lines"]["code"] = 1 if name == "equal estimate" else 2
                 if candidate is not None:
                     kind, target = candidate
+                    is_feature_reduction = (
+                        target == "alpha" and kind in {"删除", "合并"}
+                    )
                     proposal = finding(
                         kind, changes_behavior=False,
-                        decision="直接做",
+                        decision="问你" if is_feature_reduction else "直接做",
                     )
                     proposal["target"] = target
+                    if target in {"alpha", "beta"}:
+                        proposal.pop("requirement", None)
                     alpha["findings"] = [proposal]
                     if name == "delete feature" or name == "line finding":
                         alpha["keep"] = []
@@ -2599,10 +2614,10 @@ class CheckReportsTest(unittest.TestCase):
                 alpha["verdicts"][0]["verdict"] = "站不住"
                 if kind is not None:
                     proposal = finding(
-                        kind, False,
-                        "直接做" if kind in {"删除", "合并"} else "问你",
+                        kind, False, "问你",
                     )
                     proposal["target"] = "alpha"
+                    proposal.pop("requirement", None)
                     alpha["findings"] = [proposal]
                 self.write_recheck_reports(rechecks)
                 result = self.run_check()
@@ -2923,8 +2938,9 @@ class CheckReportsTest(unittest.TestCase):
     def test_feature_id_delete_covers_all_feature_files_when_keep_is_empty(self):
         main, razor, alpha = reports_for_feature(self.repository, "alpha")
         alpha["keep"] = []
-        deletion = finding("删除", False, "直接做")
+        deletion = finding("删除", False, "问你")
         deletion["target"] = "alpha"
+        deletion.pop("requirement", None)
         alpha["findings"] = [deletion]
         self.write_reports(main, razor)
         result = self.run_check()
@@ -2943,13 +2959,14 @@ class CheckReportsTest(unittest.TestCase):
                 alpha["keep"] = []
                 reduction = finding(kind, False, "直接做")
                 reduction["target"] = "alpha"
+                reduction.pop("requirement", None)
                 alpha["findings"] = [reduction]
                 self.write_reports(main, razor)
 
                 result = self.run_check()
 
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn("会影响直属 TODO", result.stdout)
+                self.assertIn("功能级删除或合并必须是 问你", result.stdout)
 
     def test_feature_id_reduction_must_cover_affected_todo_lines_with_ask_findings(self):
         self.add_tracked_file("alpha/TODO.md", "待办事项。\n")
@@ -2964,6 +2981,7 @@ class CheckReportsTest(unittest.TestCase):
                 alpha["keep"] = []
                 reduction = finding(kind, True, "问你")
                 reduction["target"] = "alpha"
+                reduction.pop("requirement", None)
                 alpha["findings"] = [reduction]
                 self.write_reports(main, razor)
 
@@ -3034,8 +3052,9 @@ class CheckReportsTest(unittest.TestCase):
         main = report("主审", self.repository)
         razor = report("剃刀", self.repository)
         for item in razor["features"]:
-            removal = finding("删除", False, "直接做")
+            removal = finding("删除", False, "问你")
             removal["target"] = item["feature"]
+            removal.pop("requirement", None)
             item["keep"] = []
             item["findings"] = [removal]
         self.write_reports(main, razor)
@@ -3209,8 +3228,9 @@ class CheckReportsTest(unittest.TestCase):
     def prepare_two_required_rechecks(self):
         main, razor, root = reports_for_feature(self.repository, "root")
         root["keep"] = []
-        deletion = finding("删除", False, "直接做")
+        deletion = finding("删除", False, "问你")
         deletion["target"] = "root"
+        deletion.pop("requirement", None)
         root["findings"] = [deletion]
         for feature_id in ("alpha", "beta"):
             item = next(entry for entry in razor["features"] if entry["feature"] == feature_id)
@@ -3243,8 +3263,9 @@ class CheckReportsTest(unittest.TestCase):
 
     def test_feature_id_delete_overlaps_any_keep(self):
         main, razor, alpha = reports_for_feature(self.repository, "alpha")
-        deletion = finding("删除", False, "直接做")
+        deletion = finding("删除", False, "问你")
         deletion["target"] = "alpha"
+        deletion.pop("requirement", None)
         alpha["findings"] = [deletion]
         self.write_reports(main, razor)
         result = self.run_check()
@@ -3256,6 +3277,7 @@ class CheckReportsTest(unittest.TestCase):
         alpha["keep"] = []
         deletion = finding("删除", False, "直接做")
         deletion["target"] = "beta"
+        deletion.pop("requirement", None)
         alpha["findings"] = [deletion]
         self.write_reports(main, razor)
         result = self.run_check()
@@ -3937,6 +3959,121 @@ class CheckReportsTest(unittest.TestCase):
                 result = self.run_check()
 
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_file_scope_deletions_and_merges_require_valid_requirement(self):
+        cases = [
+            ("删除", None, "requirement"),
+            ("合并", None, "requirement"),
+            ("删除", {"requirement": None}, "必须是对象"),
+            ("合并", {"requirement": None}, "必须是对象"),
+            (
+                "删除",
+                {"requirement": {"source": "alpha:missing", "text": "提供 alpha 功能。"}},
+                "requirement.source",
+            ),
+            (
+                "合并",
+                {"requirement": {"source": "alpha:core", "text": "不相同的条目文本。"}},
+                "requirement.text",
+            ),
+        ]
+        for kind, extra_fields, expected in cases:
+            with self.subTest(kind=kind, extra_fields=extra_fields):
+                main = report("主审", self.repository)
+                item = finding(kind, False, "直接做")
+                if extra_fields is None:
+                    item.pop("requirement", None)
+                else:
+                    item.update(extra_fields)
+                main["features"][1]["findings"] = [item]
+                self.write_reports(main, report("剃刀", self.repository))
+
+                result = self.run_check()
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(expected, result.stdout + result.stderr)
+
+    def test_only_file_scope_deletions_and_merges_may_reference_requirement(self):
+        cases = [
+            ("重构", "alpha/main.py:1", "问你"),
+            ("删除", "alpha", "直接做"),
+            ("合并", "alpha", "直接做"),
+        ]
+        for kind, target, decision in cases:
+            with self.subTest(kind=kind, target=target):
+                main = report("主审", self.repository)
+                item = finding(kind, False, decision)
+                item["target"] = target
+                item["requirement"] = {
+                    "source": "alpha:core",
+                    "text": "提供 alpha 功能。",
+                }
+                main["features"][1]["findings"] = [item]
+                self.write_reports(main, report("剃刀", self.repository))
+
+                result = self.run_check()
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("requirement", result.stdout + result.stderr)
+
+    def test_feature_scope_deletions_and_merges_without_todos_are_always_asked(self):
+        for feature_id, target in (("alpha", "alpha"), ("root", "alpha")):
+            for kind in ("删除", "合并"):
+                for decision, returncode in (("直接做", 1), ("问你", 0)):
+                    with self.subTest(
+                        feature_id=feature_id, target=target,
+                        kind=kind, decision=decision,
+                    ):
+                        main = report("主审", self.repository)
+                        item = finding(kind, False, decision)
+                        item["target"] = target
+                        item.pop("requirement", None)
+                        review = next(
+                            entry for entry in main["features"]
+                            if entry["feature"] == feature_id
+                        )
+                        review["findings"] = [item]
+                        self.write_reports(main, report("剃刀", self.repository))
+
+                        result = self.run_check()
+
+                        self.assertEqual(result.returncode, returncode, result.stdout + result.stderr)
+                        if decision == "直接做":
+                            self.assertIn("功能级删除或合并", result.stdout + result.stderr)
+
+    def test_file_scope_deletion_with_valid_requirement_can_be_direct(self):
+        main = report("主审", self.repository)
+        item = finding("删除", False, "直接做")
+        item["requirement"] = {
+            "source": "alpha:core",
+            "text": "提供 alpha 功能。",
+        }
+        main["features"][1]["findings"] = [item]
+        self.write_reports(main, report("剃刀", self.repository))
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_recheck_file_deletion_rejects_null_requirement(self):
+        main, razor, root = reports_for_feature(self.repository, "root")
+        review = recheck_report(
+            self.repository,
+            ["root"],
+            keep_lines=[item["lines"] for item in root["keep"]],
+        )
+        item = finding("删除", False, "直接做")
+        item["target"] = root["keep"][0]["lines"]
+        item["requirement"] = None
+        review["features"][0]["findings"] = [item]
+        self.write_reports(main, razor)
+        self.write_recheck_reports([review])
+
+        result = self.run_check()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("requirement", result.stdout + result.stderr)
+        self.assertIn("必须是对象", result.stdout + result.stderr)
 
     def test_accepts_an_orphan_finding_that_asks_the_user(self):
         main = report("主审", self.repository)
