@@ -3275,7 +3275,7 @@ class CheckReportsTest(unittest.TestCase):
     def test_other_feature_id_does_not_cover_this_features_files(self):
         main, razor, alpha = reports_for_feature(self.repository, "alpha")
         alpha["keep"] = []
-        deletion = finding("删除", False, "直接做")
+        deletion = finding("删除", False, "问你")
         deletion["target"] = "beta"
         deletion.pop("requirement", None)
         alpha["findings"] = [deletion]
@@ -4040,6 +4040,23 @@ class CheckReportsTest(unittest.TestCase):
                         self.assertEqual(result.returncode, returncode, result.stdout + result.stderr)
                         if decision == "直接做":
                             self.assertIn("功能级删除或合并", result.stdout + result.stderr)
+
+    def test_other_feature_id_deletions_and_merges_are_always_asked(self):
+        for kind in ("删除", "合并"):
+            for decision, returncode in (("直接做", 1), ("问你", 0)):
+                with self.subTest(kind=kind, decision=decision):
+                    main = report("主审", self.repository)
+                    item = finding(kind, False, decision)
+                    item["target"] = "beta"
+                    item.pop("requirement", None)
+                    main["features"][1]["findings"] = [item]
+                    self.write_reports(main, report("剃刀", self.repository))
+
+                    result = self.run_check()
+
+                    self.assertEqual(result.returncode, returncode, result.stdout + result.stderr)
+                    if decision == "直接做":
+                        self.assertIn("功能级删除或合并", result.stdout + result.stderr)
 
     def test_file_scope_deletion_with_valid_requirement_can_be_direct(self):
         main = report("主审", self.repository)

@@ -594,7 +594,7 @@ def _validate_feature_todo_reduction(feature_id, feature_targets, finding_ranges
 
 
 def _validate_finding(finding, label, tracked_todo_files,
-                      feature_id, direct_todo_files, features):
+                      features):
     kind = finding.get("kind") if isinstance(finding, dict) else None
     target = finding.get("target") if isinstance(finding, dict) else None
     requires_requirement = (
@@ -627,21 +627,9 @@ def _validate_finding(finding, label, tracked_todo_files,
             and decision in DECISIONS and isinstance(kind, str) and kind in KINDS):
         target_range = _parse_line_range(finding["target"], allow_single_line=True)
         target_is_todo = target_range is not None and target_range[0] in tracked_todo_files
-        feature_targets = {feature_id} if isinstance(feature_id, str) else set()
-        pending_children = list(
-            features.get(feature_id, {}).get("children", [])
-            if isinstance(feature_id, str) else []
-        )
-        while pending_children:
-            child_id = pending_children.pop()
-            if child_id in feature_targets:
-                continue
-            feature_targets.add(child_id)
-            pending_children.extend(features.get(child_id, {}).get("children", []))
-        # Feature reductions change the feature graph and remove the item context needed to justify them.
+        # A feature-level reduction changes the feature graph, so it needs user approval.
         target_is_feature_reduction = (
-            isinstance(finding["target"], str)
-            and finding["target"] in feature_targets
+            target_range is None
             and kind in {"删除", "合并"}
         )
         if target_is_todo:
@@ -2703,8 +2691,6 @@ def validate_reports(data, repository, expected_features, report_paths, tracked_
                     required_rechecks.add(feature_id)
                 problems.extend(_validate_finding(
                     finding, finding_label, tracked_todo_files,
-                    feature_id=feature_id,
-                    direct_todo_files=direct_todo_files,
                     features=data["features"],
                 ))
                 if not isinstance(finding, dict) or not _nonempty(finding.get("target")):
