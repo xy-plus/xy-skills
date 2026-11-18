@@ -2034,7 +2034,7 @@
             },
             {
               "id": "usage-coverage-candidates",
-              "text": "按 README「实际使用」记录在副本短跑并量覆盖，将覆盖记录交给卡片命令校验。",
+              "text": "按 README「实际使用」记录在副本短跑并量覆盖，由 check_usage_coverage.py 校验后供卡片判断。",
               "status": "起草"
             },
             {
@@ -2059,7 +2059,7 @@
             },
             {
               "id": "planned-feature-coverage",
-              "text": "计划中的每个功能都各有一张卡片和一项决定。",
+              "text": "计划中的每个功能都必须有一张卡片；缺卡或多卡时拒绝拼页。",
               "status": "起草"
             },
             {
@@ -2095,11 +2095,6 @@
             {
               "id": "machine-report-check",
               "text": "覆盖记录和功能卡片在决定页生成前通过机器校验。",
-              "status": "起草"
-            },
-            {
-              "id": "item-level-decisions",
-              "text": "用户以功能为单位决定；每个功能只有一项选择。",
               "status": "起草"
             },
             {
@@ -2158,18 +2153,8 @@
               "status": "确认"
             },
             {
-              "id": "compare-rewritten-draft-item",
-              "text": "改写过的起草条目在决定页上附上次认可的原文。",
-              "status": "起草"
-            },
-            {
               "id": "unused-needs-positive-evidence",
               "text": "只有正面证据表明可选功能不在实际使用范围内时，才能建议删除；覆盖没量到或没执行到本身不算证据，存疑按用到处理。",
-              "status": "起草"
-            },
-            {
-              "id": "one-choice-per-feature",
-              "text": "决定页每个功能只有一项选择，且「不要这个功能」只提供给没有子功能的功能。",
               "status": "起草"
             },
             {
@@ -2375,8 +2360,8 @@
             },
             {
               "id": "feature-cards",
-              "title": "生成并校验功能卡片",
-              "what": "按计划为每个功能生成一张结构固定的卡片，校验卡片后自动拼成决定页。",
+              "title": "校验功能卡片并拼出决定页",
+              "what": "子代理按计划为功能撰写卡片；命令校验卡片，再按计划拼成决定页。",
               "why": {
                 "text": "按功能给人审批，粒度不能小到增加人的负担。",
                 "source": "原话",
@@ -2387,17 +2372,22 @@
               "items": [
                 {
                   "id": "validate-feature-cards",
-                  "text": "校验卡片字段、依据和功能范围，并保证计划内每个功能恰有一张卡片。",
+                  "text": "校验卡片字段、字符串、删除行数、依据和推荐选项。",
                   "status": "起草"
                 },
                 {
                   "id": "build-feature-decisions",
-                  "text": "按计划顺序自动生成每功能一项的决定清单，并只给叶功能提供「不要这个功能」。",
+                  "text": "按计划顺序生成决定清单和固定选项；只给叶功能提供「不要这个功能」。",
+                  "status": "起草"
+                },
+                {
+                  "id": "one-choice-per-feature",
+                  "text": "决定页每个功能恰有一项选择；「不要这个功能」只给没有子功能的功能。",
                   "status": "起草"
                 },
                 {
                   "id": "show-draft-items-on-page",
-                  "text": "自动列出功能理由和全部起草条目，改写过的条目同时显示上次认可原文。",
+                  "text": "自动列出功能理由和全部起草条目；改写过的条目同时显示上次认可原文。",
                   "status": "起草"
                 }
               ],
@@ -2420,8 +2410,28 @@
               "directory": null,
               "items": [
                 {
-                  "id": "validate-usage-coverage",
-                  "text": "校验 README 来源、场景与 why_none、未运行时的空覆盖、文件范围及 missed 行段，保证每份直属代码文件恰好量测或列为未量测。",
+                  "id": "match-usage-sources",
+                  "text": "覆盖记录中的来源逐条对应 README「实际使用」内容；表格按数据行、列表按项、其他内容按段落。",
+                  "status": "起草"
+                },
+                {
+                  "id": "explain-usage-scenarios",
+                  "text": "每条来源可有零个或多个短跑场景；无场景时写 why_none，有场景时 why_none 为空。",
+                  "status": "起草"
+                },
+                {
+                  "id": "require-success-before-missed",
+                  "text": "没有成功短跑时 files 必须为空，不能声称文件行段未执行到。",
+                  "status": "起草"
+                },
+                {
+                  "id": "account-for-direct-code-files",
+                  "text": "每份计划功能的直属代码文件在 files 或 unmeasured 中恰好出现一次。",
+                  "status": "起草"
+                },
+                {
+                  "id": "validate-missed-ranges",
+                  "text": "missed 只记成功短跑未执行到的行段，范围有效、按行排序、相邻段合并且不越界。",
                   "status": "起草"
                 }
               ],

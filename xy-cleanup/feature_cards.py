@@ -171,8 +171,8 @@ def _append_card_lines(lines, card):
     lines.extend(f"照建议会做：{value}" for value in card["suggestion"])
 
 
-def _decision_item(feature_id, feature, reason, commit, card, previous_features, data):
-    lines = [f"本次纳入：{reason}", f"上次认可提交：{commit}"]
+def _decision_item(feature_id, feature, reason, card, previous_features, data):
+    lines = [f"本次纳入：{reason}"]
     lines.extend(_draft_lines(feature, previous_features.get(feature_id)))
     _append_card_lines(lines, card)
     options = list(COMMON_OPTIONS)
@@ -231,8 +231,8 @@ def build_decisions(repository, data, values, planned, commits, cards):
             previous_features[feature_id] = previous.get(feature_id)
     items = [
         _decision_item(
-            feature_id, values[feature_id], reason, commits[feature_id],
-            by_id[feature_id], previous_features, data,
+            feature_id, values[feature_id], reason, by_id[feature_id],
+            previous_features, data,
         )
         for feature_id, reason in planned
     ]

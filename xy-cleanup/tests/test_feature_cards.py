@@ -98,7 +98,7 @@ class FeatureCardsTest(unittest.TestCase):
 
     def test_page_lists_draft_items_and_reasons_and_shows_rewritten_item_text(self):
         self._commit_repository("初始提交")
-        self._record_and_commit("alpha", "认可 alpha")
+        approval_commit = self._record_and_commit("alpha", "认可 alpha")
         manifest = self.repository / "repo-map" / "features.json"
         document = json.loads(manifest.read_text(encoding="utf-8"))
         alpha = document["children"][0]
@@ -117,6 +117,7 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertIn("起草", rendered_lines)
         self.assertIn("简化用户设置。", rendered_lines)
         self.assertIn("原来：提供 alpha 功能。", rendered_lines)
+        self.assertNotIn(approval_commit, rendered_lines)
 
     def test_plan_with_no_changed_features_is_rejected(self):
         self._commit_repository("初始提交")
@@ -241,3 +242,7 @@ class FeatureCardsTest(unittest.TestCase):
             "--kept-markers", "无",
         ], check=True, capture_output=True, text=True)
         self._commit_repository(message)
+        return subprocess.run(
+            ["git", "-C", str(self.repository), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()

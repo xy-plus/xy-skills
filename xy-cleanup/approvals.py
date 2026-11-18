@@ -175,6 +175,7 @@ def approval_commits(repository, records, feature_ids):
         if fingerprint is None:
             continue
         occurrence = f'"{feature_id}": "{fingerprint}"'
+        # Search this exact pair so later records for other features cannot move this approval.
         history = subprocess.run(
             ["git", "-C", str(repository), "log", "-1", "--format=%H",
              "-S", occurrence, "--", APPROVED_RELATIVE_PATH],
@@ -193,7 +194,6 @@ def approval_commits(repository, records, feature_ids):
             "认可记录未在 Git 历史中找到，可能尚未提交；先提交 repo-map/approved.json："
             + ", ".join(sorted(unresolved))
         )
-    # Search the exact feature/fingerprint pair so later records for other features do not move this approval.
     return commits
 
 
@@ -211,8 +211,7 @@ def plan_data(repository, scope, review):
     return data, values, records, fingerprints, changed, commits
 
 
-def _plan(data, fingerprints, records, scope, review, commits):
-    changed = review_features(data, fingerprints, records, scope, review)
+def _plan(data, changed, commits, scope):
     selected = _scope_features(data, scope)
     if not changed:
         return f"范围内没有变过的功能（范围内 {len(selected)} 个）"
@@ -313,9 +312,23 @@ def _record(repository, data, feature_values, fingerprints, records, features,
 
 def main(argv):
     options = parser().parse_args(argv[1:])
+    repository = Path(options.repo)
+
+    if options.command == "plan":
+        try:
+            data, _values, _records, _fingerprints, planned, commits = plan_data(
+                repository, options.scope, options.review,
+            )
+            print(_plan(data, planned, commits, options.scope))
+        except ArgumentError as error:
+            print(str(error), file=sys.stderr)
+            return 2
+        except (OSError, UnicodeError, ValueError) as error:
+            print(str(error))
+            return 1
+        return 0
 
     try:
-        repository = Path(options.repo)
         data = build_map(repository)
     except ArgumentError as error:
         print(str(error), file=sys.stderr)
@@ -324,8 +337,8 @@ def main(argv):
         print(str(error))
         return 1
 
-    scope = options.scope if options.command == "plan" else options.features
-    scope_option = "--scope" if options.command == "plan" else "--features"
+    scope = options.features
+    scope_option = "--features"
     try:
         validate_scope(data, scope, scope_option)
     except ArgumentError as error:
@@ -336,23 +349,15 @@ def main(argv):
         records = read_approvals(repository, repository / APPROVED_RELATIVE_PATH)
         values, _ = feature_values(repository)
         selected = (
-            _scope_features(data, options.scope)
-            if options.command == "plan"
-            else list(data["features"]) if options.features == ["全部"]
-            else list(options.features)
+            list(data["features"])
+            if options.features == ["全部"] else list(options.features)
         )
         selected_values = {feature_id: values[feature_id] for feature_id in selected}
         fingerprints = feature_fingerprints(repository, data, selected_values)
-        if options.command == "plan":
-            commits = approval_commits(repository, records, selected)
-            print(_plan(
-                data, fingerprints, records, options.scope, options.review, commits,
-            ))
-        else:
-            print(_record(
-                repository, data, values, fingerprints, records,
-                selected, options.kept_markers,
-            ))
+        print(_record(
+            repository, data, values, fingerprints, records,
+            selected, options.kept_markers,
+        ))
     except (OSError, UnicodeError, ValueError) as error:
         print(str(error))
         return 1
