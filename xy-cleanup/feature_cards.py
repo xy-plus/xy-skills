@@ -135,7 +135,7 @@ def _load_previous_features(repository, commit):
 def _draft_lines(feature, previous_feature):
     lines = []
     why = feature["why"]
-    why_prefix = "功能理由（起草，等你拍板）" if why["source"] == "起草" else "功能理由"
+    why_prefix = "为什么（起草，等你拍板）" if why["source"] == "起草" else "为什么"
     lines.append(f"{why_prefix}：{why['text']}")
     if why["source"] == "起草":
         previous_why = previous_feature.get("why") if previous_feature else None
@@ -240,6 +240,10 @@ def build_decisions(repository, data, values, planned, commits, cards):
         "title": "定期清扫功能审批",
         "intro": [
             "每个功能只选一项：照建议、留、按我写的改；没有子功能的功能另有「不要这个功能」。",
+            "照建议：做卡片「照建议」列出的每件事。",
+            "留：不删改代码、测试、文档或 TODO，也不做卡片建议；仍会确认本页列出的起草条目和理由。",
+            "按我写的改：以「照建议」为底按备注修改；含义不明先问。",
+            "不要这个功能：只给没有子功能的功能，删除该功能实现、测试、文档、TODO 和图上条目。",
             "前三项都会把本页列出的起草条目和功能理由照写的确认；点「留」也表示确认这些文字。",
         ],
         "groups": [{"title": "功能审批", "notes": [], "items": items}],

@@ -88,6 +88,10 @@ class FeatureCardsTest(unittest.TestCase):
             items[2]["options"], ["照建议", "留", "按我写的改", "不要这个功能"],
         )
         self.assertEqual(items[1]["recommended"], "照建议")
+        intro = "\n".join(decisions["intro"])
+        for choice in ("照建议：", "留：", "按我写的改：", "不要这个功能：", "前三项"):
+            self.assertIn(choice, intro)
+        self.assertIn("为什么：让功能容易使用。", "\n".join(items[0]["lines"]))
         self.assertIn("可选的旧格式导出入口", "\n".join(items[1]["lines"]))
         self.assertIn("README 实际使用记录只选了新版入口", "\n".join(items[1]["lines"]))
         self.assertIn("前三项", "\n".join(decisions["intro"]))
