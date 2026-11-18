@@ -36,8 +36,7 @@ class RealRepositoryTest(unittest.TestCase):
         assigned_paths = Counter(
             path
             for feature in map_data["features"].values()
-            for group in feature["files"].values()
-            for path in group
+            for path in feature["files"]
         )
         self.assertEqual(set(assigned_paths), tracked_paths)
         self.assertTrue(all(count == 1 for count in assigned_paths.values()))

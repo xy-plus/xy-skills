@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "xy-handoff"))
 from check_handoff import object_without_duplicate_keys  # noqa: E402
 
 
-FEATURE_KEYS = {"id", "title", "what", "why", "directory", "items", "entries", "children"}
+FEATURE_KEYS = {"id", "title", "what", "why", "directory", "items", "children"}
 WHY_KEYS = {"text", "source", "quote", "from"}
 ITEM_KEYS = {"id", "text", "status"}
 FEATURE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -35,25 +35,14 @@ def path_is_under(path, directory):
     return directory == "" or path.startswith(directory + "/")
 
 
-def directory_home(feature_id, features):
-    """Return the nearest directory feature containing a feature."""
-    return next(
-        (item for item in feature_chain(feature_id, features)
-         if features[item].get("directory") is not None),
-        None,
-    )
-
-
 def deepest_directory(path, features, order):
-    """Return the most specific directory feature containing a path."""
+    """Return the feature owning a path by its deepest containing directory."""
     return max(
         (
             feature_id for feature_id in order
-            if features[feature_id].get("directory") is not None
-            and path_is_under(path, features[feature_id]["directory"])
+            if path_is_under(path, features[feature_id]["directory"])
         ),
         key=lambda feature_id: len(features[feature_id]["directory"]),
-        default=None,
     )
 
 
@@ -83,10 +72,20 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
     for key in sorted(missing):
         if key == "items":
             errors.append(f"功能 {current} 缺少键 items")
+        elif key == "directory":
+            errors.append(
+                f"功能 {current} 缺少键 directory；请填写该功能自己的仓内目录路径。"
+            )
         else:
             errors.append(f"{label}缺少键 {key}")
     for key in sorted(extra):
-        errors.append(f"{label}有多余键 {key}")
+        if key == "entries":
+            errors.append(
+                f"功能 {current}（directory {value.get('directory')!r}）不再支持 entries；"
+                "请删除该字段并将文件放入对应功能目录。"
+            )
+        else:
+            errors.append(f"{label}有多余键 {key}")
 
     if not isinstance(feature_id, str) or FEATURE_ID.fullmatch(feature_id) is None:
         errors.append(f"{label}的 id 必须匹配 ^[a-z][a-z0-9-]*$：{feature_id!r}")
@@ -162,13 +161,24 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
             errors.append(f"功能 {value.get('id')} 的 why.from 中 answers.json 必须引用 JSON 回答键：{origin!r}")
 
     directory = value.get("directory")
-    if directory is not None and not _safe_relative_path(directory, False) and directory != "":
-        errors.append(f"{label}的 directory 必须是仓内相对目录或 null：{directory!r}")
-    entries = value.get("entries")
-    if not isinstance(entries, list) or any(not isinstance(entry, str) for entry in entries):
-        errors.append(f"{label}的 entries 必须是字符串数组")
-    elif any(not _safe_relative_path(entry, True) for entry in entries):
-        errors.append(f"{label}的 entries 必须是安全的仓内相对路径")
+    if "directory" in value:
+        if not isinstance(directory, str):
+            actual_directory = "null" if directory is None else repr(directory)
+            errors.append(
+                f"功能 {current} 的 directory 必须是字符串且不能为 null，"
+                f"目前为 {actual_directory}；"
+                "请为该功能指定自己的仓内目录。"
+            )
+        elif parent is None and directory != "":
+            errors.append(
+                f"根功能 {current} 的 directory 必须是空字符串，目前为 {directory!r}；"
+                "请改为 \"\"。"
+            )
+        elif parent is not None and not _safe_relative_path(directory, False):
+            errors.append(
+                f"功能 {current} 的 directory {directory!r} 必须是安全的仓内相对目录路径；"
+                "请改为非空、无绝对路径、反斜线、空段、. 或 .. 的目录路径。"
+            )
     if parent is None:
         subrepositories = value.get("subrepositories")
         if not isinstance(subrepositories, list) or any(
@@ -202,55 +212,54 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
 
 
 def _validate_paths(features, order, tracked, errors):
-    if features[order[0]].get("directory") != "":
-        errors.append("根功能的 directory 必须是空字符串")
-
     directory_owner = {}
     for feature_id in order:
         value = features[feature_id]
         directory = value.get("directory")
-        if directory is None:
-            continue
         if directory in directory_owner:
-            errors.append(f"两个功能不能共用 directory {directory!r}：{directory_owner[directory]} 和 {feature_id}")
+            errors.append(
+                f"功能 {feature_id} 的 directory {directory!r} 与功能 "
+                f"{directory_owner[directory]} 的目录重复；请为 {feature_id} 指定独立目录。"
+            )
         else:
             directory_owner[directory] = feature_id
         if not any(path_is_under(path, directory) for path in tracked):
-            errors.append(f"功能 {feature_id} 的 directory 下没有被跟踪的文件：{directory!r}")
-        ancestor = next(
-            (candidate for candidate in feature_chain(feature_id, features)
-             if candidate != feature_id and features[candidate].get("directory") is not None),
-            None,
-        )
-        if ancestor is not None:
-            parent_directory = features[ancestor]["directory"]
-            if not path_is_under(directory, parent_directory):
-                errors.append(f"功能 {feature_id} 的 directory 不在祖先目录内：{directory!r}")
-
-        children = value.get("children", [])
-        if not children and value.get("entries"):
-            errors.append(f"没有子功能的目录功能 {feature_id} 的 entries 必须是空数组")
+            errors.append(
+                f"功能 {feature_id} 的 directory {directory!r} 下没有 Git 跟踪文件；"
+                "请在该目录内添加并提交跟踪文件，或把 directory 改为已有功能目录。"
+            )
 
     for feature_id in order:
-        value = features[feature_id]
-        entries = value.get("entries")
-        if not isinstance(entries, list):
+        parent_id = features[feature_id]["parent"]
+        if parent_id is None:
             continue
-        home = directory_home(feature_id, features)
-        for entry in entries:
-            is_directory = entry.endswith("/")
-            clean_entry = entry[:-1] if is_directory else entry
-            if is_directory:
-                matched = [path for path in tracked if path_is_under(path, clean_entry)]
-            else:
-                matched = [entry] if entry in tracked else []
-            if not matched:
-                errors.append(f"功能 {feature_id} 的 entries 不存在或没有被跟踪文件：{entry}")
-                continue
-            for path in matched:
-                if home is None or deepest_directory(path, features, order) != home:
-                    errors.append(f"功能 {feature_id} 的入口不在所属目录功能内：{path}")
-                    break
+        directory = features[feature_id]["directory"]
+        parent_directory = features[parent_id]["directory"]
+        if not path_is_under(directory, parent_directory):
+            errors.append(
+                f"功能 {feature_id} 的 directory {directory!r} 不在上级功能 "
+                f"{parent_id} 的 directory {parent_directory!r} 内；"
+                f"请把 {feature_id} 的目录移到 {parent_directory!r} 下。"
+            )
+            continue
+
+        nearest = max(
+            (
+                candidate for candidate in order
+                if candidate != feature_id
+                and path_is_under(directory, features[candidate]["directory"])
+            ),
+            key=lambda candidate: len(features[candidate]["directory"]),
+            default=None,
+        )
+        if nearest != parent_id:
+            nearest_directory = features[nearest]["directory"] if nearest else None
+            errors.append(
+                f"功能 {feature_id} 的 directory {directory!r} 最近的功能目录是 "
+                f"{nearest} 的 directory {nearest_directory!r}，不是上级功能 "
+                f"{parent_id} 的 directory {parent_directory!r}；"
+                "请调整功能树或目录嵌套，使上级目录成为最近的功能祖先。"
+            )
 
 
 def load_features(repository, tracked_paths):

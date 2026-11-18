@@ -39,17 +39,14 @@ def _compose_maps(main_map, child_maps):
                 {**use, "feature": f"{relative_path}/{use['feature']}"}
                 for use in feature["uses"]
             ]
-            joined["files"] = {
-                group: [f"{relative_path}/{path}" for path in paths]
-                for group, paths in feature["files"].items()
-            }
+            joined["files"] = [
+                f"{relative_path}/{path}" for path in feature["files"]
+            ]
             features[joined_id] = joined
             feature_repositories[joined_id] = relative_path
 
     directory_names = {}
     for feature_id, feature in features.items():
-        if feature["directory_name"] is None:
-            continue
         repository_path = feature_repositories[feature_id]
         if feature_id == repository_roots[repository_path]:
             name = Path(repository_path).name if repository_path else feature["directory_name"]

@@ -4,23 +4,42 @@ from map_fixture import build_map, feature, make_repo
 
 
 class OwnershipTest(unittest.TestCase):
-    def test_root_level_consumer_follows_imported_feature_code(self):
+    def test_deepest_feature_directory_owns_files_even_when_other_code_imports_them(self):
         repository = make_repo(self, {
-            "pkg/owned.py": "value = 1\n",
-            "tests/test_consumer.py": "import pkg.owned\n",
-            "tests/test_owned.py": "import pkg.owned\n",
+            "pkg/owned/main.py": "value = 1\n",
+            "pkg/consumer/main.py": "import pkg.owned.main\n",
+            "pkg/consumer/tests/test_owned.py": "import pkg.owned.main\n",
         }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
             feature("package", "pkg", children=[
-                feature("owned", None, entries=["pkg/owned.py"]),
+                feature("owned", "pkg/owned"),
+                feature("consumer", "pkg/consumer"),
             ]),
         ]))
 
         result = build_map(self, repository)
 
-        owned_files = [
-            path
-            for paths in result["features"]["owned"]["files"].values()
-            for path in paths
-        ]
-        self.assertIn("tests/test_consumer.py", owned_files)
-        self.assertIn("tests/test_owned.py", owned_files)
+        self.assertEqual(result["features"]["owned"]["files"], ["pkg/owned/main.py"])
+        self.assertEqual(result["features"]["consumer"]["files"], [
+            "pkg/consumer/main.py",
+            "pkg/consumer/tests/test_owned.py",
+        ])
+        self.assertEqual(result["features"]["consumer"]["uses"], [
+            {"feature": "owned", "by": "import"},
+        ])
+
+    def test_test_file_imports_do_not_create_feature_relationships(self):
+        repository = make_repo(self, {
+            "pkg/owned/main.py": "value = 1\n",
+            "pkg/consumer/main.py": "value = 2\n",
+            "pkg/consumer/tests/test_owned.py": "import pkg.owned.main\n",
+        }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("package", "pkg", children=[
+                feature("owned", "pkg/owned"),
+                feature("consumer", "pkg/consumer"),
+            ]),
+        ]))
+
+        result = build_map(self, repository)
+
+        self.assertEqual(result["features"]["consumer"]["uses"], [])
+        self.assertIn("pkg/consumer/tests/test_owned.py", result["features"]["consumer"]["files"])
