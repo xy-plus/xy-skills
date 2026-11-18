@@ -907,6 +907,12 @@ class CheckTest(unittest.TestCase):
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
         self.assertEqual(code, 1, problems)
         self.assertTrue(any("round1" in problem for problem in problems), problems)
+        advice = "上一轮有不通过时，下一轮主审、剃刀都要复审"
+        for name in ("review-main.json", "review-razor.json"):
+            self.assertTrue(
+                any(f"缺少 {name}" in problem and advice in problem for problem in problems),
+                problems,
+            )
 
         group = Path(self.root) / "group1"
         for number in (1, 2):

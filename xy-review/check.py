@@ -407,7 +407,9 @@ def _formal_diagnosis_group_problems(group_path):
 def _history_report_problems(round_path, name, number):
     report_path = round_path / name
     if not report_path.is_file():
-        return [f"{round_path}：缺少 {name}"], False
+        return [
+            f"{round_path}：缺少 {name}。上一轮有不通过时，下一轮主审、剃刀都要复审"
+        ], False
     try:
         text = report_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
