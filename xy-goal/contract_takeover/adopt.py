@@ -1,7 +1,19 @@
 from pathlib import Path
 import os
 
-from goal_common import *
+from goal_common import (
+    Contract,
+    GoalError,
+    consume_inputs,
+    encode_fields,
+    encode_links,
+    find_contract,
+    incoming_quotes,
+    require_project_directory,
+    session_project,
+    timer_prompt,
+    write_files,
+)
 
 
 def adopt(root, directory, matched_path, goal_content, session_id, claude_pid):

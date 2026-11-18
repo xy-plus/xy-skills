@@ -1,4 +1,22 @@
-from goal_test_support import *
+from goal_test_support import (
+    GoalTestSupport,
+    Path,
+    SCRIPT_DIRECTORY,
+    StringIO,
+    fcntl,
+    goal,
+    json,
+    mock,
+    os,
+    redirect_stderr,
+    redirect_stdout,
+    shlex,
+    shutil,
+    subprocess,
+    sys,
+    tempfile,
+)
+from goal_common import read_text
 
 
 class GoalTests(GoalTestSupport):
@@ -8,7 +26,7 @@ class GoalTests(GoalTestSupport):
         caught = []
         with mock.patch.object(Path, "read_bytes", side_effect=PermissionError("access denied")):
             try:
-                goal.read_text(path)
+                read_text(path)
             except Exception as error:
                 caught.append(error)
             else:
