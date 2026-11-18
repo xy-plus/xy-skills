@@ -2103,6 +2103,11 @@
               "status": "起草"
             },
             {
+              "id": "cross-check-card-suggestions",
+              "text": "交卡前检查建议中的几项改动彼此不矛盾。",
+              "status": "起草"
+            },
+            {
               "id": "no-action-option",
               "text": "询问用户是否采取行动时提供暂不采取的选项。",
               "status": "确认"
@@ -2115,6 +2120,16 @@
             {
               "id": "decision-directed-changes",
               "text": "按用户对每个功能的选择实施对应改动；意思不清时先询问。",
+              "status": "起草"
+            },
+            {
+              "id": "accept-bulk-card-recommendations",
+              "text": "用户只回复「都按你的建议（来吧）」时，按每个功能卡片上的推荐项处理。",
+              "status": "起草"
+            },
+            {
+              "id": "limit-changes-to-card",
+              "text": "清扫改动只限卡片明确列出的事项，不额外扩展。",
               "status": "起草"
             },
             {
@@ -2155,6 +2170,16 @@
             {
               "id": "unused-needs-positive-evidence",
               "text": "只有正面证据表明可选功能不在实际使用范围内时，才能建议删除；覆盖没量到或没执行到本身不算证据，存疑按用到处理。",
+              "status": "起草"
+            },
+            {
+              "id": "defer-high-impact-card-changes",
+              "text": "涉及实盘部署路径、软链或按名字调用的命令、子命令、脚本、systemd 单元、crontab 项及手册手工命令的删改不列入建议，只有用户在「按我写的改」中明确提出才执行。",
+              "status": "起草"
+            },
+            {
+              "id": "explain-deferred-high-impact-risk",
+              "text": "高影响未使用候选仍列入 unused，并在 risk 中说明默认不做的原因。",
               "status": "起草"
             },
             {
