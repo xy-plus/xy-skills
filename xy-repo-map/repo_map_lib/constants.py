@@ -14,5 +14,4 @@ UNSUPPORTED_CODE_SUFFIXES = {
 
 TEST_DIRECTORY_NAMES = {"tests", "test", "benches", "test_data", "testdata", "fixtures"}
 LINE_NAMES = ("code", "docs", "comments", "tests")
-FILE_GROUPS = ("registered", "reached", "directory", "shared", "whole")
-MARKER_NAMES = ("等你拍板", "还没实现", "没归到功能的代码或测试")
+MARKER_NAMES = ("等你拍板",)

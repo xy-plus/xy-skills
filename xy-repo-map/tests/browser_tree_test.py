@@ -17,34 +17,39 @@ class BrowserTreeTest(unittest.TestCase):
         alpha_source = "# one comment\n" + "".join(
             f"value_{index} = {index}\n" for index in range(12)
         )
-        future = feature("future", None, source="起草", items=[
+        future = feature("future", "group/future", source="起草", items=[
             {"id": "draft", "text": "待确认的条目。", "status": "起草"},
             {"id": "confirmed", "text": "已确认的条目。", "status": "确认"},
         ])
         future["what"] = payload
         repository = make_repo(self, {
-            "README.md": (
-                f"See alpha/main.py and group. Claude Code and {external_name} are used here.\n"
+            "README.md": "Root overview.\n",
+            "guide/guide.md": (
+                f"Claude Code and {external_name} are used here.\n"
             ),
             "alpha/main.py": alpha_source,
-            "alpha/guide.md": "See group/ready.py for details.\n",
-            "group/ready.py": "value = 2\n",
-            "group/consumer.py": "import alpha.main\nimport group.ready\n",
+            "alpha/guide.md": "See group/ready/main.py for details.\n",
+            "group/ready/main.py": "value = 2\n",
+            "group/consumer/main.py": "import alpha.main\nimport group.ready.main\n",
             "group/orphan.py": "orphan = True\n",
             "group/tests/test_ready.py": "import group.ready\n",
+            "group/future/note.py": "value = 3\n",
         }, feature(
             "root", "", subrepositories=[],
             external_dependencies=["Claude Code", external_name],
             children=[
                 feature("alpha", "alpha"),
                 feature("group", "group", children=[
-                    feature("ready", None, entries=["group/ready.py"]),
-                    feature("consumer", None, entries=["group/consumer.py"], source="确认"),
+                    feature("ready", "group/ready"),
+                    feature("consumer", "group/consumer", source="确认"),
                     future,
                 ]),
-                feature("guide", None, entries=["README.md"]),
+                feature("guide", "guide"),
             ],
         ))
+        (repository / "repo-map/skip.json").write_text(
+            '["group/future/note.py"]\n', encoding="utf-8",
+        )
         output = repository.parent / "rendered"
         rendered = subprocess.run(
             ["python3", "-B", str(COMMAND), "render", "--repo", str(repository),
@@ -53,6 +58,10 @@ class BrowserTreeTest(unittest.TestCase):
         )
         self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
         expected = json.loads((output / "map-data.json").read_text(encoding="utf-8"))
+        self.assertEqual(expected["features"]["future"]["files"], ["group/future/note.py"])
+        self.assertEqual(expected["features"]["future"]["lines"]["total"], {
+            "code": 0, "docs": 0, "comments": 0, "tests": 0,
+        })
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(executable_path=executable, headless=True)
@@ -98,12 +107,13 @@ class BrowserTreeTest(unittest.TestCase):
                 return matches[0]
 
             group_section = row_for_title("Group").locator("xpath=ancestor::section[1]")
-            group_summary = group_section.locator(".undivided")
+            group_summary = group_section.locator(".own-summary")
             group_toggle = row_for_title("Group").locator(".caret")
             self.assertEqual(group_toggle.get_attribute("aria-label"), "展开或收起Group（group）")
             self.assertEqual(group_toggle.get_attribute("aria-expanded"), "true")
             self.assertEqual(group_summary.count(), 1)
             self.assertTrue(group_summary.is_visible())
+            self.assertEqual(group_summary.locator("span").first.text_content(), "本级自己的部分")
             group_toggle.click()
             self.assertEqual(group_toggle.get_attribute("aria-expanded"), "false")
             self.assertFalse(group_summary.is_visible())
@@ -142,12 +152,12 @@ class BrowserTreeTest(unittest.TestCase):
             mention_chips = row_for_title("Alpha").locator(".uses .use-link")
             self.assertEqual(
                 mention_chips.all_text_contents(),
-                ["Group（group）提及", "Ready提及"],
+                ["Group（group）提及", "Ready（ready）提及"],
             )
             for chip in mention_chips.all():
                 self.assertEqual(chip.locator(".mention").text_content(), "提及")
             consumer_uses = row_for_title("Consumer").locator(".uses .use-link").all_text_contents()
-            self.assertEqual(consumer_uses, ["Ready", "Alpha（alpha）"])
+            self.assertEqual(consumer_uses, ["Ready（ready）", "Alpha（alpha）"])
             consumer_row = row_for_title("Consumer")
             why_row = consumer_row.locator(".why")
             self.assertEqual(why_row.evaluate("element => element.tagName"), "P")
@@ -175,6 +185,13 @@ class BrowserTreeTest(unittest.TestCase):
                     "parts => parts.map(part => part.getBoundingClientRect().width)"
                 )
                 self.assertTrue(any(width > 0 for width in widths), feature_id)
+            self.assertEqual(row_for_title("Future").locator(".feature-total").text_content(), "0 行")
+            self.assertFalse(any(
+                total.text_content() == "—"
+                for total in page.locator(".feature-total").all()
+            ))
+            self.assertNotIn("还没实现", page.locator("#marker-list").text_content())
+            self.assertNotIn("没归到功能的代码或测试", page.locator("#marker-list").text_content())
             page.locator(".feature-row").first.click()
             panel_limit = page.locator(".detail-panel").evaluate(
                 "element => parseFloat(getComputedStyle(element).maxHeight)"
@@ -209,8 +226,8 @@ class BrowserTreeTest(unittest.TestCase):
             }
             with self.subTest(page_part="decision rows and ancestors"):
                 self.assertEqual(set(visible_titles), expected_visible_titles)
-            with self.subTest(page_part="undivided code summary"):
-                self.assertEqual(page.locator(".undivided:visible").count(), 0)
+            with self.subTest(page_part="feature own-file summary"):
+                self.assertEqual(page.locator(".own-summary:visible").count(), 0)
             decision_filter.click()
             self.assertEqual(decision_filter.get_attribute("aria-pressed"), "false")
             self.assertEqual(script_errors, [])

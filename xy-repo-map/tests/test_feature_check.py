@@ -40,7 +40,8 @@ class FeatureCheckTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(nested), "commit", "-qm", "fixture"], check=True)
 
     def test_allows_subrepositories_only_on_the_root_feature(self):
-        child = feature("child", None, subrepositories=[], external_dependencies=[])
+        self.write("child/readme.md", "child\n")
+        child = feature("child", "child", subrepositories=[], external_dependencies=[])
         root = feature("root", "", children=[child], subrepositories=[], external_dependencies=[])
         root["legacy"] = "旧字段"
         self.set_features(root)
@@ -99,8 +100,7 @@ class FeatureCheckTest(unittest.TestCase):
         files = [
             path
             for feature_data in data["features"].values()
-            for group in feature_data["files"].values()
-            for path in group
+            for path in feature_data["files"]
         ]
         self.assertFalse(any(path.startswith("sub/") for path in files))
 
@@ -191,7 +191,7 @@ class FeatureCheckTest(unittest.TestCase):
             '{"id":"root","id":"other","title":"示例","what":"说明",'
             '"why":{"text":"理由","source":"起草","quote":"","from":""},'
             '"directory":"","subrepositories":[],"external_dependencies":[],'
-            '"entries":[],"children":[]}',
+            '"children":[],"items":[]}',
         )
 
         result = self.check()
@@ -199,6 +199,19 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("无法读取 repo-map/features.json", result.stdout + result.stderr)
         self.assertIn("重复键：id", result.stdout + result.stderr)
+
+    def test_rejects_entries_as_an_unknown_feature_field(self):
+        root = feature("root", "", subrepositories=[], external_dependencies=[])
+        root["entries"] = []
+        self.set_features(root)
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 1)
+        output = result.stdout + result.stderr
+        self.assertIn("功能 root", output)
+        self.assertIn("directory ''", output)
+        self.assertIn("请删除", output)
 
     def test_rejects_a_missing_feature_key(self):
         root = feature("root", "", subrepositories=[], external_dependencies=[])
@@ -384,42 +397,144 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("根", result.stdout + result.stderr)
 
-    def test_rejects_missing_duplicate_and_outside_directories(self):
+    def test_rejects_a_null_feature_directory_with_actionable_error(self):
+        self.write("pkg/item.py", "value = 1\n")
+        root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("package", None),
+        ])
+        self.set_features(root)
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 package", output)
+        self.assertIn("directory", output)
+        self.assertIn("null", output)
+        self.assertIn("目录", output)
+
+    def test_rejects_missing_or_non_string_feature_directories(self):
+        root = feature("root", "", subrepositories=[], external_dependencies=[])
+        del root["directory"]
+        self.set_features(root)
+        result = self.check()
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 root", output)
+        self.assertIn("缺少键 directory", output)
+        self.assertIn("填写", output)
+
+        self.write("pkg/item.py", "value = 1\n")
+        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("package", 7),
+        ]))
+        result = self.check()
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 package", output)
+        self.assertIn("directory", output)
+        self.assertIn("必须是字符串", output)
+
+    def test_rejects_invalid_feature_directory_values_with_feature_and_path(self):
         cases = [
-            (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("missing", "absent")]), "absent"),
-            (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("first", "pkg"), feature("second", "pkg")]), "pkg"),
-            (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("outer", "pkg", [feature("outside", "other")])]), "other"),
+            ("绝对路径", "/pkg"),
+            ("上级路径", "../pkg"),
+            ("反斜线", "pkg\\part"),
+            ("空段", "pkg//part"),
+            ("点段", "pkg/./part"),
+            ("结尾斜线", "pkg/"),
         ]
         self.write("pkg/item.py", "value = 1\n")
-        self.write("other/item.py", "value = 2\n")
-        for root, expected in cases:
-            with self.subTest(directory=expected):
+        for name, directory in cases:
+            with self.subTest(name=name):
+                root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
+                    feature("package", directory),
+                ])
                 self.set_features(root)
                 result = self.check()
-                self.assertEqual(result.returncode, 1)
-                self.assertIn(expected, result.stdout + result.stderr)
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 1, output)
+                self.assertIn("功能 package", output)
+                self.assertIn(repr(directory), output)
+                self.assertIn("安全的仓内相对目录", output)
 
-    def test_rejects_missing_and_cross_feature_entries(self):
-        self.write("pkg/owned.py", "value = 1\n")
-        self.write("other/owned.py", "value = 2\n")
-        cases = [
-            (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("pkg", "pkg", entries=["pkg/missing.py"])]), "missing.py"),
-            (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("pkg", "pkg", entries=["other/owned.py"])]), "other/owned.py"),
-            (feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("pkg", "pkg", [feature("inner", None)], ["other/owned.py"]), feature("other", "other")]), "other/owned.py"),
-        ]
-        for root, expected in cases:
-            with self.subTest(entry=expected):
-                self.set_features(root)
-                result = self.check()
-                self.assertEqual(result.returncode, 1)
-                self.assertIn(expected, result.stdout + result.stderr)
+    def test_rejects_duplicate_feature_directories_with_both_features_named(self):
+        self.write("pkg/first.py", "value = 1\n")
+        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("first", "pkg"),
+            feature("second", "pkg"),
+        ]))
 
-    def test_rejects_entries_on_a_leaf_directory_feature(self):
-        self.write("pkg/owned.py", "value = 1\n")
-        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("pkg", "pkg", entries=["pkg/owned.py"])]))
         result = self.check()
+        output = result.stdout + result.stderr
+
         self.assertEqual(result.returncode, 1)
-        self.assertIn("entries", result.stdout + result.stderr)
+        self.assertIn("first", output)
+        self.assertIn("second", output)
+        self.assertIn("pkg", output)
+        self.assertIn("目录重复", output)
+
+    def test_rejects_a_feature_directory_without_tracked_files_and_says_how_to_fix_it(self):
+        self.write("elsewhere/item.py", "value = 1\n")
+        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("package", "pkg"),
+        ]))
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 package", output)
+        self.assertIn("pkg", output)
+        self.assertIn("跟踪", output)
+        self.assertIn("添加", output)
+
+    def test_child_directory_must_be_nested_under_its_parent_directory(self):
+        self.write("pkg/parent.py", "parent = 1\n")
+        self.write("other/item.py", "value = 1\n")
+        root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("package", "pkg", children=[feature("outside", "other")]),
+        ])
+        self.set_features(root)
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 outside", output)
+        self.assertIn("other", output)
+        self.assertIn("pkg", output)
+        self.assertIn("不在上级", output)
+        self.assertIn("请", output)
+
+    def test_child_directory_cannot_skip_an_intermediate_feature_directory(self):
+        self.write("a/b/item.py", "value = 1\n")
+        self.write("a/b/c/item.py", "value = 2\n")
+        root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("parent", "a", children=[feature("child", "a/b/c")]),
+            feature("middle", "a/b"),
+        ])
+        self.set_features(root)
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("功能 child", output)
+        self.assertIn("a/b/c", output)
+        self.assertIn("middle", output)
+        self.assertIn("最近", output)
+        self.assertIn("请", output)
+
+    def test_child_directory_may_be_below_ordinary_directories_inside_parent(self):
+        self.write("pkg/src/module/main.py", "value = 1\n")
+        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[
+            feature("package", "pkg", children=[feature("module", "pkg/src/module")]),
+        ]))
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_rejects_a_nested_git_repository(self):
         nested = self.repo / "nested"

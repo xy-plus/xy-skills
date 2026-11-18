@@ -2,7 +2,6 @@ from pathlib import Path
 
 from .constants import (
     CODE_SUFFIXES,
-    FILE_GROUPS,
     LINE_NAMES,
     MARKER_NAMES,
     TEST_DIRECTORY_NAMES,
@@ -14,7 +13,7 @@ from .dependencies import (
     name_mentions,
     _import_targets,
 )
-from .features import directory_home, is_feature_ancestor, load_features
+from .features import is_feature_ancestor, load_features
 from .git_repository import (
     primary_checkout_name,
     require_repository_root,
@@ -116,7 +115,7 @@ def build_map(repository):
     external_directory_names = {
         Path(features[feature_id]["directory"]).name
         for feature_id in order
-        if features[feature_id]["directory"] not in (None, "")
+        if features[feature_id]["directory"] != ""
     }
     external_mentions = {}
     mentioned_external_dependencies = set()
@@ -144,32 +143,18 @@ def build_map(repository):
     python_paths = [path for path in paths if Path(path).suffix.lower() == ".py"]
     imports = {}
     for path in paths:
-        if (Path(path).suffix.lower() != ".py"
-                or categories[path] not in ("code", "tests")):
+        if Path(path).suffix.lower() != ".py" or categories[path] != "code":
             imports[path] = set()
         else:
             imports[path] = _import_targets(path, source_texts[path], python_paths)
 
-    entries = {feature_id: set() for feature_id in order}
-    path_set = set(paths)
-    for feature_id in order:
-        for entry in features[feature_id]["entries"]:
-            if entry.endswith("/"):
-                entries[feature_id].update(
-                    path for path in paths if path.startswith(entry)
-                )
-            elif entry in path_set:
-                entries[feature_id].add(entry)
-    owners, groups = assign_files(features, order, paths, categories, entries, imports)
-    if len(owners) != len(paths):
-        missing = sorted(set(paths) - owners.keys())
-        raise ValueError("文件没有归到功能：" + ", ".join(missing))
+    owners = assign_files(features, order, paths)
 
     lines = {feature_id: {name: 0 for name in LINE_NAMES} for feature_id in order}
-    files = {feature_id: {group: [] for group in FILE_GROUPS} for feature_id in order}
+    files = {feature_id: [] for feature_id in order}
     for path in paths:
         owner = owners[path]
-        files[owner][groups[path]].append(path)
+        files[owner].append(path)
         doc_chars[owner] += count_doc_chars(
             path, categories[path], source_texts[path],
         )
@@ -203,10 +188,6 @@ def build_map(repository):
 
     directories = {
         feature_id: features[feature_id]["directory"]
-        for feature_id in order if features[feature_id]["directory"] is not None
-    }
-    feature_home = {
-        feature_id: directory_home(feature_id, features)
         for feature_id in order
     }
 
@@ -221,18 +202,12 @@ def build_map(repository):
             if target_path in owners:
                 _add_use(uses, source_owner, owners[target_path], "import", features)
         source = source_texts[source_path]
-        own_directory = feature_home[source_owner]
-        # Parent-directory overview files can name child features without depending on them.
         for target_path in file_mentions(source_path, source, paths):
             target_owner = owners.get(target_path)
-            if target_owner is not None and not is_feature_ancestor(
-                own_directory, feature_home[target_owner], features
-            ):
+            if target_owner is not None:
                 _add_use(uses, source_owner, target_owner, "mention", features)
-        for target_feature in directory_mentions(source, directories, own_directory):
-            target_directory = feature_home[target_feature]
-            if not is_feature_ancestor(own_directory, target_directory, features):
-                _add_use(uses, source_owner, target_feature, "mention", features)
+        for target_feature in directory_mentions(source, directories, source_owner):
+            _add_use(uses, source_owner, target_feature, "mention", features)
 
     index = {feature_id: position for position, feature_id in enumerate(order)}
     uses_by_source = {feature_id: [] for feature_id in order}
@@ -249,22 +224,11 @@ def build_map(repository):
     for feature_id in order:
         value = features[feature_id]
         directory = value["directory"]
-        directory_name = repository_name if directory == "" else Path(directory).name if directory is not None else None
+        directory_name = repository_name if directory == "" else Path(directory).name
         markers = []
         if (value["why"]["source"] == "起草"
                 or any(item["status"] == "起草" for item in value["items"])):
             markers.append("等你拍板")
-        if directory is None and not children[feature_id] and not value["entries"]:
-            markers.append("还没实现")
-        if directory is not None and children[feature_id] and any(
-            groups[path] == "whole" and owners[path] == feature_id
-            and (
-                (categories[path] == "code" and counts[path].code > 0)
-                or (categories[path] == "tests" and counts[path].tests > 0)
-            )
-            for path in paths
-        ):
-            markers.append("没归到功能的代码或测试")
         for marker in markers:
             marker_counts[marker] += 1
         feature_uses = uses_by_source[feature_id]

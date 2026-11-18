@@ -11,12 +11,13 @@ class RenderTest(unittest.TestCase):
         self.repository = make_repo(self, {
             "README.md": "Demo repository.\n",
             "alpha/main.py": "value = 1\n",
-            "branch/approved.py": "value = 2\n",
+            "branch/approved/main.py": "value = 2\n",
+            "branch/future/note.bin": "not source\n",
         }, feature("root", "", subrepositories=[], external_dependencies=[], children=[
             feature("alpha", "alpha"),
             feature("branch", "branch", children=[
-                feature("approved", None, entries=["branch/approved.py"]),
-                feature("future", None, source="起草", items=[{
+                feature("approved", "branch/approved"),
+                feature("future", "branch/future", source="起草", items=[{
                     "id": "draft-item",
                     "text": "用户可以检查待确认的内容。",
                     "status": "起草",
@@ -43,6 +44,8 @@ class RenderTest(unittest.TestCase):
             "text": "用户可以检查待确认的内容。",
             "status": "起草",
         }])
+        self.assertIsInstance(data["features"]["future"]["files"], list)
+        self.assertEqual(data["markers"], {"等你拍板": 1})
         page = (self.output / "index.html").read_text(encoding="utf-8")
         embedded = re.search(r'<script id="map-data" type="application/json">(.*?)</script>',
                              page, re.DOTALL)
@@ -53,6 +56,10 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(page_data, data)
         self.assertNotIn("<script src=", page)
         self.assertNotIn("<link rel=\"stylesheet\" href=", page)
+        self.assertIn("本级自己的部分", page)
+        self.assertNotIn("没细分到子功能的部分", page)
+        self.assertNotIn("还没实现", page)
+        self.assertNotIn("没归到功能的代码或测试", page)
 
     def test_render_does_not_write_a_page_when_the_feature_list_is_invalid(self):
         feature_path = self.repository / "repo-map" / "features.json"

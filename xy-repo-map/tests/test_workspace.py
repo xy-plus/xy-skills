@@ -60,17 +60,9 @@ class WorkspaceRenderTest(unittest.TestCase):
         )
         self.assertEqual(root_doc_chars.get("own"), 17)
         self.assertEqual(root_doc_chars.get("total"), 17 + child_doc_chars)
-        sub_a_files = [
-            path
-            for group in data["features"]["sub-a/root"]["files"].values()
-            for path in group
-        ]
+        sub_a_files = data["features"]["sub-a/root"]["files"]
         self.assertIn("sub-a/README.md", sub_a_files)
-        part_files = [
-            path
-            for group in data["features"]["sub-a/part"]["files"].values()
-            for path in group
-        ]
+        part_files = data["features"]["sub-a/part"]["files"]
         self.assertIn("sub-a/lib/main.py", part_files)
         self.assertEqual(
             data["features"]["sub-a/root"]["uses"],
@@ -87,11 +79,7 @@ class WorkspaceRenderTest(unittest.TestCase):
             use["feature"] in {"sub-a/part", "sub-b/part"}
             for use in data["features"]["root"]["uses"]
         ))
-        self.assertEqual(data["markers"], {
-            "等你拍板": 0,
-            "还没实现": 0,
-            "没归到功能的代码或测试": 0,
-        })
+        self.assertEqual(data["markers"], {"等你拍板": 0})
 
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")

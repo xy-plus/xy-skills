@@ -14,7 +14,7 @@ sys.path.insert(0, str(LIBRARY))
 from repo_map_lib.map_data import build_map as build_repository_map  # noqa: E402
 
 
-def feature(feature_id, directory, children=None, entries=None, source="原话",
+def feature(feature_id, directory, children=None, source="原话",
             subrepositories=_UNSET, external_dependencies=_UNSET, items=_UNSET):
     result = {
         "id": feature_id,
@@ -27,7 +27,6 @@ def feature(feature_id, directory, children=None, entries=None, source="原话",
             "from": "测试契约" if source == "原话" else "本次回答" if source == "确认" else "",
         },
         "directory": directory,
-        "entries": [] if entries is None else entries,
         "children": [] if children is None else children,
     }
     if subrepositories is not _UNSET:

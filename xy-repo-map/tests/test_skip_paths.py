@@ -5,11 +5,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from map_fixture import COMMAND, LIBRARY, feature, make_repo
+from map_fixture import COMMAND, feature, make_repo
 
-sys.path[:0] = [str(LIBRARY.parent / "xy-cleanup"), str(LIBRARY)]
 from repo_map_lib.map_data import build_map as derive_map  # noqa: E402
-from approvals import feature_fingerprints, feature_values  # noqa: E402
 
 
 def write_skip_list(repository, paths):
@@ -40,9 +38,9 @@ class SkipPathsTest(unittest.TestCase):
 
     def test_skip_file_and_directory_are_other_zero_count_and_not_read(self):
         repository = make_repo(self, {
-            "alpha/main.py": "# visible-tool\nimport pkg.hidden\n",
-            "reader/guide.md": "See pkg/hidden.py and archive/log.md.\n",
-            "pkg/hidden.py": (
+            "alpha/source/main.py": "# visible-tool\nimport pkg.hidden_file.hidden\n",
+            "reader/guide/guide.md": "See pkg/hidden_file/hidden.py and archive/log.md.\n",
+            "pkg/hidden_file/hidden.py": (
                 "import beta.impl\n"
                 "See beta/impl.py and secret-tool.\n"
             ),
@@ -50,20 +48,20 @@ class SkipPathsTest(unittest.TestCase):
             "archive/log.md": "secret-tool\n" * 20,
         }, feature("root", "", subrepositories=[], external_dependencies=["visible-tool"], children=[
             feature("alpha", "alpha", children=[
-                feature("source", None, entries=["alpha/main.py"]),
+                feature("source", "alpha/source"),
             ]),
             feature("reader", "reader", children=[
-                feature("reader-doc", None, entries=["reader/guide.md"]),
+                feature("reader-doc", "reader/guide"),
             ]),
             feature("hidden", "pkg", children=[
-                feature("hidden-file", None, entries=["pkg/hidden.py"]),
+                feature("hidden-file", "pkg/hidden_file"),
             ]),
             feature("beta", "beta"),
             feature("archive", "archive"),
         ]))
-        write_skip_list(repository, ["pkg/hidden.py", "archive/"])
+        write_skip_list(repository, ["pkg/hidden_file/hidden.py", "archive/"])
 
-        hidden_file = repository / "pkg/hidden.py"
+        hidden_file = repository / "pkg/hidden_file/hidden.py"
         archive_file = repository / "archive/log.md"
         original_read_bytes = Path.read_bytes
 
@@ -114,7 +112,7 @@ class SkipPathsTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, expected):
                     derive_map(repository)
 
-    def test_skipped_content_and_skip_file_do_not_change_approval_fingerprint(self):
+    def test_skipped_content_and_skip_file_format_do_not_change_derived_map(self):
         repository = make_repo(self, {
             "README.md": "Root guide.\n",
             "docs/experiments/run.md": "First result.\n",
@@ -122,18 +120,12 @@ class SkipPathsTest(unittest.TestCase):
             feature("experiments", "docs/experiments"),
         ]))
         write_skip_list(repository, ["docs/experiments/"])
-        features, _ = feature_values(repository)
-
-        first = feature_fingerprints(
-            repository, derive_map(repository), features,
-        )
+        first = derive_map(repository)
         (repository / "docs/experiments/run.md").write_text(
             "A different experiment log.\nMore details.\n", encoding="utf-8",
         )
         skip_file = repository / "repo-map/skip.json"
         skip_file.write_text('[\n  "docs/experiments/"\n]\n', encoding="utf-8")
-        second = feature_fingerprints(
-            repository, derive_map(repository), features,
-        )
+        second = derive_map(repository)
 
         self.assertEqual(first, second)
