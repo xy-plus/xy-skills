@@ -301,6 +301,11 @@
           "id": "fast-forward-and-push",
           "text": "本地合入只允许快进到已审查提交，并在完成后推送主分支；不能快进时重新审查。",
           "status": "确认"
+        },
+        {
+          "id": "sync-map-with-changes",
+          "text": "每次代码改动后的功能清单会同步反映用户可见结果或约束的变化。",
+          "status": "起草"
         }
       ],
       "entries": [],
@@ -577,6 +582,11 @@
               "id": "duplicate-key-regression-case",
               "text": "回归案例要求审查报告和决定输入拒绝重复 JSON 键，且复用已有的重复键检查。",
               "status": "确认"
+            },
+            {
+              "id": "review-feature-map-changes",
+              "text": "主审会核对用户可见变化是否同步到所属功能，并核实新增或改写条目的状态和确认出处。",
+              "status": "起草"
             }
           ],
           "entries": [
@@ -860,7 +870,7 @@
                 {
                   "id": "track-and-verify-withdrawn-prompt",
                   "text": "发出后在得到回复前撤回的消息，原文保留并在自查时自动标为不跟进。",
-                  "status": "确认"
+                  "status": "起草"
                 },
                 {
                   "id": "track-and-verify-current-view",
@@ -1478,6 +1488,16 @@
               "id": "unmapped-code-marker",
               "text": "含子功能的目录功能若仍接收未细分的代码或测试，会显示“没归到功能的代码或测试”并计数。",
               "status": "确认"
+            },
+            {
+              "id": "draft-ai-written-items",
+              "text": "AI 新写或改写的条目在用户确认该条文字前标为「起草」。",
+              "status": "起草"
+            },
+            {
+              "id": "complete-empty-feature-items",
+              "text": "已有功能尚无条目且改动涉及条目时，会按现状起草该功能的全部条目。",
+              "status": "起草"
             }
           ],
           "entries": [
@@ -2015,7 +2035,7 @@
             {
               "id": "usage-coverage-candidates",
               "text": "审查前按实际使用记录在副本里短跑并统计覆盖，实际使用中没执行到的代码交剃刀逐条判用到或删。",
-              "status": "确认"
+              "status": "起草"
             },
             {
               "id": "skip-boundary",
@@ -2055,7 +2075,7 @@
             {
               "id": "orphan-findings",
               "text": "落不到任何功能条目的实体只能作为孤儿发现交由用户决定，不能作为删除或合并直接执行；复审在副本删除每个目标并跑测试，记录测试命令和结果；测试或实际使用受影响时建议补条目，否则建议删除。",
-              "status": "确认"
+              "status": "起草"
             },
             {
               "id": "implementation-completeness",
@@ -2165,7 +2185,7 @@
             {
               "id": "decision-directed-changes",
               "text": "目标不在 TODO 文件、不是功能级删除或合并、行为不变且类型不是孤儿或改清单时直接执行；其余由用户决定。对外命令、选项、脚本或文件名、入口和用法有任何变化都视为行为改变。",
-              "status": "确认"
+              "status": "起草"
             },
             {
               "id": "confirm-draft-items",
@@ -2210,7 +2230,12 @@
             {
               "id": "redundant-test-candidates",
               "text": "审查前列出覆盖的代码和杀死的变异都被其余测试函数包含的 Python 和 Rust 测试函数，交剃刀逐条判是否真重复。",
-              "status": "确认"
+              "status": "起草"
+            },
+            {
+              "id": "compare-rewritten-draft-item",
+              "text": "从已确认条目改写的起草条目交用户决定时，会附上次确认文字的对照。",
+              "status": "起草"
             }
           ],
           "entries": [
@@ -2258,7 +2283,7 @@
                 {
                   "id": "deletion-tied-to-item",
                   "text": "按文件范围提出的每条删除或合并都逐字引用目标所属、删后仍成立的功能条目；其他提议不引用条目。",
-                  "status": "确认"
+                  "status": "起草"
                 },
                 {
                   "id": "todo-review-and-ask",
@@ -2293,7 +2318,7 @@
                 {
                   "id": "recheck-every-keep",
                   "text": "首轮剃刀留下实体或任一首轮报告出现孤儿发现的功能都要复审；每条 keep 和孤儿目标各有一条结论并附范围外有效证据。keep 判站不住须有重叠发现；孤儿本身就是发现。孤儿判站不住仅限测试或文档目标，或代码目标每行都在实际使用覆盖的 missed 范围内；量不了或有行不在 missed 内都不能判站不住。",
-                  "status": "确认"
+                  "status": "起草"
                 },
                 {
                   "id": "document-rewrite-coverage",
@@ -2303,17 +2328,17 @@
                 {
                   "id": "rewrite-table-structure",
                   "text": "文档改写不丢表格：每块的表格行数、各行列数和首格与原文一致。",
-                  "status": "确认"
+                  "status": "起草"
                 },
                 {
                   "id": "usage-candidate-verdicts",
                   "text": "实际使用中没执行到的每段代码在剃刀报告里恰有一条判定；判用到须引范围外的有效位置，判删须有对应发现。",
-                  "status": "确认"
+                  "status": "起草"
                 },
                 {
                   "id": "test-candidate-reference",
                   "text": "冗余测试候选要么被删除或合并发现覆盖，要么保留说明写出覆盖它的另一个测试函数的位置。",
-                  "status": "确认"
+                  "status": "起草"
                 }
               ],
               "entries": [
@@ -2473,7 +2498,7 @@
                 {
                   "id": "record-approved-state",
                   "text": "审查完成后仅保存本次实际审过的功能认可指纹，保留范围外仍有效的记录，并移除功能图中已不存在的编号。",
-                  "status": "确认"
+                  "status": "起草"
                 },
                 {
                   "id": "block-draft-approval",

@@ -26,7 +26,7 @@ description: 对抗审查：主审、剃刀、报告格式与检查、结果处�
 
 ## 审
 
-被审仓有 `repo-map/features.json` 时，主审读清单，说明改动归属或是否要新增功能，并运行 `python3 <xy-repo-map skill目录>/repo_map.py check --repo <仓绝对路径>`；失败即为阻断项。主审逐条核对新增或改动功能的理由出处：`why.source` 为「原话」时，`quote` 必须在 `from` 指向的用户原话或用户规范中逐字可见；为「确认」时，`from` 指向的回答必须有该确认。引用 `answers.json` 时，回答编号按 JSON 键读取，写作 `#answers.<键>`；`#L7` 表示 GitHub 第 7 行。剃刀把新增功能当实体审。
+被审仓有 `repo-map/features.json` 时，主审读清单，说明改动归属或是否要新增功能，并运行 `python3 <xy-repo-map skill目录>/repo_map.py check --repo <仓绝对路径>`；失败即为阻断项。主审对照清单的改动核对：用户可见的结果或约束有增、改、删的，所属功能的 `what` 和条目已按 `xy-repo-map` 更新；新写或改写的条目为 `起草`，标 `确认` 的须能找到用户确认这条文字的出处。主审逐条核对新增或改动功能的理由出处：`why.source` 为「原话」时，`quote` 必须在 `from` 指向的用户原话或用户规范中逐字可见；为「确认」时，`from` 指向的回答必须有该确认。引用 `answers.json` 时，回答编号按 JSON 键读取，写作 `#answers.<键>`；`#L7` 表示 GitHub 第 7 行。剃刀把新增功能当实体审。
 
 写报告前核对目标路径、文件名。路径不符 `<对象目录>/group<G>/round<R>/`，或主审/剃刀报告名不符 `review-main.json`/`review-razor.json`，就停下告作者、不写：作者手里的本文件可能是旧版，审查者读的是现行版，此项由审查者把关。目标已存在也停下告作者、不覆盖。
 
