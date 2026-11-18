@@ -1983,19 +1983,19 @@
         {
           "id": "xy-cleanup",
           "title": "仓库清扫",
-          "what": "默认只审变更过的功能，清理代码、测试、文档和 TODO；不改写 TODO 或跳过名单里的文档。逐段检查直属文档，仅在改写稿保留原要求和约束且确实更短时提交改写提议；由报告检查器校验。改完代码后改写代码注释。",
+          "what": "定期清扫按功能审批：只展示上次认可后新增或变过的功能，让用户逐个决定保留或不要。",
           "why": {
-            "text": "仓库写久了会积累冗余和不必要的代码；更新功能图时要按相关范围找出能删的地方清理掉。",
+            "text": "定期清扫只需要把新增或变过的功能展示给用户逐个审批。",
             "source": "原话",
-            "quote": "我自己知道，我们这个代码写了这么久，肯定有非常多的冗余，有非常多的不必要的代码可以删掉",
-            "from": "20261111-112959-quant-workspace-maps 原话 63、64"
+            "quote": "AI 就把从上一次到这一次新增的功能展示给用户看。用户看后判断这些功能是否确实需要，再逐个做决定，决定保留还是不保留。",
+            "from": "/data/user/xy/runs/-home-xy-xy-skills/20261118-184541-xy-skills-cleanup-focus/xy-goal/quotes/24.md"
           },
           "directory": "xy-cleanup",
           "items": [
             {
               "id": "minimal-result",
-              "text": "实现、测试和文档只保留让功能图中已确认条目在实际使用中成立所必需的内容。",
-              "status": "确认"
+              "text": "只保留实际使用中用到或用户决定留下的功能。",
+              "status": "起草"
             },
             {
               "id": "explicit-scope",
@@ -2014,8 +2014,8 @@
             },
             {
               "id": "draft-missing-items",
-              "text": "缺少用户层面条目的功能在实体审查前先有待确认的条目草稿。",
-              "status": "确认"
+              "text": "功能没有条目时，在卡片上附上按现状起草的全部条目供用户确认。",
+              "status": "起草"
             },
             {
               "id": "unverified-reason-draft",
@@ -2034,7 +2034,7 @@
             },
             {
               "id": "usage-coverage-candidates",
-              "text": "审查前按实际使用记录在副本里短跑并统计覆盖，实际使用中没执行到的代码交剃刀逐条判用到或删。",
+              "text": "按 README「实际使用」记录在副本短跑并量覆盖，将覆盖记录交给卡片命令校验。",
               "status": "起草"
             },
             {
@@ -2058,14 +2058,9 @@
               "status": "确认"
             },
             {
-              "id": "two-review-roles",
-              "text": "每个纳入审查的功能分别获得主审和剃刀的独立结论。",
-              "status": "确认"
-            },
-            {
               "id": "planned-feature-coverage",
-              "text": "主审和剃刀都覆盖计划列出的每个功能，包括被纳入的上级功能。",
-              "status": "确认"
+              "text": "计划中的每个功能都各有一张卡片和一项决定。",
+              "status": "起草"
             },
             {
               "id": "review-evidence-pack",
@@ -2073,108 +2068,48 @@
               "status": "确认"
             },
             {
-              "id": "orphan-findings",
-              "text": "落不到任何功能条目的实体只能作为孤儿发现交由用户决定，不能作为删除或合并直接执行；复审在副本删除每个目标并跑测试，记录测试命令和结果；测试或实际使用受影响时建议补条目，否则建议删除。",
+              "id": "implementation-completeness",
+              "text": "卡片指出功能条目没有做到、已做到却没有写入图里的地方；不以缺测试判定功能未实现。",
               "status": "起草"
             },
             {
-              "id": "implementation-completeness",
-              "text": "审查能指出功能条目未实现及已有实现未入图的缺口，代码条目没有测试时视为未实现。",
-              "status": "确认"
-            },
-            {
               "id": "reason-validity-review",
-              "text": "功能理由按其当前是否成立来审查，不因标为确认或原话就自动认可。",
-              "status": "确认"
+              "text": "卡片展示功能理由及其出处；理由仍是起草时须由用户确认。",
+              "status": "起草"
             },
             {
               "id": "structure-review",
-              "text": "审查能判断功能间的重叠、分组、措辞和粒度，并检查共用文件是否应按功能拆分。",
-              "status": "确认"
-            },
-            {
-              "id": "smallest-solution",
-              "text": "审查结论说明满足功能要求的最小方案、所需测试及现状中可删减或复用的部分。",
-              "status": "确认"
-            },
-            {
-              "id": "keep-proof",
-              "text": "每个保留的实体都说明服务哪条功能条目、如何满足它及其实现代价是否合理。",
-              "status": "确认"
-            },
-            {
-              "id": "rewrite-every-document",
-              "text": "逐段检查直属文档；只有存在不损失原要求且确实更短的稿时才提交改写提议。",
-              "status": "确认"
-            },
-            {
-              "id": "rewrite-preservation",
-              "text": "文档改写保留原有要求、约束、例外、术语、数字、代码、路径和命令，不添加原文没有的内容。",
-              "status": "确认"
-            },
-            {
-              "id": "line-level-review",
-              "text": "审查覆盖直属文件中每个未跳过的非空内容，并让每条保留结论对应单一可定位实体。",
-              "status": "确认"
-            },
-            {
-              "id": "duplicate-removal",
-              "text": "重复实现和重复测试按实际需要保留最小的一份，不因被调用或被测试覆盖而全部留下。",
-              "status": "确认"
+              "text": "卡片指出功能图与实现不一致、分组或粒度不合适的地方。",
+              "status": "起草"
             },
             {
               "id": "todo-review",
-              "text": "直属 TODO 的每个非空行都经过必要性、精简和理由审查，删除或改写须交用户决定。",
-              "status": "确认"
-            },
-            {
-              "id": "keep-counter-review",
-              "text": "首轮剃刀提出保留的功能逐项接受新剃刀复审，并用删改副本和测试检查其必要性。",
-              "status": "确认"
+              "text": "功能直属 TODO 中的大问题列在卡片上，是否处理由该功能的选择决定。",
+              "status": "起草"
             },
             {
               "id": "no-deletion-quota",
-              "text": "清扫不设最低删减数量，只有复审后仍成立的发现才作为可删项。",
-              "status": "确认"
-            },
-            {
-              "id": "complete-review-reports",
-              "text": "每个审查角色都提交能逐项核对功能结论、实体范围、复审结果和发现的报告。",
-              "status": "确认"
+              "text": "清扫不设最低删减数量。",
+              "status": "起草"
             },
             {
               "id": "machine-report-check",
-              "text": "报告范围和格式在进入决定阶段前通过机器校验。",
-              "status": "确认"
+              "text": "覆盖记录和功能卡片在决定页生成前通过机器校验。",
+              "status": "起草"
             },
             {
               "id": "item-level-decisions",
-              "text": "待决定事项以功能条目为单位供用户选择，不把未确认的行为改动直接实施。",
-              "status": "确认"
+              "text": "用户以功能为单位决定；每个功能只有一项选择。",
+              "status": "起草"
             },
             {
               "id": "decision-evidence",
-              "text": "每项决定都有编号、说明、适配的选项、建议及其证据，意见相反时同时展示双方理由。",
-              "status": "确认"
+              "text": "每张卡片说明建议采取的动作和判断依据。",
+              "status": "起草"
             },
             {
               "id": "no-action-option",
               "text": "询问用户是否采取行动时提供暂不采取的选项。",
-              "status": "确认"
-            },
-            {
-              "id": "draft-reason-gate",
-              "text": "功能理由仍待确认时不审查该功能的具体保留实体，用户确认理由后再继续。",
-              "status": "确认"
-            },
-            {
-              "id": "rewrite-user-choice",
-              "text": "文档改写提议能逐段对照原文，并由用户分别决定采用、拒绝或修改。",
-              "status": "确认"
-            },
-            {
-              "id": "recheck-new-findings",
-              "text": "复审对首轮结论提出的新发现继续交用户决定，并保留双方理由。",
               "status": "确认"
             },
             {
@@ -2184,7 +2119,7 @@
             },
             {
               "id": "decision-directed-changes",
-              "text": "目标不在 TODO 文件、不是功能级删除或合并、行为不变且类型不是孤儿或改清单时直接执行；其余由用户决定。对外命令、选项、脚本或文件名、入口和用法有任何变化都视为行为改变。",
+              "text": "按用户对每个功能的选择实施对应改动；意思不清时先询问。",
               "status": "起草"
             },
             {
@@ -2194,13 +2129,8 @@
             },
             {
               "id": "delete-only-supporting-implementation",
-              "text": "用户决定删除功能条目时，同时删除只为该条目存在的实现。",
-              "status": "确认"
-            },
-            {
-              "id": "add-decided-orphan",
-              "text": "用户决定保留孤儿时，将对应功能条目补入功能图并标为已确认。",
-              "status": "确认"
+              "text": "用户决定不要一个功能或其中一部分时，同时删除只为它存在的实现。",
+              "status": "起草"
             },
             {
               "id": "final-requirement-review",
@@ -2228,13 +2158,38 @@
               "status": "确认"
             },
             {
-              "id": "redundant-test-candidates",
-              "text": "审查前列出覆盖的代码和杀死的变异都被其余测试函数包含的 Python 和 Rust 测试函数，交剃刀逐条判是否真重复。",
+              "id": "compare-rewritten-draft-item",
+              "text": "改写过的起草条目在决定页上附上次认可的原文。",
               "status": "起草"
             },
             {
-              "id": "compare-rewritten-draft-item",
-              "text": "从已确认条目改写的起草条目交用户决定时，会附上次确认文字的对照。",
+              "id": "unused-needs-positive-evidence",
+              "text": "只有正面证据表明可选功能不在实际使用范围内时，才能建议删除；覆盖没量到或没执行到本身不算证据，存疑按用到处理。",
+              "status": "起草"
+            },
+            {
+              "id": "one-choice-per-feature",
+              "text": "决定页每个功能只有一项选择，且「不要这个功能」只提供给没有子功能的功能。",
+              "status": "起草"
+            },
+            {
+              "id": "confirm-card-drafts",
+              "text": "「照建议」「留」「按我写的改」都确认卡片自动列出的起草条目和功能理由。",
+              "status": "起草"
+            },
+            {
+              "id": "ask-before-changing-kept-feature",
+              "text": "删除内容会改动用户选择「留」的其他功能时，先把影响交用户决定。",
+              "status": "起草"
+            },
+            {
+              "id": "review-each-answer",
+              "text": "终审逐个核对功能改动与该功能的用户回答一致。",
+              "status": "起草"
+            },
+            {
+              "id": "record-each-reviewed-feature",
+              "text": "终审通过后，决定页中仍保留的每个功能都记入认可记录。",
               "status": "起草"
             }
           ],
@@ -2243,110 +2198,6 @@
             "xy-cleanup/review-misses.md"
           ],
           "children": [
-            {
-              "id": "cleanup-report-check",
-              "title": "检查清扫审查报告",
-              "what": "清扫审查报告是否覆盖范围内每个功能、每个未跳过的直属代码、测试、文档文件和 TODO 的每个非空行，首轮写了留下的功能有没有逐条推翻的剃刀复审，估得更小的做法有没有写成功能级提议，保留的代码、测试、文档与仓内其他保留代码、测试、文档逐字重复时有没有写出另一份，剃刀理由有没有逐字相同的套话，文档改写稿齐不齐、比原文短的有没有写成提议，格式和决定合不合规，用脚本查。",
-              "why": {
-                "text": "审查要有能用机器核对的标准格式。",
-                "source": "确认",
-                "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A7"
-              },
-              "directory": null,
-              "items": [
-                {
-                  "id": "explicit-run-context",
-                  "text": "使用者每次明确选定仓库、功能范围、审查方式和报告；目标或输入无效时检查拒绝继续。",
-                  "status": "确认"
-                },
-                {
-                  "id": "report-structure",
-                  "text": "主审、剃刀和剃刀复审报告都必须提供各自完整、有效且与当前仓库匹配的内容。",
-                  "status": "确认"
-                },
-                {
-                  "id": "duplicate-json-keys",
-                  "text": "报告中的 JSON 键不能重复，否则拒绝读取，避免后写值悄悄覆盖前值。",
-                  "status": "确认"
-                },
-                {
-                  "id": "feature-report-coverage",
-                  "text": "审查范围里的每个功能在主审和剃刀报告中各出现一次；允许同一角色拆成多份报告，但缺失、重复或越界时拒收。",
-                  "status": "确认"
-                },
-                {
-                  "id": "finding-decisions",
-                  "text": "审查提议必须有有效目标、逐字规范依据、证据、收益和代价，并按提议类别及行为影响使用允许的决定。",
-                  "status": "确认"
-                },
-                {
-                  "id": "deletion-tied-to-item",
-                  "text": "按文件范围提出的每条删除或合并都逐字引用目标所属、删后仍成立的功能条目；其他提议不引用条目。",
-                  "status": "起草"
-                },
-                {
-                  "id": "todo-review-and-ask",
-                  "text": "未跳过的直属 TODO 每个非空行都要有完整、互不重叠的审查说明；删改 TODO 或整功能删除、合并连带 TODO 时，受影响的行必须逐项交用户决定。",
-                  "status": "确认"
-                },
-                {
-                  "id": "smallest-estimate",
-                  "text": "剃刀给出最小做法和代码、文档、注释、测试行数估算；若估计比现状少，就提出功能级删除、合并或重构。",
-                  "status": "确认"
-                },
-                {
-                  "id": "keep-tied-to-item",
-                  "text": "每条保留记录逐字引用一个存在的功能条目；理由尚未确认的功能不得提交保留记录，其他保留项须说明实体如何满足条目及保留代价。",
-                  "status": "确认"
-                },
-                {
-                  "id": "keep-line-coverage",
-                  "text": "保留项把未跳过的直属代码、测试和文档每个非空行纳入审查；范围不重叠，每条只覆盖一个实体，删除提议与保留范围不能相冲突。",
-                  "status": "确认"
-                },
-                {
-                  "id": "duplicate-copy-reference",
-                  "text": "代码、测试或文档中出现六个含字母数字的重复行且累计至少四十个字母数字时，保留说明必须指出另一份位置。",
-                  "status": "确认"
-                },
-                {
-                  "id": "distinct-keep-reasons",
-                  "text": "不同保留实体必须分别说明做到要求的方式和保留成本，不能逐字重复使用同一句理由。",
-                  "status": "确认"
-                },
-                {
-                  "id": "recheck-every-keep",
-                  "text": "首轮剃刀留下实体或任一首轮报告出现孤儿发现的功能都要复审；每条 keep 和孤儿目标各有一条结论并附范围外有效证据。keep 判站不住须有重叠发现；孤儿本身就是发现。孤儿判站不住仅限测试或文档目标，或代码目标每行都在实际使用覆盖的 missed 范围内；量不了或有行不在 missed 内都不能判站不住。",
-                  "status": "起草"
-                },
-                {
-                  "id": "document-rewrite-coverage",
-                  "text": "未跳过的直属文档改写须按顺序完整覆盖所有非空行、保留原有代码片段；缩短后须对整份文档提出对应提议。",
-                  "status": "确认"
-                },
-                {
-                  "id": "rewrite-table-structure",
-                  "text": "文档改写不丢表格：每块的表格行数、各行列数和首格与原文一致。",
-                  "status": "起草"
-                },
-                {
-                  "id": "usage-candidate-verdicts",
-                  "text": "实际使用中没执行到的每段代码在剃刀报告里恰有一条判定；判用到须引范围外的有效位置，判删须有对应发现。",
-                  "status": "起草"
-                },
-                {
-                  "id": "test-candidate-reference",
-                  "text": "冗余测试候选要么被删除或合并发现覆盖，要么保留说明写出覆盖它的另一个测试函数的位置。",
-                  "status": "起草"
-                }
-              ],
-              "entries": [
-                "xy-cleanup/check_reports.py",
-                "xy-cleanup/tests/test_check_reports.py"
-              ],
-              "children": []
-            },
             {
               "id": "decision-page",
               "title": "用网页问要我定的事",
@@ -2471,7 +2322,7 @@
             {
               "id": "changed-features-only",
               "title": "只审变过的功能",
-              "what": "重复清扫同一个仓库时，只审上次认可之后变过的功能。",
+              "what": "重复清扫时默认只审上次认可后新增或变过的功能，并给出上次认可的提交。",
               "why": {
                 "text": "重复清扫时，没变的功能不用重审；大仓库每次全审太慢。",
                 "source": "确认",
@@ -2509,6 +2360,11 @@
                   "id": "validate-approval-record",
                   "text": "认可记录必须是仓库内有效的普通 JSON 文件，键不重复且每个指纹格式正确；损坏或指向仓外时明确报错。",
                   "status": "确认"
+                },
+                {
+                  "id": "show-approval-commit",
+                  "text": "计划逐项显示写下该功能当前认可指纹的最近提交；没有记录时显示「无」，当前记录未提交时拒绝生成计划。",
+                  "status": "起草"
                 }
               ],
               "entries": [
@@ -2518,20 +2374,60 @@
               "children": []
             },
             {
-              "id": "comment-rewrite",
-              "title": "改写代码注释",
-              "what": "清扫改完代码后，按块压短各语言代码文件和测试文件的注释和文档串：只换注释块的文字，代码字节原样不动，给工具看的注释和注释里的代码示例不动；每份改写由新开的评审按完整信息清单核对，没有丢失对读代码改代码有影响的信息才直接用；认不出语言的文件不改。",
+              "id": "feature-cards",
+              "title": "生成并校验功能卡片",
+              "what": "按计划为每个功能生成一张结构固定的卡片，校验卡片后自动拼成决定页。",
               "why": {
-                "text": "盲评通过后直接使用注释改写稿，避免用户逐块确认；有影响的信息丢失时不采用。",
-                "source": "确认",
-                "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261114-105306-xy-skills-code-comment-rewrite/xy-goal/quotes/15.md"
+                "text": "按功能给人审批，粒度不能小到增加人的负担。",
+                "source": "原话",
+                "quote": "给人审批的话，我觉得尽量以功能为单位给人看会更好、更合适一点。功能的粒度我觉得不能更小了，如果再小的话，可能对人的负担就太高了。",
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261118-184541-xy-skills-cleanup-focus/xy-goal/quotes/16.md"
               },
               "directory": null,
-              "items": [],
+              "items": [
+                {
+                  "id": "validate-feature-cards",
+                  "text": "校验卡片字段、依据和功能范围，并保证计划内每个功能恰有一张卡片。",
+                  "status": "起草"
+                },
+                {
+                  "id": "build-feature-decisions",
+                  "text": "按计划顺序自动生成每功能一项的决定清单，并只给叶功能提供「不要这个功能」。",
+                  "status": "起草"
+                },
+                {
+                  "id": "show-draft-items-on-page",
+                  "text": "自动列出功能理由和全部起草条目，改写过的条目同时显示上次认可原文。",
+                  "status": "起草"
+                }
+              ],
               "entries": [
-                "xy-cleanup/check_comment_rewrite.py",
-                "xy-cleanup/tests/test_check_comment_rewrite.py"
+                "xy-cleanup/feature_cards.py",
+                "xy-cleanup/tests/test_feature_cards.py"
+              ],
+              "children": []
+            },
+            {
+              "id": "usage-coverage-check",
+              "title": "校验实际使用覆盖记录",
+              "what": "在决定页前校验实际使用来源、短跑场景和直属代码文件覆盖记录。",
+              "why": {
+                "text": "关键约束要写进代码本身，避免只靠文档提醒而误用。",
+                "source": "原话",
+                "quote": "约束尽量写进代码本身，避免文档软约束造成误用。",
+                "from": "xy-repo-rules/SKILL.md 第 5 条"
+              },
+              "directory": null,
+              "items": [
+                {
+                  "id": "validate-usage-coverage",
+                  "text": "校验 README 来源、场景与 why_none、未运行时的空覆盖、文件范围及 missed 行段，保证每份直属代码文件恰好量测或列为未量测。",
+                  "status": "起草"
+                }
+              ],
+              "entries": [
+                "xy-cleanup/check_usage_coverage.py",
+                "xy-cleanup/tests/test_check_usage_coverage.py"
               ],
               "children": []
             }

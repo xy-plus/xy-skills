@@ -12,7 +12,7 @@ Claude Code skill 集合，每目录一个 skill。
 | `xy-runs` | 文件去处、runs 布局与定期清理规则 |
 | `xy-handoff` | 会话大任务归属、拆分交接与后台会话收尾 |
 | `xy-repo-map` | 从功能清单推导文件归属并生成离线功能树 |
-| `xy-cleanup` | 按范围审查仓库并清理功能实现 |
+| `xy-cleanup` | 定期按功能审批清扫 |
 | `sync-think` | 把只有用户能定的事做成带建议的选择题 |
 
 ## 安装
@@ -119,12 +119,6 @@ python3 -B -m unittest discover -s xy-repo-map/tests -p 'test_*.py'
 XY_REPO_MAP_CHROMIUM=/path/to/chrome python3 -B -m unittest discover -s xy-repo-map/tests -p 'browser_*_test.py'
 ```
 
-注释改写检查器依赖 Pygments。安装：
-
-```bash
-python3 -m pip install Pygments
-```
-
 浏览器测试需要 Python Playwright 和 Chromium。创建独立环境并安装依赖：
 
 ```bash
@@ -136,5 +130,5 @@ python -m playwright install chromium
 
 将 `XY_REPO_MAP_CHROMIUM` 设为 Chromium 可执行文件绝对路径后运行两个浏览器测试命令。路径缺失或浏览器不可用时测试失败，不跳过。
 
-修改清扫审查问题后，按 `xy-cleanup/review-misses.md` 对照。
+修改清扫卡片的问法后，按 `xy-cleanup/review-misses.md` 对照。
 格式检查通过不代表判断正确；修改 `xy-review` 的主审、剃刀规则后，按 `xy-review/review-misses.md` 对照。

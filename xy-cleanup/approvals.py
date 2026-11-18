@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 
@@ -164,12 +165,59 @@ def review_features(data, fingerprints, records, scope, review):
     return changed
 
 
-def _plan(data, fingerprints, records, scope, review):
+def approval_commits(repository, records, feature_ids):
+    """Find the newest commit that changed each feature's approved fingerprint to its current value."""
+    # Keep approved.json's existing shape so repositories with older records remain readable.
+    commits = {feature_id: "无" for feature_id in feature_ids}
+    unresolved = []
+    for feature_id in feature_ids:
+        fingerprint = records.get(feature_id)
+        if fingerprint is None:
+            continue
+        occurrence = f'"{feature_id}": "{fingerprint}"'
+        history = subprocess.run(
+            ["git", "-C", str(repository), "log", "-1", "--format=%H",
+             "-S", occurrence, "--", APPROVED_RELATIVE_PATH],
+            capture_output=True, text=True, check=False,
+        )
+        if history.returncode != 0:
+            raise ValueError(f"无法读取认可记录的 Git 历史：{history.stderr.strip()}")
+        commit = history.stdout.strip()
+        if commit:
+            commits[feature_id] = commit
+        else:
+            unresolved.append(feature_id)
+
+    if unresolved:
+        raise ValueError(
+            "认可记录未在 Git 历史中找到，可能尚未提交；先提交 repo-map/approved.json："
+            + ", ".join(sorted(unresolved))
+        )
+    # Search the exact feature/fingerprint pair so later records for other features do not move this approval.
+    return commits
+
+
+def plan_data(repository, scope, review):
+    """Return the checked map, approval inputs, plan rows, and their approval commits."""
+    data = build_map(repository)
+    validate_scope(data, scope, "--scope")
+    records = read_approvals(repository, Path(repository) / APPROVED_RELATIVE_PATH)
+    values, _order = feature_values(repository)
+    selected = _scope_features(data, scope)
+    selected_values = {feature_id: values[feature_id] for feature_id in selected}
+    fingerprints = feature_fingerprints(repository, data, selected_values)
+    commits = approval_commits(repository, records, selected)
+    changed = review_features(data, fingerprints, records, scope, review)
+    return data, values, records, fingerprints, changed, commits
+
+
+def _plan(data, fingerprints, records, scope, review, commits):
     changed = review_features(data, fingerprints, records, scope, review)
     selected = _scope_features(data, scope)
     if not changed:
         return f"范围内没有变过的功能（范围内 {len(selected)} 个）"
-    lines = [f"{feature_id}\t{reason}" for feature_id, reason in changed]
+    lines = [f"{feature_id}\t{reason}\t{commits[feature_id]}"
+             for feature_id, reason in changed]
     lines.append(f"要审 {len(changed)} 个功能（范围内 {len(selected)} 个）")
     return "\n".join(lines)
 
@@ -296,7 +344,10 @@ def main(argv):
         selected_values = {feature_id: values[feature_id] for feature_id in selected}
         fingerprints = feature_fingerprints(repository, data, selected_values)
         if options.command == "plan":
-            print(_plan(data, fingerprints, records, options.scope, options.review))
+            commits = approval_commits(repository, records, selected)
+            print(_plan(
+                data, fingerprints, records, options.scope, options.review, commits,
+            ))
         else:
             print(_record(
                 repository, data, values, fingerprints, records,

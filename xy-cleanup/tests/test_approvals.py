@@ -42,6 +42,17 @@ class ApprovalPlanTest(unittest.TestCase):
             "--kept-markers", *kept_markers,
         )
 
+    def commit_changes(self, message):
+        subprocess.run(["git", "-C", str(self.repository), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(self.repository), "config", "user.email", "test@example.com"], check=True)
+        subprocess.run(["git", "-C", str(self.repository), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.repository), "commit", "-m", message],
+                       check=True, capture_output=True, text=True)
+        return subprocess.run(
+            ["git", "-C", str(self.repository), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
     def set_item_status(self, feature_id, status):
         path = self.repository / "repo-map" / "features.json"
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -93,6 +104,7 @@ class ApprovalPlanTest(unittest.TestCase):
         result = self.record()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.commit_changes("记录全部功能认可")
         approved_path = self.repository / "repo-map" / "approved.json"
         self.assertEqual(
             result.stdout,
@@ -272,21 +284,22 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
         self.assertEqual(
             changed.stdout,
-            "root\t没有认可记录\nalpha\t没有认可记录\n"
-            "beta\t没有认可记录\n要审 3 个功能（范围内 3 个）\n",
+            "root\t没有认可记录\t无\nalpha\t没有认可记录\t无\n"
+            "beta\t没有认可记录\t无\n要审 3 个功能（范围内 3 个）\n",
         )
 
         all_features = self.plan(("root",), "全部")
         self.assertEqual(all_features.returncode, 0, all_features.stdout + all_features.stderr)
         self.assertEqual(
             all_features.stdout,
-            "root\t全部重审\nalpha\t全部重审\nbeta\t全部重审\n"
+            "root\t全部重审\t无\nalpha\t全部重审\t无\nbeta\t全部重审\t无\n"
             "要审 3 个功能（范围内 3 个）\n",
         )
 
     def test_plan_detects_only_a_changed_feature_file(self):
         recorded = self.record()
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        approval_commit = self.commit_changes("记录全部功能认可")
 
         (self.repository / "alpha" / "main.py").write_text("value = 99\n", encoding="utf-8")
         result = self.plan()
@@ -294,12 +307,13 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
             result.stdout,
-            "alpha\t认可后变过\n要审 1 个功能（范围内 3 个）\n",
+            f"alpha\t认可后变过\t{approval_commit}\n要审 1 个功能（范围内 3 个）\n",
         )
 
     def test_plan_tracks_each_manifest_entry_without_crossing_to_siblings(self):
         recorded = self.record()
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        approval_commit = self.commit_changes("记录全部功能认可")
         manifest_path = self.repository / "repo-map" / "features.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["children"][1]["title"] = "Changed beta title"
@@ -313,7 +327,7 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(beta.returncode, 0, beta.stdout + beta.stderr)
         self.assertEqual(
             beta.stdout,
-            "beta\t认可后变过\n要审 1 个功能（范围内 1 个）\n",
+            f"beta\t认可后变过\t{approval_commit}\n要审 1 个功能（范围内 1 个）\n",
         )
 
     def test_subrepository_registration_changes_only_root_fingerprint_and_plan(self):
@@ -327,6 +341,7 @@ class ApprovalPlanTest(unittest.TestCase):
             json.dumps(original_fingerprints, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        approval_commit = self.commit_changes("记录原始认可")
 
         manifest_path = self.repository / "repo-map" / "features.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -348,12 +363,13 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
             result.stdout,
-            "root\t认可后变过\n要审 1 个功能（范围内 3 个）\n",
+            f"root\t认可后变过\t{approval_commit}\n要审 1 个功能（范围内 3 个）\n",
         )
 
     def test_plan_ignores_approved_file_formatting_changes(self):
         recorded = self.record()
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        self.commit_changes("记录全部功能认可")
         approved_path = self.repository / "repo-map" / "approved.json"
         subprocess.run(
             ["git", "-C", str(self.repository), "add", "repo-map/approved.json"],
@@ -372,6 +388,7 @@ class ApprovalPlanTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repository), "add", "-A"], check=True)
         recorded = self.record()
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        approval_commit = self.commit_changes("记录全部功能认可")
 
         link_path.unlink()
         link_path.symlink_to("second-target")
@@ -380,8 +397,57 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
             result.stdout,
-            "alpha\t认可后变过\n要审 1 个功能（范围内 1 个）\n",
+            f"alpha\t认可后变过\t{approval_commit}\n要审 1 个功能（范围内 1 个）\n",
         )
+
+    def test_plan_reports_latest_commit_that_recorded_a_feature_twice(self):
+        self.commit_changes("初始提交")
+        first_record = self.record(("alpha",))
+        self.assertEqual(first_record.returncode, 0, first_record.stdout + first_record.stderr)
+        self.commit_changes("首次认可 alpha")
+
+        (self.repository / "alpha" / "main.py").write_text("value = 10\n", encoding="utf-8")
+        second_record = self.record(("alpha",))
+        self.assertEqual(second_record.returncode, 0, second_record.stdout + second_record.stderr)
+        second_commit = self.commit_changes("再次认可 alpha")
+        (self.repository / "alpha" / "main.py").write_text("value = 11\n", encoding="utf-8")
+
+        result = self.plan(("alpha",))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stdout,
+            f"alpha\t认可后变过\t{second_commit}\n要审 1 个功能（范围内 1 个）\n",
+        )
+
+    def test_plan_uses_the_commit_that_added_this_feature_record(self):
+        self.commit_changes("初始提交")
+        alpha_record = self.record(("alpha",))
+        self.assertEqual(alpha_record.returncode, 0, alpha_record.stdout + alpha_record.stderr)
+        alpha_commit = self.commit_changes("认可 alpha")
+
+        beta_record = self.record(("beta",))
+        self.assertEqual(beta_record.returncode, 0, beta_record.stdout + beta_record.stderr)
+        self.commit_changes("认可 beta")
+        (self.repository / "alpha" / "main.py").write_text("value = 99\n", encoding="utf-8")
+
+        result = self.plan(("alpha",))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stdout,
+            f"alpha\t认可后变过\t{alpha_commit}\n要审 1 个功能（范围内 1 个）\n",
+        )
+
+    def test_plan_rejects_an_uncommitted_approval_record(self):
+        self.commit_changes("初始提交")
+        recorded = self.record(("alpha",))
+        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+
+        result = self.plan(("alpha",))
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("先提交 repo-map/approved.json", result.stdout + result.stderr)
 
     def test_record_rejects_drafts_without_writing(self):
         temporary_repo = make_repo(self, {
