@@ -14,7 +14,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "xy-repo-map"))
 sys.path.insert(0, str(REPOSITORY_ROOT / "xy-cleanup"))
 
-from duplicate_blocks import find_duplicate_windows  # noqa: E402
+from duplicate_blocks import _merge_ranges, find_duplicate_windows  # noqa: E402
 from repo_map_lib.git_repository import gitlink_paths, tracked_paths  # noqa: E402
 from repo_map_lib.map_data import file_category_with_skip  # noqa: E402
 from repo_map_lib.skip_paths import is_skipped_path, read_skip_paths  # noqa: E402
@@ -161,17 +161,6 @@ def _stable_hit(tool, rule, path, line, message):
         "line": int(line),
         "message": message,
     }
-
-
-def _merge_ranges(locations):
-    merged = []
-    for path, start, end in sorted(locations):
-        if merged and merged[-1][0] == path and start <= merged[-1][2] + 1:
-            previous_path, previous_start, previous_end = merged[-1]
-            merged[-1] = (previous_path, previous_start, max(previous_end, end))
-        else:
-            merged.append((path, start, end))
-    return merged
 
 
 def _duplicate_block_hits(repository, tracked_paths, skip_paths, changed):

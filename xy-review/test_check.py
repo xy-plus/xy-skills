@@ -302,38 +302,26 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertTrue(any("submitted-scan.json" in item and "重跑" in item for item in output), output)
 
-    def test_code_razor_rejects_malformed_submitted_scan_json(self):
+    def test_submitted_scan_rejects_bad_shape_and_stale_output(self):
         _repository, _base, scan_document = self.make_code_submission()
-        malformed_documents = [
-            [],
-            {**scan_document, "repo": 1},
-            {**scan_document, "base": None},
+        cases = [
+            ([], "格式"),
+            ({**scan_document, "repo": 1}, "格式"),
+            ({**scan_document, "base": None}, "格式"),
+            ({key: value for key, value in scan_document.items() if key != "head"}, "重跑"),
+            ({**scan_document, "head": "not-a-commit-id"}, "重跑"),
         ]
 
-        for malformed in malformed_documents:
-            with self.subTest(scan=malformed):
+        for submitted, expected_error in cases:
+            with self.subTest(expected_error=expected_error, submitted=submitted):
                 report = self.clean_code_razor_report(scan_document)
-                code, output = self.run_code_razor(report, malformed)
+                code, output = self.run_code_razor(report, submitted)
                 self.assertEqual(code, 1, output)
                 self.assertTrue(
-                    any("submitted-scan.json" in item and "格式" in item for item in output),
-                    output,
-                )
-
-    def test_submitted_scan_fields_are_verified_by_the_rescan(self):
-        _repository, _base, scan_document = self.make_code_submission()
-        malformed_documents = [
-            {key: value for key, value in scan_document.items() if key != "head"},
-            {**scan_document, "head": "not-a-commit-id"},
-        ]
-
-        for malformed in malformed_documents:
-            with self.subTest(scan=malformed):
-                report = self.clean_code_razor_report(scan_document)
-                code, output = self.run_code_razor(report, malformed)
-                self.assertEqual(code, 1, output)
-                self.assertTrue(
-                    any("submitted-scan.json" in item and "重跑" in item for item in output),
+                    any(
+                        "submitted-scan.json" in item and expected_error in item
+                        for item in output
+                    ),
                     output,
                 )
 
@@ -698,23 +686,16 @@ class CheckTest(unittest.TestCase):
             "缺少字段：报告.occams_razor.quote_problems",
         )
 
-    def test_razor_quote_problems_reject_wrong_item_keys(self):
-        document = razor_report()
-        document["occams_razor"]["quote_problems"]["items"] = [{
+    def test_razor_quote_problems_reject_invalid_fields_and_quotes(self):
+        wrong_keys = razor_report()
+        wrong_keys["occams_razor"]["quote_problems"]["items"] = [{
             "problem": "原话把实现细节写成了必须项",
             "evidence": "spec.md:12",
             "quote": {"source": "Q1", "text": "用户原话"},
             "suggested": "建议用户决定",
         }]
-        self.assert_rejected(
-            "review-razor.json", document,
-            "缺少字段：报告.occams_razor.quote_problems.items[0].suggestion",
-            "多余字段：suggested",
-        )
-
-    def test_razor_quote_problems_check_rule_quotes_verbatim(self):
-        document = razor_report()
-        document["occams_razor"]["quote_problems"]["items"] = [{
+        wrong_quote = razor_report()
+        wrong_quote["occams_razor"]["quote_problems"]["items"] = [{
             "problem": "原话要求的东西没有必要",
             "evidence": "spec.md:12",
             "quote": {
@@ -723,11 +704,25 @@ class CheckTest(unittest.TestCase):
             },
             "suggestion": "请用户决定是否保留这项要求",
         }]
-        self.assert_rejected(
-            "review-razor.json", document,
-            "报告.occams_razor.quote_problems.items[0].quote.text",
-            "必须逐字引用「xy-iron-law 第 3 条」",
-        )
+        cases = [
+            (
+                wrong_keys,
+                (
+                    "缺少字段：报告.occams_razor.quote_problems.items[0].suggestion",
+                    "多余字段：suggested",
+                ),
+            ),
+            (
+                wrong_quote,
+                (
+                    "报告.occams_razor.quote_problems.items[0].quote.text",
+                    "必须逐字引用「xy-iron-law 第 3 条」",
+                ),
+            ),
+        ]
+        for document, needles in cases:
+            with self.subTest(needles=needles):
+                self.assert_rejected("review-razor.json", document, *needles)
 
     def test_razor_report_needs_at_least_one_list_item(self):
         document = razor_report(keep=[], keep_old=[], delete=[], ask_user=[])
