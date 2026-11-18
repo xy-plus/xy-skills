@@ -3,7 +3,21 @@ import json
 import re
 import sys
 
-from goal_common import *
+from goal_common import (
+    Contract,
+    GoalError,
+    automatic_reason,
+    encode_links,
+    find_contract,
+    quote_files,
+    read_inbox,
+    read_text,
+    require_name,
+    require_project_directory,
+    require_project_name,
+    require_text,
+    write_files,
+)
 
 
 class HookRecordError(GoalError):

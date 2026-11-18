@@ -1,7 +1,17 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
-from goal_test_support import *
+from goal_test_support import (
+    GoalTestSupport,
+    SCRIPT_DIRECTORY,
+    ThreadPoolExecutor,
+    goal,
+    json,
+    mock,
+    shutil,
+    subprocess,
+)
+from goal_common import quote_files, timer_prompt
 
 
 class CaptureQuotesTests(GoalTestSupport):
@@ -90,7 +100,7 @@ class CaptureQuotesTests(GoalTestSupport):
         for text in ("先讨论", "用 xy-goal 开契约"):
             self.hook("hook-prompt", {"session_id": self.session, "prompt": text})
         inbox = self.inbox
-        self.assertEqual(goal.quote_files(inbox), {1: "先讨论", 2: "用 xy-goal 开契约"})
+        self.assertEqual(quote_files(inbox), {1: "先讨论", 2: "用 xy-goal 开契约"})
         contract = self.open_goal("release")
         self.assertEqual((contract / "quotes" / "1.md").read_text(), "先讨论")
         self.assertEqual((contract / "quotes" / "2.md").read_text(), "用 xy-goal 开契约")
@@ -190,7 +200,7 @@ class CaptureQuotesTests(GoalTestSupport):
             self.add_task(4)
             (contract / "links.md").write_text("4 T1\n9 T1\n120 无：hook error 已修\n")
             before = self.files()
-            text = goal.timer_prompt(contract)
+            text = timer_prompt(contract)
             result = self.run_goal("hook-prompt", session=None, pid=None,
                                    stdin=json.dumps({"session_id": self.session, "prompt": text}))
             quote = contract / "quotes" / "121.md"
@@ -279,7 +289,7 @@ class CaptureQuotesTests(GoalTestSupport):
     def test_hook_keeps_complete_quote_pending_when_classification_write_fails(self):
         contract = self.open_goal("release")
         before = self.files()
-        text = goal.timer_prompt(contract)
+        text = timer_prompt(contract)
         with self.readonly_directory(contract):
             result = self.run_goal("hook-prompt", session=None, pid=None,
                                    stdin=json.dumps({"session_id": self.session, "prompt": text}))

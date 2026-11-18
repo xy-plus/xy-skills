@@ -486,8 +486,8 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("功能 package", output)
         self.assertIn("pkg", output)
-        self.assertIn("跟踪", output)
-        self.assertIn("添加", output)
+        self.assertIn("请把 package 的文件放进目录 'pkg' 并提交", output)
+        self.assertIn("或把 package 的 directory 改为其文件实际所在的目录", output)
 
     def test_child_directory_must_be_nested_under_its_parent_directory(self):
         self.write("pkg/parent.py", "parent = 1\n")

@@ -226,7 +226,8 @@ def _validate_paths(features, order, tracked, errors):
         if not any(path_is_under(path, directory) for path in tracked):
             errors.append(
                 f"功能 {feature_id} 的 directory {directory!r} 下没有 Git 跟踪文件；"
-                "请在该目录内添加并提交跟踪文件，或把 directory 改为已有功能目录。"
+                f"请把 {feature_id} 的文件放进目录 {directory!r} 并提交，或把 {feature_id} 的 "
+                "directory 改为其文件实际所在的目录。"
             )
 
     for feature_id in order:
