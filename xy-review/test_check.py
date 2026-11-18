@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,6 +15,10 @@ from test_audit import write_file
 import rule_references
 import check
 from check import REPO_RULE_NUMBERS, main
+
+
+CLEANUP_CATEGORIES = ["多余的", "重复的", "臃肿的", "命名", "测试", "注释和文档", "配置和依赖"]
+SCANNER = Path(__file__).with_name("scan_changes.py")
 
 
 def section(items=None, checked="核对了实现与 spec"):
@@ -52,6 +58,23 @@ def razor_report(verdict="通过", keep=None, keep_old=None, delete=None, ask_us
 
 def diagnosis_report(diagnosis="问题在于目标被拆成互相矛盾的两种格式。", actions=None):
     return {"diagnosis": diagnosis, "actions": ["重想"] if actions is None else actions}
+
+
+def cleanup_section(hit_ids=(), decision="留"):
+    return {
+        "hits": [
+            {"id": hit_id, "decision": decision, "reason": "保留的写法满足现有调用要求"}
+            for hit_id in hit_ids
+        ],
+        "categories": [
+            {
+                "category": category,
+                "looked_at": "检查了改动文件及其相关调用和测试",
+                "conclusion": "没有发现需要处理的内容",
+            }
+            for category in CLEANUP_CATEGORIES
+        ],
+    }
 
 
 class CheckTest(unittest.TestCase):
@@ -106,6 +129,307 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(code, 1, problems)
         for needle in needles:
             self.assertTrue(any(needle in problem for problem in problems), f"没报「{needle}」：{problems}")
+
+    def make_code_submission(self):
+        repository = Path(self.root) / "reviewed-repository"
+        repository.mkdir()
+
+        def git(*arguments):
+            return subprocess.run(
+                ["git", "-C", str(repository), *arguments],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        git("init", "--quiet")
+        git("config", "user.name", "Test")
+        git("config", "user.email", "test@example.com")
+        lines = [f"shared line {number} includes enough alphanumeric words" for number in range(1, 7)]
+        write_file(repository, "source.md", "\n".join(lines) + "\n")
+        git("add", "-A")
+        git("commit", "--quiet", "-m", "base")
+        base = git("rev-parse", "HEAD")
+        write_file(repository, "copy.md", "\n".join(lines) + "\n")
+        git("add", "-A")
+        git("commit", "--quiet", "-m", "copy")
+        result = subprocess.run(
+            [sys.executable, "-B", str(SCANNER), "--repo", str(repository), "--base", base],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return repository, base, json.loads(result.stdout)
+
+    def run_code_razor(self, document, scan_document):
+        scan_path = Path(self.root) / "code" / "group1" / "round1"
+        write_file(
+            scan_path,
+            "submitted-scan.json",
+            json.dumps(scan_document, ensure_ascii=False),
+        )
+        return self.run_main(
+            ("code", "group1", "round1", "review-razor.json"),
+            json.dumps(document, ensure_ascii=False),
+        )
+
+    def clean_code_razor_report(self, scan_document, decision="留"):
+        report = razor_report()
+        report["cleanup"] = cleanup_section(
+            [hit["id"] for hit in scan_document["hits"]], decision
+        )
+        return report
+
+    def test_code_razor_requires_cleanup_and_submitted_scan_format(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        report = razor_report()
+
+        code, output = self.run_code_razor(report, scan_document)
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue(any("cleanup" in problem and "缺少字段" in problem for problem in output), output)
+
+    def test_valid_code_razor_replies_to_each_scanned_hit_and_category(self):
+        _repository, _base, scan_document = self.make_code_submission()
+
+        code, output = self.run_code_razor(self.clean_code_razor_report(scan_document), scan_document)
+
+        self.assertEqual((code, output), (0, []))
+
+    def test_cleanup_hit_ids_must_match_the_scan_without_missing_extra_or_duplicates(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        expected_id = scan_document["hits"][0]["id"]
+        cases = [([], "缺少"), ([expected_id, "extra-id"], "多余"), ([expected_id, expected_id], "重复")]
+
+        for ids, problem in cases:
+            with self.subTest(ids=ids):
+                report = self.clean_code_razor_report(scan_document)
+                report["cleanup"]["hits"] = [
+                    {"id": hit_id, "decision": "留", "reason": "理由清楚且针对该命中"}
+                    for hit_id in ids
+                ]
+                code, output = self.run_code_razor(report, scan_document)
+                self.assertEqual(code, 1, output)
+                self.assertTrue(any(problem in item for item in output), output)
+
+    def test_cleanup_decisions_and_reasons_are_required(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        report = self.clean_code_razor_report(scan_document)
+        report["cleanup"]["hits"][0]["decision"] = "maybe"
+        report["cleanup"]["hits"][0]["reason"] = "   "
+
+        code, output = self.run_code_razor(report, scan_document)
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue(any("decision" in item and "只能是" in item for item in output), output)
+        self.assertTrue(any("reason 不能为空" in item for item in output), output)
+
+    def test_cleanup_categories_must_have_each_workflow_class_once(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        cases = [
+            (CLEANUP_CATEGORIES[:-1], "缺少"),
+            (CLEANUP_CATEGORIES + ["新人类"], "多余"),
+            (CLEANUP_CATEGORIES + [CLEANUP_CATEGORIES[0]], "重复"),
+        ]
+
+        for categories, problem in cases:
+            with self.subTest(categories=categories):
+                report = self.clean_code_razor_report(scan_document)
+                rows = report["cleanup"]["categories"]
+                report["cleanup"]["categories"] = [
+                    next(row for row in rows if row["category"] == category)
+                    if category in CLEANUP_CATEGORIES else {
+                        "category": category,
+                        "looked_at": "检查了相关改动",
+                        "conclusion": "没有发现",
+                    }
+                    for category in categories
+                ]
+                if problem == "重复":
+                    report["cleanup"]["categories"][-1] = dict(rows[0])
+                code, output = self.run_code_razor(report, scan_document)
+                self.assertEqual(code, 1, output)
+                self.assertTrue(any("cleanup.categories" in item for item in output), output)
+
+    def test_cleanup_categories_follow_the_workflow_table(self):
+        path = Path(self.root) / "workflow.md"
+        write_file(
+            path.parent,
+            path.name,
+            "   | 类 | 包括但不限于 |\n   |---|---|\n   | 新类别 | 一个例子 |\n",
+        )
+
+        with patch.object(check, "WORKFLOW_SKILL_PATH", path):
+            categories = check.workflow_cleanup_categories()
+
+        self.assertEqual(categories, ["新类别"])
+
+    def test_cleanup_is_rejected_outside_the_code_review_path(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        report = razor_report()
+        report["cleanup"] = cleanup_section(
+            [hit["id"] for hit in scan_document["hits"]]
+        )
+
+        code, output = self.run_report(
+            "review-razor.json", report, folders=("spec", "group1", "round1")
+        )
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue(any("cleanup" in item and "代码审查" in item for item in output), output)
+
+    def test_code_razor_requires_submitted_scan_json(self):
+        scan_path = Path(self.root) / "code" / "group1" / "round1"
+        report = self.clean_code_razor_report({"hits": []})
+        path = scan_path / "review-razor.json"
+        write_file(path.parent, path.name, json.dumps(report, ensure_ascii=False))
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["check.py", str(path)])
+
+        self.assertEqual(code, 1)
+        self.assertIn("submitted-scan.json", output.getvalue())
+
+    def test_code_razor_rejects_a_submitted_scan_that_does_not_match_the_rescan(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        altered_scan = json.loads(json.dumps(scan_document))
+        altered_scan["hits"][0]["message"] = "被改过的旧消息"
+        report = self.clean_code_razor_report(scan_document)
+
+        code, output = self.run_code_razor(report, altered_scan)
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue(any("submitted-scan.json" in item and "重跑" in item for item in output), output)
+
+    def test_code_razor_rejects_malformed_submitted_scan_json(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        malformed_documents = [
+            [],
+            {**scan_document, "repo": 1},
+            {**scan_document, "base": None},
+        ]
+
+        for malformed in malformed_documents:
+            with self.subTest(scan=malformed):
+                report = self.clean_code_razor_report(scan_document)
+                code, output = self.run_code_razor(report, malformed)
+                self.assertEqual(code, 1, output)
+                self.assertTrue(
+                    any("submitted-scan.json" in item and "格式" in item for item in output),
+                    output,
+                )
+
+    def test_submitted_scan_fields_are_verified_by_the_rescan(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        malformed_documents = [
+            {key: value for key, value in scan_document.items() if key != "head"},
+            {**scan_document, "head": "not-a-commit-id"},
+        ]
+
+        for malformed in malformed_documents:
+            with self.subTest(scan=malformed):
+                report = self.clean_code_razor_report(scan_document)
+                code, output = self.run_code_razor(report, malformed)
+                self.assertEqual(code, 1, output)
+                self.assertTrue(
+                    any("submitted-scan.json" in item and "重跑" in item for item in output),
+                    output,
+                )
+
+    def test_cleanup_hit_ids_must_be_strings(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        report = self.clean_code_razor_report(scan_document)
+        report["cleanup"]["hits"][0]["id"] = {"not": "an id"}
+
+        code, output = self.run_code_razor(report, scan_document)
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue(any("hits[0].id 必须是字符串" in item for item in output), output)
+
+    def test_code_razor_rejects_a_repository_head_different_from_the_submission(self):
+        repository, _base, scan_document = self.make_code_submission()
+        later_commit = Path(repository) / "later.md"
+        later_commit.write_text("a newer HEAD\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(repository), "commit", "--quiet", "-m", "later"],
+            check=True,
+        )
+
+        code, output = self.run_code_razor(
+            self.clean_code_razor_report(scan_document), scan_document
+        )
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue(any("head" in item and "HEAD 不一致" in item for item in output), output)
+
+    def test_cleanup_hit_changes_cannot_pass_and_can_pass_after_author_change(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        changed_report = self.clean_code_razor_report(scan_document, decision="改")
+        self.assertEqual(changed_report["verdict"], "通过")
+
+        code, output = self.run_code_razor(changed_report, scan_document)
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue(any("cleanup.hits" in item and "通过" in item for item in output), output)
+
+        changed_report["verdict"] = "改了就过"
+        code, output = self.run_code_razor(changed_report, scan_document)
+        self.assertEqual((code, output), (0, []))
+
+    def test_report_with_only_a_change_decision_may_use_changed_verdict_without_delete(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        report = self.clean_code_razor_report(scan_document, decision="改")
+        report["verdict"] = "改了就过"
+        report["occams_razor"]["keep"] = []
+        report["occams_razor"]["keep_old"] = []
+
+        code, output = self.run_code_razor(report, scan_document)
+
+        self.assertEqual((code, output), (0, []))
+
+    def test_historical_code_reports_are_not_rescanned_after_repository_head_changes(self):
+        repository, _base, old_scan = self.make_code_submission()
+        git = lambda *arguments: subprocess.run(
+            ["git", "-C", str(repository), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        write_file(repository, "later.md", "a later commit\n")
+        git("add", "-A")
+        git("commit", "--quiet", "-m", "later")
+        group_path = Path(self.root) / "code" / "group1"
+
+        for number in (1, 2, 3):
+            round_path = group_path / f"round{number}"
+            razor = self.clean_code_razor_report(old_scan)
+            if number == 3:
+                razor["verdict"] = "不通过"
+                razor["occams_razor"]["delete"]["items"] = [
+                    {"entity": "unused.md", "loss": "失去旧说明"}
+                ]
+                write_file(round_path, "handling.md", "记录了第 3 轮意见的处理。\n")
+            write_file(round_path, "review-main.json", json.dumps(main_report(), ensure_ascii=False))
+            write_file(round_path, "review-razor.json", json.dumps(razor, ensure_ascii=False))
+            write_file(
+                round_path,
+                "submitted-scan.json",
+                json.dumps(old_scan, ensure_ascii=False),
+            )
+
+        diagnosis_path = group_path / "diagnosis.json"
+        write_file(
+            group_path,
+            diagnosis_path.name,
+            json.dumps(diagnosis_report(), ensure_ascii=False),
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["check.py", str(diagnosis_path)])
+
+        self.assertEqual(code, 0, output.getvalue())
 
     def test_clean_json_reports_pass(self):
         self.assertEqual(self.run_report("review-main.json", main_report()), (0, []))

@@ -7,7 +7,7 @@ Claude Code skill 集合，每目录一个 skill。
 | `xy-iron-law` | 三条铁律 |
 | `xy-repo-rules` | 仓库规范 |
 | `xy-workflow` | 标准工作流程 |
-| `xy-review` | 主审和剃刀的对抗审查、报告校验 |
+| `xy-review` | 主审和剃刀的对抗审查、改动扫描、报告校验 |
 | `xy-goal` | 长目标契约与定时自查 |
 | `xy-runs` | 文件去处、runs 布局与定期清理规则 |
 | `xy-handoff` | 会话大任务归属、拆分交接与后台会话收尾 |
@@ -43,6 +43,14 @@ claude plugin list
 
 最后核对仅启用 `superpowers@superpowers-dev` 7.0.2；未装在项目范围时，不运行带 `--scope project` 的停用命令。
 
+改动扫描使用 ruff 和 vulture：
+
+```bash
+python3 -m pip install --user ruff vulture
+```
+
+已测版本：ruff 0.12.12、vulture 2.16。改到 Rust 文件时，扫描还需要 Rust 工具链中的 `cargo clippy`。
+
 在全局 `~/.claude/settings.json` 的 `env` 中显式设置 runs 绝对路径并保留现有配置，例如：
 
 ```json
@@ -77,6 +85,8 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 `xy-workflow` 依赖 Claude Code 插件 `superpowers`（必须是 7.0.2）及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 和定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见其 README；`xy-review/check.py` 与 `xy-repo-map` 复用同仓 `xy-handoff` 的 JSON 校验函数。`xy-handoff` 单向依赖 `xy-runs` 及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
 
+`xy-review/scan_changes.py` 复用 `xy-repo-map` 的文件分类和 `repo-map/skip.json` 跳过名单；改到 Python 文件时需要 ruff 和 vulture，改到 Rust 文件时需要 `cargo clippy`。工具缺失或运行失败会让扫描失败。
+
 按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并配置 runs 清理范围。
 
 新增 skill 时建目录、写 `SKILL.md`，再按上文软链。仅当 `SKILL.md` 放不下代码或前提等内容时，才在 skill 目录加 README。
@@ -105,6 +115,8 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 运行目录满 30 天未改动会被定期清理（见 `xy-runs`），更早的证据只能在会话记录、记忆和提交历史里找。
 
 ## 测试
+
+`xy-review` 测试会实际运行改动扫描，须先安装 ruff 0.12.12、vulture 2.16 和 Rust 工具链中的 `cargo clippy`；缺少任一工具时测试失败，不跳过。
 
 从仓库根目录依次运行：
 
