@@ -420,6 +420,30 @@ class ApprovalPlanTest(unittest.TestCase):
             f"alpha\t认可后变过\t{second_commit}\n要审 1 个功能（范围内 1 个）\n",
         )
 
+    def test_plan_rejects_worktree_approval_reverted_to_historical_value(self):
+        self.commit_changes("初始提交")
+        first_record = self.record(("alpha",))
+        self.assertEqual(first_record.returncode, 0, first_record.stdout + first_record.stderr)
+        self.commit_changes("认可 alpha A")
+        approved_path = self.repository / "repo-map" / "approved.json"
+        first_value = json.loads(approved_path.read_text(encoding="utf-8"))["alpha"]
+
+        (self.repository / "alpha" / "main.py").write_text("value = 3\n", encoding="utf-8")
+        self.commit_changes("修改 alpha 实现")
+        second_record = self.record(("alpha",))
+        self.assertEqual(second_record.returncode, 0, second_record.stdout + second_record.stderr)
+        self.commit_changes("认可 alpha B")
+
+        current_records = json.loads(approved_path.read_text(encoding="utf-8"))
+        self.assertNotEqual(current_records["alpha"], first_value)
+        current_records["alpha"] = first_value
+        approved_path.write_text(json.dumps(current_records, ensure_ascii=False) + "\n", encoding="utf-8")
+
+        result = self.plan(("alpha",))
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("先提交 repo-map/approved.json", result.stdout + result.stderr)
+
     def test_plan_uses_the_commit_that_added_this_feature_record(self):
         self.commit_changes("初始提交")
         alpha_record = self.record(("alpha",))

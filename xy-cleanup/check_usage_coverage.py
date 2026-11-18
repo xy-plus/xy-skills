@@ -176,6 +176,8 @@ def _usage_source_ranges(repository):
     )
     body_start = heading_end + 1
 
+    # A table row, list item, or paragraph is one declared source; table rows take
+    # precedence because each row in the current README names a distinct record.
     tables = []
     for table in _markdown_tables(text):
         table_header = table["start"] - 1

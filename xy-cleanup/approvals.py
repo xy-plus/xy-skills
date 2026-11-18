@@ -111,6 +111,54 @@ def read_approvals(repository, path):
     return records
 
 
+def _committed_approvals(repository):
+    head = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "--verify", "HEAD"],
+        capture_output=True, text=True, check=False,
+    )
+    if head.returncode != 0:
+        return {}
+    revision = head.stdout.strip()
+    listing = subprocess.run(
+        ["git", "-C", str(repository), "ls-tree", revision, "--",
+         APPROVED_RELATIVE_PATH],
+        capture_output=True, text=True, check=False,
+    )
+    if listing.returncode != 0:
+        raise ValueError(f"无法读取 HEAD 中的认可记录：{listing.stderr.strip()}")
+    if not listing.stdout:
+        return {}
+    content = subprocess.run(
+        ["git", "-C", str(repository), "show", f"{revision}:{APPROVED_RELATIVE_PATH}"],
+        capture_output=True, text=True, check=False,
+    )
+    if content.returncode != 0:
+        raise ValueError(f"无法读取 HEAD 中的认可记录：{content.stderr.strip()}")
+    try:
+        records = json.loads(
+            content.stdout, object_pairs_hook=object_without_duplicate_keys,
+        )
+    except (UnicodeError, ValueError) as error:
+        raise ValueError(f"HEAD 中的认可记录不是合法 JSON：{error}") from error
+    if not isinstance(records, dict):
+        raise ValueError("HEAD 中的认可记录必须是对象")
+    return records
+
+
+def _require_approvals_committed(repository, records, feature_ids):
+    committed = _committed_approvals(repository)
+    missing = object()
+    changed = [
+        feature_id for feature_id in feature_ids
+        if records.get(feature_id, missing) != committed.get(feature_id, missing)
+    ]
+    if changed:
+        raise ValueError(
+            "工作树中的认可记录与 HEAD 不一致，先提交 repo-map/approved.json："
+            + ", ".join(changed)
+        )
+
+
 def feature_values(repository):
     features, order, errors = load_features(repository, tracked_paths(repository))
     if errors:
@@ -204,6 +252,7 @@ def plan_data(repository, scope, review):
     records = read_approvals(repository, Path(repository) / APPROVED_RELATIVE_PATH)
     values, _order = feature_values(repository)
     selected = _scope_features(data, scope)
+    _require_approvals_committed(repository, records, selected)
     selected_values = {feature_id: values[feature_id] for feature_id in selected}
     fingerprints = feature_fingerprints(repository, data, selected_values)
     commits = approval_commits(repository, records, selected)
