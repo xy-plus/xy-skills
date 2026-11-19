@@ -21,70 +21,54 @@ def ancestor_process_ids():
     return ancestor_ids
 
 
-def main():
-    if len(sys.argv) != 1:
-        print("delete_self.py 不接受参数", file=sys.stderr)
-        return 2
+def identify_session():
+    agent_result = subprocess.run(
+        ["claude", "agents", "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    agent_rows = json.loads(agent_result.stdout)
+    matching_rows = [
+        row for row in agent_rows
+        if row.get("kind") == "background"
+        and row.get("pid") in ancestor_process_ids()
+    ]
+    if len(matching_rows) != 1:
+        raise ValueError(f"匹配到 {len(matching_rows)} 个本会话")
+    return matching_rows[0]["id"]
 
+
+def run_removal_grandchild(write_end, session_id):
     try:
-        agent_result = subprocess.run(
-            ["claude", "agents", "--json"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        agent_rows = json.loads(agent_result.stdout)
-        matching_rows = [
-            row for row in agent_rows
-            if row.get("kind") == "background"
-            and row.get("pid") in ancestor_process_ids()
-        ]
-        if len(matching_rows) != 1:
-            raise ValueError(f"匹配到 {len(matching_rows)} 个本会话")
-        session_id = matching_rows[0]["id"]
-    except Exception as error:
-        print(f"无法确认本会话，未运行 claude rm：{error}", file=sys.stderr)
-        return 2
+        os.setsid()
+        intermediate_pid = os.getpid()
+        if os.fork() != 0:
+            os._exit(0)
+    except OSError:
+        os._exit(1)
 
-    read_end, write_end = os.pipe()
+    while os.getppid() == intermediate_pid:
+        time.sleep(0.01)
+    null_descriptor = os.open(os.devnull, os.O_RDWR)
+    for descriptor in (0, 1, 2):
+        os.dup2(null_descriptor, descriptor)
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    removal = subprocess.run(
+        ["claude", "rm", session_id],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
     try:
-        child_pid = os.fork()
-    except OSError as error:
-        os.close(read_end)
-        os.close(write_end)
-        print(f"无法启动脱离进程：{error}", file=sys.stderr)
-        return 1
+        result = f"{removal.returncode}\n".encode() + removal.stdout
+        os.write(write_end, result)
+    except OSError:
+        pass
+    os._exit(0)
 
-    if child_pid == 0:
-        os.close(read_end)
-        try:
-            os.setsid()
-            intermediate_pid = os.getpid()
-            if os.fork() != 0:
-                os._exit(0)
-        except OSError:
-            os._exit(1)
 
-        while os.getppid() == intermediate_pid:
-            time.sleep(0.01)
-        null_descriptor = os.open(os.devnull, os.O_RDWR)
-        for descriptor in (0, 1, 2):
-            os.dup2(null_descriptor, descriptor)
-        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
-        removal = subprocess.run(
-            ["claude", "rm", session_id],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        try:
-            result = f"{removal.returncode}\n".encode() + removal.stdout
-            os.write(write_end, result)
-        except OSError:
-            pass
-        os._exit(0)
-
-    os.close(write_end)
+def read_and_report(read_end, child_pid, session_id):
     os.waitpid(child_pid, 0)
     chunks = []
     while True:
@@ -106,6 +90,35 @@ def main():
         file=sys.stderr,
     )
     return 1
+
+
+def delete_session(session_id):
+    read_end, write_end = os.pipe()
+    try:
+        child_pid = os.fork()
+    except OSError as error:
+        os.close(read_end)
+        os.close(write_end)
+        print(f"无法启动脱离进程：{error}", file=sys.stderr)
+        return 1
+
+    if child_pid == 0:
+        os.close(read_end)
+        run_removal_grandchild(write_end, session_id)
+    os.close(write_end)
+    return read_and_report(read_end, child_pid, session_id)
+
+
+def main():
+    if len(sys.argv) != 1:
+        print("delete_self.py 不接受参数", file=sys.stderr)
+        return 2
+    try:
+        session_id = identify_session()
+    except Exception as error:
+        print(f"无法确认本会话，未运行 claude rm：{error}", file=sys.stderr)
+        return 2
+    return delete_session(session_id)
 
 
 if __name__ == "__main__":

@@ -88,7 +88,7 @@ def process_descendants(root_process_id):
     return descendant_process_ids
 
 
-def stop_and_confirm_processes(process, directory, include_removal_processes=True):
+def recorded_process_ids(process, directory, include_removal_processes=True):
     process_ids = process_descendants(process.pid)[::-1] + [process.pid]
     if include_removal_processes:
         for marker_name in ("rm.pid", "rm.parent"):
@@ -96,16 +96,19 @@ def stop_and_confirm_processes(process, directory, include_removal_processes=Tru
                 process_ids.append(int((directory / marker_name).read_text()))
             except (OSError, ValueError):
                 pass
+    return process_ids
+
+
+def kill_test_processes(process_ids):
     for process_id in dict.fromkeys(process_ids):
         if process_id > 1 and process_id != os.getpid():
             try:
                 os.kill(process_id, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-    process.wait(timeout=3)
-    for stream in (process.stdout, process.stderr):
-        if stream:
-            stream.close()
+
+
+def wait_for_test_processes(process_ids):
     deadline = time.monotonic() + 3
     live_process_ids = []
     while time.monotonic() < deadline:
@@ -122,6 +125,16 @@ def stop_and_confirm_processes(process, directory, include_removal_processes=Tru
             break
         time.sleep(0.01)
     assert not live_process_ids, f"测试进程未退出：{live_process_ids}"
+
+
+def stop_and_confirm_processes(process, directory, include_removal_processes=True):
+    process_ids = recorded_process_ids(process, directory, include_removal_processes)
+    kill_test_processes(process_ids)
+    process.wait(timeout=3)
+    for stream in (process.stdout, process.stderr):
+        if stream:
+            stream.close()
+    wait_for_test_processes(process_ids)
 
 
 class DeleteSelfTest(unittest.TestCase):
@@ -230,7 +243,7 @@ class DeleteSelfTest(unittest.TestCase):
         finally:
             stop_and_confirm_processes(process, self.directory)
 
-    def test_rm_failure_and_success_outputs(self):
+    def test_rm_failure_reports_output_and_exit_code(self):
         return_code, stdout, stderr = self.run_delete_self(
             self.matching_agent_rows(),
             FAKE_RM_OUTPUT="couldn't remove abc12345\n",
@@ -239,6 +252,8 @@ class DeleteSelfTest(unittest.TestCase):
         self.assertEqual(return_code, 1)
         self.assertEqual(stdout, "couldn't remove abc12345\n")
         self.assertIn("claude rm abc12345 没删成，退出码 1", stderr)
+
+    def test_rm_success_returns_output(self):
         return_code, stdout, stderr = self.run_delete_self(
             self.matching_agent_rows(), FAKE_RM_OUTPUT="removed abc12345\n"
         )
