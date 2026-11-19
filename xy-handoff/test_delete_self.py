@@ -1,3 +1,4 @@
+import ctypes
 import json
 import os
 import shutil
@@ -21,14 +22,14 @@ fake_claude_directory = os.environ["FAKE_CLAUDE_DIR"]
 command_arguments = sys.argv[1:]
 
 
-def write_marker(name, value=""):
+def write_marker(name, value):
     marker_path = os.path.join(fake_claude_directory, name)
     with open(marker_path, "w", encoding="utf-8") as marker_file:
         marker_file.write(value)
 
 
 if command_arguments == ["agents", "--json"]:
-    write_marker("agents.called")
+    write_marker("agents.called", "")
     sys.stdout.write(os.environ["FAKE_AGENTS_OUTPUT"])
     sys.exit(0)
 
@@ -57,10 +58,10 @@ if command_arguments[:1] == ["rm"]:
     sys.stdout.write(os.environ["FAKE_RM_OUTPUT"])
     sys.stdout.flush()
     if removal_mode == "wait":
-        write_marker("done")
+        write_marker("done", "")
     sys.exit(int(os.environ["FAKE_RM_CODE"]))
 
-write_marker("unexpected")
+write_marker("unexpected", "")
 sys.exit(90)
 '''
 
@@ -88,7 +89,7 @@ def process_descendants(root_process_id):
     return descendant_process_ids
 
 
-def recorded_process_ids(process, directory, include_removal_processes=True):
+def recorded_process_ids(process, directory, include_removal_processes):
     process_ids = process_descendants(process.pid)[::-1] + [process.pid]
     if include_removal_processes:
         for marker_name in ("rm.pid", "rm.parent"):
@@ -127,7 +128,7 @@ def wait_for_test_processes(process_ids):
     assert not live_process_ids, f"测试进程未退出：{live_process_ids}"
 
 
-def stop_and_confirm_processes(process, directory, include_removal_processes=True):
+def stop_and_confirm_processes(process, directory, include_removal_processes):
     process_ids = recorded_process_ids(process, directory, include_removal_processes)
     kill_test_processes(process_ids)
     process.wait(timeout=3)
@@ -135,6 +136,20 @@ def stop_and_confirm_processes(process, directory, include_removal_processes=Tru
         if stream:
             stream.close()
     wait_for_test_processes(process_ids)
+
+
+def current_child_process_ids():
+    children_path = Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children")
+    return {int(value) for value in children_path.read_text().split()}
+
+
+def reap_new_child_processes(previous_process_ids, script_process_id):
+    new_process_ids = current_child_process_ids() - previous_process_ids
+    new_process_ids.discard(script_process_id)
+    for process_id in new_process_ids:
+        waited_process_id, _ = os.waitpid(process_id, 0)
+        assert waited_process_id == process_id
+    return new_process_ids
 
 
 class DeleteSelfTest(unittest.TestCase):
@@ -151,7 +166,7 @@ class DeleteSelfTest(unittest.TestCase):
         self.fake_claude.chmod(0o755)
         self.test_path = f"{self.directory}/bin:/usr/bin:/bin"
 
-    def start_delete_self(self, agent_rows=None, script_arguments=(), **settings):
+    def start_delete_self(self, agent_rows, script_arguments, **settings):
         for marker_path in self.directory.iterdir():
             if marker_path.is_file() and marker_path != self.fake_claude:
                 marker_path.unlink()
@@ -177,19 +192,19 @@ class DeleteSelfTest(unittest.TestCase):
             text=True,
         )
 
-    def run_delete_self(self, agent_rows=None, script_arguments=(), **settings):
+    def run_delete_self(self, agent_rows, script_arguments, **settings):
         process = self.start_delete_self(agent_rows, script_arguments, **settings)
         try:
             stdout, stderr = process.communicate(timeout=8)
             return process.returncode, stdout, stderr
         finally:
-            stop_and_confirm_processes(process, self.directory)
+            stop_and_confirm_processes(process, self.directory, True)
 
     def matching_agent_rows(self):
         return [{"kind": "background", "pid": os.getpid(), "id": "abc12345"}]
 
     def test_arguments_are_rejected_without_claude(self):
-        return_code, stdout, stderr = self.run_delete_self(script_arguments=("abc12345",))
+        return_code, stdout, stderr = self.run_delete_self(None, ("abc12345",))
         self.assertEqual(return_code, 2, stdout + stderr)
         self.assertFalse((self.directory / "agents.called").exists())
 
@@ -204,12 +219,12 @@ class DeleteSelfTest(unittest.TestCase):
             (None, {"FAKE_AGENTS_OUTPUT": "not JSON"}),
         ]
         for agent_rows, settings in cases:
-            return_code, stdout, stderr = self.run_delete_self(agent_rows, **settings)
+            return_code, stdout, stderr = self.run_delete_self(agent_rows, (), **settings)
             self.assertEqual(return_code, 2, stdout + stderr)
             self.assertFalse((self.directory / "rm.called").exists())
 
     def test_matching_session_runs_rm_after_detaching(self):
-        process = self.start_delete_self(self.matching_agent_rows())
+        process = self.start_delete_self(self.matching_agent_rows(), ())
         try:
             stdout, stderr = process.communicate(timeout=8)
             self.assertEqual(process.returncode, 0, stdout + stderr)
@@ -221,11 +236,12 @@ class DeleteSelfTest(unittest.TestCase):
             )
             self.assertNotIn(process.pid, ancestor_process_ids)
         finally:
-            stop_and_confirm_processes(process, self.directory)
+            stop_and_confirm_processes(process, self.directory, True)
 
     def test_detached_rm_survives_session_tree_exit(self):
         process = self.start_delete_self(
             self.matching_agent_rows(),
+            (),
             FAKE_RM_MODE="wait",
             FAKE_RM_OUTPUT="removed later\n",
         )
@@ -234,18 +250,51 @@ class DeleteSelfTest(unittest.TestCase):
             while not (self.directory / "rm.pid").exists() and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertTrue((self.directory / "rm.pid").exists(), "假 claude rm 没启动")
-            stop_and_confirm_processes(process, self.directory, include_removal_processes=False)
+            stop_and_confirm_processes(process, self.directory, False)
             (self.directory / "continue").touch()
             deadline = time.monotonic() + 4
             while not (self.directory / "done").exists() and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertTrue((self.directory / "done").exists(), "会话退出杀掉了 claude rm")
         finally:
-            stop_and_confirm_processes(process, self.directory)
+            stop_and_confirm_processes(process, self.directory, True)
+
+    def test_session_subreaper_prevents_removal(self):
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl.argtypes = [
+            ctypes.c_int,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+            ctypes.c_ulong,
+        ]
+        libc.prctl.restype = ctypes.c_int
+        previous_child_ids = current_child_process_ids()
+        self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)
+        process = None
+        try:
+            process = self.start_delete_self(self.matching_agent_rows(), ())
+            stdout, stderr = process.communicate(timeout=8)
+            self.assertEqual(process.returncode, 1, stdout + stderr)
+            self.assertIn(
+                "claude rm abc12345 没运行：删除进程被本会话里的进程收养，没能脱离进程树",
+                stderr,
+            )
+            self.assertFalse((self.directory / "rm.called").exists())
+            adopted_process_ids = reap_new_child_processes(previous_child_ids, process.pid)
+            self.assertEqual(len(adopted_process_ids), 1)
+        finally:
+            try:
+                if process is not None:
+                    stop_and_confirm_processes(process, self.directory, True)
+                    reap_new_child_processes(previous_child_ids, process.pid)
+            finally:
+                self.assertEqual(libc.prctl(36, 0, 0, 0, 0), 0)
 
     def test_rm_failure_reports_output_and_exit_code(self):
         return_code, stdout, stderr = self.run_delete_self(
             self.matching_agent_rows(),
+            (),
             FAKE_RM_OUTPUT="couldn't remove abc12345\n",
             FAKE_RM_CODE=1,
         )
@@ -255,13 +304,13 @@ class DeleteSelfTest(unittest.TestCase):
 
     def test_rm_success_returns_output(self):
         return_code, stdout, stderr = self.run_delete_self(
-            self.matching_agent_rows(), FAKE_RM_OUTPUT="removed abc12345\n"
+            self.matching_agent_rows(), (), FAKE_RM_OUTPUT="removed abc12345\n"
         )
         self.assertEqual((return_code, stdout, stderr), (0, "removed abc12345\n", ""))
 
     def test_missing_result_has_no_exit_code(self):
         return_code, stdout, stderr = self.run_delete_self(
-            self.matching_agent_rows(), FAKE_RM_MODE="kill"
+            self.matching_agent_rows(), (), FAKE_RM_MODE="kill"
         )
         self.assertEqual(return_code, 1)
         self.assertIn("claude rm abc12345 没送回结果，不知道删没删成", stderr)

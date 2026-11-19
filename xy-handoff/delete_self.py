@@ -1,5 +1,6 @@
 """claude rm 先让守护进程停会话，再删登记。会话退出会杀掉工具命令的整棵子孙进程树。
-双重 fork 让删除孙进程先被 init 收养；结果经管道返回，读到末尾说明孙进程已结束。
+双重 fork 后确认收养者不在会话链中（init 可以），才运行 claude rm；结果经管道返回。
+读到管道末尾说明孙进程已结束。
 删成功时本会话连同本脚本先被停掉，不会有输出。脚本还能输出，就是没删成（或已删但会话还没停）。
 """
 
@@ -39,7 +40,7 @@ def identify_session():
     return matching_rows[0]["id"]
 
 
-def run_removal_grandchild(write_end, session_id):
+def run_removal_grandchild(write_end, session_id, session_process_ids):
     try:
         os.setsid()
         intermediate_pid = os.getpid()
@@ -50,6 +51,13 @@ def run_removal_grandchild(write_end, session_id):
 
     while os.getppid() == intermediate_pid:
         time.sleep(0.01)
+    if os.getppid() in session_process_ids:
+        try:
+            reason = "删除进程被本会话里的进程收养，没能脱离进程树\n".encode()
+            os.write(write_end, reason)
+        except OSError:
+            pass
+        os._exit(0)
     null_descriptor = os.open(os.devnull, os.O_RDWR)
     for descriptor in (0, 1, 2):
         os.dup2(null_descriptor, descriptor)
@@ -82,17 +90,25 @@ def read_and_report(read_end, child_pid, session_id):
         return 1
 
     return_code, _, output = data.partition(b"\n")
+    try:
+        exit_code = int(return_code)
+    except ValueError:
+        reason = return_code.decode("utf-8", "replace")
+        print(f"claude rm {session_id} 没运行：{reason}", file=sys.stderr)
+        return 1
     sys.stdout.write(output.decode("utf-8", "replace"))
-    if return_code == b"0":
+    if exit_code == 0:
         return 0
     print(
-        f"claude rm {session_id} 没删成，退出码 {return_code.decode('ascii', 'replace')}",
+        f"claude rm {session_id} 没删成，退出码 {exit_code}",
         file=sys.stderr,
     )
     return 1
 
 
 def delete_session(session_id):
+    session_process_ids = ancestor_process_ids()
+    session_process_ids.discard(1)
     read_end, write_end = os.pipe()
     try:
         child_pid = os.fork()
@@ -104,7 +120,7 @@ def delete_session(session_id):
 
     if child_pid == 0:
         os.close(read_end)
-        run_removal_grandchild(write_end, session_id)
+        run_removal_grandchild(write_end, session_id, session_process_ids)
     os.close(write_end)
     return read_and_report(read_end, child_pid, session_id)
 
