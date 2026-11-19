@@ -460,30 +460,32 @@ class ScanChangesTest(unittest.TestCase):
         self.assertEqual(structural[0]["path"], "test_new.py")
         self.assertIn("test_old.py", structural[0]["message"])
 
-    def test_rust_structural_tests_ignore_function_names_but_keep_body_names(self):
+    def _rust_structural_hits(self, package, library, old_tests, new_tests):
         self.write(
             "Cargo.toml",
-            '[package]\nname = "test_fixture"\nversion = "0.1.0"\nedition = "2021"\n',
+            f'[package]\nname = "{package}"\nversion = "0.1.0"\nedition = "2021"\n',
         )
-        self.write(
-            "src/lib.rs",
+        self.write("src/lib.rs", library)
+        self.write("src/old_tests.rs", old_tests)
+        base = self.commit("base")
+        self.write("src/new_tests.rs", new_tests)
+        self.commit("rust tests")
+        hits = self.scan_document(base)["hits"]
+        return [hit for hit in hits if hit["tool"] == "structural-tests"]
+
+    def _rust_name_structure_hits(self):
+        return self._rust_structural_hits(
+            "test_fixture",
             "pub fn process(value: i32) -> i32 { value }\n"
             "pub fn process_old(value: i32) -> i32 { value }\n"
             "pub fn process_new(value: i32) -> i32 { value }\n"
             "#[cfg(test)]\nmod old_tests;\n#[cfg(test)]\nmod new_tests;\n",
-        )
-        self.write(
-            "src/old_tests.rs",
             "#[test]\nfn old_test_name() {\n"
             "    // { old comment\n"
             "    let _ = r#\"old { string }\"#;\n"
             "    let _ = '}';\n"
             "    assert_eq!(super::process(1), 2);\n}\n"
             "#[test]\nfn same_assertion_other_call() { assert_eq!(super::process_old(3), 4); }\n",
-        )
-        base = self.commit("base")
-        self.write(
-            "src/new_tests.rs",
             "#[test]\nfn new_test_name() {\n"
             "    // } new comment\n"
             "    let _ = r#\"new { string }\"#;\n"
@@ -491,39 +493,24 @@ class ScanChangesTest(unittest.TestCase):
             "    assert_eq!(super::process(8), 9);\n}\n"
             "#[test]\nfn changed_call_name() { assert_eq!(super::process_new(5), 6); }\n",
         )
-        self.commit("rust tests")
 
-        hits = self.scan_document(base)["hits"]
-        structural = [hit for hit in hits if hit["tool"] == "structural-tests"]
+    def _rust_boolean_literal_hits(self):
+        return self._rust_structural_hits(
+            "boolean_fixture",
+            "#[cfg(test)]\nmod old_tests;\n#[cfg(test)]\nmod new_tests;\n",
+            "#[test]\nfn old_boolean_value() { let _value = true; }\n",
+            "#[test]\nfn new_boolean_value() { let _value = false; }\n",
+        )
 
-        self.assertEqual(len(structural), 1, hits)
+    def test_rust_structural_tests_ignore_function_names_but_keep_body_names(self):
+        structural = self._rust_name_structure_hits()
+        self.assertEqual(len(structural), 1, structural)
         self.assertEqual(structural[0]["path"], "src/new_tests.rs")
         self.assertIn("src/old_tests.rs", structural[0]["message"])
 
     def test_rust_structural_tests_treat_booleans_as_literals(self):
-        self.write(
-            "Cargo.toml",
-            '[package]\nname = "boolean_fixture"\nversion = "0.1.0"\nedition = "2021"\n',
-        )
-        self.write(
-            "src/lib.rs",
-            "#[cfg(test)]\nmod old_tests;\n#[cfg(test)]\nmod new_tests;\n",
-        )
-        self.write(
-            "src/old_tests.rs",
-            "#[test]\nfn old_boolean_value() { let _value = true; }\n",
-        )
-        base = self.commit("boolean base")
-        self.write(
-            "src/new_tests.rs",
-            "#[test]\nfn new_boolean_value() { let _value = false; }\n",
-        )
-        self.commit("boolean test")
-
-        hits = self.scan_document(base)["hits"]
-        structural = [hit for hit in hits if hit["tool"] == "structural-tests"]
-
-        self.assertEqual(len(structural), 1, hits)
+        structural = self._rust_boolean_literal_hits()
+        self.assertEqual(len(structural), 1, structural)
         self.assertEqual(structural[0]["path"], "src/new_tests.rs")
         self.assertIn("src/old_tests.rs", structural[0]["message"])
 
