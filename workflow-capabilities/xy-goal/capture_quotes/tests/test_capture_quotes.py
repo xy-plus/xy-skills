@@ -1,14 +1,14 @@
+from concurrent.futures import ThreadPoolExecutor
+import shutil
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 from goal_test_support import (
     GoalTestSupport,
     SCRIPT_DIRECTORY,
-    ThreadPoolExecutor,
     goal,
     json,
     mock,
-    shutil,
     subprocess,
 )
 from goal_common import quote_files, timer_prompt

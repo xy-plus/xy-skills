@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 import sys
 
 from repo_map_lib.git_repository import ArgumentError
@@ -6,6 +7,9 @@ from repo_map_lib.map_data import build_map
 from repo_map_lib.publish_to_platform.publish_command import PUBLISH_MODES, publish_repository
 from repo_map_lib.render_feature_tree.render_command import render_repository
 from repo_map_lib.workspace_map.workspace_map import build_workspace_map
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cli_errors import report_cli_argument_error, report_cli_input_error  # noqa: E402
 
 
 def main(argv):
@@ -48,11 +52,9 @@ def main(argv):
             return 0
         build_map(options.repo)
     except ArgumentError as error:
-        print(str(error), file=sys.stderr)
-        return 2
+        return report_cli_argument_error(error)
     except (OSError, ValueError) as error:
-        print(str(error))
-        return 1
+        return report_cli_input_error(error)
 
     print("功能清单检查通过")
     return 0

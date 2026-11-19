@@ -1,6 +1,4 @@
-import argparse
 from contextlib import contextmanager
-from datetime import datetime
 import fcntl
 import glob
 import json

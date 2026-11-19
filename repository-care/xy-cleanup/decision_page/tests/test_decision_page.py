@@ -50,6 +50,22 @@ def decisions_with_large_page():
     return decisions
 
 
+@contextmanager
+def large_page_request(directory, answers):
+    decisions = decisions_with_large_page()
+    with patch.object(decision_page, "IDLE_TIMEOUT_SECONDS", 0.5):
+        with decision_receiver(directory, decisions, answers) as (socket_path, _):
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(socket_path)
+            client.sendall(
+                b"GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            )
+            try:
+                yield socket_path, client
+            finally:
+                client.close()
+
+
 class UnixSocketHTTPConnection(http.client.HTTPConnection):
     def __init__(self, socket_path, timeout):
         super().__init__("localhost", timeout=timeout)
@@ -507,33 +523,21 @@ class DecisionPageCommandTest(unittest.TestCase):
 
     def test_slow_page_reader_receives_complete_response_after_timeout_period(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions = decisions_with_large_page()
-            with patch.object(decision_page, "IDLE_TIMEOUT_SECONDS", 0.5):
-                with decision_receiver(
-                    Path(temporary), decisions, Path(temporary) / "answers.json"
-                ) as (socket_path, _):
-                    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    client.connect(socket_path)
-                    client.sendall(
-                        b"GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                    )
-                    response = http.client.HTTPResponse(client)
-                    try:
-                        response.begin()
-                        content_length = int(response.getheader("Content-Length"))
-                        body = bytearray()
-                        started = time.monotonic()
-                        while len(body) < content_length:
-                            chunk = response.read(
-                                min(16 * 1024, content_length - len(body))
-                            )
-                            if not chunk:
-                                break
-                            body.extend(chunk)
-                            time.sleep(0.01)
-                        elapsed = time.monotonic() - started
-                    finally:
-                        client.close()
+            with large_page_request(Path(temporary), Path(temporary) / "answers.json") as (
+                _, client,
+            ):
+                response = http.client.HTTPResponse(client)
+                response.begin()
+                content_length = int(response.getheader("Content-Length"))
+                body = bytearray()
+                started = time.monotonic()
+                while len(body) < content_length:
+                    chunk = response.read(min(16 * 1024, content_length - len(body)))
+                    if not chunk:
+                        break
+                    body.extend(chunk)
+                    time.sleep(0.01)
+                elapsed = time.monotonic() - started
 
         self.assertGreater(content_length, 2 * 1024 * 1024)
         self.assertGreater(elapsed, 0.5)
@@ -541,41 +545,32 @@ class DecisionPageCommandTest(unittest.TestCase):
 
     def test_idle_page_reader_disconnects_and_server_accepts_next_request(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions = decisions_with_large_page()
-            with patch.object(decision_page, "IDLE_TIMEOUT_SECONDS", 0.5):
-                with decision_receiver(
-                    Path(temporary), decisions, Path(temporary) / "answers.json"
-                ) as (socket_path, _):
-                    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    client.connect(socket_path)
-                    client.sendall(
-                        b"GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                    )
-                    time.sleep(0.8)
-                    client.settimeout(2)
-                    response_bytes = bytearray()
-                    disconnected = False
-                    try:
-                        while True:
-                            chunk = client.recv(16 * 1024)
-                            if not chunk:
-                                disconnected = True
-                                break
-                            response_bytes.extend(chunk)
-                    except socket.timeout:
-                        pass
-                    finally:
-                        client.close()
+            with large_page_request(Path(temporary), Path(temporary) / "answers.json") as (
+                socket_path, client,
+            ):
+                time.sleep(0.8)
+                client.settimeout(2)
+                response_bytes = bytearray()
+                disconnected = False
+                try:
+                    while True:
+                        chunk = client.recv(16 * 1024)
+                        if not chunk:
+                            disconnected = True
+                            break
+                        response_bytes.extend(chunk)
+                except socket.timeout:
+                    pass
 
-                    response_head, response_body = bytes(response_bytes).split(b"\r\n\r\n", 1)
-                    content_length = int(
-                        next(
-                            line.split(b":", 1)[1].strip()
-                            for line in response_head.split(b"\r\n")
-                            if line.lower().startswith(b"content-length:")
-                        )
+                response_head, response_body = bytes(response_bytes).split(b"\r\n\r\n", 1)
+                content_length = int(
+                    next(
+                        line.split(b":", 1)[1].strip()
+                        for line in response_head.split(b"\r\n")
+                        if line.lower().startswith(b"content-length:")
                     )
-                    next_status, next_body = request_socket(socket_path, "GET", "/", None)
+                )
+                next_status, next_body = request_socket(socket_path, "GET", "/", None)
 
         self.assertTrue(disconnected, "停读的客户端在超时后仍未断开")
         self.assertIn(b"200 OK", response_head)
@@ -729,7 +724,7 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
         ]
         self.assertIs(decision_page.validate_decisions(deleted_compare), deleted_compare)
 
-    def test_compare_rejects_wrong_keys_types_and_empty_before(self):
+    def test_compare_rejects_invalid_shapes_and_ranges(self):
         cases = (
             ("not an array", "compare 必须是非空数组或 null"),
             ([], "compare 必须是非空数组或 null"),
@@ -744,17 +739,6 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
             ([{"lines": "guide.md:1", "before": "Before.", "after": "After."}], "行范围"),
             ([{"lines": "guide.md:0-1", "before": "Before.", "after": "After."}], "行范围"),
             ([{"lines": "guide.md:2-1", "before": "Before.", "after": "After."}], "行范围"),
-        )
-        for compare, expected in cases:
-            with self.subTest(compare=compare):
-                decisions = valid_decisions()
-                decisions["groups"][0]["items"][0]["compare"] = compare
-                with self.assertRaises(ValueError) as context:
-                    decision_page.validate_decisions(decisions)
-                self.assertIn(expected, str(context.exception))
-
-    def test_compare_ranges_must_use_one_path_and_increasing_nonoverlapping_lines(self):
-        cases = (
             (
                 [
                     {"lines": "guide.md:1-1", "before": "First.", "after": "First."},

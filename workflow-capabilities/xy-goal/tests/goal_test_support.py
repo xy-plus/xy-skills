@@ -1,18 +1,14 @@
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from io import StringIO
-import fcntl
 import json
 import os
 from pathlib import Path
-import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 

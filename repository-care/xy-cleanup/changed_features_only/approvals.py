@@ -16,6 +16,8 @@ APPROVED_RELATIVE_PATH = "repo-map/approved.json"
 APPROVED_VALUE = re.compile(r"^[0-9a-f]{64}$")
 sys.path.insert(0, str(REPOSITORY_ROOT))
 sys.path.insert(0, str(REPOSITORY_CARE / "xy-repo-map"))
+sys.path.insert(0, str(REPOSITORY_CARE))
+from cli_errors import report_cli_argument_error, report_cli_input_error  # noqa: E402
 from json_validation import object_without_duplicate_keys  # noqa: E402
 from repo_map_lib.validate_feature_list.features import load_features  # noqa: E402
 from repo_map_lib.git_repository import ArgumentError, tracked_paths  # noqa: E402
@@ -319,11 +321,9 @@ def main(argv):
     try:
         data = build_map(repository)
     except ArgumentError as error:
-        print(str(error), file=sys.stderr)
-        return 2
+        return report_cli_argument_error(error)
     except (OSError, ValueError) as error:
-        print(str(error))
-        return 1
+        return report_cli_input_error(error)
 
     scope = options.features
     scope_option = "--features"

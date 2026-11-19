@@ -9,8 +9,11 @@ from repo_map_lib.count_lines.metrics import count_file
 
 
 class MetricsTest(unittest.TestCase):
-    def test_python_docstrings_comments_and_inline_comments(self):
-        source = '''"""Module docs.
+    def test_python_and_rust_doc_comments_are_documentation(self):
+        cases = (
+            (
+                "sample.py",
+                '''"""Module docs.
 Second docs line.
 """
 
@@ -29,9 +32,25 @@ class Public:
 
 def public_function():
     return value
-'''
-        counts = count_file("sample.py", "code", source)
-        self.assertEqual((counts.code, counts.docs, counts.comments), (8, 5, 1))
+''',
+                (8, 5, 1),
+            ),
+            (
+                "lib.rs",
+                '''//! Crate docs.
+/// Public API docs.
+/* normal start
+   /* nested */
+   normal end */
+let answer = 42; // inline
+''',
+                (1, 2, 3),
+            ),
+        )
+        for path, source, expected in cases:
+            with self.subTest(path=path):
+                counts = count_file(path, "code", source)
+                self.assertEqual((counts.code, counts.docs, counts.comments), expected)
 
     def test_python_docstrings_inside_control_flow_blocks_are_documentation(self):
         source = '''if condition:
@@ -46,17 +65,6 @@ def public_function():
     def test_shell_shebang_is_code_but_full_line_hash_is_comment(self):
         counts = count_file("script.sh", "code", "#!/bin/sh\n# explanation\necho hi # inline\n\n")
         self.assertEqual((counts.code, counts.docs, counts.comments), (2, 0, 1))
-
-    def test_rust_doc_comments_and_nested_block_comments_are_separate(self):
-        source = '''//! Crate docs.
-/// Public API docs.
-/* normal start
-   /* nested */
-   normal end */
-let answer = 42; // inline
-'''
-        counts = count_file("lib.rs", "code", source)
-        self.assertEqual((counts.code, counts.docs, counts.comments), (1, 2, 3))
 
     def test_rust_string_bodies_do_not_turn_slashes_into_comments(self):
         samples = (

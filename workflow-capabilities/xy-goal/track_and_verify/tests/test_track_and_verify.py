@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
@@ -9,12 +10,20 @@ from goal_test_support import (
     mock,
     os,
     redirect_stdout,
-    shutil,
 )
 from track_and_verify.operations import read_session_transcript, show
 
 
 class TrackAndVerifyTests(GoalTestSupport):
+
+    def _assert_pending_quotes(self, contract, quote_numbers):
+        code, output, errors = self.command("check")
+        self.assertEqual(code, 1)
+        self.assertEqual(output, "")
+        for number in quote_numbers:
+            self.assertIn(f"原话 {number} 还没处理", errors)
+        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "")
+        return errors
 
     def test_add_and_relink_source_supersede_dismissal(self):
         original_root = self.root
@@ -434,13 +443,8 @@ class TrackAndVerifyTests(GoalTestSupport):
         next(record for record in records if record.get("uuid") == "away")["parentUuid"] = "other-turn"
         self.write_transcript(records)
 
-        code, output, errors = self.command("check")
-
-        self.assertEqual(code, 1)
-        self.assertEqual(output, "")
-        self.assertIn("原话 1 还没处理", errors)
+        errors = self._assert_pending_quotes(contract, (1,))
         self.assertNotIn("提示：未做撤回对账", errors)
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "")
 
     def test_check_does_not_dismiss_message_with_an_assistant_descendant(self):
         contract = self.open_goal("answered")
@@ -452,12 +456,7 @@ class TrackAndVerifyTests(GoalTestSupport):
             "assistant", uuid="answer", parent="withdrawn", timestamp="2026-10-24T09:00:10.000Z"))
         self.write_transcript(records)
 
-        code, output, errors = self.command("check")
-
-        self.assertEqual(code, 1)
-        self.assertEqual(output, "")
-        self.assertIn("原话 1 还没处理", errors)
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "")
+        self._assert_pending_quotes(contract, (1,))
 
     def test_check_keeps_ancestor_quote_pending_when_nested_user_message_is_answered(self):
         contract = self.open_goal("nested-answer")
@@ -478,13 +477,7 @@ class TrackAndVerifyTests(GoalTestSupport):
             timestamp="2026-10-24T09:00:16.000Z", role="assistant"))
         self.write_transcript(records)
 
-        code, output, errors = self.command("check")
-
-        self.assertEqual(code, 1)
-        self.assertEqual(output, "")
-        self.assertIn("原话 1 还没处理", errors)
-        self.assertIn("原话 2 还没处理", errors)
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "")
+        self._assert_pending_quotes(contract, (1, 2))
 
     def test_check_does_not_match_an_old_quote_when_hook_missed_withdrawn_message(self):
         contract = self.open_goal("old-quote")
@@ -535,13 +528,7 @@ class TrackAndVerifyTests(GoalTestSupport):
             self.set_quote_mtime(quote, "2026-10-24T09:00:00.000Z", offset)
         self.write_transcript(self.withdrawn_transcript())
 
-        code, output, errors = self.command("check")
-
-        self.assertEqual(code, 1)
-        self.assertEqual(output, "")
-        self.assertIn("原话 1 还没处理", errors)
-        self.assertIn("原话 2 还没处理", errors)
-        self.assertEqual((contract / "links.md").read_text(encoding="utf-8"), "")
+        self._assert_pending_quotes(contract, (1, 2))
 
     def test_check_leaves_already_handled_withdrawn_quote_unchanged(self):
         for handled_by in ("task", "dismissal"):
