@@ -1175,8 +1175,13 @@
         },
         {
           "id": "independent-task-notify",
-          "text": "独立任务由接手会话直接向用户交付结果、交付位置和恢复方式，并保留该会话供用户恢复。",
-          "status": "确认"
+          "text": "独立任务由接手会话直接向用户交付结果、交付位置和恢复方式。",
+          "status": "起草"
+        },
+        {
+          "id": "independent-task-keep-or-delete",
+          "text": "独立任务完成并收尾后，只在用户直接要过、或结果改了用户看得到的行为、用法或用户自己的规则时保留会话，其余汇报后自删。",
+          "status": "起草"
         },
         {
           "id": "stop-background-before-delete",
