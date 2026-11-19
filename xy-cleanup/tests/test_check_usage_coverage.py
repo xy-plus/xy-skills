@@ -35,6 +35,7 @@ class CheckUsageCoverageTest(unittest.TestCase):
                 "source": "README.md:5-5",
                 "scenarios": [{"command": "python3 app.py", "ran": True, "why_not": ""}],
                 "why_none": "",
+                "uses": ["config/runtime.yml", "deploy/app.service", "scripts/run-app.sh"],
             }],
             "files": {
                 "alpha/main.py": {"missed": []},
@@ -77,7 +78,12 @@ class CheckUsageCoverageTest(unittest.TestCase):
                 self.write_readme(readme)
                 coverage = self.valid_coverage()
                 coverage["sources"] = [
-                    {"source": source, "scenarios": [], "why_none": "无可复现命令。"}
+                    {
+                        "source": source,
+                        "scenarios": [],
+                        "why_none": "无可复现命令。",
+                        "uses": ["config/runtime.yml"],
+                    }
                     for source in expected
                 ]
                 coverage["files"] = {}
@@ -89,6 +95,23 @@ class CheckUsageCoverageTest(unittest.TestCase):
                 result = self.run_checker(coverage)
 
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_source_uses_must_be_present_nonempty_and_exact(self):
+        cases = (
+            (lambda source: source.pop("uses"), "缺少字段 uses"),
+            (lambda source: source.update(uses=[]), "uses 必须是非空字符串数组"),
+            (lambda source: source.update(uses=[""]), "uses[0] 必须是非空字符串"),
+            (lambda source: source.update(extra=True), "有多余键 extra"),
+        )
+        for mutate, message in cases:
+            with self.subTest(message=message):
+                coverage = self.valid_coverage()
+                mutate(coverage["sources"][0])
+
+                result = self.run_checker(coverage)
+
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(message, result.stdout + result.stderr)
 
     def test_requires_a_readme_actual_usage_section(self):
         self.write_readme("Demo.\n\nNo usage notes.\n")

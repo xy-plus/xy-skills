@@ -284,7 +284,9 @@ def _validate_usage_coverage(coverage, data, repository, feature_ids, tracked_fi
     any_scenario_ran = False
     for index, source in enumerate(sources):
         source_label = f"{label}.sources[{index}]"
-        item_problems = _field_errors(source, {"source", "scenarios", "why_none"}, source_label)
+        item_problems = _field_errors(
+            source, {"source", "scenarios", "why_none", "uses"}, source_label,
+        )
         problems.extend(item_problems)
         if item_problems or not isinstance(source, dict):
             continue
@@ -297,6 +299,15 @@ def _validate_usage_coverage(coverage, data, repository, feature_ids, tracked_fi
             problems.append(
                 f"{source_label}.source 必须恰好对应 {expected_sources[index]}，实际为 {source_value}"
             )
+        uses = source.get("uses")
+        if not isinstance(uses, list) or not uses:
+            problems.append(f"{source_label}.uses 必须是非空字符串数组")
+        else:
+            for uses_index, use in enumerate(uses):
+                if not _nonempty(use):
+                    problems.append(
+                        f"{source_label}.uses[{uses_index}] 必须是非空字符串"
+                    )
         scenarios = source.get("scenarios")
         if not isinstance(scenarios, list):
             problems.append(f"{source_label}.scenarios 必须是数组")

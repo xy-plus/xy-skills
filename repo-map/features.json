@@ -2034,7 +2034,7 @@
             },
             {
               "id": "usage-coverage-candidates",
-              "text": "按 README「实际使用」记录在副本短跑并量覆盖，由 check_usage_coverage.py 校验后供卡片判断。",
+              "text": "按 README「实际使用」来源短跑并量覆盖，同时记录每条来源指到的配置、部署和调用方，经校验后供卡片判断。",
               "status": "起草"
             },
             {
@@ -2169,17 +2169,7 @@
             },
             {
               "id": "unused-needs-positive-evidence",
-              "text": "只有正面证据表明可选功能不在实际使用范围内时，才能建议删除；覆盖没量到或没执行到本身不算证据，存疑按用到处理。",
-              "status": "起草"
-            },
-            {
-              "id": "defer-high-impact-card-changes",
-              "text": "涉及实盘部署路径、软链或按名字调用的命令、子命令、脚本、systemd 单元、crontab 项及手册手工命令的删改不列入建议，只有用户在「按我写的改」中明确提出才执行。",
-              "status": "起草"
-            },
-            {
-              "id": "explain-deferred-high-impact-risk",
-              "text": "高影响未使用候选仍列入 unused，并在 risk 中说明默认不做的原因。",
+              "text": "逐条核对覆盖记录各来源 uses 中的配置和调用方；只有正面查证未选择或调用时才判为未使用，未量或 missed 本身不算证据。",
               "status": "起草"
             },
             {
@@ -2457,6 +2447,11 @@
                 {
                   "id": "validate-missed-ranges",
                   "text": "missed 只记成功短跑未执行到的行段，范围有效、按行排序、相邻段合并且不越界。",
+                  "status": "起草"
+                },
+                {
+                  "id": "record-source-uses",
+                  "text": "每条 sources 项都列出它指到的配置、部署和调用方 uses 路径，且 uses 是非空字符串数组。",
                   "status": "起草"
                 }
               ],
