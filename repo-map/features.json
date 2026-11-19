@@ -1039,7 +1039,7 @@
     {
       "id": "xy-handoff",
       "title": "会话任务交接",
-      "what": "识别过大的任务，把适合独立验收的部分交给不同会话，需要时再拆；换会话继续只是其中一种用法。",
+      "what": "识别过大的任务，把适合独立验收的部分交给不同会话，需要时再拆，并按交接约定收尾每个会话；换会话继续只是其中一种用法。",
       "why": {
         "text": "大事一个会话做不完、也难一次验收：拆给不同会话，才能并行推进、分别验收。",
         "source": "确认",
@@ -1182,10 +1182,17 @@
           "id": "stop-background-before-delete",
           "text": "结束自身会话前先停止自己启动的后台任务，再清理自身会话。",
           "status": "确认"
+        },
+        {
+          "id": "deleted-session-leaves-list",
+          "text": "会话自删或被别的会话删除后，都从会话列表里消失，不会只停下来留在列表里。",
+          "status": "起草"
         }
       ],
       "entries": [
-        "xy-handoff/SKILL.md"
+        "xy-handoff/SKILL.md",
+        "xy-handoff/delete_self.py",
+        "xy-handoff/test_delete_self.py"
       ],
       "children": [
         {
