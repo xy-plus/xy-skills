@@ -58,7 +58,7 @@ def read_text(path):
         raise GoalError(f"{path}: 无法读取：{error}") from error
 
 
-def parse_fields(path, names, content):
+def parse_fields(path, names, content, ignored_fields):
     try:
         text = content.decode("utf-8")
         # 字段只用物理 LF 分行。JSON 字符串中的 U+2028 等仍是值的一部分。
@@ -66,6 +66,8 @@ def parse_fields(path, names, content):
         values = {}
         for row in rows:
             name, value = row.split(": ", 1)
+            if name in ignored_fields:
+                continue
             if name in values:
                 raise ValueError(f"字段重复：{name}")
             values[name] = json.loads(value)
@@ -194,7 +196,9 @@ def parse_links(text, quotes, tasks):
 class Contract:
     def __init__(self, path, goal_content):
         self.path = path
-        self.metadata = parse_fields(path / "goal.md", ("target", "session_id", "claude_pid"), goal_content)
+        self.metadata = parse_fields(
+            path / "goal.md", ("target", "session_id", "claude_pid"), goal_content, (),
+        )
         if re.fullmatch(r"[1-9][0-9]*", self.metadata["claude_pid"]) is None:
             raise GoalError(f"{path / 'goal.md'}: claude_pid 必须是正整数")
         self.quotes = quote_files(path / "quotes")
@@ -237,18 +241,22 @@ class Contract:
             if not path.is_file() or re.fullmatch(r"T[1-9][0-9]*\.md", path.name) is None:
                 raise GoalError(f"{path}: 事项文件名必须是 T 加正整数.md")
             content = path.read_bytes()
-            fields = list(TASK_FIELDS.values())
+            fields = list(TASK_FIELDS.values()) if directory == "tasks" else ["title", "criteria"]
             if b"\nevidence: " in content:
                 fields.append("evidence")
+            ignored_fields = ()
             if directory == "done":
+                # 关闭后状态和指针已不再描述工作；旧档仍可读，但这两行不校验也不恢复。
+                ignored_fields = ("state", "pointer")
                 conclusions = [name for name in ("verdict", "cancel_quote", "cancel_reason")
                                if f"\n{name}: ".encode() in content]
                 if len(conclusions) != 1:
                     raise GoalError(f"{path}: 格式错误：关闭事项必须且只能有一种结论")
                 fields.append(conclusions[0])
-            values = parse_fields(path, fields, content)
+            values = parse_fields(path, fields, content, ignored_fields)
             try:
-                require_state(values["state"])
+                if directory == "tasks":
+                    require_state(values["state"])
                 if "evidence" in values and values["evidence"] == "无":
                     raise GoalError("作者发起证据不能写「无」")
                 if "cancel_quote" in values and re.fullmatch(r"[1-9][0-9]*", values["cancel_quote"]) is None:
@@ -365,8 +373,12 @@ class Contract:
             if not sources:
                 detail = "除取消依据外没有出处" if cancel_quote is not None else "没有出处"
                 raise GoalError(f"已关闭事项 {task} {detail}，不能重开")
-            # 只恢复事项字段并丢弃旧结论；若取消依据是原话，它的映射仍保留在 links.md。
-            values = {name: self.done[task][name] for name in TASK_FIELDS.values()}
+            # 状态和指针须按重开时的情况重给；旧结论丢弃，出处映射不变。
+            require_text(options.state, "状态")
+            require_state(options.state)
+            require_text(options.pointer, "指针")
+            values = {name: self.done[task][name] for name in ("title", "criteria")}
+            values.update(state=options.state, pointer=options.pointer)
             if "evidence" in self.done[task]:
                 values["evidence"] = self.done[task]["evidence"]
             changes[self.path / "tasks" / f"{task}.md"] = encode_fields(values)
@@ -391,8 +403,11 @@ class Contract:
                     conclusion = {"cancel_quote": str(options.quote)}
                     self.links.add((options.quote, task))
             original = self.path / "tasks" / f"{task}.md"
-            # 统一编码已解析字段与结论，不依赖被接受的原文件是否带末尾 LF。
-            changes[self.path / "done" / f"{task}.md"] = encode_fields({**self.tasks[task], **conclusion})
+            # 关闭后状态和指针不再成立；done/ 只留事项、作者证据和结论。
+            archived = {name: self.tasks[task][name] for name in ("title", "criteria")}
+            if "evidence" in self.tasks[task]:
+                archived["evidence"] = self.tasks[task]["evidence"]
+            changes[self.path / "done" / f"{task}.md"] = encode_fields({**archived, **conclusion})
             removals.append(original)
         changes[self.path / "links.md"] = encode_links(self.links, self.dismissed)
         write_files(changes, removals)
@@ -443,6 +458,8 @@ def parser():
     cancel_basis.add_argument("--reason")
     reopening = commands.add_parser("reopen")
     reopening.add_argument("task")
+    reopening.add_argument("--state", required=True)
+    reopening.add_argument("--pointer", required=True)
     return result
 
 
