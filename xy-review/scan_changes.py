@@ -324,7 +324,7 @@ def _clippy_hits(repository, changed, categories):
     hits = []
     for workspace in workspaces:
         result = _run(
-            [cargo, "clippy", "--all-targets", "--message-format=json",
+            [cargo, "clippy", "--workspace", "--all-targets", "--message-format=json",
              "--manifest-path", str(workspace / "Cargo.toml")],
             workspace,
             "cargo clippy",
@@ -401,7 +401,7 @@ def _matching_bracket(tokens, opening, left, right):
 
 
 def _is_rust_literal(token):
-    return token[0].isdigit() or token.startswith(
+    return token in {"true", "false"} or token[0].isdigit() or token.startswith(
         ('"', "'", 'b"', "b'", 'r"', 'r#', 'br"', 'br#')
     )
 

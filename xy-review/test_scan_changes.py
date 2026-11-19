@@ -407,6 +407,38 @@ class ScanChangesTest(unittest.TestCase):
         self.assertTrue(any(hit["path"] == "src/lib.rs" for hit in clippy_hits), hits)
         self.assertFalse(any(hit["path"] == "src/other.rs" for hit in clippy_hits), hits)
 
+    def test_clippy_checks_modified_member_in_root_package_workspace(self):
+        self.write(
+            "Cargo.toml",
+            '[workspace]\nmembers = ["crates/member"]\nresolver = "2"\n\n'
+            '[package]\nname = "root_fixture"\nversion = "0.1.0"\nedition = "2021"\n',
+        )
+        self.write("src/lib.rs", "pub fn root_function() {}\n")
+        self.write(
+            "crates/member/Cargo.toml",
+            '[package]\nname = "member_fixture"\nversion = "0.1.0"\nedition = "2021"\n',
+        )
+        member_source = "pub fn member_function() {}\n"
+        self.write("crates/member/src/lib.rs", member_source)
+        base = self.commit("workspace base")
+        self.write(
+            "crates/member/src/lib.rs",
+            member_source + "fn unused_member_function() {}\n",
+        )
+        self.commit("member warning")
+
+        hits = self.scan_document(base)["hits"]
+
+        self.assertTrue(
+            any(
+                hit["tool"] == "cargo-clippy"
+                and hit["path"] == "crates/member/src/lib.rs"
+                and "dead_code" in hit["message"]
+                for hit in hits
+            ),
+            hits,
+        )
+
     def test_python_structural_tests_ignore_function_names_but_keep_body_names(self):
         self.write(
             "test_old.py",
@@ -460,6 +492,33 @@ class ScanChangesTest(unittest.TestCase):
             "#[test]\nfn changed_call_name() { assert_eq!(super::process_new(5), 6); }\n",
         )
         self.commit("rust tests")
+
+        hits = self.scan_document(base)["hits"]
+        structural = [hit for hit in hits if hit["tool"] == "structural-tests"]
+
+        self.assertEqual(len(structural), 1, hits)
+        self.assertEqual(structural[0]["path"], "src/new_tests.rs")
+        self.assertIn("src/old_tests.rs", structural[0]["message"])
+
+    def test_rust_structural_tests_treat_booleans_as_literals(self):
+        self.write(
+            "Cargo.toml",
+            '[package]\nname = "boolean_fixture"\nversion = "0.1.0"\nedition = "2021"\n',
+        )
+        self.write(
+            "src/lib.rs",
+            "#[cfg(test)]\nmod old_tests;\n#[cfg(test)]\nmod new_tests;\n",
+        )
+        self.write(
+            "src/old_tests.rs",
+            "#[test]\nfn old_boolean_value() { let _value = true; }\n",
+        )
+        base = self.commit("boolean base")
+        self.write(
+            "src/new_tests.rs",
+            "#[test]\nfn new_boolean_value() { let _value = false; }\n",
+        )
+        self.commit("boolean test")
 
         hits = self.scan_document(base)["hits"]
         structural = [hit for hit in hits if hit["tool"] == "structural-tests"]
