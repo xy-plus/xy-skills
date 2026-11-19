@@ -54,7 +54,7 @@ def read_text(path):
         raise GoalError(f"{path}: 无法读取：{error}") from error
 
 
-def parse_fields(path, names, content):
+def parse_fields(path, names, content, ignored_fields):
     try:
         text = content.decode("utf-8")
         # 字段只用物理 LF 分行。JSON 字符串中的 U+2028 等仍是值的一部分。
@@ -62,6 +62,8 @@ def parse_fields(path, names, content):
         values = {}
         for row in rows:
             name, value = row.split(": ", 1)
+            if name in ignored_fields:
+                continue
             if name in values:
                 raise ValueError(f"字段重复：{name}")
             values[name] = json.loads(value)
@@ -190,7 +192,9 @@ def parse_links(text, quotes, tasks):
 class Contract:
     def __init__(self, path, goal_content):
         self.path = path
-        self.metadata = parse_fields(path / "goal.md", ("target", "session_id", "claude_pid"), goal_content)
+        self.metadata = parse_fields(
+            path / "goal.md", ("target", "session_id", "claude_pid"), goal_content, (),
+        )
         if re.fullmatch(r"[1-9][0-9]*", self.metadata["claude_pid"]) is None:
             raise GoalError(f"{path / 'goal.md'}: claude_pid 必须是正整数")
         self.quotes = quote_files(path / "quotes")
@@ -233,18 +237,22 @@ class Contract:
             if not path.is_file() or re.fullmatch(r"T[1-9][0-9]*\.md", path.name) is None:
                 raise GoalError(f"{path}: 事项文件名必须是 T 加正整数.md")
             content = path.read_bytes()
-            fields = list(TASK_FIELDS.values())
+            fields = list(TASK_FIELDS.values()) if directory == "tasks" else ["title", "criteria"]
             if b"\nevidence: " in content:
                 fields.append("evidence")
+            ignored_fields = ()
             if directory == "done":
+                # 关闭后状态和指针已不再描述工作；旧档仍可读，但这两行不校验也不恢复。
+                ignored_fields = ("state", "pointer")
                 conclusions = [name for name in ("verdict", "cancel_quote", "cancel_reason")
                                if f"\n{name}: ".encode() in content]
                 if len(conclusions) != 1:
                     raise GoalError(f"{path}: 格式错误：关闭事项必须且只能有一种结论")
                 fields.append(conclusions[0])
-            values = parse_fields(path, fields, content)
+            values = parse_fields(path, fields, content, ignored_fields)
             try:
-                require_state(values["state"])
+                if directory == "tasks":
+                    require_state(values["state"])
                 if "evidence" in values and values["evidence"] == "无":
                     raise GoalError("作者发起证据不能写「无」")
                 if "cancel_quote" in values and re.fullmatch(r"[1-9][0-9]*", values["cancel_quote"]) is None:

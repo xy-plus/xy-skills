@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 
-DELETE_SELF_SCRIPT = Path(__file__).with_name("delete_self.py")
+DELETE_SELF_SCRIPT = Path(__file__).resolve().parents[1] / "delete_self.py"
 FAKE_CLAUDE_SOURCE = r'''import json
 import os
 import signal

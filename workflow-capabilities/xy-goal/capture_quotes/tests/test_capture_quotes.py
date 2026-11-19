@@ -359,7 +359,8 @@ class CaptureQuotesTests(GoalTestSupport):
                 before = self.files()
                 payload = {"session_id": self.session, "prompt": "原话尚未创建",
                            "tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"}
-                with mock.patch("capture_quotes.recording.find_contract", side_effect=RuntimeError("模拟定位意外失败")):
+                with mock.patch("capture_quotes.recording.find_contract",
+                                side_effect=RuntimeError("模拟定位意外失败")):
                     try:
                         result = self.run_goal(command, session=None, pid=None, stdin=json.dumps(payload))
                     except RuntimeError as error:
