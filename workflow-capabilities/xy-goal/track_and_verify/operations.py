@@ -330,8 +330,12 @@ def change(contract, options):
         if not sources:
             detail = "除取消依据外没有出处" if cancel_quote is not None else "没有出处"
             raise GoalError(f"已关闭事项 {task} {detail}，不能重开")
-        # 只恢复事项字段并丢弃旧结论；若取消依据是原话，它的映射仍保留在 links.md。
-        values = {name: contract.done[task][name] for name in TASK_FIELDS.values()}
+        # 状态和指针须按重开时的情况重给；旧结论丢弃，出处映射不变。
+        require_text(options.state, "状态")
+        require_state(options.state)
+        require_text(options.pointer, "指针")
+        values = {name: contract.done[task][name] for name in ("title", "criteria")}
+        values.update(state=options.state, pointer=options.pointer)
         if "evidence" in contract.done[task]:
             values["evidence"] = contract.done[task]["evidence"]
         changes[contract.path / "tasks" / f"{task}.md"] = encode_fields(values)
@@ -356,8 +360,11 @@ def change(contract, options):
                 conclusion = {"cancel_quote": str(options.quote)}
                 contract.links.add((options.quote, task))
         original = contract.path / "tasks" / f"{task}.md"
-        # 统一编码已解析字段与结论，不依赖被接受的原文件是否带末尾 LF。
-        changes[contract.path / "done" / f"{task}.md"] = encode_fields({**contract.tasks[task], **conclusion})
+        # 关闭后状态和指针不再成立；done/ 只留事项、作者证据和结论。
+        archived = {name: contract.tasks[task][name] for name in ("title", "criteria")}
+        if "evidence" in contract.tasks[task]:
+            archived["evidence"] = contract.tasks[task]["evidence"]
+        changes[contract.path / "done" / f"{task}.md"] = encode_fields({**archived, **conclusion})
         removals.append(original)
     changes[contract.path / "links.md"] = encode_links(contract.links, contract.dismissed)
     write_files(changes, removals)

@@ -28,6 +28,15 @@ class RealRepositoryTest(unittest.TestCase):
             self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
             map_data = json.loads((output / "map-data.json").read_text(encoding="utf-8"))
 
+        self.assertIn("self-delete", map_data["features"])
+        self.assertEqual(
+            set(map_data["features"]["self-delete"]["files"]),
+            {
+                "xy-handoff/self_delete/delete_self.py",
+                "xy-handoff/self_delete/tests/test_delete_self.py",
+            },
+        )
+
         listed_paths = subprocess.run(
             ["git", "-C", str(ROOT), "ls-files", "-z"],
             capture_output=True,

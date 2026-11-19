@@ -390,7 +390,7 @@ class GoalTests(GoalTestSupport):
                     conclusion = {"cancel_quote": "1"}
                 self.succeeds("check")
                 self.assertEqual(goal.Contract(contract, (contract / "goal.md").read_bytes()).done["T1"], {
-                    "title": "发布", "criteria": "测试通过", "state": "在办", "pointer": "无",
+                    "title": "发布", "criteria": "测试通过",
                     **conclusion,
                 })
                 self.assertFalse(task.exists())

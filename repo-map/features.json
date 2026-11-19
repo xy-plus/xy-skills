@@ -1212,11 +1212,6 @@
           "id": "stop-background-before-delete",
           "text": "结束自身会话前先停止自己启动的后台任务，再清理自身会话。",
           "status": "确认"
-        },
-        {
-          "id": "deleted-session-leaves-list",
-          "text": "会话自删或被别的会话删除后，都从会话列表里消失，不会只停下来留在列表里。",
-          "status": "起草"
         }
       ],
       "children": [
@@ -1261,6 +1256,26 @@
               "id": "report-check-errors",
               "text": "检查工具对调用方式、文件读取和 JSON 错误给出明确报告；合法说明安静通过。",
               "status": "确认"
+            }
+          ],
+          "children": []
+        },
+        {
+          "id": "self-delete",
+          "title": "会话自删",
+          "what": "在会话结束前停止并删除自身会话，确认它从会话列表中消失。",
+          "why": {
+            "text": "只停止会话进程会让它留在会话列表里；自删流程需要确认会话确实被删除。",
+            "source": "起草",
+            "quote": "",
+            "from": ""
+          },
+          "directory": "xy-handoff/self_delete",
+          "items": [
+            {
+              "id": "deleted-session-leaves-list",
+              "text": "会话自删或被别的会话删除后，都从会话列表里消失，不会只停下来留在列表里。",
+              "status": "起草"
             }
           ],
           "children": []

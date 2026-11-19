@@ -69,6 +69,8 @@ def parser():
     cancel_basis.add_argument("--reason")
     reopening = commands.add_parser("reopen")
     reopening.add_argument("task")
+    reopening.add_argument("--state", required=True)
+    reopening.add_argument("--pointer", required=True)
     return result
 
 
