@@ -85,7 +85,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 `xy-workflow` 依赖 Claude Code 插件 `superpowers`（必须是 7.0.2）及本仓库的 `xy-goal`、`xy-review`、`sync-think`；`xy-goal` 依赖 Claude Code 的 hook 和定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见其 README；`xy-review/check.py` 与 `xy-repo-map` 复用同仓 `xy-handoff` 的 JSON 校验函数。`xy-handoff` 单向依赖 `xy-runs` 及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
 
-`xy-review/scan_changes.py` 复用 `xy-repo-map` 的文件分类和 `repo-map/skip.json` 跳过名单；改到 Python 文件时需要 ruff 和 vulture，改到 Rust 文件时需要 `cargo clippy`。工具缺失或运行失败会让扫描失败。
+`xy-review/scan_changes.py` 复用同目录 `duplicate_blocks.py` 检查重复块，以及 `xy-repo-map` 的文件分类和 `repo-map/skip.json` 跳过名单；改到 Python 文件时需要 ruff 和 vulture，改到 Rust 文件时需要 `cargo clippy`。工具缺失或运行失败会让扫描失败。
 
 按 [xy-runs/README.md](xy-runs/README.md) 安装清理定时器，并配置 runs 清理范围。
 

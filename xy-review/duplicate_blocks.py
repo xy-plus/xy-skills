@@ -1,17 +1,26 @@
 """Find repeated six-line windows in tracked source, test, and documentation files."""
 from collections import defaultdict
 from pathlib import Path
+import re
 
 from repo_map_lib.map_data import file_category_with_skip
 from repo_map_lib.skip_paths import is_skipped_path
 
 
-# Six lines avoid flagging common two- or three-line idioms with little to merge;
-# forty alphanumeric characters filter low-information runs such as imports and pass.
+# Six lines avoid common short idioms; forty alphanumerics filter low-information runs.
+# Import-only lines are skipped separately before either window threshold is applied.
 WINDOW_LINES = 6
 MIN_ALPHANUMERIC_CHARACTERS = 40
 SCANNED_CATEGORIES = {"code", "tests", "docs"}
 TODO_FILENAME = "TODO.md"
+PYTHON_IMPORT_LINE = re.compile(
+    r"(?:import\s+[^#;]+|from\s+[^#;]+\s+import\s+[^#;]+)(?:\s+#.*)?"
+)
+RUST_USE_LINE = re.compile(r"(?:(?:pub(?:\([^)]*\))?\s+)?use\s+[^;]+;)(?:\s*//.*)?")
+
+
+def _is_import_line(line):
+    return bool(PYTHON_IMPORT_LINE.fullmatch(line) or RUST_USE_LINE.fullmatch(line))
 
 
 def find_duplicate_windows(repository, tracked_files, skip_paths):
@@ -30,7 +39,9 @@ def find_duplicate_windows(repository, tracked_files, skip_paths):
         meaningful_lines = []
         for line_number, raw_line in enumerate(physical_lines, start=1):
             line = " ".join(raw_line.decode("utf-8", errors="replace").split())
-            if line and any(character.isalnum() for character in line):
+            if line and not _is_import_line(line) and any(
+                character.isalnum() for character in line
+            ):
                 meaningful_lines.append((line_number, line))
         for index in range(len(meaningful_lines) - WINDOW_LINES + 1):
             window = meaningful_lines[index:index + WINDOW_LINES]
@@ -48,31 +59,7 @@ def find_duplicate_windows(repository, tracked_files, skip_paths):
     }
 
 
-def other_ranges_for_keep(keep_range, duplicate_windows):
-    path, start_line, end_line = keep_range
-    alternatives = set()
-    for locations in duplicate_windows.values():
-        overlaps_keep = any(
-            other_path == path
-            and other_start <= end_line
-            and start_line <= other_end
-            for other_path, other_start, other_end in locations
-        )
-        if not overlaps_keep:
-            continue
-        alternatives.update(
-            location
-            for location in locations
-            if not (
-                location[0] == path
-                and location[1] <= end_line
-                and start_line <= location[2]
-            )
-        )
-    return _merge_ranges(alternatives)
-
-
-def _merge_ranges(locations):
+def merge_ranges(locations):
     merged = []
     for path, start, end in sorted(locations):
         if merged and merged[-1][0] == path and start <= merged[-1][2] + 1:

@@ -618,7 +618,9 @@
             }
           ],
           "entries": [
-            "xy-review/SKILL.md"
+            "xy-review/SKILL.md",
+            "xy-review/scan_changes.py",
+            "xy-review/duplicate_blocks.py"
           ],
           "children": [
             {

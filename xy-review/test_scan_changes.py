@@ -263,6 +263,51 @@ class ScanChangesTest(unittest.TestCase):
         hits = [hit for hit in document["hits"] if hit["tool"] == "duplicate-blocks"]
         self.assertEqual(len(hits), 1)
 
+    def test_duplicate_blocks_ignore_python_and_rust_import_only_lines(self):
+        lines = [
+            "import package_one.module_one",
+            "from package_two import helper_two",
+            "use crate::module_three::item_three;",
+            "import package_four.module_four",
+            "from package_five import helper_five",
+            "use crate::module_six::item_six;",
+        ]
+
+        document = self.duplicate_document("copy.md", lines)
+
+        self.assertFalse(
+            any(hit["tool"] == "duplicate-blocks" for hit in document["hits"])
+        )
+
+    def test_duplicate_blocks_count_code_lines_across_import_lines(self):
+        code_lines = [
+            f"shared operation row {number} carries the same meaningful implementation"
+            for number in range(1, 7)
+        ]
+        source = [
+            line
+            for number, code in enumerate(code_lines, start=1)
+            for line in (code, f"import source_helpers.module_{number}")
+        ]
+        copy = [
+            line
+            for number, code in enumerate(code_lines, start=1)
+            for line in (code, f"from copy_helpers_{number} import helper_{number}")
+        ]
+        self.write("source.md", "\n".join(source) + "\n")
+        base = self.commit("source")
+        self.write("copy.md", "\n".join(copy) + "\n")
+        self.commit("copy")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "duplicate-blocks"
+        ]
+
+        self.assertEqual(len(hits), 1, hits)
+        self.assertEqual((hits[0]["path"], hits[0]["line"]), ("copy.md", 1))
+        self.assertIn("source.md:1-11", hits[0]["message"])
+
     def test_duplicate_blocks_do_not_report_five_lines(self):
         lines = [f"shared content row {number} has words" for number in range(1, 6)]
 
