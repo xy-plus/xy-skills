@@ -1,0 +1,43 @@
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from json_for_html import json_for_html  # noqa: E402
+from ..git_repository import ArgumentError
+
+
+def require_empty_output_directory(output):
+    """Resolve an output path that is either absent or an empty directory."""
+    directory = Path(output).expanduser().resolve()
+    if directory.exists() and not directory.is_dir():
+        raise ArgumentError(f"--out 必须是目录：{directory}")
+    if directory.is_dir() and any(directory.iterdir()):
+        raise ArgumentError(f"--out 必须不存在或为空：{directory}")
+    return directory
+
+
+def write_map(data, directory):
+    """Write the common map JSON and offline page into a checked output directory."""
+    page_data = {
+        "root": data["root"],
+        "features": {
+            feature_id: {key: value for key, value in feature.items() if key != "files"}
+            for feature_id, feature in data["features"].items()
+        },
+        "markers": data["markers"],
+    }
+    map_text = json_for_html(data) + "\n"
+    template = (Path(__file__).resolve().parent / "templates" / "feature-tree.html").read_text(
+        encoding="utf-8"
+    )
+    page_text = template.replace("__MAP_DATA__", json_for_html(page_data))
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "map-data.json").write_text(map_text, encoding="utf-8")
+    (directory / "index.html").write_text(page_text, encoding="utf-8")
+    return directory
+
+
+def render_repository(repository, output, build):
+    """Build a repository map and write a page to an empty output directory."""
+    directory = require_empty_output_directory(output)
+    return write_map(build(repository), directory)

@@ -35,6 +35,6 @@ superpowers 必须是 7.0.2。开工前用 `claude plugin list` 核对；启用�
    | 注释和文档 | 复述代码的注释；过时、说错或描述已删代码的说明；啰嗦；几处重复的说明（讲原因、约束、警告和对外用法的留下） |
    | 配置和依赖 | 没人读的配置项、不再用的依赖 |
 
-   清单参照 [Fowler 代码坏味道](https://courses.cs.duke.edu/compsci308/spring23/resources/Code_Smells_Taxonomy.pdf)、[测试坏味道目录](https://test-smell-catalog.readthedocs.io/) 和 [Google 代码审查指南](https://google.github.io/eng-practices/review/reviewer/looking-for.html)。交付前先提交，再运行 `python3 <xy-review skill目录>/scan_changes.py --repo <工作树绝对路径> --base <基准提交>`；命中能改的先改掉，再提交。
+   清单参照 [Fowler 代码坏味道](https://courses.cs.duke.edu/compsci308/spring23/resources/Code_Smells_Taxonomy.pdf)、[测试坏味道目录](https://test-smell-catalog.readthedocs.io/) 和 [Google 代码审查指南](https://google.github.io/eng-practices/review/reviewer/looking-for.html)。交付前先提交，再运行 `python3 <xy-review skill目录>/change_scan/scan_changes.py --repo <工作树绝对路径> --base <基准提交>`；命中能改的先改掉，再提交。
 3. 工作树变基到主分支最新提交，再按 `xy-review` 终审。报告放 `<工作流目录>/code/`，与 `spec/`、`spec-<名>/` 平级，并按 `xy-review` 的 `group<G>/round<R>/` 存放；以审查结论作闸。
 4. 按 `superpowers:verification-before-completion` 核实证据，再按 `superpowers:finishing-a-development-branch` 走「本地合并」；不出菜单、不等用户，合并后推主分支。主检出由大家共用，不在那里跑测试；只用 `git merge --ff-only` 快进，使主分支指向工作树里审过、测过的提交。不能快进就回第 3 步。删除工作树会一并删除其中被忽略的产物。

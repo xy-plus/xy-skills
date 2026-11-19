@@ -39,6 +39,76 @@
       "id": "declare-skipped-content",
       "text": "功能图和清扫能明确哪些仓库内容不参与统计与审查；没有排除项时也明确声明为空。",
       "status": "确认"
+    },
+    {
+      "id": "install-skill-set",
+      "text": "使用者可以将仓库里的技能安装到 Claude Code 的个人技能目录并直接调用。",
+      "status": "确认"
+    },
+    {
+      "id": "install-pinned-plugin",
+      "text": "使用者可以安装与工作流程匹配的固定版本 superpowers，并停用会自动更新的其他来源版本。",
+      "status": "确认"
+    },
+    {
+      "id": "configure-run-storage",
+      "text": "使用者可以为长期任务配置统一的运行目录，让临时产物保存在稳定位置。",
+      "status": "确认"
+    },
+    {
+      "id": "capture-user-messages",
+      "text": "使用者消息和提问工具的选择题回答能自动逐字保存，并可在建立目标契约时接续先前消息。",
+      "status": "确认"
+    },
+    {
+      "id": "load-global-rules",
+      "text": "每个会话开始时自动加载运行目录、交接、铁律和仓库规范，并按标准工作流程处理相应任务。",
+      "status": "确认"
+    },
+    {
+      "id": "show-required-integrations",
+      "text": "使用者能查明工作流程、目标跟踪和交接功能所需的插件、技能与 Claude Code 能力。",
+      "status": "确认"
+    },
+    {
+      "id": "install-run-cleaner",
+      "text": "使用者可以安装按配置范围定期清理过期运行目录的服务。",
+      "status": "确认"
+    },
+    {
+      "id": "add-new-skills",
+      "text": "维护者可以新增独立技能，并在安装时只暴露能直接加载的技能入口。",
+      "status": "确认"
+    },
+    {
+      "id": "maintain-feature-map",
+      "text": "已有功能清单的仓库在每次改动时维护功能归属并校验清单。",
+      "status": "确认"
+    },
+    {
+      "id": "record-feature-approvals",
+      "text": "清扫完成后记录用户认可的功能状态，使后续重审只覆盖发生变化的功能。",
+      "status": "确认"
+    },
+    {
+      "id": "run-complete-test-suite",
+      "text": "使用者能从仓库说明找到并运行覆盖各子项目的完整测试套件。",
+      "status": "确认"
+    },
+    {
+      "id": "require-browser-tests",
+      "text": "浏览器测试必须配置 Playwright 和 Chromium；环境缺失时明确失败，不静默跳过。",
+      "status": "确认"
+    },
+    {
+      "id": "check-review-regressions",
+      "text": "修改清扫或审查规则后，按记录的漏审案例做回归对照。",
+      "status": "确认"
+    },
+    {
+      "id": "skill-descriptions",
+      "text": "每个技能开头写一句适用时机，Claude Code 据此列出技能并决定何时加载。",
+      "status": "确认"
     }
   ],
   "subrepositories": [],
@@ -53,7 +123,6 @@
     "vulture",
     "cargo clippy"
   ],
-  "entries": [],
   "children": [
     {
       "id": "rules",
@@ -65,9 +134,8 @@
         "quote": "",
         "from": "20261110 清扫决定页面第一页"
       },
-      "directory": null,
+      "directory": "rules",
       "items": [],
-      "entries": [],
       "children": [
         {
           "id": "xy-iron-law",
@@ -77,9 +145,9 @@
             "text": "出了问题要改根因，不要在别处加东西收拾后果。",
             "source": "原话",
             "quote": "打补丁就是不改出错处，而在别处加东西收拾后果。",
-            "from": "xy-iron-law/SKILL.md 第 1 条"
+            "from": "rules/xy-iron-law/SKILL.md 第 1 条"
           },
-          "directory": "xy-iron-law",
+          "directory": "rules/xy-iron-law",
           "items": [
             {
               "id": "fix-root-cause",
@@ -97,7 +165,6 @@
               "status": "确认"
             }
           ],
-          "entries": [],
           "children": []
         },
         {
@@ -108,9 +175,9 @@
             "text": "积极删掉不必要的代码和文档，不留历史包袱和补丁。",
             "source": "原话",
             "quote": "积极删除或合并不必要的代码或文档；我不喜欢历史包袱和打补丁。",
-            "from": "xy-repo-rules/SKILL.md 第 7 条"
+            "from": "rules/xy-repo-rules/SKILL.md 第 7 条"
           },
-          "directory": "xy-repo-rules",
+          "directory": "rules/xy-repo-rules",
           "items": [
             {
               "id": "readme-enables-setup",
@@ -148,7 +215,6 @@
               "status": "确认"
             }
           ],
-          "entries": [],
           "children": []
         }
       ]
@@ -321,7 +387,6 @@
           "status": "起草"
         }
       ],
-      "entries": [],
       "children": []
     },
     {
@@ -334,9 +399,8 @@
         "quote": "它虽然会被标准工作流用到，但偶尔我需要用的时候，也会直接单独去调用",
         "from": "20261110 清扫决定页面第二页 R1"
       },
-      "directory": null,
+      "directory": "workflow-capabilities",
       "items": [],
-      "entries": [],
       "children": [
         {
           "id": "sync-think",
@@ -348,7 +412,7 @@
             "quote": "",
             "from": "20261110 清扫决定页面第一页"
           },
-          "directory": "sync-think",
+          "directory": "workflow-capabilities/sync-think",
           "items": [
             {
               "id": "invoke-only-when-requested",
@@ -371,20 +435,19 @@
               "status": "确认"
             }
           ],
-          "entries": [],
           "children": []
         },
         {
           "id": "xy-review",
           "title": "对抗审查",
-          "what": "常规任务由主审和剃刀并行独立审 spec 和代码：主审找遗漏、错误，剃刀找多余项；代码审查的剃刀逐条回应清理命中、并按清理清单每类记录检查范围和结论；研究任务只派主审。报告格式用脚本检查，规范引用逐字核对；规则更新后按 xy-review/review-misses.md 做回归对照；同一件事三轮没过先判因。",
+          "what": "常规任务由主审和剃刀并行独立审 spec 和代码：主审找遗漏、错误，剃刀找多余项；代码审查的剃刀逐条回应清理命中、并按清理清单每类记录检查范围和结论；研究任务只派主审。报告格式用脚本检查，规范引用逐字核对；规则更新后按 workflow-capabilities/xy-review/review-misses.md 做回归对照；同一件事三轮没过先判因。",
           "why": {
             "text": "AI 喜欢做加法、不喜欢做减法，项目会膨胀得很快；一个代理同时做加法和减法效果不好，所以拆成两个。",
             "source": "原话",
             "quote": "如果只开一个代理，同时做加法和减法效果不好，而且 AI 会喜欢做加法，不喜欢做减法，导致项目膨胀非常快。",
             "from": "20261110 清扫决定页面第一页 A6"
           },
-          "directory": "xy-review",
+          "directory": "workflow-capabilities/xy-review",
           "items": [
             {
               "id": "dual-role-review",
@@ -602,11 +665,6 @@
               "status": "起草"
             },
             {
-              "id": "scan-committed-review-changes",
-              "text": "代码审查前检查基准到送审提交的改动及相关测试、文档中的清理问题，并为命中提供稳定编号和位置。",
-              "status": "起草"
-            },
-            {
               "id": "answer-cleanup-hits",
               "text": "代码审查的剃刀逐条回应扫描命中，选择修改、保留或交用户决定并说明理由。",
               "status": "起草"
@@ -616,11 +674,6 @@
               "text": "代码审查的剃刀按工作流程清理清单的每类记录看过的地方和结论。",
               "status": "起草"
             }
-          ],
-          "entries": [
-            "xy-review/SKILL.md",
-            "xy-review/scan_changes.py",
-            "xy-review/duplicate_blocks.py"
           ],
           "children": [
             {
@@ -633,7 +686,7 @@
                 "quote": "",
                 "from": "20261110 清扫决定页面第一页"
               },
-              "directory": null,
+              "directory": "workflow-capabilities/xy-review/review_report_check",
               "items": [
                 {
                   "id": "report-type-shape",
@@ -706,9 +759,6 @@
                   "status": "起草"
                 }
               ],
-              "entries": [
-                "xy-review/check.py"
-              ],
               "children": []
             },
             {
@@ -721,7 +771,7 @@
                 "quote": "",
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L6"
               },
-              "directory": null,
+              "directory": "workflow-capabilities/xy-review/rule_quote_check",
               "items": [
                 {
                   "id": "valid-rule-reference",
@@ -739,9 +789,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-review/rule_references.py"
-              ],
               "children": []
             },
             {
@@ -754,7 +801,7 @@
                 "quote": "",
                 "from": "20261110 清扫决定页面第一页"
               },
-              "directory": null,
+              "directory": "workflow-capabilities/xy-review/stuck_loop_audit",
               "items": [
                 {
                   "id": "audit-informal-report-rounds",
@@ -767,8 +814,25 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-review/audit.py"
+              "children": []
+            },
+            {
+              "id": "change-scan",
+              "title": "改动清理扫描",
+              "what": "检查基准到送审提交的改动及相关测试、文档中的清理问题，并为命中提供稳定编号和位置。",
+              "why": {
+                "text": "改动清理扫描是审查能力中的一项专有本事，审查流程和报告检查都会使用。",
+                "source": "起草",
+                "quote": "",
+                "from": ""
+              },
+              "directory": "workflow-capabilities/xy-review/change_scan",
+              "items": [
+                {
+                  "id": "scan-committed-review-changes",
+                  "text": "代码审查前检查基准到送审提交的改动及相关测试、文档中的清理问题，并为命中提供稳定编号和位置。",
+                  "status": "起草"
+                }
               ],
               "children": []
             }
@@ -784,7 +848,7 @@
             "quote": "",
             "from": "20261110 清扫决定页面第一页"
           },
-          "directory": "xy-goal",
+          "directory": "workflow-capabilities/xy-goal",
           "items": [
             {
               "id": "xy-goal-explicit-activation",
@@ -815,10 +879,17 @@
               "id": "xy-goal-inactive-expiry",
               "text": "暂停提醒或未关闭的契约在 30 天无活动后清理；超过期限回来可能需要重新说明目标。",
               "status": "确认"
+            },
+            {
+              "id": "scheduled-review-half-hour-check",
+              "text": "在办事项每半小时对照真实状态和完成条件检查，并能当场推进已具备条件的工作。",
+              "status": "确认"
+            },
+            {
+              "id": "scheduled-review-pause-for-user",
+              "text": "只剩等待用户决定时暂停重复提醒，用户回复后或提醒过期后恢复检查并核对定时器。",
+              "status": "确认"
             }
-          ],
-          "entries": [
-            "xy-goal/README.md"
           ],
           "children": [
             {
@@ -831,7 +902,7 @@
                 "quote": "",
                 "from": "20261110 清扫决定页面第二页 R4"
               },
-              "directory": null,
+              "directory": "workflow-capabilities/xy-goal/capture_quotes",
               "items": [
                 {
                   "id": "capture-quotes-main-prompts",
@@ -859,10 +930,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-goal/SKILL.md",
-                "xy-goal/goal.py"
-              ],
               "children": []
             },
             {
@@ -875,7 +942,7 @@
                 "quote": "",
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json#answers.P1,answers.P7"
               },
-              "directory": null,
+              "directory": "workflow-capabilities/xy-goal/track_and_verify",
               "items": [
                 {
                   "id": "track-and-verify-source-links",
@@ -968,39 +1035,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-goal/SKILL.md",
-                "xy-goal/goal.py"
-              ],
-              "children": []
-            },
-            {
-              "id": "scheduled-review",
-              "title": "定时自查",
-              "what": "goal.py 在 open、adopt 时打印定时提示，由 AI 手动用 CronCreate 建立；只剩等用户时用 CronDelete 暂停，用户回话后重建。",
-              "why": {
-                "text": "我不在的时候，事情不能停在半路。",
-                "source": "确认",
-                "quote": "",
-                "from": "20261110 清扫决定页面第一页"
-              },
-              "directory": null,
-              "items": [
-                {
-                  "id": "scheduled-review-half-hour-check",
-                  "text": "在办事项每半小时对照真实状态和完成条件检查，并能当场推进已具备条件的工作。",
-                  "status": "确认"
-                },
-                {
-                  "id": "scheduled-review-pause-for-user",
-                  "text": "只剩等待用户决定时暂停重复提醒，用户回复后或提醒过期后恢复检查并核对定时器。",
-                  "status": "确认"
-                }
-              ],
-              "entries": [
-                "xy-goal/SKILL.md",
-                "xy-goal/goal.py"
-              ],
               "children": []
             },
             {
@@ -1013,7 +1047,7 @@
                 "quote": "",
                 "from": "20261110 清扫决定页面第一页"
               },
-              "directory": null,
+              "directory": "workflow-capabilities/xy-goal/contract_takeover",
               "items": [
                 {
                   "id": "contract-takeover-new-session",
@@ -1025,10 +1059,6 @@
                   "text": "同一会话恢复运行时只刷新会话归属，不改原话、事项或来源关系。",
                   "status": "确认"
                 }
-              ],
-              "entries": [
-                "xy-goal/SKILL.md",
-                "xy-goal/goal.py"
               ],
               "children": []
             }
@@ -1189,11 +1219,6 @@
           "status": "起草"
         }
       ],
-      "entries": [
-        "xy-handoff/SKILL.md",
-        "xy-handoff/delete_self.py",
-        "xy-handoff/test_delete_self.py"
-      ],
       "children": [
         {
           "id": "handoff-note-check",
@@ -1205,7 +1230,7 @@
             "quote": "",
             "from": "20261110 清扫决定页面第一页"
           },
-          "directory": null,
+          "directory": "xy-handoff/handoff_note_check",
           "items": [
             {
               "id": "reject-duplicate-keys",
@@ -1238,10 +1263,6 @@
               "status": "确认"
             }
           ],
-          "entries": [
-            "xy-handoff/check_handoff.py",
-            "xy-handoff/test_check_handoff.py"
-          ],
           "children": []
         }
       ]
@@ -1249,7 +1270,7 @@
     {
       "id": "xy-runs",
       "title": "运行目录管理",
-      "what": "工作中产生的文件各有去处，过期的自动清掉。",
+      "what": "工作中写出的文件各有去处；运行目录按规则归档，过期自动清理，确定作废的事项产物可以安全提前删除。",
       "why": {
         "text": "AI 干活会到处留临时文件，不管就越积越多。",
         "source": "确认",
@@ -1257,62 +1278,44 @@
         "from": "20261110 清扫决定页面第一页"
       },
       "directory": "xy-runs",
-      "items": [],
-      "entries": [],
-      "children": [
+      "items": [
         {
-          "id": "file-placement",
-          "title": "文件去处规则",
-          "what": "工作中写出的每个文件，按要活多久、归谁管，只有三个去处；工作树和工具自己管的位置除外；确定作废的运行目录，核对路径、进程和 systemd 引用后可以不等 30 天提前删。",
-          "why": {
-            "text": "去处说不清，文件就会被放错地方。",
-            "source": "确认",
-            "quote": "",
-            "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A17"
-          },
-          "directory": null,
-          "items": [
-            {
-              "id": "classify-destination",
-              "text": "工作产物按生命周期和所有者放进版本库、已注明的长期位置或运行目录；找不到长期位置时先问用户。",
-              "status": "确认"
-            },
-            {
-              "id": "isolate-run-dir",
-              "text": "事项按会话所属项目分组，在统一运行根下拥有独立目录，并用时间和简短英文主题辨认。",
-              "status": "确认"
-            },
-            {
-              "id": "keep-tool-paths",
-              "text": "以工具名命名的运行目录由对应工具管理，其他工作不向其中写入文件。",
-              "status": "确认"
-            },
-            {
-              "id": "share-run-context",
-              "text": "派子代理时，它能在同一事项的运行目录中读取材料并保存产物。",
-              "status": "确认"
-            },
-            {
-              "id": "expire-inactive-runs",
-              "text": "运行目录满 30 天未改动且本用户没有进程在用时才整项删除；空项目目录也须满 30 天。",
-              "status": "确认"
-            },
-            {
-              "id": "early-delete-safely",
-              "text": "确定作废的事项产物可提前删除；运行内软链仅在真实目标也属于运行根时按此规则处理，并须核对目标路径、活动进程、定时服务和其他会话依赖，且不删除运行根、项目根或整个 inbox。",
-              "status": "确认"
-            },
-            {
-              "id": "preserve-worktree-location",
-              "text": "Git 工作树留在仓库管理；harness 和各工具自管的位置不由运行目录规则搬动。",
-              "status": "确认"
-            }
-          ],
-          "entries": [
-            "xy-runs/SKILL.md"
-          ],
-          "children": []
+          "id": "classify-destination",
+          "text": "工作产物按生命周期和所有者放进版本库、已注明的长期位置或运行目录；找不到长期位置时先问用户。",
+          "status": "确认"
         },
+        {
+          "id": "isolate-run-dir",
+          "text": "事项按会话所属项目分组，在统一运行根下拥有独立目录，并用时间和简短英文主题辨认。",
+          "status": "确认"
+        },
+        {
+          "id": "keep-tool-paths",
+          "text": "以工具名命名的运行目录由对应工具管理，其他工作不向其中写入文件。",
+          "status": "确认"
+        },
+        {
+          "id": "share-run-context",
+          "text": "派子代理时，它能在同一事项的运行目录中读取材料并保存产物。",
+          "status": "确认"
+        },
+        {
+          "id": "expire-inactive-runs",
+          "text": "运行目录满 30 天未改动且本用户没有进程在用时才整项删除；空项目目录也须满 30 天。",
+          "status": "确认"
+        },
+        {
+          "id": "early-delete-safely",
+          "text": "确定作废的事项产物可提前删除；运行内软链仅在真实目标也属于运行根时按此规则处理，并须核对目标路径、活动进程、定时服务和其他会话依赖，且不删除运行根、项目根或整个 inbox。",
+          "status": "确认"
+        },
+        {
+          "id": "preserve-worktree-location",
+          "text": "Git 工作树留在仓库管理；harness 和各工具自管的位置不由运行目录规则搬动。",
+          "status": "确认"
+        }
+      ],
+      "children": [
         {
           "id": "scheduled-cleanup",
           "title": "定期清理运行目录",
@@ -1323,7 +1326,7 @@
             "quote": "",
             "from": "/data/user/xy/runs/-home-xy-xy-skills/20261110-070411-xy-skills-repo-map-cleanup-redesign/cleanup/decisions-answer.json A18"
           },
-          "directory": null,
+          "directory": "xy-runs/scheduled_cleanup",
           "items": [
             {
               "id": "linux-runtime",
@@ -1476,11 +1479,6 @@
               "status": "确认"
             }
           ],
-          "entries": [
-            "xy-runs/clean.py",
-            "xy-runs/README.md",
-            "xy-runs/systemd/"
-          ],
           "children": []
         }
       ]
@@ -1495,21 +1493,20 @@
         "quote": "ai写的代码太多了，应该怎么整理，让仓库干净？",
         "from": "20261031-002858-xy-skills-cleanup-skill 原话 1"
       },
-      "directory": null,
+      "directory": "repository-care",
       "items": [],
-      "entries": [],
       "children": [
         {
           "id": "xy-repo-map",
           "title": "仓库功能图",
-          "what": "展示本仓及已登记子仓的功能树：各功能做什么、为什么、文件归属、代码/测试/文档/注释行数、文档字数、用到与被用到的关系、外部依赖、三种状态标记及总数；可发布，工作树出图时根功能名取主检出目录名。",
+          "what": "展示本仓及已登记子仓的功能树：各功能做什么、为什么、按目录归属的文件、代码/测试/文档/注释行数、文档字数、用到与被用到的关系、外部依赖及待决定条目数量；可发布，工作树出图时根功能名取主检出目录名。",
           "why": {
             "text": "以后审核，就是看仓库实际情况和图的情况，功能多了应该删掉或更新图。",
             "source": "原话",
             "quote": "以后审核，就是看仓库实际情况和图的情况，功能多了应该删掉or更新图",
             "from": "20261031-002858-xy-skills-cleanup-skill 原话 5"
           },
-          "directory": "xy-repo-map",
+          "directory": "repository-care/xy-repo-map",
           "items": [
             {
               "id": "map-data-output",
@@ -1537,16 +1534,6 @@
               "status": "确认"
             },
             {
-              "id": "unimplemented-marker",
-              "text": "没有目录、子功能或入口的叶功能显示“还没实现”，并计入标记总数。",
-              "status": "确认"
-            },
-            {
-              "id": "unmapped-code-marker",
-              "text": "含子功能的目录功能若仍接收未细分的代码或测试，会显示“没归到功能的代码或测试”并计数。",
-              "status": "确认"
-            },
-            {
               "id": "draft-ai-written-items",
               "text": "AI 新写或改写的条目在用户确认该条文字前标为「起草」。",
               "status": "起草"
@@ -1556,14 +1543,6 @@
               "text": "已有功能尚无条目且改动涉及条目时，会按现状起草该功能的全部条目。",
               "status": "起草"
             }
-          ],
-          "entries": [
-            "xy-repo-map/SKILL.md",
-            "xy-repo-map/repo_map.py",
-            "xy-repo-map/repo_map_lib/map_data.py",
-            "xy-repo-map/tests/test_derivation.py",
-            "xy-repo-map/tests/test_real_repository.py",
-            "xy-repo-map/tests/map_fixture.py"
           ],
           "children": [
             {
@@ -1576,7 +1555,7 @@
                 "quote": "",
                 "from": "20261110 清扫决定页面第一页"
               },
-              "directory": null,
+              "directory": "repository-care/xy-repo-map/repo_map_lib/validate_feature_list",
               "items": [
                 {
                   "id": "feature-record",
@@ -1600,13 +1579,8 @@
                 },
                 {
                   "id": "directory-scope",
-                  "text": "功能目录必须唯一、真实包含被跟踪文件并位于其目录祖先内；根功能代表仓库根目录。",
-                  "status": "确认"
-                },
-                {
-                  "id": "entry-scope",
-                  "text": "功能入口必须存在并含有被跟踪文件，且位于该功能最近的目录功能内。",
-                  "status": "确认"
+                  "text": "每个功能都必须填写全树唯一的安全仓内相对目录；根目录写空字符串，其他目录下必须有 Git 跟踪文件。",
+                  "status": "起草"
                 },
                 {
                   "id": "subrepository-field",
@@ -1618,10 +1592,6 @@
                   "text": "仓外依赖名称只能由根功能声明，并且每个名称必须非空、首尾无空白且不含换行。",
                   "status": "确认"
                 }
-              ],
-              "entries": [
-                "xy-repo-map/repo_map_lib/features.py",
-                "xy-repo-map/tests/test_feature_check.py"
               ],
               "children": []
             },
@@ -1635,47 +1605,43 @@
                 "quote": "",
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261112-011603-xy-skills-full-cleanup/decisions/answers.json#answers.P5"
               },
-              "directory": null,
+              "directory": "repository-care/xy-repo-map/repo_map_lib/assign_files",
               "items": [
                 {
                   "id": "one-owner",
-                  "text": "每个被跟踪文件恰好归到一个功能，并记录其归属原因。",
-                  "status": "确认"
+                  "text": "每份 Git 跟踪文件都归到包含它的最深功能目录对应的功能。",
+                  "status": "起草"
                 },
                 {
                   "id": "leaf-directory",
-                  "text": "没有子功能的目录功能直接拥有其目录下的全部被跟踪文件。",
-                  "status": "确认"
+                  "text": "功能目录覆盖自己的全部文件；文件位于子功能目录时归该子功能。",
+                  "status": "起草"
                 },
                 {
                   "id": "registered-owner",
-                  "text": "祖先和子功能同时登记同一文件时，该文件归给更具体的子功能。",
-                  "status": "确认"
+                  "text": "上级和子功能各自拥有目录中的文件；每份文件只按最深功能目录确定归属。",
+                  "status": "起草"
                 },
                 {
                   "id": "import-reach",
-                  "text": "未登记的非测试文件可沿功能入口的 Python 导入归属，但只在同一目录功能内传播，并在遇到无关功能入口时停止。",
-                  "status": "确认"
+                  "text": "代码导入只用于推导 uses 关系，不改变文件归属。",
+                  "status": "起草"
                 },
                 {
                   "id": "tests-follow-code",
-                  "text": "未登记测试优先归给它直接导入或按限定文件名匹配的被测代码；文件名对应只适用于 test_*.py、*_test.py、*_test.rs、*_tests.rs，且只在当前候选中查找，tests.rs 不对应。同目录功能无导入代码时，再看测试导入的其他目录功能中的代码。涉及多个功能时按 shared-owner 处理；没有匹配代码时按 whole-fallback 处理。",
-                  "status": "确认"
+                  "text": "测试文件按所在的最深功能目录归属，不跟随它导入的代码。",
+                  "status": "起草"
                 },
                 {
                   "id": "shared-owner",
-                  "text": "多个兄弟功能共同登记或导入的文件归到它们最近的共同上级，并标为共用。",
-                  "status": "确认"
+                  "text": "多个功能使用同一份文件时，文件仍按所在目录归属，使用关系单独显示。",
+                  "status": "起草"
                 },
                 {
                   "id": "whole-fallback",
-                  "text": "没有被入口或导入关系细分的文件仍归到目录功能，并标示为整体归属。",
-                  "status": "确认"
+                  "text": "不需要入口、导入或文件名推断；每份文件都由所在的最深功能目录确定归属。",
+                  "status": "起草"
                 }
-              ],
-              "entries": [
-                "xy-repo-map/repo_map_lib/ownership.py",
-                "xy-repo-map/tests/test_ownership.py"
               ],
               "children": []
             },
@@ -1689,7 +1655,7 @@
                 "quote": "",
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L1"
               },
-              "directory": null,
+              "directory": "repository-care/xy-repo-map/repo_map_lib/count_lines",
               "items": [
                 {
                   "id": "line-buckets",
@@ -1722,9 +1688,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-repo-map/repo_map_lib/metrics.py"
-              ],
               "children": []
             },
             {
@@ -1737,7 +1700,7 @@
                 "quote": "需要有白名单，比如quant workspace下面的实验文档就是不需要参与优化的，就应该被全量跳过",
                 "from": "20261113-091419-xy-skills-cleanup-text 原话 3"
               },
-              "directory": null,
+              "directory": "repository-care/xy-repo-map/repo_map_lib/skip_paths",
               "items": [
                 {
                   "id": "required-skip-list",
@@ -1760,10 +1723,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-repo-map/repo_map_lib/skip_paths.py",
-                "xy-repo-map/tests/test_skip_paths.py"
-              ],
               "children": []
             },
             {
@@ -1776,7 +1735,7 @@
                 "quote": "",
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json#answers.L7（选「按建议改」，题面同目录 decisions.json 的 L7）"
               },
-              "directory": null,
+              "directory": "repository-care/xy-repo-map/repo_map_lib/find_dependencies",
               "items": [
                 {
                   "id": "python-import-links",
@@ -1790,17 +1749,14 @@
                 },
                 {
                   "id": "feature-name-mentions",
-                  "text": "代码或文档提到其他功能的唯一目录名时，功能图能够显示相应的关联。",
-                  "status": "确认"
+                  "text": "代码或文档单独提到有直属文件功能的目录名时，功能图能够显示相应关联；写在路径里的目录名不单独建立关系。",
+                  "status": "起草"
                 },
                 {
                   "id": "external-name-mentions",
                   "text": "代码或文档提到仓库声明的外部依赖时，功能图能够显示该外部使用关系。",
                   "status": "确认"
                 }
-              ],
-              "entries": [
-                "xy-repo-map/repo_map_lib/dependencies.py"
               ],
               "children": []
             },
@@ -1814,7 +1770,7 @@
                 "quote": "",
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261113-173826-xy-skills-text-cleanup/decisions/answers.json#answers.L7（选「按建议改」，题面同目录 decisions.json 的 L7）"
               },
-              "directory": null,
+              "directory": "repository-care/xy-repo-map/repo_map_lib/render_feature_tree",
               "items": [
                 {
                   "id": "offline-map-page",
@@ -1888,8 +1844,8 @@
                 },
                 {
                   "id": "show-status-marker-counts",
-                  "text": "显示三种状态标记数量。",
-                  "status": "确认"
+                  "text": "汇总显示“等你拍板”标记数量。",
+                  "status": "起草"
                 },
                 {
                   "id": "show-proportional-line-bar",
@@ -1918,8 +1874,8 @@
                 },
                 {
                   "id": "pending-decision-filter",
-                  "text": "筛选待决定项时只显示含待决定条目的功能及其上级，并隐藏其他功能和未细分部分。",
-                  "status": "确认"
+                  "text": "筛选待决定项时只显示含“等你拍板”条目的功能及其上级，并隐藏其他功能和上级的本级自己的部分。",
+                  "status": "起草"
                 },
                 {
                   "id": "system-color-scheme",
@@ -1947,13 +1903,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-repo-map/repo_map_lib/render_command.py",
-                "xy-repo-map/repo_map_lib/embedded_json.py",
-                "xy-repo-map/repo_map_lib/templates/feature-tree.html",
-                "xy-repo-map/tests/test_render.py",
-                "xy-repo-map/tests/browser_tree_test.py"
-              ],
               "children": []
             },
             {
@@ -1966,7 +1915,7 @@
                 "quote": "比如我现在在 quant workspace 下，可以看到一个完整的图，也能看到单独每个仓库（比如 quant data 或 quant engine）自己的图。",
                 "from": "20261111-044910-xy-skills-cleanup-incremental 原话 47"
               },
-              "directory": null,
+              "directory": "repository-care/xy-repo-map/repo_map_lib/workspace_map",
               "items": [
                 {
                   "id": "combine-registered-repositories",
@@ -1984,11 +1933,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-repo-map/repo_map_lib/workspace_map.py",
-                "xy-repo-map/tests/test_workspace.py",
-                "xy-repo-map/tests/browser_workspace_test.py"
-              ],
               "children": []
             },
             {
@@ -2001,7 +1945,7 @@
                 "quote": "",
                 "from": "20261110 清扫决定页面第一页"
               },
-              "directory": null,
+              "directory": "repository-care/xy-repo-map/repo_map_lib/publish_to_platform",
               "items": [
                 {
                   "id": "publish-review-page",
@@ -2029,10 +1973,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-repo-map/repo_map_lib/publish_command.py",
-                "xy-repo-map/tests/test_publish.py"
-              ],
               "children": []
             }
           ]
@@ -2047,7 +1987,7 @@
             "quote": "AI 就把从上一次到这一次新增的功能展示给用户看。用户看后判断这些功能是否确实需要，再逐个做决定，决定保留还是不保留。",
             "from": "/data/user/xy/runs/-home-xy-xy-skills/20261118-184541-xy-skills-cleanup-focus/xy-goal/quotes/24.md"
           },
-          "directory": "xy-cleanup",
+          "directory": "repository-care/xy-cleanup",
           "items": [
             {
               "id": "minimal-result",
@@ -2211,8 +2151,8 @@
             },
             {
               "id": "clear-pending-markers",
-              "text": "清扫完成时范围内没有待确认条目，其他未实现或未细分标记清零或按用户决定列明。",
-              "status": "确认"
+              "text": "清扫完成时，范围内没有待确认条目；尚未实现的功能须先完成并登记后再进入清扫。",
+              "status": "起草"
             },
             {
               "id": "after-cleanup-report",
@@ -2250,10 +2190,6 @@
               "status": "起草"
             }
           ],
-          "entries": [
-            "xy-cleanup/SKILL.md",
-            "xy-cleanup/review-misses.md"
-          ],
           "children": [
             {
               "id": "decision-page",
@@ -2265,7 +2201,7 @@
                 "quote": "尤其是像你现在一次给了几十道题，如果我需要反复地跟你给这种反馈，其实会很麻烦",
                 "from": "20261110-070411-xy-skills-repo-map-cleanup-redesign 原话 61"
               },
-              "directory": null,
+              "directory": "repository-care/xy-cleanup/decision_page",
               "items": [
                 {
                   "id": "collect-decisions",
@@ -2368,12 +2304,6 @@
                   "status": "确认"
                 }
               ],
-              "entries": [
-                "xy-cleanup/decision_page.py",
-                "xy-cleanup/templates/decision-page.html",
-                "xy-cleanup/tests/test_decision_page.py",
-                "xy-cleanup/tests/browser_decision_page_test.py"
-              ],
               "children": []
             },
             {
@@ -2386,7 +2316,7 @@
                 "quote": "",
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L9"
               },
-              "directory": null,
+              "directory": "repository-care/xy-cleanup/changed_features_only",
               "items": [
                 {
                   "id": "review-changed-features",
@@ -2424,10 +2354,6 @@
                   "status": "起草"
                 }
               ],
-              "entries": [
-                "xy-cleanup/approvals.py",
-                "xy-cleanup/tests/test_approvals.py"
-              ],
               "children": []
             },
             {
@@ -2440,7 +2366,7 @@
                 "quote": "给人审批的话，我觉得尽量以功能为单位给人看会更好、更合适一点。功能的粒度我觉得不能更小了，如果再小的话，可能对人的负担就太高了。",
                 "from": "/data/user/xy/runs/-home-xy-xy-skills/20261118-184541-xy-skills-cleanup-focus/xy-goal/quotes/16.md"
               },
-              "directory": null,
+              "directory": "repository-care/xy-cleanup/feature_cards",
               "items": [
                 {
                   "id": "validate-feature-cards",
@@ -2463,10 +2389,6 @@
                   "status": "起草"
                 }
               ],
-              "entries": [
-                "xy-cleanup/feature_cards.py",
-                "xy-cleanup/tests/test_feature_cards.py"
-              ],
               "children": []
             },
             {
@@ -2477,9 +2399,9 @@
                 "text": "关键约束要写进代码本身，避免只靠文档提醒而误用。",
                 "source": "原话",
                 "quote": "约束尽量写进代码本身，避免文档软约束造成误用。",
-                "from": "xy-repo-rules/SKILL.md 第 5 条"
+                "from": "rules/xy-repo-rules/SKILL.md 第 5 条"
               },
-              "directory": null,
+              "directory": "repository-care/xy-cleanup/usage_coverage_check",
               "items": [
                 {
                   "id": "match-usage-sources",
@@ -2512,103 +2434,11 @@
                   "status": "起草"
                 }
               ],
-              "entries": [
-                "xy-cleanup/check_usage_coverage.py",
-                "xy-cleanup/tests/test_check_usage_coverage.py"
-              ],
               "children": []
             }
           ]
         }
       ]
-    },
-    {
-      "id": "getting-started",
-      "title": "上手与安装",
-      "what": "读完就能装上、用起来。",
-      "why": {
-        "text": "装这套 skill 要软链、设环境变量、合并 hook、装定时器，漏一步就不工作，得有照着做就能装好的说明。",
-        "source": "确认",
-        "quote": "",
-        "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L10"
-      },
-      "directory": null,
-      "items": [
-        {
-          "id": "install-skill-set",
-          "text": "使用者可以将仓库里的技能安装到 Claude Code 的个人技能目录并直接调用。",
-          "status": "确认"
-        },
-        {
-          "id": "install-pinned-plugin",
-          "text": "使用者可以安装与工作流程匹配的固定版本 superpowers，并停用会自动更新的其他来源版本。",
-          "status": "确认"
-        },
-        {
-          "id": "configure-run-storage",
-          "text": "使用者可以为长期任务配置统一的运行目录，让临时产物保存在稳定位置。",
-          "status": "确认"
-        },
-        {
-          "id": "capture-user-messages",
-          "text": "使用者消息和提问工具的选择题回答能自动逐字保存，并可在建立目标契约时接续先前消息。",
-          "status": "确认"
-        },
-        {
-          "id": "load-global-rules",
-          "text": "每个会话开始时自动加载运行目录、交接、铁律和仓库规范，并按标准工作流程处理相应任务。",
-          "status": "确认"
-        },
-        {
-          "id": "show-required-integrations",
-          "text": "使用者能查明工作流程、目标跟踪和交接功能所需的插件、技能与 Claude Code 能力。",
-          "status": "确认"
-        },
-        {
-          "id": "install-run-cleaner",
-          "text": "使用者可以安装按配置范围定期清理过期运行目录的服务。",
-          "status": "确认"
-        },
-        {
-          "id": "add-new-skills",
-          "text": "维护者可以新增独立技能，并在安装时只暴露能直接加载的技能入口。",
-          "status": "确认"
-        },
-        {
-          "id": "maintain-feature-map",
-          "text": "已有功能清单的仓库在每次改动时维护功能归属并校验清单。",
-          "status": "确认"
-        },
-        {
-          "id": "record-feature-approvals",
-          "text": "清扫完成后记录用户认可的功能状态，使后续重审只覆盖发生变化的功能。",
-          "status": "确认"
-        },
-        {
-          "id": "run-complete-test-suite",
-          "text": "使用者能从仓库说明找到并运行覆盖各子项目的完整测试套件。",
-          "status": "确认"
-        },
-        {
-          "id": "require-browser-tests",
-          "text": "浏览器测试必须配置 Playwright 和 Chromium；环境缺失时明确失败，不静默跳过。",
-          "status": "确认"
-        },
-        {
-          "id": "check-review-regressions",
-          "text": "修改清扫或审查规则后，按记录的漏审案例做回归对照。",
-          "status": "确认"
-        },
-        {
-          "id": "skill-descriptions",
-          "text": "每个技能开头写一句适用时机，Claude Code 据此列出技能并决定何时加载。",
-          "status": "确认"
-        }
-      ],
-      "entries": [
-        "README.md"
-      ],
-      "children": []
     }
   ]
 }
