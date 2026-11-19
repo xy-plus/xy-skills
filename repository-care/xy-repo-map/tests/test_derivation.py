@@ -267,42 +267,41 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(data["features"]["package"]["files"], ["pkg/orphan.py"])
         self.assertEqual(data["features"]["package"]["markers"], [])
 
-    def test_uses_merge_import_and_mention_with_import_taking_precedence(self):
-        repository = make_repo(self, {
-            "alpha/main.py": "import beta.helper\n# see beta/helper.py\n",
-            "beta/helper.py": "value = 1\n",
-        }, child_tree([
-            feature("alpha", "alpha"),
-            feature("beta", "beta"),
-        ]))
-        data = build_map(self, repository)
-        self.assertEqual(data["features"]["alpha"]["uses"], [{"feature": "beta", "by": "import"}])
-
-    def test_import_matches_uppercase_python_suffix(self):
-        repository = make_repo(self, {
-            "alpha/main.py": "import beta.helper\n",
-            "beta/helper.PY": "value = 1\n",
-        }, child_tree([
-            feature("alpha", "alpha"),
-            feature("beta", "beta"),
-        ]))
-
-        data = build_map(self, repository)
-
-        self.assertEqual(data["features"]["alpha"]["uses"], [
-            {"feature": "beta", "by": "import"},
-        ])
-
-    def test_mention_finds_paths_and_other_directory_names(self):
-        repository = make_repo(self, {
-            "alpha/guide.md": "The beta directory is used here.\n",
-            "beta/helper.py": "value = 1\n",
-        }, child_tree([
-            feature("alpha", "alpha"),
-            feature("beta", "beta"),
-        ]))
-        data = build_map(self, repository)
-        self.assertEqual(data["features"]["alpha"]["uses"], [{"feature": "beta", "by": "mention"}])
+    def test_uses_report_imports_and_directory_mentions(self):
+        cases = (
+            (
+                "imports take precedence over mentions",
+                {
+                    "alpha/main.py": "import beta.helper\n# see beta/helper.py\n",
+                    "beta/helper.py": "value = 1\n",
+                },
+                [{"feature": "beta", "by": "import"}],
+            ),
+            (
+                "uppercase Python suffix",
+                {
+                    "alpha/main.py": "import beta.helper\n",
+                    "beta/helper.PY": "value = 1\n",
+                },
+                [{"feature": "beta", "by": "import"}],
+            ),
+            (
+                "paths and directory names",
+                {
+                    "alpha/guide.md": "The beta directory is used here.\n",
+                    "beta/helper.py": "value = 1\n",
+                },
+                [{"feature": "beta", "by": "mention"}],
+            ),
+        )
+        for scenario, files, expected in cases:
+            with self.subTest(scenario=scenario):
+                repository = make_repo(self, files, child_tree([
+                    feature("alpha", "alpha"),
+                    feature("beta", "beta"),
+                ]))
+                data = build_map(self, repository)
+                self.assertEqual(data["features"]["alpha"]["uses"], expected)
 
     def test_ambiguous_directory_name_does_not_create_directory_mentions(self):
         repository = make_repo(self, {

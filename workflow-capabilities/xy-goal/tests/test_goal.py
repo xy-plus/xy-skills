@@ -1,17 +1,18 @@
+import fcntl
+import shlex
+import shutil
+
 from goal_test_support import (
     GoalTestSupport,
     Path,
     SCRIPT_DIRECTORY,
     StringIO,
-    fcntl,
     goal,
     json,
     mock,
     os,
     redirect_stderr,
     redirect_stdout,
-    shlex,
-    shutil,
     subprocess,
     sys,
     tempfile,

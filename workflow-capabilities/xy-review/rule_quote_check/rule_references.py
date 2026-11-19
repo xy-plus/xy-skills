@@ -55,12 +55,3 @@ def rule_quote_problem(source, text):
     if not isinstance(text, str) or not text.strip() or text not in rule:
         return f"必须逐字引用「{source}」所标条款中的连续原文；所标条款原文：\n{rule}"
     return None
-
-
-def basis_is_supported(basis):
-    """Check a cleanup basis has an exact rule source and a continuous quote."""
-    if not isinstance(basis, dict) or set(basis) != {"source", "text"}:
-        return False
-    source = basis.get("source")
-    text = basis.get("text")
-    return is_rule_source(source) and rule_quote_problem(source, text) is None

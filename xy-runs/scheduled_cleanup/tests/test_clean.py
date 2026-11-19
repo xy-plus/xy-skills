@@ -104,6 +104,14 @@ class CleanerTestCase(unittest.TestCase):
         status = clean.clean_roots(roots, mode, cutoff, output, errors)
         return status, [json.loads(line) for line in output.getvalue().splitlines()], errors.getvalue()
 
+    def assert_outer_lock_is_held(self):
+        descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(descriptor)
+
     def start_process(self, item, action, arguments):
         environment = os.environ.copy()
         environment.update(CLEANER_TEST_ITEM=str(item), CLEANER_TEST_ACTION=action,
@@ -373,23 +381,13 @@ class CleanerTestCase(unittest.TestCase):
         real_remove = clean.remove_item
 
         def verify_move(source, destination, *, src_dir_fd, dst_dir_fd):
-            descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                with self.assertRaises(BlockingIOError):
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            finally:
-                os.close(descriptor)
+            self.assert_outer_lock_is_held()
             self.assertEqual(descriptor_directory(dst_dir_fd), self.root / ".runs-cleaner-trash")
             moved.append(descriptor_directory(src_dir_fd) / source)
             return real_rename(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
         def verify_remove(path):
-            descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                with self.assertRaises(BlockingIOError):
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            finally:
-                os.close(descriptor)
+            self.assert_outer_lock_is_held()
             real_remove(path)
 
         with mock.patch("clean.os.rename", side_effect=verify_move), \
@@ -516,6 +514,13 @@ class CleanerTestCase(unittest.TestCase):
         project.symlink_to(outside, target_is_directory=True)
         os.utime(project, (self.cutoff + 1, self.cutoff + 1), follow_symlinks=False)
 
+    def assert_replacement_rejected(self, project, protected_path, result):
+        status, paths, errors = result
+        self.assertTrue(protected_path.exists())
+        self.assertEqual(paths, [])
+        self.assertNotEqual(status, 0)
+        self.assertIn(str(project), errors)
+
     # Root expansion is a snapshot: a later symlink cannot become a cleanup root.
     def test_project_replaced_with_symlink_after_expansion_is_reported(self):
         project, outside, victim = self.replacement_fixture()
@@ -527,13 +532,10 @@ class CleanerTestCase(unittest.TestCase):
             return roots
 
         with mock.patch("clean.expand_roots", side_effect=expand_then_replace):
-            status, paths, errors = self.run_cleaner(
+            result = self.run_cleaner(
                 self.roots()[:2], "delete", self.cutoff
             )
-        self.assertTrue(victim.exists())
-        self.assertEqual(paths, [])
-        self.assertNotEqual(status, 0)
-        self.assertIn(str(project), errors)
+        self.assert_replacement_rejected(project, victim, result)
 
     # Checking before locking is insufficient if the root changes at acquisition.
     def test_project_replaced_with_symlink_at_lock_is_reported(self):
@@ -545,13 +547,10 @@ class CleanerTestCase(unittest.TestCase):
             self.replace_project_with_symlink(project, outside)
 
         with mock.patch("clean.fcntl.flock", side_effect=lock_then_replace):
-            status, paths, errors = self.run_cleaner(
+            result = self.run_cleaner(
                 self.roots()[:2], "delete", self.cutoff
             )
-        self.assertTrue(victim.exists())
-        self.assertEqual(paths, [])
-        self.assertNotEqual(status, 0)
-        self.assertIn(str(project), errors)
+        self.assert_replacement_rejected(project, victim, result)
 
     # A replacement real directory is also a different, unverified cleanup root.
     def test_project_replaced_with_different_directory_is_reported(self):
@@ -568,13 +567,10 @@ class CleanerTestCase(unittest.TestCase):
             return roots
 
         with mock.patch("clean.expand_roots", side_effect=expand_then_replace):
-            status, paths, errors = self.run_cleaner(
+            result = self.run_cleaner(
                 self.roots()[:2], "delete", self.cutoff
             )
-        self.assertTrue((project / "matter" / "data").exists())
-        self.assertEqual(paths, [])
-        self.assertNotEqual(status, 0)
-        self.assertIn(str(project), errors)
+        self.assert_replacement_rejected(project, project / "matter" / "data", result)
 
     # A swap after validation must not redirect the actual rename to the target.
     def test_project_replaced_at_rename_does_not_move_symlink_target(self):

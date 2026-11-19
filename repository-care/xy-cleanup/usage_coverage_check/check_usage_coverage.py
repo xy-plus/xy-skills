@@ -6,11 +6,10 @@ import sys
 
 
 XY_CLEANUP_DIRECTORY = Path(__file__).resolve().parents[1]
-REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-REPOSITORY_CARE = REPOSITORY_ROOT / "repository-care"
-sys.path.insert(0, str(REPOSITORY_ROOT))
-sys.path.insert(0, str(REPOSITORY_CARE / "xy-repo-map"))
-sys.path.insert(0, str(XY_CLEANUP_DIRECTORY / "changed_features_only"))
+sys.path.insert(0, str(XY_CLEANUP_DIRECTORY))
+from cleanup_imports import setup_cleanup_imports  # noqa: E402
+
+setup_cleanup_imports(__file__, ())
 from approvals import plan_data  # noqa: E402
 from json_validation import object_without_duplicate_keys  # noqa: E402
 from repo_map_lib.git_repository import ArgumentError, tracked_paths  # noqa: E402
