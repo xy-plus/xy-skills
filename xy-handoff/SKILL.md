@@ -29,7 +29,7 @@ description: 每会话常驻；收到用户消息、拆大任务、交办或收�
 
 `reply` 只写「要」（子任务，汇报派方）或「不要」（独立任务，自己交付用户）。接手会话只做分给自己的事；接手任务也按「归属与拆分」的同一规则判断是否继续拆分。`rules` 不抄自动加载的全局说明；`boundaries` 还须写明派方已定的共用接口和格式，要改先问派方。
 
-`quotes` 至少一条，写任务依据的用户原话；派方从原话延伸的事要关联来源原话，并把证据（怎么从那句原话来、不做会出什么事、做了能得到什么、代价多少）写进 `facts`。下文 `<本 skill 目录>` 指本 SKILL.md 所在目录：用 Skill 工具加载时是 Claude Code 给出的 Base directory，经 CLAUDE.md 引入时是引入路径所在目录。派方写完后运行 `python3 <本 skill 目录>/check_handoff.py <路径>`，按报错修改至退出 0 才启动接手会话。
+`quotes` 至少一条，写任务依据的用户原话；派方从原话延伸的事要关联来源原话，并把证据（怎么从那句原话来、不做会出什么事、做了能得到什么、代价多少）写进 `facts`。下文 `<本 skill 目录>` 指本 SKILL.md 所在目录：用 Skill 工具加载时是 Claude Code 给出的 Base directory，经 CLAUDE.md 引入时是引入路径所在目录。派方写完后运行 `python3 <本 skill 目录>/handoff_note_check/check_handoff.py <路径>`，按报错修改至退出 0 才启动接手会话。
 
 目录用任务所在仓库的主检出根目录；与仓库无关则用 `$HOME/tmp`（`claude --bg` 只能在已信任目录启动，家目录的信任不保存）。启动前用 `claude agents --json --all` 查现有名字；`-n` 必填，取能说明任务的短名，尽量用中文且不与现有会话重名；名字也是 SendMessage 收件地址。用子 shell，不改原会话工作目录：
 
