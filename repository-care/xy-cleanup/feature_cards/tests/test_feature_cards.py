@@ -31,12 +31,7 @@ def card(feature_id, **changes):
         "unused": [],
         "changed": [],
         "todo": [],
-        "map_issues": {
-            "why": "成立：说明本功能如何回答用户为什么需要它。",
-            "what": "一致：what 与 why 和条目讲的是同一件事。",
-            "group": "合适：列出组内功能后确认没有漏项。",
-            "items": [],
-        },
+        "map_issues": [],
         "suggestion": [],
         "recommended": "留",
     }
@@ -124,70 +119,6 @@ class FeatureCardsTest(unittest.TestCase):
 
         self.assertEqual(problems, [])
         self.assertTrue(shared_check.called)
-
-    def test_map_issues_require_three_judgments_and_string_items(self):
-        mutations = (
-            lambda value: value.update(map_issues=[]),
-            lambda value: value["map_issues"].pop("why"),
-            lambda value: value["map_issues"].update(why="  "),
-            lambda value: value["map_issues"].update(why="成立"),
-            lambda value: value["map_issues"].update(what="一致"),
-            lambda value: value["map_issues"].update(group="合适"),
-            lambda value: value["map_issues"].update(why="成立：  "),
-            lambda value: value["map_issues"].update(what=None),
-            lambda value: value["map_issues"].update(group=1),
-            lambda value: value["map_issues"].update(items="条目"),
-            lambda value: value["map_issues"].update(items=["有效条目", 3]),
-            lambda value: value["map_issues"].update(extra="多余字段"),
-        )
-        for mutate in mutations:
-            with self.subTest(mutation=mutate):
-                value = card("alpha")
-                mutate(value)
-                self.assertTrue(feature_cards._card_errors(value, "卡片"))
-
-    def test_page_shows_only_failed_map_judgments_and_each_item_issue(self):
-        cards = self.default_cards()
-        cards[0]["map_issues"]["why"] = "理由只抱怨旧版效果，没有说明功能为何必要。"
-        cards[1]["map_issues"] = {
-            "why": "成立：理由具体回答了为什么需要这个功能。",
-            "what": "what 与理由矛盾：理由说免点，what 却只写看依赖。",
-            "group": "合适：列出组内功能并确认没有漏项。",
-            "items": ["漏了运行目录管理。", "写了但未实现的结果。"],
-        }
-        cards[2]["map_issues"]["group"] = "运行目录管理应该归入本组，但图中遗漏。"
-
-        result = self.run_cards(cards)
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        items = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
-            "items"
-        ]
-        root_lines = "\n".join(items[0]["lines"])
-        self.assertIn(
-            "图上理由不成立：理由只抱怨旧版效果，没有说明功能为何必要。",
-            root_lines,
-        )
-        self.assertNotIn("图上 what 不一致", root_lines)
-        self.assertNotIn("图上分组不合适", root_lines)
-
-        alpha_lines = "\n".join(items[1]["lines"])
-        self.assertIn(
-            "图上 what 不一致：what 与理由矛盾：理由说免点，what 却只写看依赖。",
-            alpha_lines,
-        )
-        self.assertIn("图上条目问题：漏了运行目录管理。", alpha_lines)
-        self.assertIn("图上条目问题：写了但未实现的结果。", alpha_lines)
-        self.assertNotIn("图上理由不成立", alpha_lines)
-        self.assertNotIn("图上分组不合适", alpha_lines)
-
-        beta_lines = "\n".join(items[2]["lines"])
-        self.assertIn(
-            "图上分组不合适：运行目录管理应该归入本组，但图中遗漏。",
-            beta_lines,
-        )
-        self.assertNotIn("图上理由不成立", beta_lines)
-        self.assertNotIn("图上 what 不一致", beta_lines)
 
     def test_valid_cards_make_a_decision_page_accepted_by_decision_page(self):
         cards = self.default_cards()
