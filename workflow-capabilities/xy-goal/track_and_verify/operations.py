@@ -475,38 +475,43 @@ def check(contract, session_id):
     return 0
 
 
-def contract_fingerprint(path, goal_content):
-    contract = Contract(path, goal_content)
-    links_path = path / "links.md"
-    links_bytes = links_path.read_bytes()
+def _split_link_bytes(links_bytes):
     link_segments = links_bytes.split(b"\n")
     links_lines = [segment + b"\n" for segment in link_segments[:-1]]
     if link_segments[-1]:
         links_lines.append(link_segments[-1])
+    return links_lines
 
-    def line_content(line):
-        if line.endswith(b"\n"):
+
+def _link_line_content(line):
+    if line.endswith(b"\n"):
+        line = line[:-1]
+        if line.endswith(b"\r"):
             line = line[:-1]
-            if line.endswith(b"\r"):
-                line = line[:-1]
-        return line
+    return line
 
+
+def _automatic_dismissal_rows(contract, path, links_lines):
+    present_rows = {_link_line_content(line) for line in links_lines}
     automatic_dismissals = {}
     for number, text in contract.quotes.items():
         reason = automatic_reason(text, path)
         expected_line = f"{number} 不必跟进 {reason}".encode("utf-8") if reason is not None else None
         if (reason is not None and contract.dismissed.get(number) == reason
-                and any(line_content(line) == expected_line
-                        for line in links_lines)):
+                and expected_line in present_rows):
             automatic_dismissals[number] = expected_line
+    return automatic_dismissals
 
+
+def _fingerprint_file_entries(path, automatic_dismissals):
     entries = []
+    omitted_quotes = {f"quotes/{number}.md" for number in automatic_dismissals}
     for directory_name in ("quotes", "tasks", "done"):
         directory = path / directory_name
         for entry in sorted(directory.rglob("*"), key=lambda value: value.as_posix()):
             relative = entry.relative_to(path).as_posix()
             # Only omit the numbered quote whose exact automatic dismissal is present.
-            if any(relative == f"quotes/{number}.md" for number in automatic_dismissals):
+            if relative in omitted_quotes:
                 continue
             if entry.is_symlink():
                 entries.append([relative, "symlink", os.readlink(entry)])
@@ -516,12 +521,20 @@ def contract_fingerprint(path, goal_content):
                 entries.append([relative, "file", hashlib.sha256(entry.read_bytes()).hexdigest()])
             else:
                 entries.append([relative, "other", entry.lstat().st_mode])
+    return entries
+
+
+def contract_fingerprint(path, goal_content):
+    contract = Contract(path, goal_content)
+    links_lines = _split_link_bytes((path / "links.md").read_bytes())
+    automatic_dismissals = _automatic_dismissal_rows(contract, path, links_lines)
+    entries = _fingerprint_file_entries(path, automatic_dismissals)
     # The automatic input's exact dismissal row is excluded with its quote; every other
     # mapping remains byte-for-byte in the fingerprint, including its line endings.
     # automatic_reason is the single classifier.
     fingerprint_links = b"".join(
         line for line in links_lines
-        if line_content(line) not in automatic_dismissals.values()
+        if _link_line_content(line) not in automatic_dismissals.values()
     )
     entries.append(["links.md", "file", hashlib.sha256(fingerprint_links).hexdigest()])
     payload = json.dumps({
