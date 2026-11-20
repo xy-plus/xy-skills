@@ -31,7 +31,12 @@ def card(feature_id, **changes):
         "unused": [],
         "changed": [],
         "todo": [],
-        "map_issues": [],
+        "map_issues": {
+            "why": "成立",
+            "what": "一致",
+            "group": "合适",
+            "items": [],
+        },
         "suggestion": [],
         "recommended": "留",
     }
@@ -119,6 +124,50 @@ class FeatureCardsTest(unittest.TestCase):
 
         self.assertEqual(problems, [])
         self.assertTrue(shared_check.called)
+
+    def test_map_issues_require_three_judgments_and_string_items(self):
+        mutations = (
+            lambda value: value.update(map_issues=[]),
+            lambda value: value["map_issues"].pop("why"),
+            lambda value: value["map_issues"].update(why="  "),
+            lambda value: value["map_issues"].update(what=None),
+            lambda value: value["map_issues"].update(group=1),
+            lambda value: value["map_issues"].update(items="条目"),
+            lambda value: value["map_issues"].update(items=["有效条目", 3]),
+            lambda value: value["map_issues"].update(extra="多余字段"),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                value = card("alpha")
+                mutate(value)
+                self.assertTrue(feature_cards._card_errors(value, "卡片"))
+
+    def test_page_shows_only_failed_map_judgments_and_each_item_issue(self):
+        cards = self.default_cards()
+        cards[1]["map_issues"] = {
+            "why": "成立",
+            "what": "what 与理由矛盾：理由说免点，what 却只写看依赖。",
+            "group": "合适",
+            "items": ["漏了运行目录管理。", "写了但未实现的结果。"],
+        }
+
+        result = self.run_cards(cards)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][1]
+        lines = "\n".join(item["lines"])
+        self.assertIn(
+            "图上 what 不一致：what 与理由矛盾：理由说免点，what 却只写看依赖。",
+            lines,
+        )
+        self.assertIn("图上条目问题：漏了运行目录管理。", lines)
+        self.assertIn("图上条目问题：写了但未实现的结果。", lines)
+        self.assertNotIn("图上理由不成立", lines)
+        self.assertNotIn("图上分组不合适", lines)
+        self.assertNotIn("why：成立", lines)
+        self.assertNotIn("group：合适", lines)
 
     def test_valid_cards_make_a_decision_page_accepted_by_decision_page(self):
         cards = self.default_cards()

@@ -53,15 +53,20 @@ description: 定期按功能审批清扫，只把变过的功能做成卡片交�
   ],
   "changed": ["一句话一条：上次认可以来变了什么"],
   "todo": ["一句话一条：本功能 TODO.md 里攒下的大问题"],
-  "map_issues": ["一句话一条：功能图写偏的地方"],
+  "map_issues": {
+    "why": "成立；否则写理由缺了什么，例如只抱怨或报进度、只说设备或愿望、只说了几项中的一项",
+    "what": "一致；否则写它与 title、why、条目或子功能矛盾的地方",
+    "group": "合适；否则写放错上级或漏掉该归入本组的功能",
+    "items": ["条目没写到、写了没做到或非「等你拍板」的标记，一句一条"]
+  },
   "suggestion": ["一句话一件：选「照建议」会做的改动"],
   "recommended": "照建议"
 }
 ```
 
-`feature` 是字符串；`used`、`changed`、`todo`、`map_issues`、`suggestion` 是字符串数组；`unused` 是对象数组，其中 `what`、`evidence`、`risk` 是字符串，`lines` 是非负整数。
+`feature` 是字符串；`used`、`changed`、`todo`、`suggestion` 是字符串数组；`map_issues` 是必填对象，`why`、`what`、`group` 是非空字符串，`items` 是字符串数组；`unused` 是对象数组，其中 `what`、`evidence`、`risk` 是字符串，`lines` 是非负整数。
 
-`map_issues` 写图上没写到、写了没做到、`what` 与条目矛盾、理由不成立、分组不合适和非「等你拍板」的功能图标记。「等你拍板」对应的起草条目由拼页命令自动列出，不写进 `map_issues`。
+`map_issues.why` 写「成立」，或具体说明理由为何不成立；`map_issues.what` 写「一致」，或指出它与 title、why、条目、子功能矛盾的地方；`map_issues.group` 写「合适」，或说明放错上级、漏掉该归入本组的功能。`map_issues.items` 逐条写功能条目没写到、写了没做到，以及非「等你拍板」的功能图标记。拼页只显示不成立的 why、what、group 栏和 items；通过的栏不列出。「等你拍板」对应的起草条目由拼页命令自动列出，不写进 items。
 
 功能提供的模式、选项、配置、输出、入口、旧格式、旧用法、额外校验和兜底按人能理解的粒度归类，每样只进 `used` 或 `unused` 一处。实际使用证据只认 README 来源中明确选到或跑到的内容、成功短跑覆盖到的内容及这些来源实际使用的调用方；测试或文档提及、理论上可达、研究代码调用、功能条目描述都不能证明在用。
 

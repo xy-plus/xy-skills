@@ -25,13 +25,23 @@ CARD_SHAPE = {
     "unused": [{"what": "", "evidence": "", "lines": "", "risk": ""}],
     "changed": [""],
     "todo": [""],
-    "map_issues": [""],
+    "map_issues": {
+        "why": "",
+        "what": "",
+        "group": "",
+        "items": [""],
+    },
     "suggestion": [""],
     "recommended": "",
 }
 RECOMMENDATIONS = {"照建议", "留", "不要这个功能"}
 COMMON_OPTIONS = ["照建议", "留", "按我写的改"]
 REMOVE_FEATURE = "不要这个功能"
+MAP_ISSUE_JUDGMENTS = (
+    ("why", "成立", "图上理由不成立"),
+    ("what", "一致", "图上 what 不一致"),
+    ("group", "合适", "图上分组不合适"),
+)
 
 
 class InvalidCardJson(ValueError):
@@ -187,7 +197,12 @@ def _append_card_lines(lines, card):
         )
     lines.extend(f"变了什么：{value}" for value in card["changed"])
     lines.extend(f"TODO 大问题：{value}" for value in card["todo"])
-    lines.extend(f"图上写偏：{value}" for value in card["map_issues"])
+    map_issues = card["map_issues"]
+    for field, accepted, label in MAP_ISSUE_JUDGMENTS:
+        value = map_issues[field]
+        if value != accepted:
+            lines.append(f"{label}：{value}")
+    lines.extend(f"图上条目问题：{value}" for value in map_issues["items"])
     lines.extend(f"照建议会做：{value}" for value in card["suggestion"])
 
 
