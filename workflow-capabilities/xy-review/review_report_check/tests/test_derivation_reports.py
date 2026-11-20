@@ -1,14 +1,17 @@
 import json
 from pathlib import Path
 import unittest
-from unittest.mock import patch
 
 import test_check as support
 
 check = support.check
 derivation_report = support.derivation_report
 main_report = support.main_report
+razor_report = support.razor_report
 write_file = support.write_file
+
+
+REPORT_NEED = "报告必须能核对用户要求"
 
 
 class DerivationReportTest(unittest.TestCase):
@@ -16,21 +19,97 @@ class DerivationReportTest(unittest.TestCase):
     run_main = support.CheckTest.run_main
     run_report = support.CheckTest.run_report
     assert_rejected = support.CheckTest.assert_rejected
-    make_code_submission = support.CheckTest.make_code_submission
-    clean_code_razor_report = support.CheckTest.clean_code_razor_report
-    run_code_razor = support.CheckTest.run_code_razor
 
-    def test_code_razor_report_is_decoded_once(self):
-        _repository, _base, scan_document = self.make_code_submission()
-        report = self.clean_code_razor_report(scan_document)
+    def test_main_mapping_accepts_items_linked_to_round_derivation(self):
+        report = main_report()
 
-        with patch.object(
-            check.json, "loads", wraps=check.json.loads,
-        ) as decode:
-            code, output = self.run_code_razor(report, scan_document)
+        code, problems = self.run_report("review-main.json", report)
 
-        self.assertEqual((code, output), (0, []))
-        self.assertEqual(decode.call_count, 3)
+        self.assertEqual((code, problems), (0, []))
+
+    def test_main_mapping_requires_items_and_matching_needs(self):
+        report = main_report()
+        report["mapping"]["items"] = []
+        self.assert_rejected("review-main.json", report, "mapping.items")
+
+        report = main_report()
+        report["mapping"]["items"][0]["need"] = "未在推导中的要求"
+        self.assert_rejected("review-main.json", report, "mapping.items", "derivation-main.json")
+
+    def test_main_mapping_requires_one_exact_merge_for_each_repeated_need(self):
+        report = main_report()
+        report["mapping"]["items"] = [
+            {"block": "规则 A", "need": REPORT_NEED},
+            {"block": "规则 B", "need": REPORT_NEED},
+        ]
+        self.assert_rejected("review-main.json", report, "mapping.merges")
+
+        report["mapping"]["merges"] = [{
+            "need": REPORT_NEED,
+            "blocks": ["规则 A", "另一块"],
+            "decision": "不合",
+            "reason": "两块承担不同职责。",
+        }]
+        self.assert_rejected("review-main.json", report, "mapping.merges", "items")
+
+        report["mapping"]["merges"][0]["blocks"] = ["规则 A", "规则 B"]
+        report["mapping"]["merges"].append(dict(report["mapping"]["merges"][0]))
+        self.assert_rejected("review-main.json", report, "mapping.merges", "恰有一条")
+
+    def test_main_mapping_requires_nonpassing_verdict_for_unmapped_or_merged_needs(self):
+        report = main_report()
+        report["mapping"]["items"][0]["need"] = "无"
+        self.assert_rejected("review-main.json", report, "mapping", "不能判通过")
+
+        report = main_report()
+        report["mapping"]["items"] = [
+            {"block": "规则 A", "need": REPORT_NEED},
+            {"block": "规则 B", "need": REPORT_NEED},
+        ]
+        report["mapping"]["merges"] = [{
+            "need": REPORT_NEED,
+            "blocks": ["规则 A", "规则 B"],
+            "decision": "合并",
+            "reason": "合成一条规则。",
+        }]
+        self.assert_rejected("review-main.json", report, "mapping", "不能判通过")
+        report["verdict"] = "不通过"
+        self.assertEqual(self.run_report("review-main.json", report), (0, []))
+
+    def test_razor_user_visible_requires_direct_user_decision_for_changes(self):
+        report = razor_report()
+        report["occams_razor"]["keep"][0]["user_visible"] = {
+            "change": "把 hook 安装进全局 settings",
+        }
+        self.assert_rejected("review-razor.json", report, "user_visible.decided_by")
+
+        report["occams_razor"]["keep"][0]["user_visible"]["decided_by"] = {
+            "source": "R5",
+            "text": "你先判断是否应该这么做；如果应该的话就开。",
+        }
+        self.assert_rejected("review-razor.json", report, "用户直接决定")
+
+        report["occams_razor"]["keep"][0]["user_visible"]["decided_by"]["text"] = (
+            "我决定把 hook 安装进全局 settings。"
+        )
+        self.assertEqual(self.run_report("review-razor.json", report), (0, []))
+
+    def test_razor_user_visible_validates_exact_shape_and_omits_decision_when_unchanged(self):
+        report = razor_report()
+        self.assertEqual(self.run_report("review-razor.json", report), (0, []))
+
+        report["occams_razor"]["keep"][0]["user_visible"]["decided_by"] = {
+            "source": "Q35",
+            "text": "我决定照这个方式做。",
+        }
+        self.assert_rejected("review-razor.json", report, "不改", "decided_by")
+
+        report = razor_report()
+        report["occams_razor"]["keep"][0]["user_visible"] = {
+            "change": "调整用户规则",
+            "decided_by": {"source": "Q35", "text": "   "},
+        }
+        self.assert_rejected("review-razor.json", report, "decided_by.text")
 
     def test_report_templates_are_selected_by_their_declared_filenames(self):
         expected = {

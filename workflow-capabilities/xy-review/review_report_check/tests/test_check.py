@@ -40,6 +40,10 @@ def main_report(verdict="通过", deviations=None, hard_to_misuse=None, repo_rul
         },
         "hard_to_misuse": section(hard_to_misuse),
         "repo_rules": {str(number): section() for number in REPO_RULE_NUMBERS} if repo_rules is None else repo_rules,
+        "mapping": {
+            "items": [{"block": "主审报告", "need": "报告必须能核对用户要求"}],
+            "merges": [],
+        },
         "verdict": verdict,
     }
 
@@ -52,6 +56,7 @@ def razor_report(verdict="通过", keep=None, keep_old=None, delete=None, ask_us
                 "requirement": "用户原话 1「检查改动」",
                 "achieved": "检查改动是否符合要求",
                 "cost": "实现简单，代价配得上收益",
+                "user_visible": {"change": "不改"},
             }] if keep is None else keep,
             "keep_old": [] if keep_old is None else keep_old,
             "delete": {"items": [] if delete is None else delete, "checked": "核对了依赖与调用方"},

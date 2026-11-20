@@ -1,3 +1,4 @@
+import copy
 import json
 import pathlib
 import re
@@ -184,9 +185,156 @@ def workflow_cleanup_categories():
 
 def _report_shape(filename, code_review):
     _report_kind, shape = REPORTS[filename]
+    if filename == "review-razor.json":
+        shape = copy.deepcopy(shape)
+        keep_shape = shape["occams_razor"]["keep"]
+        if keep_shape:
+            keep_shape[0].pop("user_visible", None)
     if filename != "review-razor.json" or code_review:
         return shape
     return {key: value for key, value in shape.items() if key != "cleanup"}
+
+
+def _report_for_shape(document, filename):
+    if filename != "review-razor.json" or not isinstance(document, dict):
+        return document
+    shaped = copy.deepcopy(document)
+    razor = shaped.get("occams_razor")
+    keep = razor.get("keep") if isinstance(razor, dict) else None
+    if isinstance(keep, list):
+        for item in keep:
+            if isinstance(item, dict):
+                item.pop("user_visible", None)
+    return shaped
+
+
+def _user_visible_problems(document):
+    keep = item_list(document, "occams_razor", "keep")
+    problems = []
+    delegated_phrases = (
+        "你先判断", "由你判断", "你来判断", "你自己判断", "你判断是否",
+        "判断是否应该", "你决定是否", "由你决定", "交给你判断", "如果应该的话就",
+    )
+    for index, item in enumerate(keep):
+        if not isinstance(item, dict):
+            continue
+        path = f"报告.occams_razor.keep[{index}].user_visible"
+        visible = item.get("user_visible")
+        if not isinstance(visible, dict):
+            problems.append(f"{path} 必须是对象")
+            continue
+        change = visible.get("change")
+        if not isinstance(change, str) or not change.strip():
+            problems.append(f"{path}.change 必须是非空字符串")
+            continue
+        if change == "不改":
+            if set(visible) != {"change"}:
+                problems.append(f"{path} 为「不改」时只能有 change，不能写 decided_by")
+            continue
+        if "decided_by" not in visible:
+            problems.append(f"{path}.decided_by 有用户可见变化时必填")
+            continue
+        if set(visible) != {"change", "decided_by"}:
+            problems.append(f"{path} 有用户可见变化时只能有 change 和 decided_by")
+            continue
+        decided_by = visible.get("decided_by")
+        if not isinstance(decided_by, dict) or set(decided_by) != {"source", "text"}:
+            problems.append(f"{path}.decided_by 必须且只能含 source 和 text")
+            continue
+        source = decided_by.get("source")
+        text = decided_by.get("text")
+        if not isinstance(source, str) or not source.strip():
+            problems.append(f"{path}.decided_by.source 必须是非空字符串")
+        if not isinstance(text, str) or not text.strip():
+            problems.append(f"{path}.decided_by.text 必须是非空字符串")
+        elif any(phrase in text for phrase in delegated_phrases):
+            problems.append(f"{path}.decided_by.text 是把判断交给代理的原话，不能作为用户直接决定")
+    return problems
+
+
+def _main_mapping_problems(document, report_path):
+    mapping = document.get("mapping") if isinstance(document, dict) else None
+    if not isinstance(mapping, dict):
+        return []
+    items = mapping.get("items")
+    merges = mapping.get("merges")
+    problems = []
+    if not isinstance(items, list) or not items:
+        problems.append("报告.mapping.items 不能为空")
+        return problems
+    if not isinstance(merges, list):
+        return problems
+
+    derivation_path = pathlib.Path(report_path).parent / "derivation-main.json"
+    derivation_needs = None
+    try:
+        derivation = json.loads(
+            derivation_path.read_text(encoding="utf-8"),
+            object_pairs_hook=object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        derivation = None
+    if isinstance(derivation, dict) and isinstance(derivation.get("needs"), list):
+        derivation_needs = {
+            item.get("need") for item in derivation["needs"]
+            if isinstance(item, dict) and isinstance(item.get("need"), str)
+        }
+
+    blocks_by_need = {}
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        block = item.get("block")
+        need = item.get("need")
+        if not isinstance(block, str) or not block.strip():
+            problems.append(f"报告.mapping.items[{index}].block 必须是非空字符串")
+        if not isinstance(need, str) or not need.strip():
+            problems.append(f"报告.mapping.items[{index}].need 必须是非空字符串")
+            continue
+        if need == "无":
+            continue
+        if derivation_needs is not None and need not in derivation_needs:
+            problems.append(
+                f"报告.mapping.items[{index}].need 必须逐字匹配同一轮 derivation-main.json 的 need，或写「无」"
+            )
+        if isinstance(block, str):
+            blocks_by_need.setdefault(need, []).append(block)
+
+    merge_entries = {}
+    for index, merge in enumerate(merges):
+        if not isinstance(merge, dict):
+            continue
+        need = merge.get("need")
+        blocks = merge.get("blocks")
+        decision = merge.get("decision")
+        reason = merge.get("reason")
+        if not isinstance(need, str) or not need.strip():
+            problems.append(f"报告.mapping.merges[{index}].need 必须是非空字符串")
+            continue
+        if decision not in ("合并", "不合"):
+            problems.append(f"报告.mapping.merges[{index}].decision 只能是「合并」或「不合」")
+        if not isinstance(reason, str) or not reason.strip():
+            problems.append(f"报告.mapping.merges[{index}].reason 不能为空")
+        if not isinstance(blocks, list) or any(not isinstance(block, str) for block in blocks):
+            problems.append(f"报告.mapping.merges[{index}].blocks 必须是对象块名称数组")
+            continue
+        merge_entries.setdefault(need, []).append((index, blocks))
+
+    multi_mapped = {
+        need: blocks for need, blocks in blocks_by_need.items()
+        if len(blocks) > 1
+    }
+    for need, blocks in multi_mapped.items():
+        entries = merge_entries.get(need, [])
+        if len(entries) != 1:
+            problems.append(f"报告.mapping.merges 对应 need「{need}」必须恰有一条")
+        elif Counter(entries[0][1]) != Counter(blocks):
+            problems.append(f"报告.mapping.merges[{entries[0][0]}].blocks 必须与该 need 对应的 mapping.items 块一致")
+    for need, entries in merge_entries.items():
+        if need not in multi_mapped:
+            for index, _blocks in entries:
+                problems.append(f"报告.mapping.merges[{index}] 只能列出被两块以上 mapping.items 对上的 need")
+    return problems
 
 
 def _cleanup_problems(document, code_review):
@@ -321,6 +469,20 @@ def _main_verdict_problems(document):
     for number in REPO_RULE_NUMBERS:
         if item_list(document, "repo_rules", str(number), "items"):
             findings.append(f"repo_rules.{number}")
+    mapping = document.get("mapping", {})
+    mapping_items = mapping.get("items", []) if isinstance(mapping, dict) else []
+    mapping_merges = mapping.get("merges", []) if isinstance(mapping, dict) else []
+    mapping_blocks_needing_action = any(
+        isinstance(item, dict) and item.get("need") == "无"
+        for item in mapping_items
+    ) or any(
+        isinstance(merge, dict) and merge.get("decision") == "合并"
+        for merge in mapping_merges
+    )
+    if mapping_blocks_needing_action:
+        findings.append("mapping")
+    if verdict == "通过" and mapping_blocks_needing_action:
+        return ["mapping 有「无」或「合并」，主审 verdict 不能判通过"]
     if verdict == "通过" and findings:
         return ["主审 verdict 写「通过」但有发现：" + "、".join(findings)]
     if verdict in ("改了就过", "不通过") and not findings:
@@ -385,7 +547,8 @@ def _check_parsed_document(document, filename, report_path):
         return ["报告文件名只能是 " + "、".join(REPORTS)]
     report_kind, _shape = REPORTS[filename]
     code_review = filename == "review-razor.json" and is_code_review_report(report_path)
-    problems = check_value("报告", document, _report_shape(filename, code_review))
+    shape_document = _report_for_shape(document, filename)
+    problems = check_value("报告", shape_document, _report_shape(filename, code_review))
     problems += _cleanup_problems(document, code_review)
     problems += _placeholder_problems(document)
     if not isinstance(document, dict):
@@ -393,8 +556,10 @@ def _check_parsed_document(document, filename, report_path):
     if report_kind in ("主审报告", "剃刀报告", "推导报告"):
         problems += check_rule_quotes(document, report_kind)
     if report_kind == "主审报告":
+        problems += _main_mapping_problems(document, report_path)
         return problems + _main_verdict_problems(document)
     if report_kind == "剃刀报告":
+        problems += _user_visible_problems(document)
         return problems + _razor_verdict_problems(document)
     if report_kind == "判因报告":
         return problems + _diagnosis_action_problems(document)

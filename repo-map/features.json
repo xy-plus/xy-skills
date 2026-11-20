@@ -202,17 +202,17 @@
             {
               "id": "clear-names",
               "text": "目录、文件和变量名含义清楚；除专业词汇外使用简单清楚的英文词，不清楚时改成容易理解的词组。",
-              "status": "确认"
+              "status": "起草"
             },
             {
               "id": "separate-responsibilities",
               "text": "项目、目录和文件之间有合理层级和职责边界，并复用功能。",
-              "status": "确认"
+              "status": "起草"
             },
             {
               "id": "docs-near-code",
               "text": "文档尽量写在代码注释里，不另开文档；上手要用的说明写进 README。",
-              "status": "确认"
+              "status": "起草"
             }
           ],
           "children": []
@@ -388,7 +388,7 @@
         },
         {
           "id": "test-driven-implementation",
-          "text": "代码实现先写能暴露缺口的测试，再实现并运行定向回归和完整验证。",
+          "text": "按审过的 spec（快速任务按用户原话）派一个工作子代理实现，并带 superpowers:test-driven-development。",
           "status": "起草"
         },
         {
