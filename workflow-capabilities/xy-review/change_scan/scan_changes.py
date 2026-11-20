@@ -222,7 +222,8 @@ def _skip_paths(repository, tracked_paths):
         raise ScanError(str(error)) from error
 
 
-def _stable_hit(tool, rule, path, line, line_end, message):
+def _stable_hit(tool, rule, path, line_range, message):
+    line, line_end = line_range
     return {
         "id": f"{tool}:{rule}:{path}:{line}",
         "tool": tool,
@@ -265,8 +266,7 @@ def _duplicate_block_hits(repository, tracked_paths, skip_paths, changed):
                 "duplicate-blocks",
                 "six-lines-forty-characters",
                 path,
-                start,
-                end,
+                (start, end),
                 f"与 {locations} 有逐字重复段；连续 6 行且至少 40 个字母数字",
             ))
     return hits
@@ -287,8 +287,7 @@ def _line_count_hits(repository, changed, categories):
                 "file-lines",
                 "over-1000-lines",
                 path,
-                MAX_FILE_LINES + 1,
-                count,
+                (MAX_FILE_LINES + 1, count),
                 f"文件有 {count} 行，超过 1000 行门槛（pylint too-many-lines 默认值）",
             ))
     return hits
@@ -375,7 +374,7 @@ def _ruff_hits(repository, changed, categories):
         else:
             line_start = line_end = line
         hits.append(_stable_hit(
-            "ruff", code, filename, line_start, line_end, f"{code}: {message}"
+            "ruff", code, filename, (line_start, line_end), f"{code}: {message}"
         ))
     return hits
 
@@ -527,8 +526,7 @@ def _structural_test_hits(repository, tracked_paths, skip_paths, changed, catego
                 "structural-tests",
                 f"{language}:{name}",
                 path,
-                line_start,
-                line_end,
+                (line_start, line_end),
                 f"{language} 测试 {name} 去掉字面量后结构相同；其他位置：{', '.join(others)}",
             ))
     return hits

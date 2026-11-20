@@ -245,9 +245,10 @@ class ScanChangesTest(unittest.TestCase):
         self.write("changed.md", "after\n")
         self.commit("change")
         duplicate_hits = [
-            scan_changes._stable_hit("example", "rule", "changed.md", 1, 1, message)
+            scan_changes._stable_hit("example", "rule", "changed.md", (1, 3), message)
             for message in ("first", "second")
         ]
+        self.assertEqual(duplicate_hits[0]["lines"], [1, 3])
 
         with (
             patch.object(scan_changes, "_duplicate_block_hits", return_value=duplicate_hits),
