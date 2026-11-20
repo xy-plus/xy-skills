@@ -1372,7 +1372,7 @@
         {
           "id": "early-delete-safely",
           "text": "确定作废的事项目录或其中内容可按字面绝对路径提前删除；目标须位于 RUNS_ROOT 下项目的一件事目录内，不得是运行根、项目目录或 xy-goal-inbox，上级目录不能经过软链；目标本身是软链时，真实目标须仍在 RUNS_ROOT 内，并且只删除链接本身。",
-          "status": "起草"
+          "status": "确认"
         },
         {
           "id": "preserve-worktree-location",
@@ -1411,12 +1411,12 @@
             {
               "id": "preview-list",
               "text": "预览模式只列出符合期限条件的候选项，不删除文件，也不清理回收目录或预览标记。",
-              "status": "起草"
+              "status": "确认"
             },
             {
               "id": "delete-command",
               "text": "删除模式整项移除所有符合期限的运行目录，并报告每个成功删除项的原路径。",
-              "status": "起草"
+              "status": "确认"
             },
             {
               "id": "json-lines",
@@ -1511,7 +1511,7 @@
             {
               "id": "coordinate-writers",
               "text": "按运行目录写入的事项在清理期间仍可完成写入；写入方在整个写入期间持有与清理器相同的最外层根锁，清理器不会在写入完成前移走数据。",
-              "status": "起草"
+              "status": "确认"
             },
             {
               "id": "recover-trash",

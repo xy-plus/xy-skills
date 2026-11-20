@@ -489,6 +489,87 @@ class CleanerTestCase(unittest.TestCase):
         self.assertTrue((item / "new").exists())
         self.assertEqual((status, paths, errors), (0, [], ""))
 
+    # A writer holds the shared root lock until its complete write is visible.
+    def test_writer_lock_blocks_cleanup_until_write_finishes(self):
+        item = self.root / "matter"
+        item.mkdir()
+        data = item / "data"
+        data.write_text("old", encoding="utf-8")
+        writer_code = r"""
+import fcntl, os, sys
+root = os.open(os.environ["CLEANER_TEST_ROOT"], os.O_RDONLY | os.O_DIRECTORY)
+fcntl.flock(root, fcntl.LOCK_EX)
+path = os.environ["CLEANER_TEST_ITEM"] + "/data"
+with open(path, "w") as stream:
+    stream.write("partial")
+    stream.flush()
+    os.fsync(stream.fileno())
+print("writing", flush=True)
+sys.stdin.read(1)
+with open(path, "a") as stream:
+    stream.write("complete")
+    stream.flush()
+    os.fsync(stream.fileno())
+print("finished", flush=True)
+sys.stdin.read(1)
+os.close(root)
+print("released", flush=True)
+"""
+        environment = os.environ.copy()
+        environment.update(CLEANER_TEST_ROOT=str(self.root), CLEANER_TEST_ITEM=str(item))
+        writer = subprocess.Popen(
+            [sys.executable, "-c", writer_code], env=environment,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, cwd=self.temporary.name,
+        )
+        self.addCleanup(stop_process, writer)
+        ready, _, _ = select.select([writer.stdout], [], [], 5)
+        self.assertTrue(ready, "writer did not acquire the root lock")
+        self.assertEqual(writer.stdout.readline(), "writing\n")
+
+        lock_attempted = threading.Event()
+        results = []
+        errors = []
+        real_flock = fcntl.flock
+
+        def observed_flock(descriptor, operation):
+            if operation == fcntl.LOCK_EX:
+                lock_attempted.set()
+            return real_flock(descriptor, operation)
+
+        def run_cleaner():
+            try:
+                results.append(self.run_cleaner([str(self.root)], "delete", self.cutoff))
+            except BaseException as error:
+                errors.append(error)
+
+        with mock.patch("clean.fcntl.flock", side_effect=observed_flock):
+            cleaner = threading.Thread(target=run_cleaner)
+            cleaner.start()
+            self.assertTrue(lock_attempted.wait(5), "cleaner did not try the shared root lock")
+            cleaner.join(timeout=0.1)
+            self.assertTrue(cleaner.is_alive(), "cleaner passed a lock held by the writer")
+            self.assertTrue(data.exists())
+            self.assertEqual(data.read_text(encoding="utf-8"), "partial")
+
+            writer.stdin.write("1")
+            writer.stdin.flush()
+            self.assertEqual(writer.stdout.readline(), "finished\n")
+            self.assertEqual(data.read_text(encoding="utf-8"), "partialcomplete")
+            self.assertTrue(item.is_dir())
+            self.assertTrue(cleaner.is_alive(), "cleaner moved data before the writer released its lock")
+
+            writer.stdin.write("2")
+            writer.stdin.flush()
+            self.assertEqual(writer.stdout.readline(), "released\n")
+            self.assertEqual(writer.wait(timeout=5), 0)
+            cleaner.join(timeout=5)
+
+        self.assertFalse(cleaner.is_alive(), "cleaner stayed blocked after the writer released its lock")
+        self.assertEqual(errors, [])
+        self.assertEqual(results, [(0, [str(item)], "")])
+        self.assertFalse(item.exists())
+
     # The writer starts after rename while the cleaner still holds the root lock.
     def test_cleaner_renames_first_so_writer_exits_without_writing(self):
         item = self.root / "matter"
