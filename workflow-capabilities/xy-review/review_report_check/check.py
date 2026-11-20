@@ -208,47 +208,66 @@ def _report_for_shape(document, filename):
     return shaped
 
 
+DELEGATED_DECISION_PHRASES = (
+    "你先判断", "由你判断", "你来判断", "你自己判断", "你判断是否",
+    "判断是否应该", "你决定是否", "由你决定", "交给你判断", "如果应该的话就",
+)
+
+
 def _user_visible_problems(document):
     keep = item_list(document, "occams_razor", "keep")
+    return [
+        problem
+        for index, item in enumerate(keep)
+        for problem in _user_visible_item_problems(index, item)
+    ]
+
+
+def _user_visible_item_problems(index, item):
+    if not isinstance(item, dict):
+        return []
+    path = f"报告.occams_razor.keep[{index}].user_visible"
+    visible = item.get("user_visible")
+    if not isinstance(visible, dict):
+        return [f"{path} 必须是对象"]
+    return _user_visible_change_problems(path, visible)
+
+
+def _user_visible_change_problems(path, visible):
+    change = visible.get("change")
+    if not isinstance(change, str) or not change.strip():
+        return [f"{path}.change 必须是非空字符串"]
+    if change == "不改":
+        return _unchanged_user_visible_problems(path, visible)
+    return _changed_user_visible_problems(path, visible)
+
+
+def _unchanged_user_visible_problems(path, visible):
+    if set(visible) != {"change"}:
+        return [f"{path} 为「不改」时只能有 change，不能写 decided_by"]
+    return []
+
+
+def _changed_user_visible_problems(path, visible):
+    if "decided_by" not in visible:
+        return [f"{path}.decided_by 有用户可见变化时必填"]
+    if set(visible) != {"change", "decided_by"}:
+        return [f"{path} 有用户可见变化时只能有 change 和 decided_by"]
+    return _decided_by_problems(path, visible.get("decided_by"))
+
+
+def _decided_by_problems(path, decided_by):
+    if not isinstance(decided_by, dict) or set(decided_by) != {"source", "text"}:
+        return [f"{path}.decided_by 必须且只能含 source 和 text"]
     problems = []
-    delegated_phrases = (
-        "你先判断", "由你判断", "你来判断", "你自己判断", "你判断是否",
-        "判断是否应该", "你决定是否", "由你决定", "交给你判断", "如果应该的话就",
-    )
-    for index, item in enumerate(keep):
-        if not isinstance(item, dict):
-            continue
-        path = f"报告.occams_razor.keep[{index}].user_visible"
-        visible = item.get("user_visible")
-        if not isinstance(visible, dict):
-            problems.append(f"{path} 必须是对象")
-            continue
-        change = visible.get("change")
-        if not isinstance(change, str) or not change.strip():
-            problems.append(f"{path}.change 必须是非空字符串")
-            continue
-        if change == "不改":
-            if set(visible) != {"change"}:
-                problems.append(f"{path} 为「不改」时只能有 change，不能写 decided_by")
-            continue
-        if "decided_by" not in visible:
-            problems.append(f"{path}.decided_by 有用户可见变化时必填")
-            continue
-        if set(visible) != {"change", "decided_by"}:
-            problems.append(f"{path} 有用户可见变化时只能有 change 和 decided_by")
-            continue
-        decided_by = visible.get("decided_by")
-        if not isinstance(decided_by, dict) or set(decided_by) != {"source", "text"}:
-            problems.append(f"{path}.decided_by 必须且只能含 source 和 text")
-            continue
-        source = decided_by.get("source")
-        text = decided_by.get("text")
-        if not isinstance(source, str) or not source.strip():
-            problems.append(f"{path}.decided_by.source 必须是非空字符串")
-        if not isinstance(text, str) or not text.strip():
-            problems.append(f"{path}.decided_by.text 必须是非空字符串")
-        elif any(phrase in text for phrase in delegated_phrases):
-            problems.append(f"{path}.decided_by.text 是把判断交给代理的原话，不能作为用户直接决定")
+    source = decided_by.get("source")
+    text = decided_by.get("text")
+    if not isinstance(source, str) or not source.strip():
+        problems.append(f"{path}.decided_by.source 必须是非空字符串")
+    if not isinstance(text, str) or not text.strip():
+        problems.append(f"{path}.decided_by.text 必须是非空字符串")
+    elif any(phrase in text for phrase in DELEGATED_DECISION_PHRASES):
+        problems.append(f"{path}.decided_by.text 是把判断交给代理的原话，不能作为用户直接决定")
     return problems
 
 
@@ -258,49 +277,71 @@ def _main_mapping_problems(document, report_path):
         return []
     items = mapping.get("items")
     merges = mapping.get("merges")
-    problems = []
     if not isinstance(items, list) or not items:
-        problems.append("报告.mapping.items 不能为空")
-        return problems
+        return ["报告.mapping.items 不能为空"]
     if not isinstance(merges, list):
-        return problems
+        return []
+    derivation_needs = _round_main_derivation_needs(report_path)
+    blocks_by_need, problems = _mapping_item_blocks(items, derivation_needs)
+    merge_entries, merge_problems = _mapping_merge_entries(merges)
+    problems.extend(merge_problems)
+    return problems + _mapping_merge_problems(blocks_by_need, merge_entries)
 
+
+def _round_main_derivation_needs(report_path):
     derivation_path = pathlib.Path(report_path).parent / "derivation-main.json"
-    derivation_needs = None
     try:
         derivation = json.loads(
             derivation_path.read_text(encoding="utf-8"),
             object_pairs_hook=object_without_duplicate_keys,
         )
     except (OSError, UnicodeDecodeError, ValueError, TypeError):
-        derivation = None
-    if isinstance(derivation, dict) and isinstance(derivation.get("needs"), list):
-        derivation_needs = {
-            item.get("need") for item in derivation["needs"]
-            if isinstance(item, dict) and isinstance(item.get("need"), str)
-        }
+        return None
+    if not isinstance(derivation, dict) or not isinstance(derivation.get("needs"), list):
+        return None
+    return {
+        item.get("need") for item in derivation["needs"]
+        if isinstance(item, dict) and isinstance(item.get("need"), str)
+    }
 
+
+def _mapping_item_blocks(items, derivation_needs):
     blocks_by_need = {}
+    problems = []
     for index, item in enumerate(items):
-        if not isinstance(item, dict):
-            continue
-        block = item.get("block")
-        need = item.get("need")
-        if not isinstance(block, str) or not block.strip():
-            problems.append(f"报告.mapping.items[{index}].block 必须是非空字符串")
-        if not isinstance(need, str) or not need.strip():
-            problems.append(f"报告.mapping.items[{index}].need 必须是非空字符串")
-            continue
-        if need == "无":
-            continue
-        if derivation_needs is not None and need not in derivation_needs:
-            problems.append(
-                f"报告.mapping.items[{index}].need 必须逐字匹配同一轮 derivation-main.json 的 need，或写「无」"
-            )
-        if isinstance(block, str):
+        item_blocks, item_problems = _mapping_item_blocks_for_one(index, item, derivation_needs)
+        problems.extend(item_problems)
+        if item_blocks is not None:
+            need, block = item_blocks
             blocks_by_need.setdefault(need, []).append(block)
+    return blocks_by_need, problems
 
+
+def _mapping_item_blocks_for_one(index, item, derivation_needs):
+    if not isinstance(item, dict):
+        return None, []
+    problems = []
+    block = item.get("block")
+    need = item.get("need")
+    if not isinstance(block, str) or not block.strip():
+        problems.append(f"报告.mapping.items[{index}].block 必须是非空字符串")
+    if not isinstance(need, str) or not need.strip():
+        problems.append(f"报告.mapping.items[{index}].need 必须是非空字符串")
+        return None, problems
+    if need == "无":
+        return None, problems
+    if derivation_needs is not None and need not in derivation_needs:
+        problems.append(
+            f"报告.mapping.items[{index}].need 必须逐字匹配同一轮 derivation-main.json 的 need，或写「无」"
+        )
+    if isinstance(block, str):
+        return (need, block), problems
+    return None, problems
+
+
+def _mapping_merge_entries(merges):
     merge_entries = {}
+    problems = []
     for index, merge in enumerate(merges):
         if not isinstance(merge, dict):
             continue
@@ -319,11 +360,15 @@ def _main_mapping_problems(document, report_path):
             problems.append(f"报告.mapping.merges[{index}].blocks 必须是对象块名称数组")
             continue
         merge_entries.setdefault(need, []).append((index, blocks))
+    return merge_entries, problems
 
+
+def _mapping_merge_problems(blocks_by_need, merge_entries):
     multi_mapped = {
         need: blocks for need, blocks in blocks_by_need.items()
         if len(blocks) > 1
     }
+    problems = []
     for need, blocks in multi_mapped.items():
         entries = merge_entries.get(need, [])
         if len(entries) != 1:
