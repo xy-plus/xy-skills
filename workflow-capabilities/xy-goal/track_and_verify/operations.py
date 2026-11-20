@@ -3,6 +3,7 @@ import json
 import re
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -168,18 +169,8 @@ def withdrawn_quotes_in_reply_windows(records, answered, quote_numbers, quote_ti
                 or withdrawn["uuid"] in answered or content not in quote_numbers):
             continue
 
-        has_new_prompt_sibling = False
-        next_user = None
-        for later_index in range(index + 1, len(records)):
-            later = records[later_index]
-            if (later.get("parentUuid") == parent
-                    and later.get("promptId") != withdrawn.get("promptId")):
-                has_new_prompt_sibling = True
-            if (next_user is None and later.get("type") == "user"
-                    and isinstance(later.get("content"), str)):
-                next_user = later
-            if has_new_prompt_sibling and next_user is not None:
-                break
+        has_new_prompt_sibling, next_user = reply_window(
+            records, index, parent, withdrawn.get("promptId"))
         if not has_new_prompt_sibling:
             continue
         if next_user is None:
@@ -194,6 +185,20 @@ def withdrawn_quotes_in_reply_windows(records, answered, quote_numbers, quote_ti
             possible.setdefault(matches[0], set()).add(withdrawn["uuid"])
     return possible
 
+
+def reply_window(records, index, parent, prompt_id):
+    has_new_prompt_sibling = False
+    next_user = None
+    for later in records[index + 1:]:
+        if later.get("parentUuid") == parent and later.get("promptId") != prompt_id:
+            has_new_prompt_sibling = True
+        if next_user is None and later.get("type") == "user" and isinstance(later.get("content"), str):
+            next_user = later
+        if has_new_prompt_sibling and next_user is not None:
+            break
+    return has_new_prompt_sibling, next_user
+
+
 def relink(path, goal_content, task, sources):
     """唯一先写后整体校验的入口：多个无出处事项须逐项修，进度不能因剩余错误回滚。
 
@@ -207,7 +212,8 @@ def relink(path, goal_content, task, sources):
     quotes = quote_files(path / "quotes")
     tasks, done = relink_task_files(path)
     validate_relink_request(task, sources, quotes, tasks, path)
-    links, dismissed = repaired_mappings(path, text, quotes, tasks, done, task, sources)
+    data = RelinkData(path, text, quotes, tasks, done)
+    links, dismissed = repaired_mappings(data, task, sources)
     write_files({path / "links.md": encode_links(links, dismissed)}, [])
     Contract(path, goal_content)
     print(f"修复完成：{path}")
@@ -244,17 +250,26 @@ def validate_relink_request(task, sources, quotes, tasks, path):
     require_source_quotes(sources, quotes, path)
 
 
-def repaired_mappings(path, text, quotes, tasks, done, task, sources):
-    links, dismissed, invalid = parse_links(text, quotes, tasks | done)
+@dataclass(frozen=True)
+class RelinkData:
+    path: Path
+    text: str
+    quotes: dict
+    tasks: set
+    done: set
+
+
+def repaired_mappings(data, task, sources):
+    links, dismissed, invalid = parse_links(data.text, data.quotes, data.tasks | data.done)
     for line, reason in invalid:
         print(f"丢弃：{line}；{reason}")
     kept_links = set()
     for number, landing in links:
-        if landing not in tasks:
+        if landing not in data.tasks:
             # 只修开放事项的机器输入映射；关闭事项的记录已经是历史。
             kept_links.add((number, landing))
             continue
-        reason = automatic_reason(quotes[number], path)
+        reason = automatic_reason(data.quotes[number], data.path)
         if reason is None:
             kept_links.add((number, landing))
         else:
@@ -485,6 +500,11 @@ def contract_fingerprint(path, goal_content):
 
 
 def validate_close_review(contract, report_path):
+    report = read_close_review_report(report_path)
+    validate_close_review_identity(contract, report)
+
+
+def read_close_review_report(report_path):
     path = Path(report_path)
     if not path.is_absolute():
         raise GoalError("复核报告路径必须是绝对路径")
@@ -493,16 +513,8 @@ def validate_close_review(contract, report_path):
     except (OSError, UnicodeError) as error:
         raise GoalError(f"无法读取复核报告 {path}: {error}") from error
 
-    def unique_object(pairs):
-        value = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError(f"字段重复：{key}")
-            value[key] = item
-        return value
-
     try:
-        report = json.loads(text, object_pairs_hook=unique_object)
+        report = json.loads(text, object_pairs_hook=unique_json_object)
     except (json.JSONDecodeError, ValueError) as error:
         raise GoalError(f"复核报告 JSON 格式错误：{error}") from error
     required = {"contract_directory", "verdict", "fingerprint", "reviewer_session_id"}
@@ -510,6 +522,19 @@ def validate_close_review(contract, report_path):
         raise GoalError("复核报告必须且只能包含 contract_directory、verdict、fingerprint、reviewer_session_id")
     if any(not isinstance(value, str) or not value.strip() for value in report.values()):
         raise GoalError("复核报告字段都必须是非空字符串")
+    return report
+
+
+def unique_json_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"字段重复：{key}")
+        value[key] = item
+    return value
+
+
+def validate_close_review_identity(contract, report):
     if report["contract_directory"] != str(contract.path.resolve(strict=True)):
         raise GoalError("复核报告的契约目录与当前契约不符")
     if report["verdict"] != "通过":

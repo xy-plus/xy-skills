@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from dataclasses import dataclass
 import fcntl
 import glob
 import json
@@ -190,44 +191,66 @@ def parse_links(text, quotes, tasks):
 class Contract:
     def __init__(self, path, goal_content):
         self.path = path
-        self.metadata = parse_fields(
-            path / "goal.md", ("target", "session_id", "claude_pid"), goal_content, (),
-        )
-        if re.fullmatch(r"[1-9][0-9]*", self.metadata["claude_pid"]) is None:
-            raise GoalError(f"{path / 'goal.md'}: claude_pid 必须是正整数")
+        self.metadata = self.read_metadata(goal_content)
         self.quotes = quote_files(path / "quotes")
         self.tasks = self.read_tasks("tasks")
         self.done = self.read_tasks("done")
+        self.validate_task_directories()
+        self.read_links()
+        self.validate_done()
+
+    def read_metadata(self, goal_content):
+        metadata = parse_fields(
+            self.path / "goal.md", ("target", "session_id", "claude_pid"), goal_content, (),
+        )
+        if re.fullmatch(r"[1-9][0-9]*", metadata["claude_pid"]) is None:
+            raise GoalError(f"{self.path / 'goal.md'}: claude_pid 必须是正整数")
+        return metadata
+
+    def validate_task_directories(self):
         overlap = self.tasks.keys() & self.done.keys()
         if overlap:
-            raise GoalError(f"{path / 'done'}: 事项同时开放和关闭：{sorted(overlap)}")
-        links_path = path / "links.md"
+            raise GoalError(f"{self.path / 'done'}: 事项同时开放和关闭：{sorted(overlap)}")
+
+    def read_links(self):
+        links_path = self.path / "links.md"
         self.links, self.dismissed, invalid = parse_links(
             read_text(links_path), self.quotes, self.tasks.keys() | self.done.keys())
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
+
+        self.validate_link_sources()
+        self.validate_task_sources()
+
+    def validate_link_sources(self):
         for number, task in self.links:
             if task not in self.tasks:
                 # 关闭事项不再驱动工作；它的映射是历史，不能让整份契约因此读不出来。
                 continue
-            reason = automatic_reason(self.quotes[number], path)
+            reason = automatic_reason(self.quotes[number], self.path)
             if reason is not None:
                 # 机器输入挂上后，完好的契约里没有摘除映射的命令，因此只能在挂接时挡住。
                 raise GoalError(f"原话 {number} 是机器输入（{reason}），不能作为出处{RELINK_USAGE}")
+
+    def validate_task_sources(self):
         linked_tasks = {task for _, task in self.links}
         for task in self.tasks:
             if task not in linked_tasks:
                 raise GoalError(
-                    f"{path / 'tasks' / (task + '.md')}: 开放事项 {task} 没有原话出处{RELINK_USAGE}"
+                    f"{self.path / 'tasks' / (task + '.md')}: 开放事项 {task} 没有原话出处{RELINK_USAGE}"
                 )
+
+    def validate_done(self):
         for task, values in self.done.items():
             if "cancel_quote" in values:
                 number = int(values["cancel_quote"])
                 if number not in self.quotes or (number, task) not in self.links:
-                    raise GoalError(f"{path / 'done' / (task + '.md')}: 取消原话不存在或缺少映射")
+                    raise GoalError(
+                        f"{self.path / 'done' / (task + '.md')}: 取消原话不存在或缺少映射")
             if "cancel_reason" in values:
                 if "evidence" not in values:
-                    raise GoalError(f"{path / 'done' / (task + '.md')}: 取消原因只用于带证据的事项")
+                    raise GoalError(
+                        f"{self.path / 'done' / (task + '.md')}: 取消原因只用于带证据的事项")
 
     def read_tasks(self, directory):
         tasks = {}
@@ -384,7 +407,15 @@ def consume_inputs(paths):
             remove_temporary_path(destination)
 
 
-def publish_contract(root, destination, *, metadata, quotes, links, input_paths):
+@dataclass(frozen=True)
+class ContractDraft:
+    metadata: dict
+    quotes: dict
+    links: str
+    input_paths: tuple
+
+
+def publish_contract(root, destination, draft):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     item = destination.parent
     project = item.parent
@@ -398,13 +429,13 @@ def publish_contract(root, destination, *, metadata, quotes, links, input_paths)
         staging.mkdir(parents=True)
         for name in ("quotes", "tasks", "done"):
             (staging / name).mkdir()
-        for number, text in quotes.items():
+        for number, text in draft.quotes.items():
             (staging / "quotes" / f"{number}.md").write_bytes(text.encode("utf-8"))
-        (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
-        (staging / "links.md").write_text(links, encoding="utf-8")
+        (staging / "goal.md").write_text(encode_fields(draft.metadata), encoding="utf-8")
+        (staging / "links.md").write_text(draft.links, encoding="utf-8")
         Contract(staging, (staging / "goal.md").read_bytes())
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
-        with consume_inputs(input_paths):
+        with consume_inputs(draft.input_paths):
             staging.parent.rename(item)
     finally:
         remove_temporary_path(temporary)

@@ -2,10 +2,12 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from goal_common import (
+    ContractDraft,
     HOOK_COMMANDS,
     TASK_FIELDS,
     Contract,
@@ -31,6 +33,14 @@ from track_and_verify.operations import (
     validate_close_review,
 )
 from contract_takeover.adopt import adopt as adopt_contract
+
+
+@dataclass(frozen=True)
+class ExecutionContext:
+    root: Path
+    session_id: str
+    claude_pid: int | None
+    now: datetime
 
 
 def parser():
@@ -86,20 +96,19 @@ def parser():
 
 
 def execute(options, *, root, session_id, claude_pid, now):
+    context = ExecutionContext(root, session_id, claude_pid, now)
     if options.command == "fingerprint":
         return print_contract_fingerprint(options.directory, root)
     found = find_contract(root, session_id)
     if options.command in ("open", "adopt"):
-        return execute_start_command(
-            options, root=root, session_id=session_id, claude_pid=claude_pid, now=now,
-            found_contract=found)
+        return execute_start_command(options, context, found)
     if found is None:
         raise GoalError("本会话没有契约")
     path, goal_content = found
     if options.command not in ("show", "check"):
         require_project_directory(root, path.parents[1])
     return execute_contract_command(
-        options, path=path, goal_content=goal_content, session_id=session_id)
+        options, path=path, goal_content=goal_content, session_id=context.session_id)
 
 
 def print_contract_fingerprint(directory, root):
@@ -118,30 +127,32 @@ def print_contract_fingerprint(directory, root):
     return 0
 
 
-def execute_start_command(options, *, root, session_id, claude_pid, now, found_contract):
+def execute_start_command(options, context, found_contract):
     path = found_contract[0] if found_contract is not None else None
     if path is not None and options.command not in ("show", "check"):
-        require_project_directory(root, path.parents[1])
-    require_pid(claude_pid)
+        require_project_directory(context.root, path.parents[1])
+    require_pid(context.claude_pid)
     if path is not None and not (options.command == "adopt"
             and Path(options.directory).expanduser().resolve() == path):
         raise GoalError(f"本会话已有契约：{path}")
     if options.command == "open":
-        return open_contract(options, root, session_id, claude_pid, now)
-    return adopt_contract(root, options.directory, found_contract, session_id, claude_pid)
+        return open_contract(options, context)
+    return adopt_contract(context.root, options.directory, found_contract,
+                          context.session_id, context.claude_pid)
 
 
-def open_contract(options, root, session_id, claude_pid, now):
+def open_contract(options, context):
     require_name(options.slug, "slug")
     require_text(options.target, "目标")
-    project = root / session_project(session_id)
-    path = project / f"{now:%Y%m%d-%H%M%S}-{options.slug}" / "xy-goal"
-    inbox = project / "xy-goal-inbox" / session_id
+    project = context.root / session_project(context.session_id)
+    path = project / f"{context.now:%Y%m%d-%H%M%S}-{options.slug}" / "xy-goal"
+    inbox = project / "xy-goal-inbox" / context.session_id
     quotes, reasons = incoming_quotes(inbox, path, 0)
-    metadata = {"target": options.target, "session_id": session_id, "claude_pid": str(claude_pid)}
+    metadata = {"target": options.target, "session_id": context.session_id,
+                "claude_pid": str(context.claude_pid)}
     links = "".join(f"{number} 不必跟进 {reason}\n" for number, reason in reasons.items())
-    publish_contract(root, path, metadata=metadata, quotes=quotes, links=links,
-                     input_paths=[inbox] if inbox.exists() else [])
+    draft = ContractDraft(metadata, quotes, links, (inbox,) if inbox.exists() else ())
+    publish_contract(context.root, path, draft)
     print(timer_prompt(path))
     return 0
 

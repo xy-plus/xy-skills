@@ -239,75 +239,88 @@ class GoalTests(GoalTestSupport):
                         self.assertEqual(output, "")
                         self.assertIn(str(self.root), errors)
 
-    def test_waiting_hook_and_open_refuse_deleted_or_replaced_root_without_writes(self):
+    def test_waiting_hook_refuses_deleted_or_replaced_root_without_writes(self):
+        self.assert_waiting_command_refuses_root_change("hook-prompt")
+
+    def test_waiting_open_refuses_deleted_or_replaced_root_without_writes(self):
+        self.assert_waiting_command_refuses_root_change("open")
+
+    def assert_waiting_command_refuses_root_change(self, operation):
         original_root = self.root
         environment = os.environ.copy()
         environment["CLAUDE_CODE_SESSION_ID"] = self.session
-        for operation in ("hook-prompt", "open"):
-            for root_type, change in (("directory", "deleted"), ("directory", "replaced"),
-                                      ("symlink", "deleted"), ("symlink", "replaced")):
-                with self.subTest(operation=operation, root_type=root_type, change=change):
-                    directory = original_root / f"{operation}-{root_type}-{change}"
-                    directory.mkdir()
-                    self.root = directory / "root"
-                    target = directory / "original" if root_type == "symlink" else self.root
-                    target.mkdir()
-                    (target / "keep.md").write_bytes(b"original root")
-                    replacement = directory / "replacement"
-                    replacement.mkdir()
-                    (replacement / "keep.md").write_bytes(b"replacement root")
-                    if root_type == "symlink":
-                        self.root.symlink_to(target, target_is_directory=True)
-                    arguments = (("hook-prompt",) if operation == "hook-prompt" else
-                                 ("open", "release", "交付新版本", "--claude-pid", str(self.pid)))
-                    descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        for root_type, change in (("directory", "deleted"), ("directory", "replaced"),
+                                  ("symlink", "deleted"), ("symlink", "replaced")):
+            with self.subTest(operation=operation, root_type=root_type, change=change):
+                self.run_waiting_root_change_case(original_root, environment,
+                                                  (operation, root_type, change))
+
+    def run_waiting_root_change_case(self, original_root, environment, scenario):
+        operation, root_type, change = scenario
+        directory = original_root / f"{operation}-{root_type}-{change}"
+        directory.mkdir()
+        self.root = directory / "root"
+        target = directory / "original" if root_type == "symlink" else self.root
+        target.mkdir()
+        (target / "keep.md").write_bytes(b"original root")
+        replacement = directory / "replacement"
+        replacement.mkdir()
+        (replacement / "keep.md").write_bytes(b"replacement root")
+        if root_type == "symlink":
+            self.root.symlink_to(target, target_is_directory=True)
+        arguments = (("hook-prompt",) if operation == "hook-prompt" else
+                     ("open", "release", "交付新版本", "--claude-pid", str(self.pid)))
+        descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            with tempfile.TemporaryFile(mode="w+", dir=original_root) as incoming:
+                json.dump({"session_id": self.session, "prompt": "排在锁后的原话"}, incoming)
+                incoming.seek(0)
+                with subprocess.Popen(
+                    [sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
+                     "--root", str(self.root), *arguments],
+                    stdin=incoming, env=environment, text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                ) as process:
                     try:
-                        fcntl.flock(descriptor, fcntl.LOCK_EX)
-                        with tempfile.TemporaryFile(mode="w+", dir=original_root) as incoming:
-                            json.dump({"session_id": self.session, "prompt": "排在锁后的原话"}, incoming)
-                            incoming.seek(0)
-                            with subprocess.Popen(
-                                [sys.executable, "-B", str(SCRIPT_DIRECTORY / "goal.py"),
-                                 "--root", str(self.root), *arguments],
-                                stdin=incoming, env=environment, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            ) as process:
-                                try:
-                                    # 观察真实 CLI 的目录 fd；父进程持锁，子进程还不能执行命令。
-                                    self.wait_until_root_is_open(process, descriptor)
-                                    if root_type == "symlink":
-                                        self.root.unlink()
-                                        if change == "replaced":
-                                            self.root.symlink_to(replacement, target_is_directory=True)
-                                    elif change == "deleted":
-                                        shutil.rmtree(self.root)
-                                    else:
-                                        self.root.rename(directory / "retired")
-                                        replacement.rename(self.root)
-                                    before = {str(path.relative_to(directory)):
-                                              path.read_bytes() if path.is_file() else None
-                                              for path in directory.rglob("*")}
-                                    fcntl.flock(descriptor, fcntl.LOCK_UN)
-                                    output, errors = process.communicate(timeout=10)
-                                    self.assertEqual(
-                                        {str(path.relative_to(directory)):
-                                         path.read_bytes() if path.is_file() else None
-                                         for path in directory.rglob("*")}, before,
-                                        "根目录失效后不能创建目录或写入文件",
-                                    )
-                                    if operation == "hook-prompt":
-                                        self.assert_hook_error((process.returncode, output, errors), operation,
-                                                               message=str(self.root),
-                                                               record="这次输入没有记入契约。")
-                                    else:
-                                        self.assertEqual(process.returncode, 1, output + errors)
-                                        self.assertEqual(output, "")
-                                        self.assertIn(str(self.root), errors)
-                                finally:
-                                    if process.poll() is None:
-                                        process.kill()
+                        # 观察真实 CLI 的目录 fd；父进程持锁，子进程还不能执行命令。
+                        self.wait_until_root_is_open(process, descriptor)
+                        self.replace_waiting_root(root_type, change, directory, replacement)
+                        before = {str(path.relative_to(directory)):
+                                  path.read_bytes() if path.is_file() else None
+                                  for path in directory.rglob("*")}
+                        fcntl.flock(descriptor, fcntl.LOCK_UN)
+                        output, errors = process.communicate(timeout=10)
+                        current = {str(path.relative_to(directory)):
+                                   path.read_bytes() if path.is_file() else None
+                                   for path in directory.rglob("*")}
+                        self.assertEqual(current, before, "根目录失效后不能创建目录或写入文件")
+                        self.assert_waiting_command_result(operation, process.returncode, output, errors)
                     finally:
-                        os.close(descriptor)
+                        if process.poll() is None:
+                            process.kill()
+        finally:
+            os.close(descriptor)
+
+    def replace_waiting_root(self, root_type, change, directory, replacement):
+        if root_type == "symlink":
+            self.root.unlink()
+            if change == "replaced":
+                self.root.symlink_to(replacement, target_is_directory=True)
+        elif change == "deleted":
+            shutil.rmtree(self.root)
+        else:
+            self.root.rename(directory / "retired")
+            replacement.rename(self.root)
+
+    def assert_waiting_command_result(self, operation, returncode, output, errors):
+        if operation == "hook-prompt":
+            self.assert_hook_error((returncode, output, errors), operation,
+                                   message=str(self.root), record="这次输入没有记入契约。")
+        else:
+            self.assertEqual(returncode, 1, output + errors)
+            self.assertEqual(output, "")
+            self.assertIn(str(self.root), errors)
 
     def test_open_refuses_an_existing_contract(self):
         self.open_goal("release")

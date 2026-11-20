@@ -1,17 +1,4 @@
-import json
-import shutil
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
-from goal_test_support import (
-    GoalTestSupport,
-    StringIO,
-    goal,
-    mock,
-    os,
-    redirect_stdout,
-)
-from track_and_verify.operations import read_session_transcript, show
+from track_test_support import GoalTestSupport, goal
 
 
 class RelinkTests(GoalTestSupport):

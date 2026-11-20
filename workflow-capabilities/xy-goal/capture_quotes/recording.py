@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import dataclass
 import json
 import re
 import stat
@@ -24,6 +25,13 @@ from goal_common import (
 
 class HookRecordError(GoalError):
     """原话已完整写入或有残缺文件；消息携带最终记录结果与原始错误。"""
+
+
+@dataclass(frozen=True)
+class WrittenQuote:
+    number: int
+    path: Path
+    text: str
 
 
 def hook_input(command):
@@ -60,7 +68,8 @@ def record_hook(root, session_id, text, transcript_path):
             root, session_id, text, found)
     quote = write_quote(directory, number, text)
     if path is not None:
-        classify_recorded_quote(path, contract, validation_error, number, quote, text)
+        classify_recorded_quote(path, contract, validation_error,
+                                WrittenQuote(number, quote, text))
 
 
 def inbox_record_target(root, session_id, transcript_path):
@@ -107,6 +116,10 @@ def contract_record_target(root, session_id, text, found):
 
 def write_quote(directory, number, text):
     quote = directory / f"{number}.md"
+    return write_new_quote(quote, text)
+
+
+def write_new_quote(quote, text, staged=False):
     output = quote.open("x", encoding="utf-8", newline="")
     try:
         with output:
@@ -115,26 +128,29 @@ def write_quote(directory, number, text):
         try:
             quote.unlink()
         except Exception as cleanup_error:
-            detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
+            prefix = "暂存原话" if staged else "这次输入的原话文件"
+            detail = (str(error) if staged or isinstance(error, GoalError)
+                      else f"{type(error).__name__}: {error}")
             raise HookRecordError(
-                f"这次输入的原话文件可能残缺（{quote}），先删掉它。原始错误：{detail}；"
+                f"{prefix}可能残缺（{quote}），先删掉它。原始错误：{detail}；"
                 f"删除失败：{type(cleanup_error).__name__}: {cleanup_error}") from error
         raise
     return quote
 
 
-def classify_recorded_quote(path, contract, validation_error, number, quote, text):
+def classify_recorded_quote(path, contract, validation_error, record):
     # 原话完整写入就是提交点。校验或分类失败都留给后续处理，不能再删除原话。
     try:
         if validation_error is not None:
             raise validation_error
-        reason = automatic_reason(text, path)
+        reason = automatic_reason(record.text, path)
         if reason is not None:
-            contract.dismissed[number] = reason
+            contract.dismissed[record.number] = reason
             write_files({contract.path / "links.md": encode_links(contract.links, contract.dismissed)}, [])
     except Exception as error:
         detail = str(error) if isinstance(error, GoalError) else f"{type(error).__name__}: {error}"
-        raise HookRecordError(f"这次输入已记为原话 {number}（{quote}）。原始错误：{detail}") from error
+        raise HookRecordError(
+            f"这次输入已记为原话 {record.number}（{record.path}）。原始错误：{detail}") from error
 
 
 def stage_corrupt_contract_input(root, contract_path, session_id, text, cause):
@@ -155,18 +171,7 @@ def stage_corrupt_contract_input(root, contract_path, session_id, text, cause):
     if not stat.S_ISDIR(inbox.lstat().st_mode):
         raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox}")
     quote = inbox / f"{max(read_inbox(inbox), default=0) + 1}.md"
-    output = quote.open("x", encoding="utf-8", newline="")
-    try:
-        with output:
-            output.write(text)
-    except BaseException as error:
-        try:
-            quote.unlink()
-        except Exception as cleanup_error:
-            raise HookRecordError(
-                f"暂存原话可能残缺（{quote}），先删掉它。原始错误：{error}；"
-                f"删除失败：{type(cleanup_error).__name__}: {cleanup_error}") from error
-        raise
+    write_new_quote(quote, text, staged=True)
     detail = str(cause) if cause is not None else "契约原话或关系文件不可读"
     raise HookRecordError(
         f"这次输入已暂存，修好契约后按原序并入。暂存位置：{quote}。原始错误：{detail}")
