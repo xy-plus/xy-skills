@@ -487,6 +487,60 @@ class GoalTests(GoalTestSupport):
                             encoding="utf-8")
         self.rejects("close", "--review", str(report), message="指纹")
 
+    def test_close_review_fingerprint_ignores_dismissed_automatic_inputs(self):
+        automatic_inputs = (
+            ("timer", "自动：本契约定时提示"),
+            ("notification", "自动：完整后台任务通知"),
+        )
+        for index, (input_kind, reason) in enumerate(automatic_inputs, start=1):
+            with self.subTest(reason=reason):
+                if index > 1:
+                    self.root = Path(self.temporary.name) / f"runs-machine-{index}"
+                    self.root.mkdir()
+                contract = self.open_goal(f"machine-{index}")
+                text = (f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做"
+                        if input_kind == "timer" else
+                        "<task-notification>\n<task-id>42</task-id><status>completed</status>"
+                        "<summary>后台完成</summary>\n</task-notification>")
+                review = self.close_review(contract)
+
+                self.hook("hook-prompt", {"session_id": self.session, "prompt": text})
+
+                self.succeeds("close", "--review", str(review))
+                self.assertFalse((contract / "goal.md").exists())
+
+    def test_close_review_fingerprint_covers_nonautomatic_changes(self):
+        self.root = Path(self.temporary.name) / "runs-human-quote"
+        self.root.mkdir()
+        contract = self.open_goal("human-quote")
+        review = self.close_review(contract)
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": "用户提出的真实要求"})
+        self.succeeds("dismiss", "1", "--reason", "已由作者处理")
+        self.rejects("close", "--review", str(review), message="指纹")
+
+        self.root = Path(self.temporary.name) / "runs-machine-manual-reason"
+        self.root.mkdir()
+        contract = self.open_goal("machine-manual-reason")
+        review = self.close_review(contract)
+        timer = f"本次契约：{contract}。按 xy-goal 的「定时自查」一节做"
+        self.hook("hook-prompt", {"session_id": self.session, "prompt": timer})
+        links = contract / "links.md"
+        links.write_text(links.read_text(encoding="utf-8").replace(
+            "自动：本契约定时提示", "人工标记"), encoding="utf-8")
+        self.rejects("close", "--review", str(review), message="指纹")
+
+        self.root = Path(self.temporary.name) / "runs-task-change"
+        self.root.mkdir()
+        contract = self.open_goal("task-change")
+        self.quote(contract, 1, "发布要求")
+        self.add_task(1)
+        self.succeeds("accept", "T1", "--verdict", "通过")
+        review = self.close_review(contract)
+        done = contract / "done" / "T1.md"
+        done.write_text(done.read_text(encoding="utf-8").replace("测试通过", "另一项标准"),
+                        encoding="utf-8")
+        self.rejects("close", "--review", str(review), message="指纹")
+
     def test_fingerprint_covers_contract_target_and_is_read_only(self):
         contract = self.open_goal("release")
         before = self.files()

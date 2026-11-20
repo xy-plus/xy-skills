@@ -477,11 +477,26 @@ def check(contract, session_id):
 
 def contract_fingerprint(path, goal_content):
     contract = Contract(path, goal_content)
+    links_path = path / "links.md"
+    links_text = links_path.read_text(encoding="utf-8")
+    links_lines = links_text.splitlines(keepends=True)
+    automatic_dismissals = {}
+    for number, text in contract.quotes.items():
+        reason = automatic_reason(text, path)
+        expected_line = f"{number} 不必跟进 {reason}" if reason is not None else None
+        if (reason is not None and contract.dismissed.get(number) == reason
+                and any(line.removesuffix("\n").removesuffix("\r") == expected_line
+                        for line in links_lines)):
+            automatic_dismissals[number] = expected_line
+
     entries = []
     for directory_name in ("quotes", "tasks", "done"):
         directory = path / directory_name
         for entry in sorted(directory.rglob("*"), key=lambda value: value.as_posix()):
             relative = entry.relative_to(path).as_posix()
+            # Only omit the numbered quote whose exact automatic dismissal is present.
+            if any(relative == f"quotes/{number}.md" for number in automatic_dismissals):
+                continue
             if entry.is_symlink():
                 entries.append([relative, "symlink", os.readlink(entry)])
             elif entry.is_dir():
@@ -490,7 +505,13 @@ def contract_fingerprint(path, goal_content):
                 entries.append([relative, "file", hashlib.sha256(entry.read_bytes()).hexdigest()])
             else:
                 entries.append([relative, "other", entry.lstat().st_mode])
-    entries.append(["links.md", "file", hashlib.sha256((path / "links.md").read_bytes()).hexdigest()])
+    # The automatic input's exact dismissal row is excluded with its quote; every other
+    # mapping remains in the fingerprint. automatic_reason is the single classifier.
+    fingerprint_links = "".join(
+        line for line in links_lines
+        if line.removesuffix("\n").removesuffix("\r") not in automatic_dismissals.values()
+    ).encode("utf-8")
+    entries.append(["links.md", "file", hashlib.sha256(fingerprint_links).hexdigest()])
     payload = json.dumps({
         "contract_directory": str(path.resolve(strict=True)),
         "target": contract.metadata["target"],
