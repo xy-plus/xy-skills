@@ -2296,7 +2296,7 @@
                 {
                   "id": "review-changed-features",
                   "text": "重复清扫时按功能登记和直属文件从上次认可提交到当前提交的变化，只列发生变化的功能。",
-                  "status": "起草"
+                  "status": "确认"
                 },
                 {
                   "id": "choose-review-scope",
@@ -2321,7 +2321,7 @@
                 {
                   "id": "validate-approval-record",
                   "text": "认可记录必须是仓库内有效的普通 JSON 文件，键不重复，值为 40 位小写完整提交号且是当前 HEAD 的祖先；无效时明确报错。",
-                  "status": "起草"
+                  "status": "确认"
                 },
                 {
                   "id": "show-approval-commit",
