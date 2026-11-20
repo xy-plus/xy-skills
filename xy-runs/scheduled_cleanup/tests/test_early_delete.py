@@ -34,6 +34,16 @@ class EarlyDeleteTests(unittest.TestCase):
         (settings_directory / "settings.json").write_text(
             json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
 
+    def set_target_in_home_runs(self):
+        self.root = self.home / "runs"
+        self.project = self.root / "-home-xy-project"
+        self.item = self.project / "20261120-110000-task"
+        self.target = self.item / "obsolete-build"
+        self.target.mkdir(parents=True)
+        (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
+        (self.home / ".claude" / "settings.json").write_text(
+            json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
+
     def run_delete(self, target, *extra, confirmed=True):
         arguments = [sys.executable, "-B", str(SCRIPT), "delete-obsolete",
                      "--target", str(target)]
@@ -140,14 +150,7 @@ class EarlyDeleteTests(unittest.TestCase):
         self.assertIn("sub-agent-runner", result.stderr)
 
     def test_delete_rejects_systemd_home_specifier_reference(self):
-        self.root = self.home / "runs"
-        self.project = self.root / "-home-xy-project"
-        self.item = self.project / "20261120-110000-task"
-        self.target = self.item / "obsolete-build"
-        self.target.mkdir(parents=True)
-        (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
-        (self.home / ".claude" / "settings.json").write_text(
-            json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
+        self.set_target_in_home_runs()
         unit = self.units / "uses-target.service"
         relative_target = self.target.relative_to(self.home)
         unit.write_text(f"ExecStart=/bin/tool %h/{relative_target}\n", encoding="utf-8")
@@ -157,14 +160,7 @@ class EarlyDeleteTests(unittest.TestCase):
         self.assertIn("systemd", result.stderr)
 
     def test_delete_rejects_systemd_environment_variable_reference(self):
-        self.root = self.home / "runs"
-        self.project = self.root / "-home-xy-project"
-        self.item = self.project / "20261120-110000-task"
-        self.target = self.item / "obsolete-build"
-        self.target.mkdir(parents=True)
-        (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
-        (self.home / ".claude" / "settings.json").write_text(
-            json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
+        self.set_target_in_home_runs()
         unit = self.units / "uses-target.service"
         relative_target = self.target.relative_to(self.root)
         unit.write_text(
