@@ -190,78 +190,6 @@ def browser_receiver(directory, page_html, decisions, answers_path, fail_next_po
 
 
 class DecisionPageBrowserTest(unittest.TestCase):
-    def test_folded_details_expand_and_submit_without_entering_answers(self):
-        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
-        self.assertTrue(
-            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
-        )
-        decisions = browser_decisions()
-        details_lines = [
-            "alpha：第一条。",
-            "draft-" * 80 + "<img src=x onerror=window.pwned=1>",
-        ]
-        decisions["groups"][0]["items"][0]["details"] = {
-            "title": "起草条目 2 条",
-            "lines": details_lines,
-        }
-        page_html = decision_page.render_decision_page(decisions)
-        page_errors = []
-
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            answers_path = Path(temporary) / "answers.json"
-            with browser_receiver(
-                Path(temporary), page_html, decisions, answers_path, False
-            ) as (receiver_thread, bridge):
-                with sync_playwright() as playwright:
-                    browser = playwright.chromium.launch(
-                        executable_path=executable, headless=True
-                    )
-                    page = browser.new_page(viewport={"width": 390, "height": 844})
-                    page.on("pageerror", lambda error: page_errors.append(str(error)))
-                    page.goto(f"http://127.0.0.1:{bridge.server_port}/")
-
-                    first_item = page.locator('[data-item-id="A1"]')
-                    disclosure = first_item.locator(".decision-details")
-                    self.assertEqual(disclosure.count(), 1)
-                    self.assertFalse(disclosure.evaluate("element => element.open"))
-                    self.assertEqual(
-                        disclosure.locator("summary").inner_text(), "起草条目 2 条"
-                    )
-                    self.assertFalse(disclosure.locator(".details-line").first.is_visible())
-                    disclosure.locator("summary").click()
-                    self.assertTrue(disclosure.evaluate("element => element.open"))
-                    self.assertEqual(
-                        disclosure.locator(".details-line").all_inner_texts(),
-                        details_lines,
-                    )
-                    self.assertIsNone(page.evaluate("window.pwned"))
-                    self.assertLessEqual(
-                        page.evaluate("document.documentElement.scrollWidth"),
-                        page.evaluate("window.innerWidth"),
-                    )
-
-                    page.locator("#submit").click()
-                    page.locator("#status").get_by_text("已收到").wait_for()
-                    browser.close()
-
-                receiver_thread.join(5)
-                self.assertFalse(receiver_thread.is_alive())
-                submitted_answers = {
-                    "A1": {"option": "Keep", "note": ""},
-                    "B1": {"option": "Use current name", "note": ""},
-                    "__proto__": {"option": "Keep prototype", "note": ""},
-                    "constructor": {"option": "Keep constructor", "note": ""},
-                }
-                saved_answers = json.loads(answers_path.read_text(encoding="utf-8"))
-                self.assertEqual(
-                    saved_answers,
-                    {"title": "Cleanup decisions", "answers": submitted_answers},
-                )
-                self.assertNotIn("details", saved_answers["answers"]["A1"])
-                self.assertEqual(bridge.received_payloads, [{"answers": submitted_answers}])
-
-        self.assertEqual(page_errors, [])
-
     def test_compare_shows_counts_and_each_block_change_on_a_phone(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(
@@ -433,6 +361,14 @@ class DecisionPageBrowserTest(unittest.TestCase):
             executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
         )
         decisions = browser_decisions()
+        details_lines = [
+            "alpha：第一条。",
+            "draft-" * 80 + "<img src=x onerror=window.pwned=1>",
+        ]
+        decisions["groups"][0]["items"][0]["details"] = {
+            "title": "起草条目 2 条",
+            "lines": details_lines,
+        }
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             answers_path = Path(temporary) / "answers.json"
             page_html = decision_page.render_decision_page(decisions)
@@ -449,6 +385,20 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     page.on("pageerror", lambda error: script_errors.append(str(error)))
                     page.goto(f"http://127.0.0.1:{bridge.server_port}/")
                     first_item = page.locator('[data-item-id="A1"]')
+                    disclosure = first_item.locator(".decision-details")
+                    self.assertFalse(disclosure.evaluate("element => element.open"))
+                    self.assertEqual(
+                        disclosure.locator("summary").inner_text(), "起草条目 2 条"
+                    )
+                    self.assertFalse(
+                        disclosure.locator(".details-line").first.is_visible()
+                    )
+                    disclosure.locator("summary").click()
+                    self.assertEqual(
+                        disclosure.locator(".details-line").all_inner_texts(),
+                        details_lines,
+                    )
+                    self.assertIsNone(page.evaluate("window.pwned"))
                     prototype_item = page.locator('[data-item-id="__proto__"]')
                     constructor_item = page.locator('[data-item-id="constructor"]')
                     first_item.locator('input[value="Remove"]').check()
@@ -506,10 +456,12 @@ class DecisionPageBrowserTest(unittest.TestCase):
                         "note": "Saved constructor answer.",
                     },
                 }
+                saved_answers = json.loads(answers_path.read_text(encoding="utf-8"))
                 self.assertEqual(
-                    json.loads(answers_path.read_text(encoding="utf-8")),
+                    saved_answers,
                     {"title": "Cleanup decisions", "answers": expected_answers},
                 )
+                self.assertNotIn("details", saved_answers["answers"]["A1"])
                 submitted = {"answers": expected_answers}
                 self.assertEqual(bridge.received_payloads, [submitted, submitted])
                 self.assertEqual(script_errors, [])
