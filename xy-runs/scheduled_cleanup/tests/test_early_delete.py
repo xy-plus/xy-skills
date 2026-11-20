@@ -34,8 +34,8 @@ class EarlyDeleteTests(unittest.TestCase):
         (settings_directory / "settings.json").write_text(
             json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
 
-    def set_target_in_home_runs(self):
-        self.root = self.home / "runs"
+    def set_target_in_home_runs(self, runs_name):
+        self.root = self.home / runs_name
         self.project = self.root / "-home-xy-project"
         self.item = self.project / "20261120-110000-task"
         self.target = self.item / "obsolete-build"
@@ -150,7 +150,7 @@ class EarlyDeleteTests(unittest.TestCase):
         self.assertIn("sub-agent-runner", result.stderr)
 
     def test_delete_rejects_systemd_home_specifier_reference(self):
-        self.set_target_in_home_runs()
+        self.set_target_in_home_runs("runs")
         unit = self.units / "uses-target.service"
         relative_target = self.target.relative_to(self.home)
         unit.write_text(f"ExecStart=/bin/tool %h/{relative_target}\n", encoding="utf-8")
@@ -160,7 +160,7 @@ class EarlyDeleteTests(unittest.TestCase):
         self.assertIn("systemd", result.stderr)
 
     def test_delete_rejects_systemd_environment_variable_reference(self):
-        self.set_target_in_home_runs()
+        self.set_target_in_home_runs("runs")
         unit = self.units / "uses-target.service"
         relative_target = self.target.relative_to(self.root)
         unit.write_text(
@@ -196,6 +196,113 @@ class EarlyDeleteTests(unittest.TestCase):
 
         self.assertIn("systemd", result.stderr)
         self.assertIn(str(unit), result.stderr)
+
+    def test_delete_fails_closed_for_unknown_systemd_specifier(self):
+        unit = self.units / "uses-target.service"
+        unit.write_text("ExecStart=/bin/tool %i\n", encoding="utf-8")
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(str(unit), result.stderr)
+        self.assertIn("%i", result.stderr)
+
+    def test_delete_does_not_treat_systemd_percent_unit_as_a_specifier(self):
+        unit = self.units / "uses-target.service"
+        unit.write_text("CPUQuota=400%\nExecStart=/bin/tool /not-the-target\n",
+                        encoding="utf-8")
+
+        result = self.run_delete(self.target)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.target.exists())
+
+    def test_delete_keeps_dollar_text_in_environment_values_literal(self):
+        unit = self.units / "uses-target.service"
+        unit.write_text(
+            "Environment=PASSWORD=$argon2id$hash-value\n"
+            "ExecStart=/bin/tool /not-the-target\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_delete(self.target)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.target.exists())
+
+    def test_delete_uses_environment_file_value_over_inline_environment(self):
+        environment_file = self.home / "target.env"
+        environment_file.write_text(f"TARGET={self.target}\n", encoding="utf-8")
+        unit = self.units / "uses-target.service"
+        unit.write_text(
+            "Environment=TARGET=/not/the/target\n"
+            f"EnvironmentFile={environment_file}\n"
+            "ExecStart=/bin/tool $TARGET\n",
+            encoding="utf-8",
+        )
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(str(unit), result.stderr)
+
+    def test_delete_fails_closed_when_environment_file_cannot_be_read(self):
+        environment_file = self.home / "missing-target.env"
+        unit = self.units / "uses-target.service"
+        unit.write_text(
+            f"EnvironmentFile={environment_file}\nExecStart=/bin/tool\n",
+            encoding="utf-8",
+        )
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(str(unit), result.stderr)
+        self.assertIn(str(environment_file), result.stderr)
+
+    def test_delete_rejects_quoted_target_path_with_spaces(self):
+        self.set_target_in_home_runs("runs with spaces")
+        unit = self.units / "uses-target.service"
+        unit.write_text(f'ExecStart=/bin/tool "{self.target}"\n', encoding="utf-8")
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(str(unit), result.stderr)
+
+    def test_delete_uses_environment_definition_from_unit_dropin(self):
+        unit = self.units / "uses-target.service"
+        unit.write_text(
+            "Environment=TARGET=/not/the/target\nExecStart=/bin/tool $TARGET\n",
+            encoding="utf-8",
+        )
+        dropin_directory = self.units / "uses-target.service.d"
+        dropin_directory.mkdir()
+        (dropin_directory / "override.conf").write_text(
+            f"Environment=TARGET={self.target}\n", encoding="utf-8")
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(str(unit), result.stderr)
+
+    def test_delete_expands_escaped_percent_in_unit_path(self):
+        (self.target / "output.txt").unlink()
+        self.target.rmdir()
+        self.target = self.item / "obsolete%literal"
+        self.target.mkdir()
+        (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
+        unit = self.units / "uses-target.service"
+        escaped_target = str(self.target).replace("%", "%%")
+        unit.write_text(f"ExecStart=/bin/tool {escaped_target}\n", encoding="utf-8")
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(str(unit), result.stderr)
+
+    def test_delete_fails_closed_for_unmatched_systemd_quotes(self):
+        unit = self.units / "uses-target.service"
+        unit.write_text('ExecStart=/bin/tool --message="unterminated\n', encoding="utf-8")
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(str(unit), result.stderr)
+        self.assertIn("引号", result.stderr)
 
     def test_cleaner_unit_glob_outside_runs_root_does_not_block_deletion(self):
         unit = self.units / "runs-cleaner.service"

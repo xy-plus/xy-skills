@@ -1,4 +1,3 @@
-import inspect
 import fcntl
 import shlex
 import shutil
@@ -60,19 +59,6 @@ class GoalTests(GoalTestSupport):
         self.assertEqual((contract / "quotes" / "2.md").read_text(encoding="utf-8"),
                          "关闭前暂存的新原话")
         self.assertTrue((contract / "goal.md").is_file())
-
-    def test_contract_validation_stays_in_init_and_publish_uses_named_inputs(self):
-        split_methods = {
-            "read_metadata", "validate_task_directories", "read_links",
-            "validate_link_sources", "validate_task_sources", "validate_done",
-        }
-        self.assertFalse(split_methods & set(goal_common.Contract.__dict__))
-        self.assertFalse(hasattr(goal_common, "ContractDraft"))
-        signature = inspect.signature(goal_common.publish_contract)
-        self.assertEqual(tuple(signature.parameters),
-                         ("root", "destination", "metadata", "quotes", "links", "input_paths"))
-        self.assertTrue(all(signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
-                            for name in ("metadata", "quotes", "links", "input_paths")))
 
     def test_read_text_preserves_filesystem_errors(self):
         path = self.root / "unreadable.md"

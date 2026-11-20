@@ -1370,11 +1370,6 @@
           "status": "确认"
         },
         {
-          "id": "expire-inactive-runs-implementation-detail",
-          "text": "运行目录及全部后代的修改时间（mtime）和状态变更时间（ctime）都满 30 天，且没有本用户可读进程引用时才整项清理。",
-          "status": "起草"
-        },
-        {
           "id": "early-delete-safely",
           "text": "确定作废的事项产物可提前删除；运行内软链仅在真实目标也属于运行根时按此规则处理，并须核对目标路径、活动进程、定时服务和其他会话依赖，且不删除运行根、项目根或整个 inbox。",
           "status": "确认"
