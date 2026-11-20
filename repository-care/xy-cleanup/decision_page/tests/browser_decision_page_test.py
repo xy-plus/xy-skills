@@ -190,6 +190,29 @@ def browser_receiver(directory, page_html, decisions, answers_path, fail_next_po
 
 
 class DecisionPageBrowserTest(unittest.TestCase):
+    def _open_page(self, playwright, executable, bridge, page_errors):
+        browser = playwright.chromium.launch(
+            executable_path=executable,
+            headless=True,
+        )
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        page.goto(f"http://127.0.0.1:{bridge.server_port}/")
+        return browser, page
+
+    def _expand_folded_details(self, page, item, expected_lines):
+        disclosure = item.locator(".decision-details")
+        self.assertFalse(disclosure.evaluate("element => element.open"))
+        self.assertEqual(
+            disclosure.locator("summary").inner_text(), "起草条目 2 条"
+        )
+        self.assertFalse(disclosure.locator(".details-line").first.is_visible())
+        disclosure.locator("summary").click()
+        self.assertEqual(
+            disclosure.locator(".details-line").all_inner_texts(), expected_lines
+        )
+        self.assertIsNone(page.evaluate("window.pwned"))
+
     def test_compare_shows_counts_and_each_block_change_on_a_phone(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(
@@ -263,13 +286,9 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 Path(temporary), first_page, decisions, answers_path, False
             ) as (_receiver_thread, bridge):
                 with sync_playwright() as playwright:
-                    browser = playwright.chromium.launch(
-                        executable_path=executable,
-                        headless=True,
+                    browser, page = self._open_page(
+                        playwright, executable, bridge, script_errors
                     )
-                    page = browser.new_page(viewport={"width": 390, "height": 844})
-                    page.on("pageerror", lambda error: script_errors.append(str(error)))
-                    page.goto(f"http://127.0.0.1:{bridge.server_port}/")
 
                     self.assertEqual(page.locator(".item").count(), 4)
                     first_item = page.locator('[data-item-id="A1"]')
@@ -377,28 +396,11 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 Path(temporary), page_html, decisions, answers_path, True
             ) as (receiver_thread, bridge):
                 with sync_playwright() as playwright:
-                    browser = playwright.chromium.launch(
-                        executable_path=executable,
-                        headless=True,
+                    browser, page = self._open_page(
+                        playwright, executable, bridge, script_errors
                     )
-                    page = browser.new_page(viewport={"width": 390, "height": 844})
-                    page.on("pageerror", lambda error: script_errors.append(str(error)))
-                    page.goto(f"http://127.0.0.1:{bridge.server_port}/")
                     first_item = page.locator('[data-item-id="A1"]')
-                    disclosure = first_item.locator(".decision-details")
-                    self.assertFalse(disclosure.evaluate("element => element.open"))
-                    self.assertEqual(
-                        disclosure.locator("summary").inner_text(), "起草条目 2 条"
-                    )
-                    self.assertFalse(
-                        disclosure.locator(".details-line").first.is_visible()
-                    )
-                    disclosure.locator("summary").click()
-                    self.assertEqual(
-                        disclosure.locator(".details-line").all_inner_texts(),
-                        details_lines,
-                    )
-                    self.assertIsNone(page.evaluate("window.pwned"))
+                    self._expand_folded_details(page, first_item, details_lines)
                     prototype_item = page.locator('[data-item-id="__proto__"]')
                     constructor_item = page.locator('[data-item-id="constructor"]')
                     first_item.locator('input[value="Remove"]').check()
