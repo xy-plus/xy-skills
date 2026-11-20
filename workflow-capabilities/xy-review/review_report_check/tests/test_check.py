@@ -136,7 +136,7 @@ class CheckTest(unittest.TestCase):
             reports[0] = ("review-main.json", main_report(verdict="不通过", hard_to_misuse=[{
                 "problem": "缺陷",
                 "evidence": "check.py:5",
-                "quote": {"source": "xy-repo-rules 第 1 条", "text": "人类或 agent 读完 README.md 后都能立刻上手。"},
+                "quote": {"source": "xy-repo-rules 第 1 条", "text": "任何人或 agent 看完 README.md，就能直接上手这个仓库的所有事情。"},
             }]))
         for name, report in reports:
             code, output = self.run_report(name, report, (group, "round3"))
@@ -670,7 +670,7 @@ class CheckTest(unittest.TestCase):
             "evidence": "README.md:1",
             "quote": {
                 "source": "xy-repo-rules 第 1 条",
-                "text": "人类或 agent 读完 README.md 后都能立刻上手。",
+                "text": "任何人或 agent 看完 README.md，就能直接上手这个仓库的所有事情。",
             },
         }])
         document = main_report(verdict="改了就过", repo_rules=rules)
@@ -986,7 +986,7 @@ class CheckTest(unittest.TestCase):
         document = main_report(verdict="不通过", hard_to_misuse=[{
             "problem": "缺陷",
             "evidence": "check.py:5",
-            "quote": {"source": "xy-repo-rules 第 1 条", "text": "人类或 agent 读完 README.md 后都能立刻上手。"},
+            "quote": {"source": "xy-repo-rules 第 1 条", "text": "任何人或 agent 看完 README.md，就能直接上手这个仓库的所有事情。"},
         }])
         code, output = self.run_report("review-main.json", document, ("group1", "round3"))
         self.assertEqual(code, 0, output)

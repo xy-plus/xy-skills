@@ -178,6 +178,11 @@
               "id": "remove-unneeded-work",
               "text": "积极删除或合并没有实际必要的代码和文档，避免仓库留下历史包袱。",
               "status": "确认"
+            },
+            {
+              "id": "question-user-premises",
+              "text": "用户的话也不一定对；先判断要求是否合理、是否正确，并考虑更好、更本质的解决方案。",
+              "status": "确认"
             }
           ],
           "children": []
@@ -185,7 +190,7 @@
         {
           "id": "xy-repo-rules",
           "title": "仓库规范",
-          "what": "README 让人易上手；命名简单清楚；项目、目录和文件有合理层级、职责边界和功能复用；文档靠近代码，上手说明写进 README。",
+          "what": "任何人或 agent 看完 README.md，就能直接上手这个仓库的所有事情；命名清楚简单；项目、目录和文件有合理层级、职责边界和功能复用；文档尽量写在代码注释里，不另开文档文件。",
           "why": {
             "text": "积极删掉不必要的代码和文档，不留历史包袱和补丁。",
             "source": "原话",
@@ -196,23 +201,23 @@
           "items": [
             {
               "id": "readme-enables-setup",
-              "text": "任何人读完仓库说明后都能立即完成安装并开始使用。",
+              "text": "任何人或 agent 看完 README.md，就能直接上手这个仓库的所有事情。",
               "status": "确认"
             },
             {
               "id": "clear-names",
               "text": "目录、文件和变量名含义清楚；除专业词汇外使用简单清楚的英文词，不清楚时改成容易理解的词组。",
-              "status": "起草"
+              "status": "确认"
             },
             {
               "id": "separate-responsibilities",
               "text": "项目、目录和文件之间有合理层级和职责边界，并复用功能。",
-              "status": "起草"
+              "status": "确认"
             },
             {
               "id": "docs-near-code",
-              "text": "文档尽量写在代码注释里，不另开文档；上手要用的说明写进 README。",
-              "status": "起草"
+              "text": "文档尽量写在代码注释里，不另开文档文件。",
+              "status": "确认"
             }
           ],
           "children": []
@@ -477,7 +482,7 @@
             {
               "id": "include-review-source",
               "text": "读对象前只给上游：契约目录、相关原话及原件、短回答的题干和所选选项、被审仓功能图里的相关功能登记；审代码时再给已审 spec。不给对象位置；推导校验通过后再给本轮送审版本。",
-              "status": "起草"
+              "status": "确认"
             },
             {
               "id": "recover-short-answer-context",
@@ -602,7 +607,7 @@
             {
               "id": "check-all-repo-rules",
               "text": "主审逐条对照仓库规范，记录每条是否发现问题。",
-              "status": "起草"
+              "status": "确认"
             },
             {
               "id": "standard-reports-and-conclusion",
@@ -711,7 +716,7 @@
                 {
                   "id": "report-type-shape",
                   "text": "按报告文件名检查主审、剃刀、推导和判因报告是否使用对应的固定字段结构。",
-                  "status": "起草"
+                  "status": "确认"
                 },
                 {
                   "id": "reject-invalid-fields",
