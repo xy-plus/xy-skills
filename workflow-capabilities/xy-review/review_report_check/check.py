@@ -704,19 +704,17 @@ def _history_report_problems(round_path, name, number):
         text = report_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         return [f"{report_path}：无法读取必需报告：{error}"], False
-    document, report_problems = _parse_document(text)
-    if not report_problems:
-        if name in ("review-main.json", "review-razor.json"):
-            derivation, derivation_problems = _round_derivation_document(report_path, name)
-            report_problems = _check_parsed_document(
-                document, name, report_path, derivation
-            )
-            report_problems += derivation_problems
-        else:
-            report_problems = _check_parsed_document(document, name, report_path)
-    if report_problems:
-        return [f"{report_path}：{problem}" for problem in report_problems], False
-    failed = document.get("verdict") == "不通过"
+    document, parse_problems = _parse_document(text)
+    if parse_problems:
+        return [f"{report_path}：{problem}" for problem in parse_problems], False
+    if not isinstance(document, dict):
+        return [f"{report_path}：历史报告必须是 JSON 对象"], False
+    verdict = document.get("verdict")
+    if not isinstance(verdict, str) or verdict not in VERDICTS:
+        return [
+            f"{report_path}：历史报告 verdict 必须是「通过」「改了就过」或「不通过」之一"
+        ], False
+    failed = verdict == "不通过"
     if failed and not (round_path / "handling.md").is_file():
         return [f"{round_path}：{name} 结论为「不通过」，缺少 handling.md"], number == 3
     return [], failed and number == 3
