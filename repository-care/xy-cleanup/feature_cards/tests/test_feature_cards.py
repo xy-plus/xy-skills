@@ -307,23 +307,14 @@ class FeatureCardsTest(unittest.TestCase):
         paths = self.write_cards(self.default_cards())
         paths[0].write_text('{"feature":"root","feature":"root"}', encoding="utf-8")
 
-        result = self.run_card_paths(paths, arguments)
+        result = self.run_card_paths(paths, arguments.copy())
 
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertFalse(self.output.exists())
 
-        arguments = [
-            "python3",
-            "-B",
-            str(COMMAND),
-            "--repo",
-            str(self.repository),
-            "--scope",
-            "全部",
-            "--review",
-            "全部",
-        ]
-        result = self.run_card_paths([self.directory / "absent.json"], arguments)
+        result = self.run_card_paths(
+            [self.directory / "absent.json"], arguments.copy()
+        )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
     def test_missing_required_arguments_exit_two(self):
