@@ -1056,8 +1056,8 @@
                 },
                 {
                   "id": "independent-close-review",
-                  "text": "关闭前由新审查者对照原话与已关闭事项复核。",
-                  "status": "确认"
+                  "text": "关闭前由新审查者对照原话与已关闭事项复核；复核者会话须与当前持有这份契约的会话不同。",
+                  "status": "起草"
                 },
                 {
                   "id": "track-and-verify-close-review-scope",

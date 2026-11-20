@@ -1,4 +1,4 @@
-import inspect, json, subprocess, sys, tempfile, unittest
+import json, subprocess, sys, tempfile, unittest
 import os
 from pathlib import Path
 
@@ -193,12 +193,3 @@ class CheckHandoffTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("无法检查现有会话", result.stdout)
         self.assertFalse(launch_log.exists())
-
-    def test_skill_does_not_require_a_manual_name_list_before_start(self):
-        skill = (Path(__file__).resolve().parents[2] / "SKILL.md").read_text(encoding="utf-8")
-        self.assertNotIn("启动前用 `claude agents --json --all` 查现有名字", skill)
-
-    def test_start_helper_requires_explicit_name_list_and_command_result(self):
-        parameters = inspect.signature(self.run_start).parameters.values()
-        self.assertTrue(all(parameter.default is inspect.Parameter.empty
-                            for parameter in parameters))

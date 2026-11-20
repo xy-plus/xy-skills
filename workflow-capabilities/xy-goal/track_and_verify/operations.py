@@ -545,5 +545,6 @@ def validate_close_review_identity(contract, report):
     reviewer = report["reviewer_session_id"]
     if re.fullmatch(r"[^/\\\n\r\x00]+", reviewer) is None or reviewer in (".", ".."):
         raise GoalError("复核者会话 id 必须是单个目录名")
+    # 复核者会话须与当前持有这份契约的会话不同；接管后 session_id 会更新。
     if reviewer == contract.metadata["session_id"]:
         raise GoalError("复核者会话 id 必须与契约当前会话不同")
