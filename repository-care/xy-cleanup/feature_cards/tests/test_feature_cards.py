@@ -144,30 +144,46 @@ class FeatureCardsTest(unittest.TestCase):
 
     def test_page_shows_only_failed_map_judgments_and_each_item_issue(self):
         cards = self.default_cards()
+        cards[0]["map_issues"]["why"] = "理由只抱怨旧版效果，没有说明功能为何必要。"
         cards[1]["map_issues"] = {
             "why": "成立",
             "what": "what 与理由矛盾：理由说免点，what 却只写看依赖。",
             "group": "合适",
             "items": ["漏了运行目录管理。", "写了但未实现的结果。"],
         }
+        cards[2]["map_issues"]["group"] = "运行目录管理应该归入本组，但图中遗漏。"
 
         result = self.run_cards(cards)
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+        items = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
             "items"
-        ][1]
-        lines = "\n".join(item["lines"])
+        ]
+        root_lines = "\n".join(items[0]["lines"])
+        self.assertIn(
+            "图上理由不成立：理由只抱怨旧版效果，没有说明功能为何必要。",
+            root_lines,
+        )
+        self.assertNotIn("图上 what 不一致", root_lines)
+        self.assertNotIn("图上分组不合适", root_lines)
+
+        alpha_lines = "\n".join(items[1]["lines"])
         self.assertIn(
             "图上 what 不一致：what 与理由矛盾：理由说免点，what 却只写看依赖。",
-            lines,
+            alpha_lines,
         )
-        self.assertIn("图上条目问题：漏了运行目录管理。", lines)
-        self.assertIn("图上条目问题：写了但未实现的结果。", lines)
-        self.assertNotIn("图上理由不成立", lines)
-        self.assertNotIn("图上分组不合适", lines)
-        self.assertNotIn("why：成立", lines)
-        self.assertNotIn("group：合适", lines)
+        self.assertIn("图上条目问题：漏了运行目录管理。", alpha_lines)
+        self.assertIn("图上条目问题：写了但未实现的结果。", alpha_lines)
+        self.assertNotIn("图上理由不成立", alpha_lines)
+        self.assertNotIn("图上分组不合适", alpha_lines)
+
+        beta_lines = "\n".join(items[2]["lines"])
+        self.assertIn(
+            "图上分组不合适：运行目录管理应该归入本组，但图中遗漏。",
+            beta_lines,
+        )
+        self.assertNotIn("图上理由不成立", beta_lines)
+        self.assertNotIn("图上 what 不一致", beta_lines)
 
     def test_valid_cards_make_a_decision_page_accepted_by_decision_page(self):
         cards = self.default_cards()
