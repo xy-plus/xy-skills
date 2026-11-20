@@ -561,35 +561,45 @@ def expand_systemd_variables(value, variables, unit, source, expanding):
     return "".join(result)
 
 
+def unresolved_systemd_specifier_at(word, position):
+    if position + 1 >= len(word):
+        return None, position + 1
+    specifier = word[position + 1]
+    if specifier == "%":
+        return None, position + 2
+    if specifier == "f" or specifier.isalnum() or specifier == "{":
+        return "%" + specifier, position + 2
+    return None, position + 2
+
+
+def unresolved_systemd_variable_at(word, position):
+    if position + 1 >= len(word):
+        return "$", position + 1
+    if word[position + 1] == "$":
+        return None, position + 2
+    if word[position + 1] == "{":
+        end = word.find("}", position + 2)
+        if end < 0:
+            return word[position:], len(word)
+        return word[position:end + 1], end + 1
+    match = SYSTEMD_ENVIRONMENT_NAME.match(word, position + 1)
+    if match is None:
+        return "$", position + 1
+    return "$" + match.group(), match.end()
+
+
 def unresolved_systemd_reference(word):
     position = 0
     while position < len(word):
         if word[position] == "%":
-            if position + 1 >= len(word):
-                position += 1
-                continue
-            specifier = word[position + 1]
-            if specifier == "%":
-                position += 2
-                continue
-            if specifier == "f" or specifier.isalnum() or specifier == "{":
-                return "%" + specifier
+            unresolved, position = unresolved_systemd_specifier_at(word, position)
         elif word[position] == "$":
-            if position + 1 >= len(word):
-                return "$"
-            if word[position + 1] == "$":
-                position += 2
-                continue
-            if word[position + 1] == "{":
-                end = word.find("}", position + 2)
-                if end < 0:
-                    return word[position:]
-                return word[position:end + 1]
-            match = SYSTEMD_ENVIRONMENT_NAME.match(word, position + 1)
-            if match is None:
-                return "$"
-            return "$" + match.group()
-        position += 1
+            unresolved, position = unresolved_systemd_variable_at(word, position)
+        else:
+            position += 1
+            continue
+        if unresolved is not None:
+            return unresolved
     return None
 
 
