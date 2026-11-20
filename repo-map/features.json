@@ -94,9 +94,7 @@
     "systemd",
     "playwright",
     "Chromium",
-    "ruff",
-    "vulture",
-    "cargo clippy"
+    "ruff"
   ],
   "children": [
     {
