@@ -205,6 +205,7 @@ def _decision_item(feature_id, reason, card, context):
         "lines": lines,
         "options": options,
         "recommended": card["recommended"],
+        "details": None,
         "compare": None,
     }
 

@@ -46,6 +46,7 @@ def decisions_document(title, feature_ids):
                         "options": ["照建议", "留"],
                         "recommended": "照建议",
                         "compare": None,
+                        "details": None,
                     }
                     for feature_id in feature_ids
                 ],

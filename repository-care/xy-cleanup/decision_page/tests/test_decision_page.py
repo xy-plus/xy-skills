@@ -43,6 +43,7 @@ def valid_decisions():
                         "options": ["Keep", "Remove"],
                         "recommended": "Keep",
                         "compare": None,
+                        "details": None,
                     }
                 ],
             }

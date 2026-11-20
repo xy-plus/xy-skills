@@ -40,11 +40,50 @@ class DecisionShapeValidationTest(unittest.TestCase):
         missing_compare = valid_decisions()
         del missing_compare["groups"][0]["items"][0]["compare"]
         cases.append((missing_compare, "compare"))
+        missing_details = valid_decisions()
+        del missing_details["groups"][0]["items"][0]["details"]
+        cases.append((missing_details, "details"))
 
         for decisions, expected in cases:
             with self.subTest(expected=expected):
                 with self.assertRaises(ValueError) as context:
                     decision_page.validate_decisions(decisions)
+                self.assertIn(expected, str(context.exception))
+
+    def test_details_accepts_null_and_a_complete_object(self):
+        null_details = valid_decisions()
+        self.assertIs(decision_page.validate_decisions(null_details), null_details)
+
+        decision = valid_decisions()
+        decision["groups"][0]["items"][0]["details"] = {
+            "title": "起草条目 2 条",
+            "lines": ["alpha：第一条。", "beta：第二条。"],
+        }
+        self.assertIs(decision_page.validate_decisions(decision), decision)
+
+    def test_details_rejects_missing_extra_and_invalid_fields(self):
+        cases = (
+            ("missing", None, "details"),
+            ("extra", {"title": "更多", "lines": ["条目。"], "extra": True}, "extra"),
+            ("non-object", ["条目。"], "details"),
+            ("missing-title", {"lines": ["条目。"]}, "title"),
+            ("empty-title", {"title": " ", "lines": ["条目。"]}, "title"),
+            ("non-string-title", {"title": 7, "lines": ["条目。"]}, "title"),
+            ("missing-lines", {"title": "更多"}, "lines"),
+            ("non-array-lines", {"title": "更多", "lines": "条目。"}, "lines"),
+            ("empty-lines", {"title": "更多", "lines": []}, "lines"),
+            ("empty-line", {"title": "更多", "lines": [""]}, "lines[0]"),
+            ("non-string-line", {"title": "更多", "lines": [7]}, "lines[0]"),
+        )
+        for label, details, expected in cases:
+            with self.subTest(label=label):
+                decision = valid_decisions()
+                if label == "missing":
+                    del decision["groups"][0]["items"][0]["details"]
+                else:
+                    decision["groups"][0]["items"][0]["details"] = details
+                with self.assertRaises(ValueError) as context:
+                    decision_page.validate_decisions(decision)
                 self.assertIn(expected, str(context.exception))
 
     def test_compare_accepts_null_and_block_array_with_an_empty_after(self):

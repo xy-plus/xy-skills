@@ -28,6 +28,7 @@ DECISION_SHAPE = {
                     "lines": [""],
                     "options": [""],
                     "recommended": "",
+                    "details": {"title": "", "lines": [""]},
                     "compare": [{"lines": "", "before": "", "after": ""}],
                 }
             ],
@@ -52,7 +53,7 @@ from text_metrics import count_non_whitespace_characters  # noqa: E402
 
 
 def _decision_shape_view(value):
-    """Adapt optional and empty comparison text for the shared shape checker."""
+    """Adapt nullable comparison and detail values for the shared shape checker."""
     if not isinstance(value, dict):
         return value
     result = dict(value)
@@ -78,6 +79,8 @@ def _decision_item_shape_view(item):
     result = dict(item)
     if "compare" in result:
         result["compare"] = _compare_shape_view(result["compare"])
+    if "details" in result and result["details"] is None:
+        result["details"] = {"title": "optional", "lines": ["optional"]}
     return result
 
 
@@ -168,6 +171,11 @@ def _validate_compare(item_label, compare):
         previous_end = end_line
 
 
+def _validate_details(item_label, details):
+    if details is not None and not details["lines"]:
+        raise ValueError(f"{item_label}.details.lines 必须是非空字符串数组")
+
+
 def _validate_decision_item(item, item_label, item_ids):
     item_id = item["id"]
     if item_id in item_ids:
@@ -181,6 +189,7 @@ def _validate_decision_item(item, item_label, item_ids):
     if item["recommended"] not in options:
         raise ValueError(f"{item_label}.recommended 必须是 options 中的选项")
     _validate_compare(item_label, item["compare"])
+    _validate_details(item_label, item["details"])
 
 
 def _validate_decision_groups(groups):

@@ -388,6 +388,7 @@ class FeatureCardsTest(unittest.TestCase):
                                     "lines": ["认可。"],
                                     "options": ["照建议", "留"],
                                     "recommended": "照建议",
+                                    "details": None,
                                     "compare": None,
                                 }
                                 for feature_id in feature_ids
