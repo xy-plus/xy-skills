@@ -197,37 +197,17 @@ class EarlyDeleteTests(unittest.TestCase):
         self.assertIn("systemd", result.stderr)
         self.assertIn(str(unit), result.stderr)
 
-    def test_delete_fails_closed_for_unknown_systemd_specifier(self):
+    def test_delete_fails_closed_for_unparseable_systemd_text(self):
         unit = self.units / "uses-target.service"
-        unit.write_text("ExecStart=/bin/tool %i\n", encoding="utf-8")
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(str(unit), result.stderr)
-        self.assertIn("%i", result.stderr)
-
-    def test_delete_does_not_treat_systemd_percent_unit_as_a_specifier(self):
-        unit = self.units / "uses-target.service"
-        unit.write_text("CPUQuota=400%\nExecStart=/bin/tool /not-the-target\n",
-                        encoding="utf-8")
-
-        result = self.run_delete(self.target)
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.target.exists())
-
-    def test_delete_keeps_dollar_text_in_environment_values_literal(self):
-        unit = self.units / "uses-target.service"
-        unit.write_text(
-            "Environment=PASSWORD=$argon2id$hash-value\n"
-            "ExecStart=/bin/tool /not-the-target\n",
-            encoding="utf-8",
-        )
-
-        result = self.run_delete(self.target)
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.target.exists())
+        for contents, detail in (
+            ("ExecStart=/bin/tool %i\n", "%i"),
+            ('ExecStart=/bin/tool --message="unterminated\n', "引号"),
+        ):
+            with self.subTest(detail=detail):
+                unit.write_text(contents, encoding="utf-8")
+                result = self.assert_rejected_unchanged(self.target)
+                self.assertIn(str(unit), result.stderr)
+                self.assertIn(detail, result.stderr)
 
     def test_delete_uses_environment_file_value_over_inline_environment(self):
         environment_file = self.home / "target.env"
@@ -295,27 +275,24 @@ class EarlyDeleteTests(unittest.TestCase):
 
         self.assertIn(str(unit), result.stderr)
 
-    def test_delete_fails_closed_for_unmatched_systemd_quotes(self):
-        unit = self.units / "uses-target.service"
-        unit.write_text('ExecStart=/bin/tool --message="unterminated\n', encoding="utf-8")
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(str(unit), result.stderr)
-        self.assertIn("引号", result.stderr)
-
-    def test_cleaner_unit_glob_outside_runs_root_does_not_block_deletion(self):
+    def test_delete_ignores_literal_percent_dollars_and_external_globs(self):
         unit = self.units / "runs-cleaner.service"
-        unit.write_text(
+        contents = (
+            "CPUQuota=400%\nExecStart=/bin/tool /not-the-target\n",
+            "Environment=PASSWORD=$argon2id$hash-value\n"
+            "ExecStart=/bin/tool /not-the-target\n",
             "ExecStart=/usr/bin/python3 /skills/xy-runs/clean.py configured "
             "--mode delete --additional-root %h/.codex-subagent*/sessions/*/*\n",
-            encoding="utf-8",
         )
-
-        result = self.run_delete(self.target)
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.target.exists())
+        for index, content in enumerate(contents):
+            with self.subTest(index=index):
+                target = self.item / f"unreferenced-{index}"
+                target.mkdir()
+                (target / "output.txt").write_text("作废产物", encoding="utf-8")
+                unit.write_text(content, encoding="utf-8")
+                result = self.run_delete(target)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse(target.exists())
 
     def test_delete_unlinks_in_root_symlink_without_touching_its_target(self):
         data = self.item / "real-data"

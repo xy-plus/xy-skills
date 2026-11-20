@@ -18,7 +18,6 @@ from goal_test_support import (
     tempfile,
 )
 from goal_common import read_text
-import goal_common
 
 
 class GoalTests(GoalTestSupport):
