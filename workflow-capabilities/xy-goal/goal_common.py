@@ -315,46 +315,37 @@ def session_project(session_id):
     return require_project_name(records[0].parent.name)
 
 
+def actual_directory(path, error_message, *, create=False):
+    if create:
+        try:
+            path.mkdir()
+        except FileExistsError:
+            pass
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(mode):
+        raise GoalError(f"{error_message}：{path}")
+    return True
+
+
 def inbox_directory(root, project, session_id, *, create=False):
     """Return an actual inbox directory, rejecting symlinks at both levels."""
     require_name(session_id, "inbox 会话 id")
     if project.parent != root:
         raise GoalError(f"项目目录必须是根目录下的真实目录，不能是软链接：{project}")
-    try:
-        project_mode = project.lstat().st_mode
-    except FileNotFoundError:
+    if not actual_directory(project, "项目目录必须是根目录下的真实目录，不能是软链接"):
         if create:
             raise GoalError(f"项目目录不存在，不能创建 inbox：{project}")
         return None
-    if not stat.S_ISDIR(project_mode):
-        raise GoalError(f"项目目录必须是根目录下的真实目录，不能是软链接：{project}")
 
     inbox_root = project / "xy-goal-inbox"
-    if create:
-        try:
-            inbox_root.mkdir()
-        except FileExistsError:
-            pass
-    try:
-        root_mode = inbox_root.lstat().st_mode
-    except FileNotFoundError:
+    message = "项目 inbox 必须是实际目录，不能是软链接"
+    if not actual_directory(inbox_root, message, create=create):
         return None
-    if not stat.S_ISDIR(root_mode):
-        raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox_root}")
-
     inbox = inbox_root / session_id
-    if create:
-        try:
-            inbox.mkdir()
-        except FileExistsError:
-            pass
-    try:
-        inbox_mode = inbox.lstat().st_mode
-    except FileNotFoundError:
-        return None
-    if not stat.S_ISDIR(inbox_mode):
-        raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox}")
-    return inbox
+    return inbox if actual_directory(inbox, message, create=create) else None
 
 
 def checked_inbox_path(root, inbox):
@@ -438,7 +429,8 @@ def consume_inputs(root, paths):
             remove_temporary_path(destination)
 
 
-def publish_contract(root, destination, *, metadata, quotes, links, input_paths):
+# Keep the values as named inputs; the spec rejects a one-off container for this call.
+def publish_contract(root, destination, *, metadata, quotes, links, input_paths):  # noqa: PLR0913
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     item = destination.parent
     project = item.parent

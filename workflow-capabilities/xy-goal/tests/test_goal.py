@@ -35,27 +35,13 @@ class GoalTests(GoalTestSupport):
                 contract = self.open_goal(f"merge-{level}")
                 outside = self.root.parent / f"merge-outside-{level}"
                 outside.mkdir()
-                inbox_root = self.project / "xy-goal-inbox"
-                inbox = inbox_root / self.session
-                if level == "root":
-                    inbox_root.symlink_to(outside, target_is_directory=True)
-                else:
-                    inbox_root.mkdir()
-                    inbox.symlink_to(outside, target_is_directory=True)
                 try:
-                    code, output, errors = self.command("check")
-                    self.assertEqual(code, 1, output + errors)
-                    self.assertIn("项目 inbox 必须是实际目录", errors)
-                    self.assertTrue((contract / "goal.md").is_file())
+                    with self.symlinked_inbox(level, outside):
+                        code, output, errors = self.command("check")
+                        self.assertEqual(code, 1, output + errors)
+                        self.assertIn("项目 inbox 必须是实际目录", errors)
+                        self.assertTrue((contract / "goal.md").is_file())
                 finally:
-                    if level == "root":
-                        if inbox_root.is_symlink():
-                            inbox_root.unlink()
-                    else:
-                        if inbox.is_symlink():
-                            inbox.unlink()
-                        if inbox_root.is_dir() and not inbox_root.is_symlink():
-                            inbox_root.rmdir()
                     self.root = original_root
 
     def test_close_merges_inbox_before_rejecting_unhandled_quotes(self):

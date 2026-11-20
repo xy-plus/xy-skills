@@ -277,6 +277,27 @@ class GoalTestSupport(unittest.TestCase):
         return {str(path.relative_to(directory)): path.read_bytes() if path.is_file() else None
                 for path in directory.rglob("*")}
 
+    @contextmanager
+    def symlinked_inbox(self, level, outside):
+        inbox_root = self.project / "xy-goal-inbox"
+        inbox = inbox_root / self.session
+        if level == "root":
+            inbox_root.symlink_to(outside, target_is_directory=True)
+        else:
+            inbox_root.mkdir()
+            inbox.symlink_to(outside, target_is_directory=True)
+        try:
+            yield inbox_root, inbox
+        finally:
+            if level == "root":
+                if inbox_root.is_symlink():
+                    inbox_root.unlink()
+            else:
+                if inbox.is_symlink():
+                    inbox.unlink()
+                if inbox_root.is_dir() and not inbox_root.is_symlink():
+                    inbox_root.rmdir()
+
     def wait_until_root_is_open(self, process, descriptor):
         deadline = time.monotonic() + 10
         while process.poll() is None and time.monotonic() < deadline:

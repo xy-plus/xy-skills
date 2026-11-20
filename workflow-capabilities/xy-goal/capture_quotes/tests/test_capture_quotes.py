@@ -22,14 +22,7 @@ class CaptureQuotesTests(GoalTestSupport):
                 self.project.mkdir(parents=True, exist_ok=True)
                 outside = self.root.parent / f"outside-{level}"
                 outside.mkdir()
-                inbox_root = self.project / "xy-goal-inbox"
-                inbox = inbox_root / self.session
-                if level == "root":
-                    inbox_root.symlink_to(outside, target_is_directory=True)
-                else:
-                    inbox_root.mkdir()
-                    inbox.symlink_to(outside, target_is_directory=True)
-                try:
+                with self.symlinked_inbox(level, outside) as (inbox_root, inbox):
                     before = self.directory_entries(outside)
                     payload = {
                         "session_id": self.session,
@@ -43,15 +36,6 @@ class CaptureQuotesTests(GoalTestSupport):
                                            record="这次输入没有记入契约。")
                     self.assertEqual(self.directory_entries(outside), before)
                     self.assertTrue((inbox_root if level == "root" else inbox).is_symlink())
-                finally:
-                    if level == "root":
-                        if inbox_root.is_symlink():
-                            inbox_root.unlink()
-                    else:
-                        if inbox.is_symlink():
-                            inbox.unlink()
-                        if inbox_root.is_dir() and not inbox_root.is_symlink():
-                            inbox_root.rmdir()
 
     def test_open_rejects_symlinked_inbox_root_and_session_without_claiming(self):
         original_root = self.root
@@ -63,14 +47,7 @@ class CaptureQuotesTests(GoalTestSupport):
                 outside = self.root.parent / f"open-outside-{level}"
                 outside.mkdir()
                 (outside / "1.md").write_text("不能导入外部原话", encoding="utf-8")
-                inbox_root = self.project / "xy-goal-inbox"
-                inbox = inbox_root / self.session
-                if level == "root":
-                    inbox_root.symlink_to(outside, target_is_directory=True)
-                else:
-                    inbox_root.mkdir()
-                    inbox.symlink_to(outside, target_is_directory=True)
-                try:
+                with self.symlinked_inbox(level, outside) as (inbox_root, inbox):
                     before = self.directory_entries(outside)
                     code, output, errors = self.run_goal(
                         "open", f"release-{level}", "目标",
@@ -81,16 +58,7 @@ class CaptureQuotesTests(GoalTestSupport):
                     self.assertEqual(self.directory_entries(outside), before)
                     self.assertFalse((self.project / f"20261024-093000-release-{level}" / "xy-goal").exists())
                     self.assertTrue((inbox_root if level == "root" else inbox).is_symlink())
-                finally:
-                    if level == "root":
-                        if inbox_root.is_symlink():
-                            inbox_root.unlink()
-                    else:
-                        if inbox.is_symlink():
-                            inbox.unlink()
-                        if inbox_root.is_dir() and not inbox_root.is_symlink():
-                            inbox_root.rmdir()
-                    self.root = original_root
+                self.root = original_root
 
     def test_inbox_hooks_reject_symlink_project_without_writing_outside(self):
         outside = self.replace_project_with_symlink()
