@@ -147,9 +147,12 @@ class FeatureCardsTest(unittest.TestCase):
             ["照建议", "留", "按我写的改", "不要这个功能"],
         )
         self.assertEqual(items[1]["recommended"], "照建议")
+        self.assertIsNone(items[1]["details"])
+        self.assertIn("要什么：提供 alpha 功能。", items[1]["lines"])
         intro = "\n".join(decisions["intro"])
         for choice in ("照建议：", "留：", "按我写的改：", "不要这个功能：", "前三项"):
             self.assertIn(choice, intro)
+        self.assertIn("包括收起的", intro)
         self.assertIn("为什么：让功能容易使用。", "\n".join(items[0]["lines"]))
         self.assertIn("可选的旧格式导出入口", "\n".join(items[1]["lines"]))
         self.assertIn("README 实际使用记录只选了新版入口", "\n".join(items[1]["lines"]))
@@ -179,11 +182,55 @@ class FeatureCardsTest(unittest.TestCase):
             "items"
         ][0]
         rendered_lines = "\n".join(item["lines"])
+        self.assertIsNone(item["details"])
+        self.assertFalse(any(line.startswith("要什么：") for line in item["lines"]))
         self.assertIn("提供新版 alpha 功能。", rendered_lines)
         self.assertIn("起草", rendered_lines)
         self.assertIn("简化用户设置。", rendered_lines)
         self.assertIn("原来：提供 alpha 功能。", rendered_lines)
         self.assertNotIn(approval_commit, rendered_lines)
+
+    def test_unapproved_feature_folds_draft_items_and_keeps_what_and_why_visible(self):
+        manifest = self.repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        alpha = document["children"][0]
+        alpha["why"] = {
+            "text": "让 alpha 易于使用。",
+            "source": "起草",
+            "quote": "",
+            "from": "",
+        }
+        alpha["items"] = [
+            {"id": "core", "text": "提供 alpha 核心能力。", "status": "起草"},
+            {"id": "extra", "text": "提供 alpha 附加能力。", "status": "起草"},
+        ]
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        self._commit_repository("起草 alpha 条目")
+
+        result = self.run_cards(
+            [card("alpha")], scope=("alpha",), review="全部"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][0]
+        self.assertEqual(
+            item["details"],
+            {
+                "title": "起草条目 2 条",
+                "lines": ["core：提供 alpha 核心能力。", "extra：提供 alpha 附加能力。"],
+            },
+        )
+        self.assertEqual(
+            item["lines"][:3],
+            [
+                "本次纳入：全部重审",
+                "要什么：提供 alpha 功能。",
+                "为什么（起草，等你拍板）：让 alpha 易于使用。",
+            ],
+        )
+        self.assertFalse(any("alpha 核心能力" in line for line in item["lines"]))
 
     def test_plan_with_no_changed_features_is_rejected(self):
         self._commit_repository("初始提交")
@@ -388,8 +435,8 @@ class FeatureCardsTest(unittest.TestCase):
                                     "lines": ["认可。"],
                                     "options": ["照建议", "留"],
                                     "recommended": "照建议",
-                                    "details": None,
                                     "compare": None,
+                                    "details": None,
                                 }
                                 for feature_id in feature_ids
                             ],

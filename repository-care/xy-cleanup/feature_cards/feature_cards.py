@@ -148,7 +148,7 @@ def _load_previous_features(repository, commit):
         ) from error
 
 
-def _draft_lines(feature, previous_feature):
+def _draft_reason_lines(feature, previous_feature):
     lines = []
     why = feature["why"]
     why_prefix = "为什么（起草，等你拍板）" if why["source"] == "起草" else "为什么"
@@ -157,7 +157,11 @@ def _draft_lines(feature, previous_feature):
         previous_why = previous_feature.get("why") if previous_feature else None
         if isinstance(previous_why, dict) and previous_why.get("text") != why["text"]:
             lines.append(f"原来：{previous_why['text']}")
+    return lines
 
+
+def _draft_item_lines(feature, previous_feature, *, include_draft_label):
+    lines = []
     previous_items = (
         {
             item["id"]: item
@@ -170,7 +174,8 @@ def _draft_lines(feature, previous_feature):
     for item in feature["items"]:
         if item["status"] != "起草":
             continue
-        text = f"起草条目 {item['id']}：{item['text']}"
+        prefix = "起草条目 " if include_draft_label else ""
+        text = f"{prefix}{item['id']}：{item['text']}"
         previous = previous_items.get(item["id"])
         if previous is not None and previous.get("text") != item["text"]:
             text += f"（原来：{previous['text']}）"
@@ -193,9 +198,25 @@ def _append_card_lines(lines, card):
 
 def _decision_item(feature_id, reason, card, context):
     feature = context.values[feature_id]
+    previous_feature = context.previous_features.get(feature_id)
+    unapproved = context.commits[feature_id] == "无"
+    draft_items = _draft_item_lines(
+        feature,
+        previous_feature,
+        include_draft_label=not unapproved,
+    )
     lines = [f"本次纳入：{reason}"]
-    lines.extend(_draft_lines(feature, context.previous_features.get(feature_id)))
+    if unapproved:
+        lines.append(f"要什么：{feature['what']}")
+    lines.extend(_draft_reason_lines(feature, previous_feature))
+    if not unapproved:
+        lines.extend(draft_items)
     _append_card_lines(lines, card)
+    details = (
+        {"title": f"起草条目 {len(draft_items)} 条", "lines": draft_items}
+        if unapproved and draft_items
+        else None
+    )
     options = list(COMMON_OPTIONS)
     if not context.data["features"][feature_id]["children"]:
         options.append(REMOVE_FEATURE)
@@ -205,7 +226,7 @@ def _decision_item(feature_id, reason, card, context):
         "lines": lines,
         "options": options,
         "recommended": card["recommended"],
-        "details": None,
+        "details": details,
         "compare": None,
     }
 
@@ -215,6 +236,7 @@ class DecisionContext:
     values: dict
     data: dict
     previous_features: dict
+    commits: dict
 
 
 @dataclass
@@ -311,7 +333,12 @@ def build_decisions(plan, cards):
     previous_features = _load_feature_history(
         plan.repository, planned_ids, plan.commits
     )
-    context = DecisionContext(plan.values, plan.data, previous_features)
+    context = DecisionContext(
+        plan.values,
+        plan.data,
+        previous_features,
+        plan.commits,
+    )
     items = _build_decision_items(plan.planned, by_id, context)
     decisions = {
         "title": (
@@ -323,7 +350,7 @@ def build_decisions(plan, cards):
             "留：不删改代码、测试、文档或 TODO，也不做卡片建议；仍会确认本页列出的起草条目和理由。",
             "按我写的改：以「照建议」为底按备注修改；含义不明先问。",
             "不要这个功能：只给没有子功能的功能，删除该功能实现、测试、文档、TODO 和图上条目。",
-            "前三项都会把本页列出的起草条目和功能理由照写的确认；点「留」也表示确认这些文字。",
+            "前三项都会把本页列出的起草条目（包括收起的）和功能理由照写的确认；点「留」也表示确认这些文字。",
         ],
         "groups": [{"title": "功能审批", "notes": [], "items": items}],
         "footnotes": [],
