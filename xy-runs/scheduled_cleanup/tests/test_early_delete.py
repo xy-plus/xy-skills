@@ -1,11 +1,13 @@
 import json
 import os
+import pwd
 from pathlib import Path
 import select
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from cleanup_test_support import stop_process
 
@@ -200,7 +202,8 @@ class EarlyDeleteTests(unittest.TestCase):
     def test_delete_fails_closed_for_unparseable_systemd_text(self):
         unit = self.units / "uses-target.service"
         for contents, detail in (
-            ("ExecStart=/bin/tool %i\n", "%i"),
+            ("ExecStart=/bin/tool /runs/%i\n", "%i"),
+            ("ExecStart=/bin/tool %f\n", "%f"),
             ('ExecStart=/bin/tool --message="unterminated\n', "引号"),
         ):
             with self.subTest(detail=detail):
@@ -208,6 +211,80 @@ class EarlyDeleteTests(unittest.TestCase):
                 result = self.assert_rejected_unchanged(self.target)
                 self.assertIn(str(unit), result.stderr)
                 self.assertIn(detail, result.stderr)
+
+    def test_delete_allows_unresolved_template_and_variable_words_outside_paths(self):
+        unit = self.units / "uses-target@instance.service"
+        unit.write_text(
+            "Description=模板实例 %i $UNDEFINED\n"
+            "ExecStart=/bin/tool %i $UNDEFINED\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_delete(self.target)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.target.exists())
+
+    def test_delete_rejects_target_paths_after_user_manager_specifier_expansion(self):
+        unit = self.units / "uses-target.service"
+        original_target = self.target
+        item = original_target.parent
+        contexts = (
+            ("%t", {"XDG_RUNTIME_DIR": str(self.root)}, "root"),
+            ("%S", {"XDG_STATE_HOME": str(self.root)}, "root"),
+            ("%C", {"XDG_CACHE_HOME": str(self.root)}, "root"),
+            ("%L", {"XDG_STATE_HOME": str(item)}, "log"),
+            ("%E", {"XDG_CONFIG_HOME": str(self.root)}, "root"),
+            ("%T", {"TMPDIR": str(self.root)}, "root"),
+            ("%V", {"TMPDIR": str(self.root)}, "root"),
+            ("%u", {}, pwd.getpwuid(os.getuid()).pw_name),
+            ("%U", {}, str(os.getuid())),
+        )
+        for index, (specifier, variables, layout) in enumerate(contexts):
+            with self.subTest(specifier=specifier):
+                if layout == "root":
+                    target = original_target
+                    unit_path = f"{specifier}/{target.relative_to(self.root)}"
+                elif specifier == "%L":
+                    target = item / "log"
+                    unit_path = specifier
+                else:
+                    target = item / layout
+                    unit_path = f"{self.root}/{item.relative_to(self.root)}/{specifier}"
+                if not target.exists():
+                    target.mkdir(parents=True)
+                    (target / "output.txt").write_text("作废产物", encoding="utf-8")
+                unit.write_text(f"ExecStart=/bin/tool {unit_path}\n", encoding="utf-8")
+                self.target = target
+                with patch.dict(os.environ, variables):
+                    result = self.assert_rejected_unchanged(target)
+                self.assertIn(f"systemd 用户单元引用目标：{unit}", result.stderr)
+
+    def test_delete_rejects_reference_in_unit_linked_from_wants_directory(self):
+        external_units = self.temporary / "linked-units"
+        external_units.mkdir()
+        linked_unit = external_units / "uses-target.service"
+        linked_unit.write_text(f"ExecStart=/bin/tool {self.target}\n", encoding="utf-8")
+        wants = self.units / "default.target.wants"
+        wants.mkdir()
+        link = wants / linked_unit.name
+        link.symlink_to(linked_unit)
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(f"systemd 用户单元引用目标：{link}", result.stderr)
+
+    def test_delete_rejects_reference_in_type_level_service_dropin(self):
+        unit = self.units / "ordinary.service"
+        unit.write_text("ExecStart=/bin/tool /not-the-target\n", encoding="utf-8")
+        type_dropin = self.units / "service.d"
+        type_dropin.mkdir()
+        (type_dropin / "target.conf").write_text(
+            f"Description={self.target}\n", encoding="utf-8")
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn(f"systemd 用户单元引用目标：{unit}", result.stderr)
 
     def test_delete_uses_environment_file_value_over_inline_environment(self):
         environment_file = self.home / "target.env"
