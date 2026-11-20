@@ -4,7 +4,6 @@ import io
 import json
 import os
 import select
-import shutil
 import subprocess
 import sys
 import threading
@@ -25,47 +24,6 @@ SCRIPT = SCRIPT_DIRECTORY / "clean.py"
 
 def descriptor_directory(descriptor):
     return Path(os.readlink(f"/proc/self/fd/{descriptor}"))
-
-# All test paths travel through the environment, except command-line fixtures.
-# This prevents cwd/fd/maps tests from accidentally passing via argv matches.
-PROCESS_CODE = r"""
-import ctypes
-import os
-import sys
-from pathlib import Path
-
-item = Path(os.environ["CLEANER_TEST_ITEM"])
-action = os.environ["CLEANER_TEST_ACTION"]
-if action == "executable":
-    os.environ["CLEANER_TEST_ACTION"] = "idle"
-    os.execve(str(item / "python"), ["python", "-c", os.environ["CLEANER_TEST_CODE"]], os.environ)
-if action in ("cwd", "hidden-cwd"):
-    os.chdir(item)
-if action == "file":
-    descriptor = os.open(item / "data", os.O_RDONLY)
-if action == "directory":
-    descriptor = os.open(item, os.O_RDONLY | os.O_DIRECTORY)
-if action == "handshake":
-    import fcntl
-    root_descriptor = os.open(os.environ["CLEANER_TEST_ROOT"], os.O_RDONLY | os.O_DIRECTORY)
-    fcntl.flock(root_descriptor, fcntl.LOCK_EX)
-    descriptor = os.open(item, os.O_RDONLY | os.O_DIRECTORY)
-    os.close(root_descriptor)
-if action == "mapping":
-    library = ctypes.CDLL(None, use_errno=True)
-    library.mmap.restype = ctypes.c_void_p
-    descriptor = os.open(item / "data", os.O_RDONLY)
-    address = library.mmap(None, 4096, 1, 2, descriptor, 0)
-    if address == ctypes.c_void_p(-1).value:
-        raise OSError(ctypes.get_errno(), "mmap")
-    os.close(descriptor)
-if action.startswith("hidden"):
-    if ctypes.CDLL(None).prctl(4, 0, 0, 0, 0) != 0:
-        raise RuntimeError("PR_SET_DUMPABLE failed")
-print("ready", flush=True)
-sys.stdin.read(1)
-"""
-
 
 class CleanerTestCase(unittest.TestCase):
     def setUp(self):
@@ -113,21 +71,6 @@ class CleanerTestCase(unittest.TestCase):
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             os.close(descriptor)
-
-    def start_process(self, item, action, arguments):
-        environment = os.environ.copy()
-        environment.update(CLEANER_TEST_ITEM=str(item), CLEANER_TEST_ACTION=action,
-                           CLEANER_TEST_CODE=PROCESS_CODE, CLEANER_TEST_ROOT=str(self.root))
-        process = subprocess.Popen(
-            [sys.executable, "-c", PROCESS_CODE, *arguments], env=environment,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, cwd=self.temporary.name,
-        )
-        self.addCleanup(stop_process, process)
-        ready, _, _ = select.select([process.stdout], [], [], 5)
-        self.assertTrue(ready, "child did not become ready")
-        self.assertEqual(process.stdout.readline(), "ready\n")
-        return process
 
     def roots(self):
         return [str(self.root), str(self.root / "-*"),
@@ -292,62 +235,6 @@ class CleanerTestCase(unittest.TestCase):
         self.assertIn(str(rename_error), errors)
         self.assertIn("test rename denied", errors)
         self.assertIn("test interrupted removal", errors)
-
-
-    def make_item(self, name):
-        item = self.root / name
-        item.mkdir()
-        (item / "data").write_bytes(b"x" * 4096)
-        return item
-
-    # Each /proc reference must protect an item, without argv mentioning it.
-    def test_cwd_open_files_directory_handles_and_mappings_keep_items(self):
-        cases = [(action, action) for action in ("cwd", "file", "directory", "mapping", "executable")]
-        cases.extend((action, f"kept-{action} (deleted)") for action in ("cwd", "directory"))
-        for action, name in cases:
-            with self.subTest(action=action, name=name):
-                item = self.make_item(name)
-                if action == "executable":
-                    shutil.copy2(sys.executable, item / "python")
-                process = self.start_process(item, action, [])
-                _, paths, _ = self.run_cleaner([str(self.root)], "list", self.cutoff)
-                self.assertEqual(paths, [], name)
-                status, paths, errors = self.run_cleaner(
-                    [str(self.root)], "delete", self.cutoff
-                )
-                self.assertTrue(item.exists(), name)
-                self.assertEqual((status, paths, errors), (0, [], ""))
-                stop_process(process)
-                shutil.rmtree(item)
-
-    # Command-line paths match complete roots, never prefixes or suffix siblings.
-    def test_command_paths_match_only_complete_roots(self):
-        cases = (("", "", True), ("", "/data", True), ("", " extra", True),
-                 ("", "-other", False), ("/elsewhere", "", False))
-        for prefix, suffix, kept in cases:
-            with self.subTest(prefix=prefix, suffix=suffix):
-                item = self.make_item("command")
-                path = prefix + str(item) + suffix
-                process = self.start_process(item, "idle", [f"--output={path}"])
-                self.run_cleaner([str(self.root)], "delete", self.cutoff)
-                self.assertEqual(item.exists(), kept)
-                stop_process(process)
-                if kept:
-                    shutil.rmtree(item)
-
-    # A hidden process is kept only when its readable command names the item.
-    def test_hidden_process_with_and_without_command_path(self):
-        for name, arguments, kept in (("with-path", True, True), ("without-path", False, False)):
-            with self.subTest(name=name):
-                item = self.make_item(name)
-                process = self.start_process(item, "hidden-cwd", [str(item)] if arguments else [])
-                with self.assertRaises(PermissionError):
-                    os.readlink(f"/proc/{process.pid}/cwd")
-                self.run_cleaner([str(self.root)], "delete", self.cutoff)
-                self.assertEqual(item.exists(), kept)
-                stop_process(process)
-
-
     def keep_fresh(self, directory):
         file = directory / "fresh"
         file.touch()
@@ -602,56 +489,6 @@ class CleanerTestCase(unittest.TestCase):
         self.assertTrue((item / "new").exists())
         self.assertEqual((status, paths, errors), (0, [], ""))
 
-    # A handshake must release the lock while the directory handle protects both levels.
-    def test_writer_handshake_keeps_matter_and_project(self):
-        project = self.root / "-project"
-        item = project / "matter"
-        item.mkdir(parents=True)
-        (item / "data").touch()
-        self.start_process(item, "handshake", [])
-        descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        finally:
-            os.close(descriptor)
-        status, paths, _ = self.run_cleaner(self.roots()[:2], "delete", self.cutoff)
-        self.assertTrue(item.exists())
-        self.assertTrue(project.exists())
-        self.assertEqual((status, paths), (0, []))
-
-    # The inherited handle must remain sufficient after the wrapper has exited.
-    def test_child_inherits_handle_after_writer_exits(self):
-        project = self.root / "-project"
-        item = project / "matter"
-        item.mkdir(parents=True)
-        (item / "data").touch()
-        code = r"""
-import fcntl, os, subprocess, sys
-root = os.open(os.environ["CLEANER_TEST_ROOT"], os.O_RDONLY | os.O_DIRECTORY)
-fcntl.flock(root, fcntl.LOCK_EX)
-handle = os.open(os.environ["CLEANER_TEST_ITEM"], os.O_RDONLY | os.O_DIRECTORY)
-os.close(root)
-subprocess.Popen([sys.executable, "-c", "import os,sys; print(os.getpid(), flush=True); sys.stdin.read(1)"],
-                 pass_fds=(handle,), stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
-os.close(handle)
-"""
-        environment = os.environ.copy()
-        environment.update(CLEANER_TEST_ROOT=str(self.root), CLEANER_TEST_ITEM=str(item))
-        wrapper = subprocess.Popen(
-            [sys.executable, "-c", code], env=environment, cwd=self.temporary.name,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        )
-        self.addCleanup(lambda: wrapper.communicate("x", timeout=5))
-        ready, _, _ = select.select([wrapper.stdout], [], [], 5)
-        self.assertTrue(ready)
-        child = int(wrapper.stdout.readline())
-        self.assertEqual(wrapper.wait(timeout=5), 0)
-        self.assertTrue(Path(f"/proc/{child}").exists())
-        _, paths, _ = self.run_cleaner(self.roots()[:2], "delete", self.cutoff)
-        self.assertTrue(item.exists())
-        self.assertTrue(project.exists())
-        self.assertEqual(paths, [])
-
     # The writer starts after rename while the cleaner still holds the root lock.
     def test_cleaner_renames_first_so_writer_exits_without_writing(self):
         item = self.root / "matter"
@@ -741,55 +578,3 @@ os.close(handle)
         self.assertTrue(item.exists())
         self.assertNotEqual(status, 0)
         self.assertIn(".runs-cleaner-trash", errors)
-
-
-    def process_fixture(self, uid):
-        process = Path(self.temporary.name) / "proc" / "123"
-        process.mkdir(parents=True)
-        (process / "status").write_text(f"Name:\tfixture\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
-        (process / "cmdline").write_bytes(b"python\0")
-        (process / "fd").mkdir()
-        (process / "maps").write_text("")
-        real_iterdir = Path.iterdir
-
-        def fixture_processes(path):
-            return iter([process]) if path == Path("/proc") else real_iterdir(path)
-
-        return process, mock.patch("clean.Path.iterdir", fixture_processes)
-
-    # Chroot needs privileges; a proc fixture verifies the root-reference boundary.
-    def test_process_root_reference_keeps_item(self):
-        item = self.root / "matter"
-        item.mkdir()
-        process, fixture = self.process_fixture(os.getuid())
-        (process / "root").symlink_to(item, target_is_directory=True)
-        with fixture:
-            self.run_cleaner([str(self.root)], "delete", self.cutoff)
-        self.assertTrue(item.exists())
-
-    # References from another account, including root, must not prevent deletion.
-    def test_other_uid_command_and_handle_do_not_keep_item(self):
-        item = self.root / "matter"
-        item.mkdir()
-        process, fixture = self.process_fixture(0)
-        (process / "cmdline").write_bytes(os.fsencode(item) + b"\0")
-        (process / "fd" / "3").symlink_to(item, target_is_directory=True)
-        with fixture:
-            self.run_cleaner([str(self.root)], "delete", self.cutoff)
-        self.assertFalse(item.exists())
-
-    # Process names are bytes; a non-UTF-8 name must not hide the UID or abort a run.
-    def test_non_utf8_process_name_does_not_break_uid_detection(self):
-        item = self.root / "matter"
-        item.mkdir()
-        process, fixture = self.process_fixture(os.getuid())
-        (process / "status").write_bytes(
-            b"Name:\t\xff\n" + f"Uid:\t{os.getuid()}\n".encode("ascii")
-        )
-        (process / "fd" / "3").symlink_to(item, target_is_directory=True)
-        try:
-            with fixture:
-                self.run_cleaner([str(self.root)], "delete", self.cutoff)
-        except UnicodeError as error:
-            self.fail(f"reading the UID must not decode the process name: {error}")
-        self.assertTrue(item.exists())

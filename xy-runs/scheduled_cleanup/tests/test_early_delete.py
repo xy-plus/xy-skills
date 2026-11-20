@@ -1,15 +1,10 @@
 import json
 import os
-import pwd
 from pathlib import Path
-import select
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
-
-from cleanup_test_support import stop_process
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "clean.py"
@@ -29,36 +24,21 @@ class EarlyDeleteTests(unittest.TestCase):
         self.target.mkdir()
         (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
         self.home = self.temporary / "home"
-        self.units = self.home / ".config" / "systemd" / "user"
-        self.units.mkdir(parents=True)
         settings_directory = self.home / ".claude"
-        settings_directory.mkdir()
+        settings_directory.mkdir(parents=True)
         (settings_directory / "settings.json").write_text(
             json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
-
-    def set_target_in_home_runs(self, runs_name):
-        self.root = self.home / runs_name
-        self.project = self.root / "-home-xy-project"
-        self.item = self.project / "20261120-110000-task"
-        self.target = self.item / "obsolete-build"
-        self.target.mkdir(parents=True)
-        (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
-        (self.home / ".claude" / "settings.json").write_text(
-            json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
-
-    def run_delete(self, target, *extra, confirmed=True):
-        arguments = [sys.executable, "-B", str(SCRIPT), "delete-obsolete",
-                     "--target", str(target)]
-        if confirmed:
-            arguments.append("--other-sessions-checked")
-        arguments.extend(extra)
+    def run_delete(self, target):
         environment = os.environ.copy()
         environment["HOME"] = str(self.home)
-        return subprocess.run(arguments, capture_output=True, text=True, check=False, env=environment)
+        return subprocess.run(
+            [sys.executable, "-B", str(SCRIPT), "delete-obsolete", "--target", str(target)],
+            capture_output=True, text=True, check=False, env=environment,
+        )
 
-    def assert_rejected_unchanged(self, target, *extra, confirmed=True):
+    def assert_rejected_unchanged(self, target):
         before = self.snapshot()
-        result = self.run_delete(target, *extra, confirmed=confirmed)
+        result = self.run_delete(target)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.snapshot(), before)
         return result
@@ -79,11 +59,6 @@ class EarlyDeleteTests(unittest.TestCase):
         self.assertEqual(sibling.read_text(encoding="utf-8"), "保留")
         self.assertTrue(self.item.is_dir())
         self.assertTrue(self.root.is_dir())
-
-    def test_delete_refuses_missing_confirmation_without_touching_target(self):
-        result = self.assert_rejected_unchanged(self.target, confirmed=False)
-        self.assertIn("--other-sessions-checked", result.stderr)
-
     def test_delete_rejects_root_project_inbox_outside_and_nonliteral_targets(self):
         inbox = self.project / "xy-goal-inbox"
         session_inbox = inbox / "session-1"
@@ -120,257 +95,6 @@ class EarlyDeleteTests(unittest.TestCase):
         result = self.assert_rejected_unchanged(outside_link)
         self.assertIn("软链", result.stderr)
         self.assertEqual(outside_data.read_text(encoding="utf-8"), "外部数据")
-
-    def test_delete_rejects_process_systemd_and_runner_task_references(self):
-        process_code = "import os, sys; os.chdir(os.environ['DELETE_TEST_DIRECTORY']); print('ready', flush=True); sys.stdin.read()"
-        environment = os.environ.copy()
-        environment["DELETE_TEST_DIRECTORY"] = str(self.target)
-        process = subprocess.Popen([sys.executable, "-c", process_code], env=environment,
-                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True)
-        self.addCleanup(stop_process, process)
-        ready, _, _ = select.select([process.stdout], [], [], 5)
-        self.assertTrue(ready)
-        self.assertEqual(process.stdout.readline(), "ready\n")
-        result = self.assert_rejected_unchanged(self.target)
-        self.assertIn("进程", result.stderr)
-        stop_process(process)
-
-        unit = self.units / "uses-target.service"
-        unit.write_text(f"ExecStart=/bin/tool {self.target}\n", encoding="utf-8")
-        result = self.assert_rejected_unchanged(self.target)
-        self.assertIn("systemd", result.stderr)
-        unit.unlink()
-
-        task_directory = self.item / "sub-agent-runner" / "tasks"
-        task_directory.mkdir(parents=True)
-        (task_directory / "still-running.json").write_text(
-            json.dumps({"task": "still-running", "dir": str(self.target / "working")}),
-            encoding="utf-8",
-        )
-        result = self.assert_rejected_unchanged(self.target)
-        self.assertIn("sub-agent-runner", result.stderr)
-
-    def test_delete_rejects_systemd_home_specifier_reference(self):
-        self.set_target_in_home_runs("runs")
-        unit = self.units / "uses-target.service"
-        relative_target = self.target.relative_to(self.home)
-        unit.write_text(f"ExecStart=/bin/tool %h/{relative_target}\n", encoding="utf-8")
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn("systemd", result.stderr)
-
-    def test_delete_rejects_systemd_environment_variable_reference(self):
-        self.set_target_in_home_runs("runs")
-        unit = self.units / "uses-target.service"
-        relative_target = self.target.relative_to(self.root)
-        unit.write_text(
-            f"Environment=RUNS_ROOT={self.root}\n"
-            f"ExecStart=/bin/tool $RUNS_ROOT/{relative_target}\n",
-            encoding="utf-8",
-        )
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn("systemd", result.stderr)
-        self.assertIn(str(unit), result.stderr)
-
-    def test_delete_rejects_systemd_globs_matching_target_or_ancestor(self):
-        unit = self.units / "uses-target.service"
-        patterns = (str(self.item / "*"), str(self.project / "*"))
-        for pattern in patterns:
-            with self.subTest(pattern=pattern):
-                self.target.mkdir(parents=True, exist_ok=True)
-                (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
-                unit.write_text(f"ExecStart=/bin/tool {pattern}\n", encoding="utf-8")
-                result = self.assert_rejected_unchanged(self.target)
-                self.assertIn("systemd", result.stderr)
-                self.assertIn(str(unit), result.stderr)
-
-    def test_delete_fails_closed_for_unresolved_systemd_path_variable(self):
-        unit = self.units / "uses-target.service"
-        relative_target = self.target.relative_to(self.root)
-        unit.write_text(f"ExecStart=/bin/tool $UNKNOWN_ROOT/{relative_target}\n",
-                         encoding="utf-8")
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn("systemd", result.stderr)
-        self.assertIn(str(unit), result.stderr)
-
-    def test_delete_fails_closed_for_unparseable_systemd_text(self):
-        unit = self.units / "uses-target.service"
-        for contents, detail in (
-            ("ExecStart=/bin/tool /runs/%i\n", "%i"),
-            ("ExecStart=/bin/tool %f\n", "%f"),
-            ('ExecStart=/bin/tool --message="unterminated\n', "引号"),
-        ):
-            with self.subTest(detail=detail):
-                unit.write_text(contents, encoding="utf-8")
-                result = self.assert_rejected_unchanged(self.target)
-                self.assertIn(str(unit), result.stderr)
-                self.assertIn(detail, result.stderr)
-
-    def test_delete_allows_unresolved_template_and_variable_words_outside_paths(self):
-        unit = self.units / "uses-target@instance.service"
-        unit.write_text(
-            "Description=模板实例 %i $UNDEFINED\n"
-            "ExecStart=/bin/tool %i $UNDEFINED\n",
-            encoding="utf-8",
-        )
-
-        result = self.run_delete(self.target)
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.target.exists())
-
-    def test_delete_rejects_target_paths_after_user_manager_specifier_expansion(self):
-        unit = self.units / "uses-target.service"
-        original_target = self.target
-        item = original_target.parent
-        contexts = (
-            ("%t", {"XDG_RUNTIME_DIR": str(self.root)}, "root"),
-            ("%S", {"XDG_STATE_HOME": str(self.root)}, "root"),
-            ("%C", {"XDG_CACHE_HOME": str(self.root)}, "root"),
-            ("%L", {"XDG_STATE_HOME": str(item)}, "log"),
-            ("%E", {"XDG_CONFIG_HOME": str(self.root)}, "root"),
-            ("%T", {"TMPDIR": str(self.root)}, "root"),
-            ("%V", {"TMPDIR": str(self.root)}, "root"),
-            ("%u", {}, pwd.getpwuid(os.getuid()).pw_name),
-            ("%U", {}, str(os.getuid())),
-        )
-        for index, (specifier, variables, layout) in enumerate(contexts):
-            with self.subTest(specifier=specifier):
-                if layout == "root":
-                    target = original_target
-                    unit_path = f"{specifier}/{target.relative_to(self.root)}"
-                elif specifier == "%L":
-                    target = item / "log"
-                    unit_path = specifier
-                else:
-                    target = item / layout
-                    unit_path = f"{self.root}/{item.relative_to(self.root)}/{specifier}"
-                if not target.exists():
-                    target.mkdir(parents=True)
-                    (target / "output.txt").write_text("作废产物", encoding="utf-8")
-                unit.write_text(f"ExecStart=/bin/tool {unit_path}\n", encoding="utf-8")
-                self.target = target
-                with patch.dict(os.environ, variables):
-                    result = self.assert_rejected_unchanged(target)
-                self.assertIn(f"systemd 用户单元引用目标：{unit}", result.stderr)
-
-    def test_delete_rejects_reference_in_unit_linked_from_wants_directory(self):
-        external_units = self.temporary / "linked-units"
-        external_units.mkdir()
-        linked_unit = external_units / "uses-target.service"
-        linked_unit.write_text(f"ExecStart=/bin/tool {self.target}\n", encoding="utf-8")
-        wants = self.units / "default.target.wants"
-        wants.mkdir()
-        link = wants / linked_unit.name
-        link.symlink_to(linked_unit)
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(f"systemd 用户单元引用目标：{link}", result.stderr)
-
-    def test_delete_rejects_reference_in_type_level_service_dropin(self):
-        unit = self.units / "ordinary.service"
-        unit.write_text("ExecStart=/bin/tool /not-the-target\n", encoding="utf-8")
-        type_dropin = self.units / "service.d"
-        type_dropin.mkdir()
-        (type_dropin / "target.conf").write_text(
-            f"Description={self.target}\n", encoding="utf-8")
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(f"systemd 用户单元引用目标：{unit}", result.stderr)
-
-    def test_delete_uses_environment_file_value_over_inline_environment(self):
-        environment_file = self.home / "target.env"
-        environment_file.write_text(f"TARGET={self.target}\n", encoding="utf-8")
-        unit = self.units / "uses-target.service"
-        unit.write_text(
-            "Environment=TARGET=/not/the/target\n"
-            f"EnvironmentFile={environment_file}\n"
-            "ExecStart=/bin/tool $TARGET\n",
-            encoding="utf-8",
-        )
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(str(unit), result.stderr)
-
-    def test_delete_fails_closed_when_environment_file_cannot_be_read(self):
-        environment_file = self.home / "missing-target.env"
-        unit = self.units / "uses-target.service"
-        unit.write_text(
-            f"EnvironmentFile={environment_file}\nExecStart=/bin/tool\n",
-            encoding="utf-8",
-        )
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(str(unit), result.stderr)
-        self.assertIn(str(environment_file), result.stderr)
-
-    def test_delete_rejects_quoted_target_path_with_spaces(self):
-        self.set_target_in_home_runs("runs with spaces")
-        unit = self.units / "uses-target.service"
-        unit.write_text(f'ExecStart=/bin/tool "{self.target}"\n', encoding="utf-8")
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(str(unit), result.stderr)
-
-    def test_delete_uses_environment_definition_from_unit_dropin(self):
-        unit = self.units / "uses-target.service"
-        unit.write_text(
-            "Environment=TARGET=/not/the/target\nExecStart=/bin/tool $TARGET\n",
-            encoding="utf-8",
-        )
-        dropin_directory = self.units / "uses-target.service.d"
-        dropin_directory.mkdir()
-        (dropin_directory / "override.conf").write_text(
-            f"Environment=TARGET={self.target}\n", encoding="utf-8")
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(str(unit), result.stderr)
-
-    def test_delete_expands_escaped_percent_in_unit_path(self):
-        (self.target / "output.txt").unlink()
-        self.target.rmdir()
-        self.target = self.item / "obsolete%literal"
-        self.target.mkdir()
-        (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
-        unit = self.units / "uses-target.service"
-        escaped_target = str(self.target).replace("%", "%%")
-        unit.write_text(f"ExecStart=/bin/tool {escaped_target}\n", encoding="utf-8")
-
-        result = self.assert_rejected_unchanged(self.target)
-
-        self.assertIn(str(unit), result.stderr)
-
-    def test_delete_ignores_literal_percent_dollars_and_external_globs(self):
-        unit = self.units / "runs-cleaner.service"
-        contents = (
-            "CPUQuota=400%\nExecStart=/bin/tool /not-the-target\n",
-            "Environment=PASSWORD=$argon2id$hash-value\n"
-            "ExecStart=/bin/tool /not-the-target\n",
-            "ExecStart=/usr/bin/python3 /skills/xy-runs/clean.py configured "
-            "--mode delete --additional-root %h/.codex-subagent*/sessions/*/*\n",
-        )
-        for index, content in enumerate(contents):
-            with self.subTest(index=index):
-                target = self.item / f"unreferenced-{index}"
-                target.mkdir()
-                (target / "output.txt").write_text("作废产物", encoding="utf-8")
-                unit.write_text(content, encoding="utf-8")
-                result = self.run_delete(target)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertFalse(target.exists())
-
     def test_delete_unlinks_in_root_symlink_without_touching_its_target(self):
         data = self.item / "real-data"
         data.mkdir()

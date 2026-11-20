@@ -1,5 +1,5 @@
 [Unit]
-Description=Delete expired and unused temporary items
+Description=Delete expired temporary items
 
 [Service]
 Type=oneshot

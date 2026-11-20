@@ -8,7 +8,7 @@ Linux 临时目录清理器，仅用 Python 标准库；需 Python 3.9 以上、
 python3 /absolute/path/to/clean.py --mode list ROOT_OR_GLOB [ROOT_OR_GLOB ...]
 python3 /absolute/path/to/clean.py --mode delete ROOT_OR_GLOB [ROOT_OR_GLOB ...]
 python3 /absolute/path/to/clean.py configured --mode list --additional-root ROOT_OR_GLOB
-python3 /absolute/path/to/clean.py delete-obsolete --target ABSOLUTE_TARGET --other-sessions-checked
+python3 /absolute/path/to/clean.py delete-obsolete --target ABSOLUTE_TARGET
 ```
 
 必须写明模式和至少一个根目录；通配符须加引号，由脚本展开，根可重复或嵌套。`list` 仅向标准输出列候选，不改目录或清空回收目录；`delete` 删除所有合格项，并输出成功删除项的原路径。
@@ -70,10 +70,10 @@ service 调用同一个 `configured --mode delete` 入口。入口要求 RUNS_RO
 
 ## 删除协议与限制
 
-程序在最外层根上取 `flock(LOCK_EX)`。锁内复核根仍是展开时的真实目录，且候选仍过期、未在用，再以唯一名移入该根 `.runs-cleaner-trash/`；在锁内删除。根在展开后被替换则跳过并报告；操作依持有的目录句柄，不跟随软链。`delete` 每轮先清上次残留；内层根不建回收目录，回收目录不是候选，`list` 不改其内容。
+程序在最外层根上取 `flock(LOCK_EX)`。锁内复核根仍是展开时的真实目录、清理项仍符合 mtime 和 ctime 的期限，再以唯一名移入该根 `.runs-cleaner-trash/` 并删除。根在展开后被替换则报告；操作依持有的目录句柄，不跟随软链。`delete` 每轮先清上次残留；内层根不建回收目录，回收目录不是候选，`list` 不改其内容。
 
-在用检查读取本用户进程的工作目录、根目录、可执行文件、打开的文件/目录句柄、映射文件及命令行完整路径。命令行路径后必须是 `/`、空白或结尾；同前缀不算在用。与删除互斥的写入方须共用最外层根锁；长写入先在锁内打开事项目录句柄，再放锁并持有至写完，子进程须继承该句柄。握手由写入方实现。
+`delete-obsolete` 只检查路径：目标须为字面绝对路径，位于 `RUNS_ROOT` 下某项目的一件事目录或其内容中；不接受运行根、项目目录、inbox 或经过软链的上级。目标本身是软链时，真实目标须在运行根内，删除只解除链接。它与定期清理共用最外层根锁和回收目录。
 
-本用户主动禁止查看的进程，只按可读命令行判断；若它隐藏目录、文件句柄等引用且命令行不含该项路径，30 天未变更的项仍可能被删。其他账号（包括 root）不检查；程序以本人身份运行，不用 sudo。
+写入方须共用最外层根锁，并在整个写入期间持锁，避免清理与写入交错。
 
 软链只按链接自身时间判断，只删链接、不遍历目标；任一后代不可读时整项保留。ctime 让刚迁入的旧文件重新获得 30 天保留期；访问时间和只读访问不延长。长期内容放仓库或已注明的长期位置。
