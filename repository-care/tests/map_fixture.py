@@ -38,26 +38,24 @@ def feature(feature_id, directory, *, children, source, items):
     return result
 
 
-def root_feature(feature_id, directory, **fields):
+def root_feature(
+    feature_id,
+    directory,
+    *,
+    children,
+    source,
+    items,
+    subrepositories,
+    external_dependencies,
+):
     """Build a feature and keep root-only fields outside the generic factory."""
-    expected = {
-        "children",
-        "source",
-        "items",
-        "subrepositories",
-        "external_dependencies",
-    }
-    if fields.keys() != expected:
-        raise TypeError(f"root feature fields must be exactly {sorted(expected)}")
     result = feature(
         feature_id,
         directory,
-        children=fields["children"],
-        source=fields["source"],
-        items=fields["items"],
+        children=children,
+        source=source,
+        items=items,
     )
-    subrepositories = fields["subrepositories"]
-    external_dependencies = fields["external_dependencies"]
     if subrepositories is not MISSING:
         result["subrepositories"] = subrepositories
     if external_dependencies is not MISSING:

@@ -32,9 +32,9 @@ def card(feature_id, **changes):
         "changed": [],
         "todo": [],
         "map_issues": {
-            "why": "成立",
-            "what": "一致",
-            "group": "合适",
+            "why": "成立：说明本功能如何回答用户为什么需要它。",
+            "what": "一致：what 与 why 和条目讲的是同一件事。",
+            "group": "合适：列出组内功能后确认没有漏项。",
             "items": [],
         },
         "suggestion": [],
@@ -130,6 +130,10 @@ class FeatureCardsTest(unittest.TestCase):
             lambda value: value.update(map_issues=[]),
             lambda value: value["map_issues"].pop("why"),
             lambda value: value["map_issues"].update(why="  "),
+            lambda value: value["map_issues"].update(why="成立"),
+            lambda value: value["map_issues"].update(what="一致"),
+            lambda value: value["map_issues"].update(group="合适"),
+            lambda value: value["map_issues"].update(why="成立：  "),
             lambda value: value["map_issues"].update(what=None),
             lambda value: value["map_issues"].update(group=1),
             lambda value: value["map_issues"].update(items="条目"),
@@ -146,9 +150,9 @@ class FeatureCardsTest(unittest.TestCase):
         cards = self.default_cards()
         cards[0]["map_issues"]["why"] = "理由只抱怨旧版效果，没有说明功能为何必要。"
         cards[1]["map_issues"] = {
-            "why": "成立",
+            "why": "成立：理由具体回答了为什么需要这个功能。",
             "what": "what 与理由矛盾：理由说免点，what 却只写看依赖。",
-            "group": "合适",
+            "group": "合适：列出组内功能并确认没有漏项。",
             "items": ["漏了运行目录管理。", "写了但未实现的结果。"],
         }
         cards[2]["map_issues"]["group"] = "运行目录管理应该归入本组，但图中遗漏。"

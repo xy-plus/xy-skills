@@ -155,6 +155,8 @@ def _read_committed_approvals(repository, head):
     if not isinstance(records, dict):
         raise ValueError("HEAD 中的认可记录必须是对象")
     for feature_id, commit in records.items():
+        if not isinstance(commit, str):
+            raise ValueError(f"认可记录 {feature_id} 的提交号必须是字符串")
         if APPROVED_VALUE.fullmatch(commit) is None:
             raise ValueError(f"认可记录 {feature_id} 必须是 40 位小写完整提交号")
         if not _commit_exists(repository, commit):

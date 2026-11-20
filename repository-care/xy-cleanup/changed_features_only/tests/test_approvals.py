@@ -363,6 +363,34 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("不存在", result.stdout + result.stderr)
 
+    def test_plan_rejects_null_approval_commit_with_readable_error(self):
+        approved_path = self.repository / "repo-map" / "approved.json"
+        records = json.loads(approved_path.read_text(encoding="utf-8"))
+        records["alpha"] = None
+        approved_path.write_text(json.dumps(records), encoding="utf-8")
+        self.commit_changes("写入 null 认可记录")
+
+        result = self.plan(scope=("alpha",))
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("认可记录 alpha 的提交号必须是字符串", output)
+        self.assertNotIn("Traceback", output)
+
+    def test_plan_rejects_array_approval_commit_with_readable_error(self):
+        approved_path = self.repository / "repo-map" / "approved.json"
+        records = json.loads(approved_path.read_text(encoding="utf-8"))
+        records["alpha"] = []
+        approved_path.write_text(json.dumps(records), encoding="utf-8")
+        self.commit_changes("写入数组认可记录")
+
+        result = self.plan(scope=("alpha",))
+
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("认可记录 alpha 的提交号必须是字符串", output)
+        self.assertNotIn("Traceback", output)
+
     def test_record_updates_only_answered_features_and_drops_stale_ids(self):
         approved_path = self.repository / "repo-map" / "approved.json"
         records = json.loads(approved_path.read_text(encoding="utf-8"))

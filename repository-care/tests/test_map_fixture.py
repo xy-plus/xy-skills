@@ -27,6 +27,34 @@ class MapFixtureTest(unittest.TestCase):
                     )
                 )
 
+    def test_root_factory_has_required_keyword_only_root_fields(self):
+        parameters = inspect.signature(map_fixture.root_feature).parameters
+        self.assertEqual(
+            list(parameters),
+            [
+                "feature_id",
+                "directory",
+                "children",
+                "source",
+                "items",
+                "subrepositories",
+                "external_dependencies",
+            ],
+        )
+        for name in (
+            "children",
+            "source",
+            "items",
+            "subrepositories",
+            "external_dependencies",
+        ):
+            with self.subTest(parameter=name):
+                self.assertIs(
+                    parameters[name].kind,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+                self.assertIs(parameters[name].default, inspect.Parameter.empty)
+
     def test_root_fields_are_separate_and_missing_fields_differ_from_empty_lists(self):
         child = map_fixture.feature(
             "child",

@@ -583,31 +583,15 @@ class FeatureCheckTest(FeatureCheckBase):
                 self.assertNotIn("Traceback", output)
 
     def test_answers_json_references_use_json_answer_keys(self):
-        for origin in (
-            "/run/decisions/answers.json#answers.L7",
-            "/run/decisions/answers.json#answers.P1,answers.P7",
-            "/run/decisions/answers.json#answers.L7（说明）",
-            "用户原话.md 第 7 行",
-        ):
-            with self.subTest(origin=origin):
-                root = make_root_feature(
-                    "root",
-                    "",
-                    subrepositories=[],
-                    external_dependencies=[],
-                    source="确认",
-                    children=[],
-                    items=[],
-                )
-                root["why"]["from"] = origin
-                self.set_features(root)
-                result = self.check()
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-        for origin in (
-            "/run/decisions/answers.json L7",
-            "/run/decisions/answers.json#L7",
-        ):
+        cases = (
+            ("/run/decisions/answers.json#answers.L7", True),
+            ("/run/decisions/answers.json#answers.P1,answers.P7", True),
+            ("/run/decisions/answers.json#answers.L7（说明）", True),
+            ("用户原话.md 第 7 行", True),
+            ("/run/decisions/answers.json L7", False),
+            ("/run/decisions/answers.json#L7", False),
+        )
+        for origin, valid in cases:
             with self.subTest(origin=origin):
                 root = make_root_feature(
                     "root",
@@ -622,9 +606,12 @@ class FeatureCheckTest(FeatureCheckBase):
                 self.set_features(root)
                 result = self.check()
                 output = result.stdout + result.stderr
-                self.assertEqual(result.returncode, 1, output)
-                self.assertIn("root", output)
-                self.assertIn("answers.json", output)
+                if valid:
+                    self.assertEqual(result.returncode, 0, output)
+                else:
+                    self.assertEqual(result.returncode, 1, output)
+                    self.assertIn("root", output)
+                    self.assertIn("answers.json", output)
 
     def test_requires_the_root_to_cover_the_repository(self):
         self.set_features(
