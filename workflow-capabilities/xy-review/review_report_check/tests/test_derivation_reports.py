@@ -15,6 +15,22 @@ write_file = support.write_file
 REPORT_NEED = "报告必须能核对用户要求"
 
 
+def repeated_need_report(decision="合并", merged_text="写成一条规则。"):
+    report = main_report()
+    report["mapping"]["items"] = [
+        {"block": "规则 A", "need": REPORT_NEED},
+        {"block": "规则 B", "need": REPORT_NEED},
+    ]
+    report["mapping"]["merges"] = [{
+        "need": REPORT_NEED,
+        "blocks": ["规则 A", "规则 B"],
+        "decision": decision,
+        "merged_text": merged_text,
+        "reason": "合成一条规则。" if decision == "合并" else "两块承担不同职责。",
+    }]
+    return report
+
+
 class DerivationReportTest(unittest.TestCase):
     setUp = support.CheckTest.setUp
     run_main = support.CheckTest.run_main
@@ -75,18 +91,7 @@ class DerivationReportTest(unittest.TestCase):
         self.assert_rejected("review-main.json", report, "mapping.items", "重复")
 
     def test_main_mapping_requires_nonblank_merged_text(self):
-        report = main_report(verdict="不通过")
-        report["mapping"]["items"] = [
-            {"block": "规则 A", "need": REPORT_NEED},
-            {"block": "规则 B", "need": REPORT_NEED},
-        ]
-        report["mapping"]["merges"] = [{
-            "need": REPORT_NEED,
-            "blocks": ["规则 A", "规则 B"],
-            "decision": "不合",
-            "reason": "两块承担不同职责。",
-            "merged_text": "   ",
-        }]
+        report = repeated_need_report(decision="不合", merged_text="   ")
 
         self.assert_rejected("review-main.json", report, "mapping.merges[0].merged_text", "不能为空")
         del report["mapping"]["merges"][0]["merged_text"]
@@ -112,18 +117,7 @@ class DerivationReportTest(unittest.TestCase):
         report["mapping"]["items"][0]["need"] = "无"
         self.assert_rejected("review-main.json", report, "mapping", "不能判通过")
 
-        report = main_report()
-        report["mapping"]["items"] = [
-            {"block": "规则 A", "need": REPORT_NEED},
-            {"block": "规则 B", "need": REPORT_NEED},
-        ]
-        report["mapping"]["merges"] = [{
-            "need": REPORT_NEED,
-            "blocks": ["规则 A", "规则 B"],
-            "decision": "合并",
-            "merged_text": "写成一条规则。",
-            "reason": "合成一条规则。",
-        }]
+        report = repeated_need_report()
         self.assert_rejected("review-main.json", report, "mapping", "不能判通过")
         report["verdict"] = "不通过"
         self.assertEqual(self.run_report("review-main.json", report), (0, []))
