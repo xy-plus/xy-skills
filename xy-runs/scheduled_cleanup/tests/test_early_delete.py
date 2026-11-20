@@ -139,6 +139,23 @@ class EarlyDeleteTests(unittest.TestCase):
         result = self.assert_rejected_unchanged(self.target)
         self.assertIn("sub-agent-runner", result.stderr)
 
+    def test_delete_rejects_systemd_home_specifier_reference(self):
+        self.root = self.home / "runs"
+        self.project = self.root / "-home-xy-project"
+        self.item = self.project / "20261120-110000-task"
+        self.target = self.item / "obsolete-build"
+        self.target.mkdir(parents=True)
+        (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
+        (self.home / ".claude" / "settings.json").write_text(
+            json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
+        unit = self.units / "uses-target.service"
+        relative_target = self.target.relative_to(self.home)
+        unit.write_text(f"ExecStart=/bin/tool %h/{relative_target}\n", encoding="utf-8")
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn("systemd", result.stderr)
+
     def test_delete_unlinks_in_root_symlink_without_touching_its_target(self):
         data = self.item / "real-data"
         data.mkdir()

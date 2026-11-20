@@ -14,6 +14,7 @@ import stat
 import sys
 import time
 import uuid
+from typing import Optional
 
 
 TRASH_NAME = ".runs-cleaner-trash"
@@ -157,7 +158,7 @@ class CleanupPlan:
     roots: dict
     outer_roots: dict
     mode: str
-    cutoff: float | None
+    cutoff: Optional[float]
     output: object
     errors: object
 
@@ -406,7 +407,11 @@ def find_systemd_reference(directory, paths):
             if not (entry.is_file() or entry.is_symlink()):
                 continue
             content = entry.read_bytes().decode("utf-8", errors="surrogateescape")
-            if any(str(path) in content for path in paths):
+            # Expand the systemd home specifier used by installed units before
+            # comparing literal target paths; deliberately do not guess at globs
+            # or environment-variable expressions.
+            expanded_content = content.replace("%h", str(Path.home()))
+            if any(str(path) in expanded_content for path in paths):
                 return entry
     except OSError as error:
         raise CleanerError(f"无法完整检查 systemd 用户单元：{error}") from error

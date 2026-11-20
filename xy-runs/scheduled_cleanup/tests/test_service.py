@@ -1,11 +1,13 @@
 """Execute the service's launcher with a temporary HOME and an argv receiver."""
 
+import ast
 import configparser
 import io
 import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,6 +55,29 @@ class ServiceTests(unittest.TestCase):
              str(self.home / ".codex-subagent*" / "sessions" / "*" / "*")],
             env=environment, text=True, capture_output=True, check=False, cwd=self.home,
         )
+
+    def test_cleaner_annotations_remain_importable_on_python_39(self):
+        source = SCRIPT_DIRECTORY.joinpath("clean.py").read_text(encoding="utf-8")
+        module = ast.parse(source)
+        annotations = []
+        for node in ast.walk(module):
+            if isinstance(node, ast.AnnAssign):
+                annotations.append(node.annotation)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                annotations.extend(argument.annotation for argument in node.args.args
+                                   if argument.annotation is not None)
+                if node.returns is not None:
+                    annotations.append(node.returns)
+        pep604 = [part for annotation in annotations for part in ast.walk(annotation)
+                  if isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr)]
+        self.assertEqual(pep604, [], "Python 3.9 evaluates type unions without PEP 604")
+        ast.parse(source, feature_version=(3, 9))
+        python39 = shutil.which("python3.9")
+        if python39 is not None:
+            import_line = f"import sys; sys.path.insert(0, {str(SCRIPT_DIRECTORY)!r}); import clean"
+            result = subprocess.run([python39, "-B", "-c", import_line],
+                                    capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_timer_catches_up_after_power_off(self):
         timer = configparser.ConfigParser(interpolation=None)
