@@ -239,11 +239,10 @@ class GoalTests(GoalTestSupport):
                         self.assertEqual(output, "")
                         self.assertIn(str(self.root), errors)
 
-    def test_waiting_hook_refuses_deleted_or_replaced_root_without_writes(self):
-        self.assert_waiting_command_refuses_root_change("hook-prompt")
-
-    def test_waiting_open_refuses_deleted_or_replaced_root_without_writes(self):
-        self.assert_waiting_command_refuses_root_change("open")
+    def test_waiting_hook_and_open_refuse_deleted_or_replaced_root_without_writes(self):
+        for operation in ("hook-prompt", "open"):
+            with self.subTest(operation=operation):
+                self.assert_waiting_command_refuses_root_change(operation)
 
     def assert_waiting_command_refuses_root_change(self, operation):
         original_root = self.root
