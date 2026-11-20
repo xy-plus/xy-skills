@@ -218,9 +218,19 @@ class UseGraph:
     external: dict
 
 
-def _record_file_uses(
-    inputs, source_path, uses, external_uses, directories, features_with_files
-):
+@dataclass
+class UseDerivation:
+    inputs: UseInputs
+    directories: dict
+    features_with_files: set
+    uses: dict
+    external_uses: dict
+
+
+def _record_file_uses(context, source_path):
+    inputs = context.inputs
+    uses = context.uses
+    external_uses = context.external_uses
     category = inputs.categories[source_path]
     if category not in ("code", "docs", "tests"):
         return
@@ -244,9 +254,9 @@ def _record_file_uses(
             _add_use(uses, source_owner, target_owner, "mention", inputs.features)
     for target_feature in directory_mentions(
         source,
-        directories,
+        context.directories,
         source_owner,
-        features_with_files,
+        context.features_with_files,
     ):
         _add_use(uses, source_owner, target_feature, "mention", inputs.features)
 
@@ -262,21 +272,19 @@ def _derive_feature_uses(inputs):
         for feature_id, feature_files in inputs.files.items()
         if feature_files
     }
-    uses = {}
-    external_uses = {feature_id: set() for feature_id in order}
+    context = UseDerivation(
+        inputs,
+        directories,
+        features_with_files,
+        {},
+        {feature_id: set() for feature_id in order},
+    )
     for source_path in inputs.paths:
-        _record_file_uses(
-            inputs,
-            source_path,
-            uses,
-            external_uses,
-            directories,
-            features_with_files,
-        )
+        _record_file_uses(context, source_path)
 
     index = {feature_id: position for position, feature_id in enumerate(order)}
     uses_by_source = {feature_id: [] for feature_id in order}
-    for (source_id, target_id), kinds in uses.items():
+    for (source_id, target_id), kinds in context.uses.items():
         uses_by_source[source_id].append(
             {
                 "feature": target_id,
@@ -285,7 +293,7 @@ def _derive_feature_uses(inputs):
         )
     for feature_uses in uses_by_source.values():
         feature_uses.sort(key=lambda item: index[item["feature"]])
-    return UseGraph(uses_by_source, external_uses)
+    return UseGraph(uses_by_source, context.external_uses)
 
 
 def _assemble_features(

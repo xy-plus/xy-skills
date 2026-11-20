@@ -392,7 +392,7 @@ def _changed_file_owners(context):
 def _record_diff_owners(context, change, changed, transfers):
     status = change[0]
     if status.startswith("R"):
-        _record_rename_owners(context, status, change[1], change[2], changed, transfers)
+        _record_rename_owners(context, change, changed, transfers)
     elif status.startswith("A"):
         _record_added_owner(context, change[1], changed)
     elif status.startswith("D"):
@@ -401,7 +401,8 @@ def _record_diff_owners(context, change, changed, transfers):
         _record_modified_owners(context, change[1], changed, transfers)
 
 
-def _record_rename_owners(context, status, old_path, current_path, changed, transfers):
+def _record_rename_owners(context, paths, changed, transfers):
+    status, old_path, current_path = paths
     if _is_excluded(old_path, context.old_skip, context.current_skip) or _is_excluded(
         current_path, context.old_skip, context.current_skip
     ):

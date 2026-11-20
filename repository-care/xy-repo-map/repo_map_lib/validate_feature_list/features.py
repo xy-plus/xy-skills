@@ -144,19 +144,31 @@ def _validate_why(value, why, label, errors):
         errors.append(f"{label}的 why 缺少键 {key}")
     for key in sorted(why.keys() - WHY_KEYS):
         errors.append(f"{label}的 why 有多余键 {key}")
-    source = why.get("source")
     if not _nonempty_text(why.get("text")):
         errors.append(f"{label}的 why.text 必须是非空字符串")
+    _validate_why_source(why, label, errors)
+    _validate_why_reference(value, why, label, errors)
+
+
+def _validate_why_source(why, label, errors):
+    source = why.get("source")
     if source not in ("原话", "确认", "起草"):
         errors.append(f"{label}的 why.source 只能是 原话、确认、起草")
     elif source == "原话":
-        if not _nonempty_text(why.get("quote")) or not _nonempty_text(why.get("from")):
-            errors.append(f"{label}的 why（原话）必须有非空 quote 和 from")
+        _validate_quote_origin(why, label, errors)
     elif source == "确认":
         if why.get("quote") != "" or not _nonempty_text(why.get("from")):
             errors.append(f"{label}的 why（确认）必须使用空 quote 和非空 from")
     elif why.get("quote") != "" or why.get("from") != "":
         errors.append(f"{label}的 why（起草）必须使用空 quote 和空 from")
+
+
+def _validate_quote_origin(why, label, errors):
+    if not _nonempty_text(why.get("quote")) or not _nonempty_text(why.get("from")):
+        errors.append(f"{label}的 why（原话）必须有非空 quote 和 from")
+
+
+def _validate_why_reference(value, why, label, errors):
     for key in ("quote", "from"):
         if key in why and not isinstance(why[key], str):
             errors.append(f"{label}的 why.{key} 必须是字符串")
