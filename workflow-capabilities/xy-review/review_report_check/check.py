@@ -3,7 +3,6 @@ import pathlib
 import re
 import sys
 from collections import Counter
-from copy import deepcopy
 
 
 REVIEW_DIRECTORY = pathlib.Path(__file__).resolve().parents[1]
@@ -24,9 +23,8 @@ VERDICTS = ("通过", "改了就过", "不通过")
 DIAGNOSIS_ACTIONS = ("拆分", "重想", "问用户", "顶回")
 CLEANUP_DECISIONS = ("改", "留", "要用户定")
 WORKFLOW_SKILL_PATH = REPOSITORY_ROOT / "xy-workflow" / "SKILL.md"
-TEMPLATE_BLOCKS = re.findall(
-    r"```json\s*\n(.*?)```",
-    (REVIEW_DIRECTORY / "SKILL.md").read_text(encoding="utf-8"),
+REPORT_TEMPLATE_MARKER = re.compile(
+    r"<!--\s*report-template:\s*([^>]+?)\s*-->\s*```json\s*\n(.*?)```",
     re.S,
 )
 
@@ -39,20 +37,57 @@ def value_shape(value):
     return type(value)
 
 
-REPORT_SHAPES = [value_shape(json.loads(block)) for block in TEMPLATE_BLOCKS]
-repo_rule_shape = next(iter(REPORT_SHAPES[0]["repo_rules"].values()))
-repo_rule_item_shape = REPORT_SHAPES[0]["first_principles"]["deviations"]["items"]
-REPORT_SHAPES[0]["repo_rules"] = {
+def _report_templates(skill_text):
+    """Map explicitly named SKILL.md templates to their report filenames."""
+    templates = {}
+    for match in REPORT_TEMPLATE_MARKER.finditer(skill_text):
+        try:
+            template = json.loads(match.group(2))
+        except ValueError as error:
+            raise ValueError(f"SKILL.md 报告模板 JSON 无效：{error}") from error
+        filenames = [name.strip() for name in match.group(1).split(",")]
+        if not filenames or any(not name.endswith(".json") for name in filenames):
+            raise ValueError("SKILL.md 报告模板必须声明 JSON 报告文件名")
+        for filename in filenames:
+            if filename in templates:
+                raise ValueError(f"SKILL.md 重复声明报告模板：{filename}")
+            templates[filename] = template
+    return templates
+
+
+SKILL_TEXT = (REVIEW_DIRECTORY / "SKILL.md").read_text(encoding="utf-8")
+REPORT_TEMPLATES = _report_templates(SKILL_TEXT)
+REPORT_TEMPLATE_KINDS = {
+    "review-main.json": "主审报告",
+    "review-razor.json": "剃刀报告",
+    "diagnosis.json": "判因报告",
+    "derivation-main.json": "推导报告",
+    "derivation-razor.json": "推导报告",
+}
+if set(REPORT_TEMPLATES) != set(REPORT_TEMPLATE_KINDS):
+    raise ValueError(
+        "SKILL.md 报告模板名称须恰为：" + "、".join(REPORT_TEMPLATE_KINDS)
+    )
+
+REPORT_SHAPES = {
+    filename: value_shape(template)
+    for filename, template in REPORT_TEMPLATES.items()
+}
+main_shape = REPORT_SHAPES["review-main.json"]
+repo_rule_shape = next(iter(main_shape["repo_rules"].values()))
+repo_rule_item_shape = main_shape["first_principles"]["deviations"]["items"]
+main_shape["repo_rules"] = {
     str(number): {**repo_rule_shape, "items": repo_rule_item_shape}
     for number in REPO_RULE_NUMBERS
 }
-REPORTS = dict(zip(
-    ("review-main.json", "review-razor.json", "diagnosis.json"),
-    zip(("主审报告", "剃刀报告", "判因报告"), REPORT_SHAPES),
-))
+REPORTS = {
+    filename: (REPORT_TEMPLATE_KINDS[filename], REPORT_SHAPES[filename])
+    for filename in REPORT_TEMPLATE_KINDS
+}
 TEMPLATE_PLACEHOLDERS = [
     placeholder
-    for block in TEMPLATE_BLOCKS
+    for template in REPORT_TEMPLATES.values()
+    for block in (json.dumps(template, ensure_ascii=False),)
     for placeholder in re.findall(r"<([^<>]+)>", block)
 ]
 
@@ -67,18 +102,20 @@ def item_list(document, *path):
 
 def check_rule_quotes(document, report_kind):
     """核对主审与剃刀发现中引用的编号规范条款。"""
-    if report_kind == "主审报告":
+    if report_kind == "推导报告":
+        sections = [("needs", item_list(document, "needs"), True)]
+    elif report_kind == "主审报告":
         sections = [
             ("first_principles.deviations", item_list(
                 document, "first_principles", "deviations", "items"
-            )),
+            ), False),
             ("first_principles.quote_problems", item_list(
                 document, "first_principles", "quote_problems", "items"
-            )),
-            ("hard_to_misuse", item_list(document, "hard_to_misuse", "items")),
+            ), False),
+            ("hard_to_misuse", item_list(document, "hard_to_misuse", "items"), False),
         ]
         sections.extend(
-            (f"repo_rules.{number}", item_list(document, "repo_rules", str(number), "items"))
+            (f"repo_rules.{number}", item_list(document, "repo_rules", str(number), "items"), False)
             for number in REPO_RULE_NUMBERS
         )
     else:
@@ -86,10 +123,10 @@ def check_rule_quotes(document, report_kind):
         sections = [
             ("occams_razor.quote_problems", item_list(
                 document, "occams_razor", "quote_problems", "items"
-            )),
+            ), False),
         ]
     problems = []
-    for section, items in sections:
+    for section, items, direct_array in sections:
         for index, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
@@ -100,7 +137,7 @@ def check_rule_quotes(document, report_kind):
             problem = rule_quote_problem(source, quote.get("text"))
             if problem is not None:
                 problems.append(
-                    f"报告.{section}.items[{index}].quote.text {problem}"
+                    f"报告.{section}{'[' if direct_array else '.items['}{index}].quote.text {problem}"
                 )
     return problems
 
@@ -149,9 +186,7 @@ def _report_shape(filename, code_review):
     _report_kind, shape = REPORTS[filename]
     if filename != "review-razor.json" or code_review:
         return shape
-    non_code_shape = deepcopy(shape)
-    non_code_shape.pop("cleanup", None)
-    return non_code_shape
+    return {key: value for key, value in shape.items() if key != "cleanup"}
 
 
 def _cleanup_problems(document, code_review):
@@ -297,16 +332,9 @@ def _razor_verdict_problems(document):
     verdict = document.get("verdict")
     if isinstance(verdict, str) and verdict not in VERDICTS:
         return ["报告.verdict 只能是「通过」「改了就过」或「不通过」"]
-    keep = item_list(document, "occams_razor", "keep")
-    keep_old = item_list(document, "occams_razor", "keep_old")
     deleted = item_list(document, "occams_razor", "delete", "items")
-    asked = item_list(document, "occams_razor", "ask_user", "items")
-    quote_problems = item_list(document, "occams_razor", "quote_problems", "items")
     cleanup_hits = item_list(document, "cleanup", "hits")
-    cleanup_categories = item_list(document, "cleanup", "categories")
     problems = []
-    if not keep and not keep_old and not deleted and not asked and not quote_problems and not cleanup_categories:
-        problems.append("剃刀报告的清单合计至少要有一项")
     changed_hits = any(
         isinstance(hit, dict) and hit.get("decision") == "改"
         for hit in cleanup_hits
@@ -345,29 +373,61 @@ def _placeholder_problems(document):
     return []
 
 
-def check(text, filename, report_path):
-    """按文件名选报告结构并返回所有内容问题。"""
+def _parse_document(text):
+    try:
+        return json.loads(text, object_pairs_hook=object_without_duplicate_keys), []
+    except (ValueError, TypeError) as error:
+        return None, [f"JSON 无效：{error}"]
+
+
+def _check_parsed_document(document, filename, report_path):
     if filename not in REPORTS:
-        return ["报告文件名只能是 review-main.json、review-razor.json 或 diagnosis.json"]
+        return ["报告文件名只能是 " + "、".join(REPORTS)]
     report_kind, _shape = REPORTS[filename]
     code_review = filename == "review-razor.json" and is_code_review_report(report_path)
-    try:
-        document = json.loads(text, object_pairs_hook=object_without_duplicate_keys)
-    except (ValueError, TypeError) as error:
-        return [f"JSON 无效：{error}"]
-
     problems = check_value("报告", document, _report_shape(filename, code_review))
     problems += _cleanup_problems(document, code_review)
     problems += _placeholder_problems(document)
     if not isinstance(document, dict):
         return problems
-    if report_kind in ("主审报告", "剃刀报告"):
+    if report_kind in ("主审报告", "剃刀报告", "推导报告"):
         problems += check_rule_quotes(document, report_kind)
     if report_kind == "主审报告":
         return problems + _main_verdict_problems(document)
     if report_kind == "剃刀报告":
         return problems + _razor_verdict_problems(document)
-    return problems + _diagnosis_action_problems(document)
+    if report_kind == "判因报告":
+        return problems + _diagnosis_action_problems(document)
+    return problems
+
+
+def _check_document(text, filename, report_path):
+    document, problems = _parse_document(text)
+    if problems:
+        return problems
+    return _check_parsed_document(document, filename, report_path)
+
+
+def _round_derivation_problems(report_path, filename):
+    derivation_name = (
+        "derivation-main.json" if filename == "review-main.json"
+        else "derivation-razor.json"
+    )
+    derivation_path = pathlib.Path(report_path).parent / derivation_name
+    try:
+        text = derivation_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        return [f"该轮报告缺少或无法读取对应推导文件 {derivation_path}：{error}"]
+    problems = _check_document(text, derivation_name, derivation_path)
+    return [f"{derivation_path}：{problem}" for problem in problems]
+
+
+def check(text, filename, report_path):
+    """按 SKILL.md 声明的文件名选模板并校验报告。"""
+    problems = _check_document(text, filename, report_path)
+    if filename in ("review-main.json", "review-razor.json"):
+        problems += _round_derivation_problems(report_path, filename)
+    return problems
 
 
 def diagnosis_file_problems(path):
@@ -377,7 +437,9 @@ def diagnosis_file_problems(path):
         text = diagnosis_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         return [f"无法读取判因报告：{error}"]
-    problems = check(text, "diagnosis.json", diagnosis_path)
+    document, problems = _parse_document(text)
+    if not problems:
+        problems = _check_parsed_document(document, "diagnosis.json", diagnosis_path)
     group_path = diagnosis_path.parent
     if re.fullmatch(r"group[1-9]\d*", group_path.name):
         problems += _formal_diagnosis_group_problems(group_path)
@@ -418,10 +480,13 @@ def _history_report_problems(round_path, name, number):
         text = report_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         return [f"{report_path}：无法读取必需报告：{error}"], False
-    report_problems = check(text, name, report_path)
+    document, report_problems = _parse_document(text)
+    if not report_problems:
+        report_problems = _check_parsed_document(document, name, report_path)
+        if name in ("review-main.json", "review-razor.json"):
+            report_problems += _round_derivation_problems(report_path, name)
     if report_problems:
         return [f"{report_path}：{problem}" for problem in report_problems], False
-    document = json.loads(text, object_pairs_hook=object_without_duplicate_keys)
     failed = document.get("verdict") == "不通过"
     if failed and not (round_path / "handling.md").is_file():
         return [f"{round_path}：{name} 结论为「不通过」，缺少 handling.md"], number == 3
@@ -448,7 +513,7 @@ def _report_location_problems(path, kind):
         elif group_match is not None:
             problems += _formal_diagnosis_group_problems(group_path)
         return problems, group_path, group_match
-    if kind in ("主审报告", "剃刀报告"):
+    if kind in ("主审报告", "剃刀报告", "推导报告"):
         round_path = path.parent
         group_path = round_path.parent
         group_match = re.fullmatch(r"group([1-9]\d*)", group_path.name)
@@ -508,13 +573,13 @@ def main(argv):
         return 1
 
     kind = REPORTS.get(path.name, (None, None))[0]
-    problems = check(text, path.name, path)
-    if kind == "剃刀报告" and is_code_review_report(path):
-        try:
-            document = json.loads(text, object_pairs_hook=object_without_duplicate_keys)
-        except (ValueError, TypeError):
-            document = {}
-        problems += _submitted_scan_problems(path, document)
+    document, problems = _parse_document(text)
+    if not problems:
+        problems = _check_parsed_document(document, path.name, path)
+        if path.name in ("review-main.json", "review-razor.json"):
+            problems += _round_derivation_problems(path, path.name)
+        if kind == "剃刀报告" and is_code_review_report(path):
+            problems += _submitted_scan_problems(path, document)
     location_problems, group_path, group_match = _report_location_problems(path, kind)
     problems += location_problems
     if group_match is not None:
@@ -524,7 +589,6 @@ def main(argv):
         return 1
 
     if kind in ("主审报告", "剃刀报告") and path.parent.name == "round3":
-        document = json.loads(text, object_pairs_hook=object_without_duplicate_keys)
         if document.get("verdict") == "不通过":
             group = path.parent.parent.name
             print(f"提醒：{group} 第 3 轮仍不通过，按 xy-review 先派判因子代理写 {group}/diagnosis.json，按结论处理后再开下一组")

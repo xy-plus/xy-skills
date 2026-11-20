@@ -36,7 +36,6 @@ def section(items=None, checked="核对了实现与 spec"):
 def main_report(verdict="通过", deviations=None, hard_to_misuse=None, repo_rules=None):
     return {
         "first_principles": {
-            "essence": "用户要的是明确且可检查的行为",
             "deviations": section(deviations),
             "quote_problems": section(),
         },
@@ -61,6 +60,17 @@ def razor_report(verdict="通过", keep=None, keep_old=None, delete=None, ask_us
             "quote_problems": section(),
         },
         "verdict": verdict,
+    }
+
+
+def derivation_report(root="根在遗漏最少要求。", needs=None, approach="按最少要求逐项对照对象。"):
+    return {
+        "root": root,
+        "needs": [{
+            "need": "报告必须能核对用户要求",
+            "quote": {"source": "Q1", "text": "按要求审查"},
+        }] if needs is None else needs,
+        "approach": approach,
     }
 
 
@@ -91,16 +101,24 @@ class CheckTest(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = directory.name
 
-    def run_main(self, path_parts, text):
+    def run_main(self, path_parts, text, create_derivation=True):
         path = os.path.join(self.root, *path_parts)
         write_file(os.path.dirname(path), os.path.basename(path), text)
+        if create_derivation and path_parts[-1] in ("review-main.json", "review-razor.json"):
+            derivation_name = "derivation-main.json" if path_parts[-1] == "review-main.json" else "derivation-razor.json"
+            write_file(
+                os.path.dirname(path), derivation_name,
+                json.dumps(derivation_report(), ensure_ascii=False),
+            )
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             code = main(["check.py", path])
         return code, output.getvalue().splitlines()
 
-    def run_report(self, name, document, folders=("group1", "round1")):
-        return self.run_main((*folders, name), json.dumps(document, ensure_ascii=False))
+    def run_report(self, name, document, folders=("group1", "round1"), create_derivation=True):
+        return self.run_main(
+            (*folders, name), json.dumps(document, ensure_ascii=False), create_derivation
+        )
 
     def create_formal_round3(self, failed=False, group="group1"):
         group_path = Path(self.root) / group
@@ -114,7 +132,7 @@ class CheckTest(unittest.TestCase):
             reports[0] = ("review-main.json", main_report(verdict="不通过", hard_to_misuse=[{
                 "problem": "缺陷",
                 "evidence": "check.py:5",
-                "quote": {"source": "xy-repo-rules 第 7 条", "text": "积极删除或合并不必要的代码或文档"},
+                "quote": {"source": "xy-repo-rules 第 1 条", "text": "人类或 agent 读完 README.md 后都能立刻上手。"},
             }]))
         for name, report in reports:
             code, output = self.run_report(name, report, (group, "round3"))
@@ -127,6 +145,8 @@ class CheckTest(unittest.TestCase):
             round_path = group_path / f"round{number}"
             write_file(round_path, "review-main.json", json.dumps(main_report(), ensure_ascii=False))
             write_file(round_path, "review-razor.json", json.dumps(razor_report(), ensure_ascii=False))
+            write_file(round_path, "derivation-main.json", json.dumps(derivation_report(), ensure_ascii=False))
+            write_file(round_path, "derivation-razor.json", json.dumps(derivation_report(), ensure_ascii=False))
         for number in (1, 2, 3):
             write_file(group_path / f"round{number}", "submitted-review.md", "本轮审查版本。\n")
         if failed:
@@ -203,6 +223,18 @@ class CheckTest(unittest.TestCase):
         code, output = self.run_code_razor(self.clean_code_razor_report(scan_document), scan_document)
 
         self.assertEqual((code, output), (0, []))
+
+    def test_code_razor_report_is_decoded_once(self):
+        _repository, _base, scan_document = self.make_code_submission()
+        report = self.clean_code_razor_report(scan_document)
+
+        with patch.object(
+            check.json, "loads", wraps=check.json.loads,
+        ) as decode:
+            code, output = self.run_code_razor(report, scan_document)
+
+        self.assertEqual((code, output), (0, []))
+        self.assertEqual(decode.call_count, 3)
 
     def test_cleanup_hit_ids_must_match_the_scan_without_missing_extra_or_duplicates(self):
         _repository, _base, scan_document = self.make_code_submission()
@@ -409,6 +441,8 @@ class CheckTest(unittest.TestCase):
                 write_file(round_path, "handling.md", "记录了第 3 轮意见的处理。\n")
             write_file(round_path, "review-main.json", json.dumps(main_report(), ensure_ascii=False))
             write_file(round_path, "review-razor.json", json.dumps(razor, ensure_ascii=False))
+            write_file(round_path, "derivation-main.json", json.dumps(derivation_report(), ensure_ascii=False))
+            write_file(round_path, "derivation-razor.json", json.dumps(derivation_report(), ensure_ascii=False))
             write_file(
                 round_path,
                 "submitted-scan.json",
@@ -430,6 +464,72 @@ class CheckTest(unittest.TestCase):
     def test_clean_json_reports_pass(self):
         self.assertEqual(self.run_report("review-main.json", main_report()), (0, []))
         self.assertEqual(self.run_report("review-razor.json", razor_report()), (0, []))
+        self.assertEqual(self.run_report("derivation-main.json", derivation_report()), (0, []))
+        self.assertEqual(self.run_report("derivation-razor.json", derivation_report()), (0, []))
+
+    def test_report_templates_are_selected_by_their_declared_filenames(self):
+        expected = {
+            "review-main.json": "主审报告",
+            "review-razor.json": "剃刀报告",
+            "diagnosis.json": "判因报告",
+            "derivation-main.json": "推导报告",
+            "derivation-razor.json": "推导报告",
+        }
+
+        self.assertEqual(
+            {name: check.REPORTS[name][0] for name in expected}, expected
+        )
+
+    def test_derivation_report_requires_the_template_fields_and_nonblank_needs(self):
+        document = derivation_report()
+        del document["root"]
+        self.assert_rejected(
+            "derivation-main.json", document, "缺少字段：报告.root"
+        )
+
+        document = derivation_report(needs=[{
+            "need": " ",
+            "quote": {"source": "Q1", "text": "按要求审查"},
+        }])
+        self.assert_rejected(
+            "derivation-razor.json", document, "报告.needs[0].need 不能为空"
+        )
+
+    def test_derivation_rule_quotes_must_match_the_numbered_rule(self):
+        document = derivation_report(needs=[{
+            "need": "保留内容要满足约束",
+            "quote": {
+                "source": "xy-iron-law 第 2 条",
+                "text": "不准确的规范引文",
+            },
+        }])
+
+        self.assert_rejected(
+            "derivation-main.json", document,
+            "报告.needs[0].quote.text", "必须逐字引用「xy-iron-law 第 2 条」",
+        )
+
+    def test_review_report_requires_its_role_derivation_in_the_same_round(self):
+        code, problems = self.run_report(
+            "review-main.json", main_report(), create_derivation=False
+        )
+
+        self.assertEqual(code, 1)
+        self.assertTrue(any("derivation-main.json" in problem for problem in problems), problems)
+
+    def test_review_report_rejects_a_malformed_same_round_derivation(self):
+        path = Path(self.root) / "group1" / "round1"
+        write_file(path, "derivation-razor.json", json.dumps(derivation_report(), ensure_ascii=False))
+        write_file(path, "review-main.json", json.dumps(main_report(), ensure_ascii=False))
+        write_file(path, "derivation-main.json", '{"root":"","needs":[],"approach":"方案"}')
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["check.py", str(path / "review-main.json")])
+
+        self.assertEqual(code, 1)
+        self.assertIn("derivation-main.json", output.getvalue())
+        self.assertIn("root 不能为空", output.getvalue())
 
     def test_main_report_requires_exact_keys_and_types(self):
         cases = []
@@ -458,8 +558,8 @@ class CheckTest(unittest.TestCase):
         cases.append((document, "缺少字段：报告.first_principles.deviations.items[0].evidence"))
 
         document = main_report()
-        document["first_principles"]["essence"] = " \n\t"
-        cases.append((document, "报告.first_principles.essence 不能为空"))
+        document["first_principles"]["essence"] = "多余字段"
+        cases.append((document, "first_principles 多余字段：essence"))
 
         document = main_report()
         document["hard_to_misuse"]["checked"] = []
@@ -558,14 +658,14 @@ class CheckTest(unittest.TestCase):
         document["first_principles"]["quote_problems"]["items"] = [{
             "problem": "规范引文不准确",
             "evidence": "check.py:25",
-            "quote": {"source": "xy-repo-rules 第 7 条", "text": "不是第七条原文"},
+            "quote": {"source": "xy-repo-rules 第 4 条", "text": "不是第四条原文"},
             "suggestion": "逐字核对",
         }]
 
         self.assert_rejected(
             "review-main.json", document,
             "first_principles.quote_problems.items[0].quote.text",
-            "xy-repo-rules 第 7 条",
+            "xy-repo-rules 第 4 条",
         )
 
     def test_main_report_rejects_rule_name_anywhere_in_source(self):
@@ -732,18 +832,8 @@ class CheckTest(unittest.TestCase):
             with self.subTest(needles=needles):
                 self.assert_rejected("review-razor.json", document, *needles)
 
-    def test_razor_report_needs_at_least_one_list_item(self):
+    def test_razor_report_may_have_empty_review_lists(self):
         document = razor_report(keep=[], keep_old=[], delete=[], ask_user=[])
-        self.assert_rejected("review-razor.json", document, "清单合计至少要有一项")
-
-    def test_razor_quote_problems_alone_satisfy_nonempty_list_rule(self):
-        document = razor_report(keep=[], keep_old=[], delete=[], ask_user=[])
-        document["occams_razor"]["quote_problems"]["items"] = [{
-            "problem": "原话要求的东西没有必要",
-            "evidence": "spec.md:12",
-            "quote": {"source": "Q1", "text": "用户原话"},
-            "suggestion": "请用户决定是否保留",
-        }]
         self.assertEqual(self.run_report("review-razor.json", document), (0, []))
 
     def test_razor_rejects_old_keep_shape(self):
@@ -761,12 +851,6 @@ class CheckTest(unittest.TestCase):
             "缺少字段：报告.occams_razor.keep_old[0].reason",
             "多余字段：why",
         )
-
-    def test_razor_keep_old_alone_satisfies_the_nonempty_list_rule(self):
-        document = razor_report(
-            keep=[], keep_old=[{"entity": "check.py", "reason": "从当前入口可达"}],
-        )
-        self.assertEqual(self.run_report("review-razor.json", document), (0, []))
 
     def test_razor_keep_may_be_empty_when_delete_has_an_item(self):
         deletion = [{"entity": "unused.py", "loss": "失去过时脚本"}]
@@ -809,31 +893,21 @@ class CheckTest(unittest.TestCase):
 
     def test_reports_reject_template_placeholders_and_placeholder_fragments(self):
         document = main_report()
-        document["first_principles"]["essence"] = "<用户真正要的是什么；若是修错，根源在哪>"
+        document["first_principles"]["deviations"]["checked"] = "<对照了什么>"
         self.assert_rejected("review-main.json", document, "模板占位符")
 
-        document = main_report()
-        document["first_principles"]["essence"] = "用户要的是 <用户真正要的是什么>"
-        self.assert_rejected("review-main.json", document, "模板占位符")
+        document = derivation_report(
+            root="<只看上游：要解决的根本问题；修错时写错在哪、根源在哪>"
+        )
+        self.assert_rejected("derivation-main.json", document, "模板占位符")
 
         self.assert_rejected("diagnosis.json", diagnosis_report(diagnosis="<这组为什么没过，引用各轮报告的阻断项和证据>"),
                              "模板占位符", folders=("group1",))
 
-    def test_template_placeholder_error_does_not_name_the_field(self):
-        document = main_report()
-        document["first_principles"]["essence"] = "<用户真正要的是什么>"
-
-        code, problems = self.run_report("review-main.json", document)
-
-        self.assertEqual(code, 1, problems)
-        placeholder_problems = [problem for problem in problems if "模板占位符" in problem]
-        self.assertEqual(len(placeholder_problems), 1, problems)
-        self.assertNotIn("essence", placeholder_problems[0])
-
     def test_diagnosis_template_actions_are_rejected_when_copied(self):
         skill = (REVIEW_DIRECTORY / "SKILL.md").read_text(encoding="utf-8")
-        templates = [json.loads(block) for block in re.findall(r"```json\s*\n(.*?)```", skill, re.S)]
-        diagnosis_template = next(template for template in templates if "diagnosis" in template)
+        templates = check._report_templates(skill)
+        diagnosis_template = templates["diagnosis.json"]
         copied_actions = {"diagnosis": "引用阻断项和证据说明根因。", "actions": diagnosis_template["actions"]}
         self.assert_rejected("diagnosis.json", copied_actions, "模板占位符", folders=("group1",))
 
@@ -927,6 +1001,8 @@ class CheckTest(unittest.TestCase):
             round_path = group / f"round{number}"
             write_file(round_path, "review-main.json", json.dumps(main_report(), ensure_ascii=False))
             write_file(round_path, "review-razor.json", json.dumps(razor_report(), ensure_ascii=False))
+            write_file(round_path, "derivation-main.json", json.dumps(derivation_report(), ensure_ascii=False))
+            write_file(round_path, "derivation-razor.json", json.dumps(derivation_report(), ensure_ascii=False))
         for number in (1, 2, 3):
             write_file(group / f"round{number}", "submitted-review.md", "")
         code, problems = self.run_report("diagnosis.json", diagnosis_report(), folders=("group1",))
@@ -982,7 +1058,7 @@ class CheckTest(unittest.TestCase):
         document = main_report(verdict="不通过", hard_to_misuse=[{
             "problem": "缺陷",
             "evidence": "check.py:5",
-            "quote": {"source": "xy-repo-rules 第 7 条", "text": "积极删除或合并不必要的代码或文档"},
+            "quote": {"source": "xy-repo-rules 第 1 条", "text": "人类或 agent 读完 README.md 后都能立刻上手。"},
         }])
         code, output = self.run_report("review-main.json", document, ("group1", "round3"))
         self.assertEqual(code, 0, output)
