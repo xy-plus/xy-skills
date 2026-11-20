@@ -74,6 +74,18 @@ class GoalTests(GoalTestSupport):
         self.assertTrue(all(signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
                             for name in ("metadata", "quotes", "links", "input_paths")))
 
+    def test_inbox_directory_helpers_require_explicit_create_choice(self):
+        for helper in (goal_common.actual_directory, goal_common.inbox_directory):
+            with self.subTest(helper=helper.__name__):
+                parameter = inspect.signature(helper).parameters["create"]
+                self.assertIs(parameter.default, inspect.Parameter.empty)
+
+    def test_skill_documents_hook_check_and_close_inbox_merge(self):
+        skill = (SCRIPT_DIRECTORY / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("下一个 hook、`check` 或 `close`", skill)
+        closing = skill.split("## 验收与关闭", 1)[1]
+        self.assertIn("运行 `close` 时也会先并入 inbox", closing)
+
     def test_read_text_preserves_filesystem_errors(self):
         path = self.root / "unreadable.md"
         caught = []

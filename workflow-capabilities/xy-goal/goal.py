@@ -147,7 +147,7 @@ def open_contract(options, context):
     require_text(options.target, "目标")
     project = context.root / session_project(context.session_id)
     path = project / f"{context.now:%Y%m%d-%H%M%S}-{options.slug}" / "xy-goal"
-    inbox = inbox_directory(context.root, project, context.session_id)
+    inbox = inbox_directory(context.root, project, context.session_id, create=False)
     quotes, reasons = incoming_quotes(
         context.root, project, context.session_id, path, 0)
     metadata = {"target": options.target, "session_id": context.session_id,

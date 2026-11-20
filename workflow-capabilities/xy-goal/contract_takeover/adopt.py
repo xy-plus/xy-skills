@@ -56,7 +56,7 @@ def take_over_contract(root, path, contract, session_id, claude_pid):
     else:
         raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
     project = root / session_project(session_id)
-    inbox = inbox_directory(root, project, session_id)
+    inbox = inbox_directory(root, project, session_id, create=False)
     quotes, reasons = incoming_quotes(
         root, project, session_id, path, max(contract.quotes, default=0))
     contract.metadata.update(session_id=session_id, claude_pid=str(claude_pid))

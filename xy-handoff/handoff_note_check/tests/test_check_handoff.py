@@ -1,4 +1,4 @@
-import json, subprocess, sys, tempfile, unittest
+import inspect, json, subprocess, sys, tempfile, unittest
 import os
 from pathlib import Path
 
@@ -43,7 +43,7 @@ class CheckHandoffTest(unittest.TestCase):
         executable.chmod(0o755)
         return directory
 
-    def run_start(self, name="handoff-name", existing_sessions=(), agents_exit=0):
+    def run_start(self, name, existing_sessions, agents_exit):
         directory = self.fake_claude()
         launch_log = self.path.parent / "launch.json"
         start_directory = self.path.parent / "start-here"
@@ -158,7 +158,7 @@ class CheckHandoffTest(unittest.TestCase):
 
     def test_start_validates_then_launches_with_the_fixed_prompt_in_the_given_directory(self):
         self.path.write_text(json.dumps(handoff(), ensure_ascii=False), encoding="utf-8")
-        result, launch_log, start_directory = self.run_start()
+        result, launch_log, start_directory = self.run_start("handoff-name", (), 0)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "backgrounded · fake · handoff-name\n")
         self.assertEqual(result.stderr, "")
@@ -173,14 +173,14 @@ class CheckHandoffTest(unittest.TestCase):
         document = handoff()
         del document["task"]["done_when"]
         self.path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-        result, launch_log, _ = self.run_start()
+        result, launch_log, _ = self.run_start("handoff-name", (), 0)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("done_when", result.stdout)
         self.assertFalse(launch_log.exists())
 
     def test_start_does_not_launch_when_session_name_already_exists(self):
         self.path.write_text(json.dumps(handoff(), ensure_ascii=False), encoding="utf-8")
-        result, launch_log, _ = self.run_start(existing_sessions=("handoff-name",))
+        result, launch_log, _ = self.run_start("handoff-name", ("handoff-name",), 0)
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("会话名字已存在", result.stdout)
@@ -188,7 +188,7 @@ class CheckHandoffTest(unittest.TestCase):
 
     def test_start_does_not_launch_when_session_list_cannot_be_checked(self):
         self.path.write_text(json.dumps(handoff(), ensure_ascii=False), encoding="utf-8")
-        result, launch_log, _ = self.run_start(agents_exit=1)
+        result, launch_log, _ = self.run_start("handoff-name", (), 1)
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("无法检查现有会话", result.stdout)
@@ -197,3 +197,8 @@ class CheckHandoffTest(unittest.TestCase):
     def test_skill_does_not_require_a_manual_name_list_before_start(self):
         skill = (Path(__file__).resolve().parents[2] / "SKILL.md").read_text(encoding="utf-8")
         self.assertNotIn("启动前用 `claude agents --json --all` 查现有名字", skill)
+
+    def test_start_helper_requires_explicit_name_list_and_command_result(self):
+        parameters = inspect.signature(self.run_start).parameters.values()
+        self.assertTrue(all(parameter.default is inspect.Parameter.empty
+                            for parameter in parameters))

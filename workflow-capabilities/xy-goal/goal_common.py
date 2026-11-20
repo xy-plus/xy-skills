@@ -315,7 +315,7 @@ def session_project(session_id):
     return require_project_name(records[0].parent.name)
 
 
-def actual_directory(path, error_message, *, create=False):
+def actual_directory(path, error_message, *, create):
     if create:
         try:
             path.mkdir()
@@ -330,12 +330,13 @@ def actual_directory(path, error_message, *, create=False):
     return True
 
 
-def inbox_directory(root, project, session_id, *, create=False):
+def inbox_directory(root, project, session_id, *, create):
     """Return an actual inbox directory, rejecting symlinks at both levels."""
     require_name(session_id, "inbox 会话 id")
     if project.parent != root:
         raise GoalError(f"项目目录必须是根目录下的真实目录，不能是软链接：{project}")
-    if not actual_directory(project, "项目目录必须是根目录下的真实目录，不能是软链接"):
+    if not actual_directory(project, "项目目录必须是根目录下的真实目录，不能是软链接",
+                            create=False):
         if create:
             raise GoalError(f"项目目录不存在，不能创建 inbox：{project}")
         return None
@@ -352,14 +353,14 @@ def checked_inbox_path(root, inbox):
     project = inbox.parent.parent
     if inbox.parent != project / "xy-goal-inbox":
         raise GoalError(f"项目 inbox 路径不符合约定：{inbox}")
-    actual = inbox_directory(root, project, inbox.name)
+    actual = inbox_directory(root, project, inbox.name, create=False)
     if actual is None:
         raise GoalError(f"项目 inbox 不存在：{inbox}")
     return actual
 
 
 def read_inbox(root, project, session_id):
-    directory = inbox_directory(root, project, session_id)
+    directory = inbox_directory(root, project, session_id, create=False)
     return quote_files(directory) if directory is not None else {}
 
 
@@ -379,7 +380,7 @@ def merge_inbox(contract, session_id):
     root = contract.path.parents[2]
     project = contract.path.parents[1]
     require_project_directory(root, project)
-    inbox = inbox_directory(root, project, session_id)
+    inbox = inbox_directory(root, project, session_id, create=False)
     if inbox is None:
         return contract
     quotes, reasons = incoming_quotes(
