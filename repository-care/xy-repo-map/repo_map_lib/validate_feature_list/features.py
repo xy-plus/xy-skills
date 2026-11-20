@@ -28,7 +28,9 @@ def feature_chain(feature_id, features):
 
 def is_feature_ancestor(ancestor_id, feature_id, features):
     """Return whether one feature is a strict ancestor of another."""
-    return ancestor_id != feature_id and ancestor_id in feature_chain(feature_id, features)
+    return ancestor_id != feature_id and ancestor_id in feature_chain(
+        feature_id, features
+    )
 
 
 def path_is_under(path, directory):
@@ -40,7 +42,8 @@ def deepest_directory(path, features, order):
     """Return the feature owning a path by its deepest containing directory."""
     return max(
         (
-            feature_id for feature_id in order
+            feature_id
+            for feature_id in order
             if path_is_under(path, features[feature_id]["directory"])
         ),
         key=lambda feature_id: len(features[feature_id]["directory"]),
@@ -52,22 +55,19 @@ def _nonempty_text(value):
 
 
 def _safe_relative_path(value, allow_directory_marker):
-    if (not isinstance(value, str) or not value or "\0" in value
-            or value.startswith("/") or "\\" in value):
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\0" in value
+        or value.startswith("/")
+        or "\\" in value
+    ):
         return False
     path = value[:-1] if allow_directory_marker and value.endswith("/") else value
     return all(part not in ("", ".", "..") for part in path.split("/"))
 
 
-def _collect_features(value, parent, features, order, errors, label="根功能"):
-    if not isinstance(value, dict):
-        errors.append(f"{label}必须是对象")
-        return
-    allowed_keys = FEATURE_KEYS | (
-        {"subrepositories", "external_dependencies"} if parent is None else set()
-    )
-    feature_id = value.get("id")
-    current = feature_id if isinstance(feature_id, str) else label
+def _validate_feature_keys(value, allowed_keys, current, label, errors):
     missing = allowed_keys - value.keys()
     extra = value.keys() - allowed_keys
     for key in sorted(missing):
@@ -88,47 +88,41 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
         else:
             errors.append(f"{label}有多余键 {key}")
 
-    if not isinstance(feature_id, str) or FEATURE_ID.fullmatch(feature_id) is None:
-        errors.append(f"{label}的 id 必须匹配 ^[a-z][a-z0-9-]*$：{feature_id!r}")
-    elif feature_id in features:
-        errors.append(f"功能 id 重复：{feature_id}")
-    else:
-        features[feature_id] = {**value, "parent": parent}
-        order.append(feature_id)
 
-    if "items" in value:
-        items = value["items"]
-        if not isinstance(items, list):
-            errors.append(f"功能 {current} 的 items 必须是数组")
+def _validate_items(value, current, errors):
+    if "items" not in value:
+        return
+    items = value["items"]
+    if not isinstance(items, list):
+        errors.append(f"功能 {current} 的 items 必须是数组")
+        return
+    item_ids = set()
+    for index, item in enumerate(items):
+        item_label = f"功能 {current} 的 items[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{item_label} 必须是对象")
+            continue
+        for key in sorted(ITEM_KEYS - item.keys()):
+            errors.append(f"{item_label}缺少键 {key}")
+        for key in sorted(item.keys() - ITEM_KEYS):
+            errors.append(f"{item_label}有多余键 {key}")
+        item_id = item.get("id")
+        if not isinstance(item_id, str) or FEATURE_ID.fullmatch(item_id) is None:
+            errors.append(f"{item_label}.id 必须匹配 ^[a-z][a-z0-9-]*$：{item_id!r}")
+        elif item_id in item_ids:
+            errors.append(f"功能 {current} 的条目 id 重复：{item_id}")
         else:
-            item_ids = set()
-            for index, item in enumerate(items):
-                item_label = f"功能 {current} 的 items[{index}]"
-                if not isinstance(item, dict):
-                    errors.append(f"{item_label} 必须是对象")
-                    continue
-                for key in sorted(ITEM_KEYS - item.keys()):
-                    errors.append(f"{item_label}缺少键 {key}")
-                for key in sorted(item.keys() - ITEM_KEYS):
-                    errors.append(f"{item_label}有多余键 {key}")
+            item_ids.add(item_id)
+        text = item.get("text")
+        if not _nonempty_text(text) or any(
+            character in text for character in ("\r", "\n", "\u2028", "\u2029")
+        ):
+            errors.append(f"{item_label}.text 必须是非空单行字符串")
+        if item.get("status") not in ("确认", "起草"):
+            errors.append(f"{item_label}.status 只能是 确认、起草")
 
-                item_id = item.get("id")
-                if not isinstance(item_id, str) or FEATURE_ID.fullmatch(item_id) is None:
-                    errors.append(
-                        f"{item_label}.id 必须匹配 ^[a-z][a-z0-9-]*$：{item_id!r}"
-                    )
-                elif item_id in item_ids:
-                    errors.append(f"功能 {current} 的条目 id 重复：{item_id}")
-                else:
-                    item_ids.add(item_id)
 
-                text = item.get("text")
-                if (not _nonempty_text(text)
-                        or any(character in text for character in ("\r", "\n", "\u2028", "\u2029"))):
-                    errors.append(f"{item_label}.text 必须是非空单行字符串")
-                if item.get("status") not in ("确认", "起草"):
-                    errors.append(f"{item_label}.status 只能是 确认、起草")
-
+def _validate_feature_text(value, label, errors):
     for key in ("title", "what"):
         if not _nonempty_text(value.get(key)):
             errors.append(f"{label}的 {key} 必须是非空字符串")
@@ -147,7 +141,9 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
         if source not in ("原话", "确认", "起草"):
             errors.append(f"{label}的 why.source 只能是 原话、确认、起草")
         elif source == "原话":
-            if not _nonempty_text(why.get("quote")) or not _nonempty_text(why.get("from")):
+            if not _nonempty_text(why.get("quote")) or not _nonempty_text(
+                why.get("from")
+            ):
                 errors.append(f"{label}的 why（原话）必须有非空 quote 和 from")
         elif source == "确认":
             if why.get("quote") != "" or not _nonempty_text(why.get("from")):
@@ -158,9 +154,17 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
             if key in why and not isinstance(why[key], str):
                 errors.append(f"{label}的 why.{key} 必须是字符串")
         origin = why.get("from")
-        if isinstance(origin, str) and "answers.json" in origin and not ANSWERS_JSON_REF.fullmatch(origin):
-            errors.append(f"功能 {value.get('id')} 的 why.from 中 answers.json 必须引用 JSON 回答键：{origin!r}")
+        if (
+            isinstance(origin, str)
+            and "answers.json" in origin
+            and not ANSWERS_JSON_REF.fullmatch(origin)
+        ):
+            errors.append(
+                f"功能 {value.get('id')} 的 why.from 中 answers.json 必须引用 JSON 回答键：{origin!r}"
+            )
 
+
+def _validate_feature_paths(value, parent, current, label, errors):
     directory = value.get("directory")
     if "directory" in value:
         if not isinstance(directory, str):
@@ -173,7 +177,7 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
         elif parent is None and directory != "":
             errors.append(
                 f"根功能 {current} 的 directory 必须是空字符串，目前为 {directory!r}；"
-                "请改为 \"\"。"
+                '请改为 ""。'
             )
         elif parent is not None and not _safe_relative_path(directory, False):
             errors.append(
@@ -203,6 +207,30 @@ def _collect_features(value, parent, features, order, errors, label="根功能")
                     errors.append(
                         f"{label}的 external_dependencies 名字必须是非空字符串、首尾无空白且不含换行：{name!r}"
                     )
+
+
+def _collect_features(value, parent, features, order, errors, label):
+    if not isinstance(value, dict):
+        errors.append(f"{label}必须是对象")
+        return
+    allowed_keys = FEATURE_KEYS | (
+        {"subrepositories", "external_dependencies"} if parent is None else set()
+    )
+    feature_id = value.get("id")
+    current = feature_id if isinstance(feature_id, str) else label
+    _validate_feature_keys(value, allowed_keys, current, label, errors)
+
+    if not isinstance(feature_id, str) or FEATURE_ID.fullmatch(feature_id) is None:
+        errors.append(f"{label}的 id 必须匹配 ^[a-z][a-z0-9-]*$：{feature_id!r}")
+    elif feature_id in features:
+        errors.append(f"功能 id 重复：{feature_id}")
+    else:
+        features[feature_id] = {**value, "parent": parent}
+        order.append(feature_id)
+
+    _validate_items(value, current, errors)
+    _validate_feature_text(value, label, errors)
+    _validate_feature_paths(value, parent, current, label, errors)
     children = value.get("children")
     if not isinstance(children, list):
         errors.append(f"{label}的 children 必须是数组")
@@ -247,7 +275,8 @@ def _validate_paths(features, order, tracked, errors):
 
         nearest = max(
             (
-                candidate for candidate in order
+                candidate
+                for candidate in order
                 if candidate != feature_id
                 and path_is_under(directory, features[candidate]["directory"])
             ),
@@ -279,7 +308,7 @@ def load_features(repository, tracked_paths):
         return {}, [], [f"无法读取 repo-map/features.json：{error}"]
 
     features, order, errors = {}, [], []
-    _collect_features(document, None, features, order, errors)
+    _collect_features(document, None, features, order, errors, "根功能")
     if not order or document.get("id") not in features:
         return features, order, errors or ["功能清单必须包含根功能"]
     if errors:

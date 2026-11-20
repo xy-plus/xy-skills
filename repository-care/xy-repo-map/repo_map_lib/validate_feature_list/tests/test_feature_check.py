@@ -5,16 +5,34 @@ import tempfile
 import unittest
 
 import sys
-REPOSITORY_ROOT = next(parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists())
+
+REPOSITORY_ROOT = next(
+    parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
+)
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
-from map_fixture import COMMAND, build_map, feature, make_repo
+from map_fixture import (
+    COMMAND,
+    build_map,
+    feature,
+    make_repo,
+    root_feature as make_root_feature,
+)
 
 
 class FeatureCheckTest(unittest.TestCase):
     def setUp(self):
         self.repo = make_repo(
-            self, {"README.md": "仓库说明。\n"},
-            feature("root", "", subrepositories=[], external_dependencies=[]),
+            self,
+            {"README.md": "仓库说明。\n"},
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=[],
+                external_dependencies=[],
+                children=[],
+                source="原话",
+                items=[],
+            ),
         )
 
     def write(self, relative, content):
@@ -29,23 +47,55 @@ class FeatureCheckTest(unittest.TestCase):
     def check(self):
         return subprocess.run(
             ["python3", "-B", str(COMMAND), "check", "--repo", str(self.repo)],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     def make_nested_repository(self, relative):
         nested = self.repo / relative
         nested.mkdir(parents=True)
         subprocess.run(["git", "-C", str(nested), "init", "-q"], check=True)
-        subprocess.run(["git", "-C", str(nested), "config", "user.name", "Fixture"], check=True)
-        subprocess.run(["git", "-C", str(nested), "config", "user.email", "fixture@example.invalid"], check=True)
+        subprocess.run(
+            ["git", "-C", str(nested), "config", "user.name", "Fixture"], check=True
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(nested),
+                "config",
+                "user.email",
+                "fixture@example.invalid",
+            ],
+            check=True,
+        )
         (nested / "README.md").write_text("nested\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(nested), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(nested), "commit", "-qm", "fixture"], check=True)
+        subprocess.run(
+            ["git", "-C", str(nested), "commit", "-qm", "fixture"], check=True
+        )
 
     def test_allows_subrepositories_only_on_the_root_feature(self):
         self.write("child/readme.md", "child\n")
-        child = feature("child", "child", subrepositories=[], external_dependencies=[])
-        root = feature("root", "", children=[child], subrepositories=[], external_dependencies=[])
+        child = make_root_feature(
+            "child",
+            "child",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[],
+            source="原话",
+            items=[],
+        )
+        root = make_root_feature(
+            "root",
+            "",
+            children=[child],
+            subrepositories=[],
+            external_dependencies=[],
+            source="原话",
+            items=[],
+        )
         root["legacy"] = "旧字段"
         self.set_features(root)
 
@@ -72,7 +122,15 @@ class FeatureCheckTest(unittest.TestCase):
         ]
         for name, subrepositories, expected in cases:
             with self.subTest(value=name):
-                root = feature("root", "", subrepositories=subrepositories, external_dependencies=[])
+                root = make_root_feature(
+                    "root",
+                    "",
+                    subrepositories=subrepositories,
+                    external_dependencies=[],
+                    children=[],
+                    source="原话",
+                    items=[],
+                )
                 self.set_features(root)
 
                 result = self.check()
@@ -94,12 +152,24 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("sub-two", output)
         self.assertIn("subrepositories", output)
 
-    def test_accepts_registered_ignored_nested_repository_without_adding_its_files_to_map(self):
+    def test_accepts_registered_ignored_nested_repository_without_adding_its_files_to_map(
+        self,
+    ):
         self.write(".gitignore", "/sub/\n")
         self.make_nested_repository("sub")
-        self.set_features(feature("root", "", subrepositories=["sub"], external_dependencies=[]))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=["sub"],
+                external_dependencies=[],
+                children=[],
+                source="原话",
+                items=[],
+            )
+        )
 
-        data = build_map(self, self.repo)
+        data = build_map(self.repo)
         files = [
             path
             for feature_data in data["features"].values()
@@ -108,7 +178,17 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertFalse(any(path.startswith("sub/") for path in files))
 
     def test_accepts_a_registered_path_missing_from_the_checkout(self):
-        self.set_features(feature("root", "", subrepositories=["quant-deep"], external_dependencies=[]))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=["quant-deep"],
+                external_dependencies=[],
+                children=[],
+                source="原话",
+                items=[],
+            )
+        )
 
         result = self.check()
 
@@ -117,19 +197,50 @@ class FeatureCheckTest(unittest.TestCase):
     def test_rejects_invalid_external_dependency_names(self):
         cases = [
             ("不是数组", "Claude Code", "external_dependencies 必须是字符串数组"),
-            ("元素不是字符串", ["Claude Code", 1], "external_dependencies 必须是字符串数组"),
-            ("空名字", [""], "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行"),
-            ("空白名字", ["  "], "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行"),
-            ("前置空白", [" Claude Code"], "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行"),
-            ("尾随空白", ["Claude Code "], "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行"),
-            ("换行", ["Claude\nCode"], "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行"),
+            (
+                "元素不是字符串",
+                ["Claude Code", 1],
+                "external_dependencies 必须是字符串数组",
+            ),
+            (
+                "空名字",
+                [""],
+                "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行",
+            ),
+            (
+                "空白名字",
+                ["  "],
+                "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行",
+            ),
+            (
+                "前置空白",
+                [" Claude Code"],
+                "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行",
+            ),
+            (
+                "尾随空白",
+                ["Claude Code "],
+                "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行",
+            ),
+            (
+                "换行",
+                ["Claude\nCode"],
+                "external_dependencies 名字必须是非空字符串、首尾无空白且不含换行",
+            ),
         ]
         for name, external_dependencies, expected in cases:
             with self.subTest(value=name):
-                self.set_features(feature(
-                    "root", "", subrepositories=[],
-                    external_dependencies=external_dependencies,
-                ))
+                self.set_features(
+                    make_root_feature(
+                        "root",
+                        "",
+                        subrepositories=[],
+                        external_dependencies=external_dependencies,
+                        children=[],
+                        source="原话",
+                        items=[],
+                    )
+                )
 
                 result = self.check()
                 output = result.stdout + result.stderr
@@ -140,9 +251,14 @@ class FeatureCheckTest(unittest.TestCase):
     def test_reports_all_external_dependency_content_errors_together(self):
         self.write("README.md", "No external tools are mentioned here.\n")
         self.write("pkg/source.py", "value = 1\n")
-        root = feature(
-            "root", "", subrepositories=[], external_dependencies=["Unused", "pkg"],
-            children=[feature("package", "pkg")],
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=["Unused", "pkg"],
+            children=[feature("package", "pkg", children=[], source="原话", items=[])],
+            source="原话",
+            items=[],
         )
         self.set_features(root)
 
@@ -157,9 +273,17 @@ class FeatureCheckTest(unittest.TestCase):
         self.write("tracked/file.py", "value = 1\n")
         self.write(".gitignore", "/ordinary/\n")
         self.write("ordinary/file.py", "ignored data\n")
-        self.set_features(feature(
-            "root", "", subrepositories=["tracked", "ordinary", "visible"], external_dependencies=[]
-        ))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=["tracked", "ordinary", "visible"],
+                external_dependencies=[],
+                children=[],
+                source="原话",
+                items=[],
+            )
+        )
         self.make_nested_repository("visible")
 
         result = self.check()
@@ -173,10 +297,27 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("还不支持子仓", output)
 
     def test_registered_gitlink_is_still_unsupported_and_mismatched(self):
-        self.set_features(feature("root", "", subrepositories=["linked"], external_dependencies=[]))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=["linked"],
+                external_dependencies=[],
+                children=[],
+                source="原话",
+                items=[],
+            )
+        )
         subprocess.run(
-            ["git", "-C", str(self.repo), "update-index", "--add", "--cacheinfo",
-             f"160000,{'1' * 40},linked"],
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                f"160000,{'1' * 40},linked",
+            ],
             check=True,
         )
         self.make_nested_repository("linked")
@@ -204,7 +345,15 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("重复键：id", result.stdout + result.stderr)
 
     def test_rejects_entries_as_an_unknown_feature_field(self):
-        root = feature("root", "", subrepositories=[], external_dependencies=[])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[],
+            source="原话",
+            items=[],
+        )
         root["entries"] = []
         self.set_features(root)
 
@@ -217,7 +366,15 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("请删除", output)
 
     def test_rejects_a_missing_feature_key(self):
-        root = feature("root", "", subrepositories=[], external_dependencies=[])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[],
+            source="原话",
+            items=[],
+        )
         del root["what"]
         del root["subrepositories"]
         del root["external_dependencies"]
@@ -230,7 +387,15 @@ class FeatureCheckTest(unittest.TestCase):
                 self.assertIn(f"根功能缺少键 {key}", output)
 
     def test_requires_items_on_root_and_child_features(self):
-        root = feature("root", "", subrepositories=[], external_dependencies=[], items=[])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            items=[],
+            children=[],
+            source="原话",
+        )
         del root["items"]
         self.set_features(root)
         result = self.check()
@@ -238,11 +403,16 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("功能 root 缺少键 items", result.stdout + result.stderr)
 
         self.write("pkg/item.py", "value = 1\n")
-        child = feature("child", "pkg", items=[])
+        child = feature("child", "pkg", items=[], children=[], source="原话")
         del child["items"]
-        root = feature(
-            "root", "", subrepositories=[], external_dependencies=[],
-            children=[child], items=[],
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[child],
+            items=[],
+            source="原话",
         )
         self.set_features(root)
         result = self.check()
@@ -250,9 +420,17 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("功能 child 缺少键 items", result.stdout + result.stderr)
 
     def assert_invalid_items(self, items, expected):
-        self.set_features(feature(
-            "root", "", subrepositories=[], external_dependencies=[], items=items,
-        ))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=[],
+                external_dependencies=[],
+                items=items,
+                children=[],
+                source="原话",
+            )
+        )
         result = self.check()
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 1, output)
@@ -270,10 +448,21 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_rejects_missing_or_extra_item_keys(self):
         cases = [
-            ([{"id": "core", "text": "输出正确结果。"}],
-             ("功能 root 的 items[0]", "缺少键 status")),
-            ([{"id": "core", "text": "输出正确结果。", "status": "确认", "extra": True}],
-             ("功能 root 的 items[0]", "有多余键 extra")),
+            (
+                [{"id": "core", "text": "输出正确结果。"}],
+                ("功能 root 的 items[0]", "缺少键 status"),
+            ),
+            (
+                [
+                    {
+                        "id": "core",
+                        "text": "输出正确结果。",
+                        "status": "确认",
+                        "extra": True,
+                    }
+                ],
+                ("功能 root 的 items[0]", "有多余键 extra"),
+            ),
         ]
         for items, expected in cases:
             with self.subTest(items=items):
@@ -281,20 +470,32 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_rejects_invalid_or_duplicate_item_ids(self):
         cases = [
-            ([{"id": "Bad_ID", "text": "输出正确结果。", "status": "确认"}],
-             ("功能 root", "items[0].id")),
-            ([
-                {"id": "same", "text": "输出正确结果。", "status": "确认"},
-                {"id": "same", "text": "输出其他结果。", "status": "确认"},
-            ], ("功能 root", "条目 id 重复")),
+            (
+                [{"id": "Bad_ID", "text": "输出正确结果。", "status": "确认"}],
+                ("功能 root", "items[0].id"),
+            ),
+            (
+                [
+                    {"id": "same", "text": "输出正确结果。", "status": "确认"},
+                    {"id": "same", "text": "输出其他结果。", "status": "确认"},
+                ],
+                ("功能 root", "条目 id 重复"),
+            ),
         ]
         for items, expected in cases:
             with self.subTest(items=items):
                 self.assert_invalid_items(items, expected)
 
     def test_rejects_empty_non_string_and_multiline_item_text(self):
-        cases = ("", "  \t", None, "first\nsecond", "first\rsecond",
-                 "first\u2028second", "first\u2029second")
+        cases = (
+            "",
+            "  \t",
+            None,
+            "first\nsecond",
+            "first\rsecond",
+            "first\u2028second",
+            "first\u2029second",
+        )
         for text in cases:
             with self.subTest(text=text):
                 self.assert_invalid_items(
@@ -303,9 +504,14 @@ class FeatureCheckTest(unittest.TestCase):
                 )
 
     def test_rejects_item_status_outside_confirmed_or_draft(self):
-        root = feature(
-            "root", "", subrepositories=[], external_dependencies=[],
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
             items=[{"id": "core", "text": "输出正确结果。", "status": "待定"}],
+            children=[],
+            source="原话",
         )
         self.set_features(root)
         result = self.check()
@@ -315,22 +521,47 @@ class FeatureCheckTest(unittest.TestCase):
     def test_accepts_valid_items_with_repeated_ids_on_different_features(self):
         self.write("pkg/item.py", "value = 1\n")
         item = {"id": "core", "text": "输出正确结果。", "status": "确认"}
-        root = feature(
-            "root", "", subrepositories=[], external_dependencies=[],
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
             items=[item],
-            children=[feature("child", "pkg", items=[item])],
+            children=[
+                feature("child", "pkg", items=[item], children=[], source="原话")
+            ],
+            source="原话",
         )
         self.set_features(root)
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_rejects_an_invalid_identifier_and_duplicate_identifier(self):
-        root = feature("Bad_ID", "", subrepositories=[], external_dependencies=[])
+        root = make_root_feature(
+            "Bad_ID",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[],
+            source="原话",
+            items=[],
+        )
         self.set_features(root)
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("id", result.stdout + result.stderr)
-        root = feature("root", "", subrepositories=[], external_dependencies=[], children=[feature("same", "pkg"), feature("same", "other")])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[
+                feature("same", "pkg", children=[], source="原话", items=[]),
+                feature("same", "other", children=[], source="原话", items=[]),
+            ],
+            source="原话",
+            items=[],
+        )
         self.write("pkg/item.py", "value = 1\n")
         self.write("other/item.py", "value = 2\n")
         self.set_features(root)
@@ -341,7 +572,17 @@ class FeatureCheckTest(unittest.TestCase):
     def test_accepts_only_valid_why_source_combinations(self):
         for source in ("原话", "确认", "起草"):
             with self.subTest(source=source):
-                self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], source=source))
+                self.set_features(
+                    make_root_feature(
+                        "root",
+                        "",
+                        subrepositories=[],
+                        external_dependencies=[],
+                        source=source,
+                        children=[],
+                        items=[],
+                    )
+                )
                 result = self.check()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout, "功能清单检查通过\n")
@@ -350,14 +591,27 @@ class FeatureCheckTest(unittest.TestCase):
         invalid = [
             ("原话", "", "契约", "why（原话）必须有非空 quote 和 from"),
             ("原话", "逐字引文", "", "why（原话）必须有非空 quote 和 from"),
-            ("确认", "不允许的引文", "本次回答", "why（确认）必须使用空 quote 和非空 from"),
+            (
+                "确认",
+                "不允许的引文",
+                "本次回答",
+                "why（确认）必须使用空 quote 和非空 from",
+            ),
             ("确认", "", "", "why（确认）必须使用空 quote 和非空 from"),
             ("起草", "不允许的引文", "", "why（起草）必须使用空 quote 和空 from"),
             ("未知", "", "", "why.source 只能是 原话、确认、起草"),
         ]
         for source, quote, origin, expected in invalid:
             with self.subTest(source=source, quote=quote, origin=origin):
-                root = feature("root", "", subrepositories=[], external_dependencies=[])
+                root = make_root_feature(
+                    "root",
+                    "",
+                    subrepositories=[],
+                    external_dependencies=[],
+                    children=[],
+                    source="原话",
+                    items=[],
+                )
                 root["why"].update(source=source, quote=quote, **{"from": origin})
                 self.set_features(root)
                 result = self.check()
@@ -374,7 +628,15 @@ class FeatureCheckTest(unittest.TestCase):
             "用户原话.md 第 7 行",
         ):
             with self.subTest(origin=origin):
-                root = feature("root", "", subrepositories=[], external_dependencies=[], source="确认")
+                root = make_root_feature(
+                    "root",
+                    "",
+                    subrepositories=[],
+                    external_dependencies=[],
+                    source="确认",
+                    children=[],
+                    items=[],
+                )
                 root["why"]["from"] = origin
                 self.set_features(root)
                 result = self.check()
@@ -385,7 +647,15 @@ class FeatureCheckTest(unittest.TestCase):
             "/run/decisions/answers.json#L7",
         ):
             with self.subTest(origin=origin):
-                root = feature("root", "", subrepositories=[], external_dependencies=[], source="确认")
+                root = make_root_feature(
+                    "root",
+                    "",
+                    subrepositories=[],
+                    external_dependencies=[],
+                    source="确认",
+                    children=[],
+                    items=[],
+                )
                 root["why"]["from"] = origin
                 self.set_features(root)
                 result = self.check()
@@ -395,16 +665,34 @@ class FeatureCheckTest(unittest.TestCase):
                 self.assertIn("answers.json", output)
 
     def test_requires_the_root_to_cover_the_repository(self):
-        self.set_features(feature("root", "pkg", subrepositories=[], external_dependencies=[]))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "pkg",
+                subrepositories=[],
+                external_dependencies=[],
+                children=[],
+                source="原话",
+                items=[],
+            )
+        )
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("根", result.stdout + result.stderr)
 
     def test_rejects_a_null_feature_directory_with_actionable_error(self):
         self.write("pkg/item.py", "value = 1\n")
-        root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("package", None),
-        ])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[
+                feature("package", None, children=[], source="原话", items=[]),
+            ],
+            source="原话",
+            items=[],
+        )
         self.set_features(root)
 
         result = self.check()
@@ -417,7 +705,15 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("目录", output)
 
     def test_rejects_missing_or_non_string_feature_directories(self):
-        root = feature("root", "", subrepositories=[], external_dependencies=[])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[],
+            source="原话",
+            items=[],
+        )
         del root["directory"]
         self.set_features(root)
         result = self.check()
@@ -428,9 +724,19 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("填写", output)
 
         self.write("pkg/item.py", "value = 1\n")
-        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("package", 7),
-        ]))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=[],
+                external_dependencies=[],
+                children=[
+                    feature("package", 7, children=[], source="原话", items=[]),
+                ],
+                source="原话",
+                items=[],
+            )
+        )
         result = self.check()
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 1)
@@ -450,9 +756,19 @@ class FeatureCheckTest(unittest.TestCase):
         self.write("pkg/item.py", "value = 1\n")
         for name, directory in cases:
             with self.subTest(name=name):
-                root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
-                    feature("package", directory),
-                ])
+                root = make_root_feature(
+                    "root",
+                    "",
+                    subrepositories=[],
+                    external_dependencies=[],
+                    children=[
+                        feature(
+                            "package", directory, children=[], source="原话", items=[]
+                        ),
+                    ],
+                    source="原话",
+                    items=[],
+                )
                 self.set_features(root)
                 result = self.check()
                 output = result.stdout + result.stderr
@@ -463,10 +779,20 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_rejects_duplicate_feature_directories_with_both_features_named(self):
         self.write("pkg/first.py", "value = 1\n")
-        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("first", "pkg"),
-            feature("second", "pkg"),
-        ]))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=[],
+                external_dependencies=[],
+                children=[
+                    feature("first", "pkg", children=[], source="原话", items=[]),
+                    feature("second", "pkg", children=[], source="原话", items=[]),
+                ],
+                source="原话",
+                items=[],
+            )
+        )
 
         result = self.check()
         output = result.stdout + result.stderr
@@ -477,11 +803,23 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("pkg", output)
         self.assertIn("目录重复", output)
 
-    def test_rejects_a_feature_directory_without_tracked_files_and_says_how_to_fix_it(self):
+    def test_rejects_a_feature_directory_without_tracked_files_and_says_how_to_fix_it(
+        self,
+    ):
         self.write("elsewhere/item.py", "value = 1\n")
-        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("package", "pkg"),
-        ]))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=[],
+                external_dependencies=[],
+                children=[
+                    feature("package", "pkg", children=[], source="原话", items=[]),
+                ],
+                source="原话",
+                items=[],
+            )
+        )
 
         result = self.check()
         output = result.stdout + result.stderr
@@ -495,9 +833,27 @@ class FeatureCheckTest(unittest.TestCase):
     def test_child_directory_must_be_nested_under_its_parent_directory(self):
         self.write("pkg/parent.py", "parent = 1\n")
         self.write("other/item.py", "value = 1\n")
-        root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("package", "pkg", children=[feature("outside", "other")]),
-        ])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[
+                feature(
+                    "package",
+                    "pkg",
+                    children=[
+                        feature(
+                            "outside", "other", children=[], source="原话", items=[]
+                        )
+                    ],
+                    source="原话",
+                    items=[],
+                ),
+            ],
+            source="原话",
+            items=[],
+        )
         self.set_features(root)
 
         result = self.check()
@@ -513,10 +869,26 @@ class FeatureCheckTest(unittest.TestCase):
     def test_child_directory_cannot_skip_an_intermediate_feature_directory(self):
         self.write("a/b/item.py", "value = 1\n")
         self.write("a/b/c/item.py", "value = 2\n")
-        root = feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("parent", "a", children=[feature("child", "a/b/c")]),
-            feature("middle", "a/b"),
-        ])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[
+                feature(
+                    "parent",
+                    "a",
+                    children=[
+                        feature("child", "a/b/c", children=[], source="原话", items=[])
+                    ],
+                    source="原话",
+                    items=[],
+                ),
+                feature("middle", "a/b", children=[], source="原话", items=[]),
+            ],
+            source="原话",
+            items=[],
+        )
         self.set_features(root)
 
         result = self.check()
@@ -531,9 +903,33 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_child_directory_may_be_below_ordinary_directories_inside_parent(self):
         self.write("pkg/src/module/main.py", "value = 1\n")
-        self.set_features(feature("root", "", subrepositories=[], external_dependencies=[], children=[
-            feature("package", "pkg", children=[feature("module", "pkg/src/module")]),
-        ]))
+        self.set_features(
+            make_root_feature(
+                "root",
+                "",
+                subrepositories=[],
+                external_dependencies=[],
+                children=[
+                    feature(
+                        "package",
+                        "pkg",
+                        children=[
+                            feature(
+                                "module",
+                                "pkg/src/module",
+                                children=[],
+                                source="原话",
+                                items=[],
+                            )
+                        ],
+                        source="原话",
+                        items=[],
+                    ),
+                ],
+                source="原话",
+                items=[],
+            )
+        )
 
         result = self.check()
 
@@ -548,8 +944,22 @@ class FeatureCheckTest(unittest.TestCase):
         self.assertIn("子仓", result.stdout + result.stderr)
 
     def test_rejects_a_known_but_unsupported_code_suffix(self):
-        suffixes = (".go", ".java", ".kt", ".swift", ".cpp", ".cc", ".hpp",
-                    ".cs", ".rb", ".php", ".scala", ".lua", ".ts", ".css")
+        suffixes = (
+            ".go",
+            ".java",
+            ".kt",
+            ".swift",
+            ".cpp",
+            ".cc",
+            ".hpp",
+            ".cs",
+            ".rb",
+            ".php",
+            ".scala",
+            ".lua",
+            ".ts",
+            ".css",
+        )
         for suffix in suffixes:
             self.write(f"src/legacy{suffix}", "unsupported source\n")
         subprocess.run(["git", "-C", str(self.repo), "add", "src"], check=True)
@@ -561,15 +971,31 @@ class FeatureCheckTest(unittest.TestCase):
 
     def test_bad_arguments_exit_with_two(self):
         result = subprocess.run(
-            ["python3", "-B", str(COMMAND), "check", "--repo", str(self.repo / "missing")],
-            capture_output=True, text=True, check=False,
+            [
+                "python3",
+                "-B",
+                str(COMMAND),
+                "check",
+                "--repo",
+                str(self.repo / "missing"),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         self.assertEqual(result.returncode, 2)
 
     def _assert_repository_error_for_check_and_render(self, repository, message):
         with tempfile.TemporaryDirectory() as temporary:
             for command in ("check", "render"):
-                arguments = ["python3", "-B", str(COMMAND), command, "--repo", str(repository)]
+                arguments = [
+                    "python3",
+                    "-B",
+                    str(COMMAND),
+                    command,
+                    "--repo",
+                    str(repository),
+                ]
                 if command == "render":
                     arguments.extend(["--out", str(Path(temporary) / "rendered")])
                 result = subprocess.run(

@@ -1,4 +1,5 @@
 """Test the decision-page command and its request handling."""
+
 from contextlib import contextmanager, nullcontext
 import copy
 import http.client
@@ -17,7 +18,9 @@ import unittest
 from unittest.mock import patch
 
 
-ROOT = next(parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists())
+ROOT = next(
+    parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
+)
 DECISION_PAGE_DIRECTORY = ROOT / "repository-care" / "xy-cleanup" / "decision_page"
 sys.path.insert(0, str(DECISION_PAGE_DIRECTORY))
 
@@ -28,18 +31,22 @@ def valid_decisions():
     return {
         "title": "Cleanup decisions",
         "intro": ["Read every item."],
-        "groups": [{
-            "title": "Review",
-            "notes": [],
-            "items": [{
-                "id": "A1",
-                "title": "Feature",
-                "lines": ["Keep this feature."],
-                "options": ["Keep", "Remove"],
-                "recommended": "Keep",
-                "compare": None,
-            }],
-        }],
+        "groups": [
+            {
+                "title": "Review",
+                "notes": [],
+                "items": [
+                    {
+                        "id": "A1",
+                        "title": "Feature",
+                        "lines": ["Keep this feature."],
+                        "options": ["Keep", "Remove"],
+                        "recommended": "Keep",
+                        "compare": None,
+                    }
+                ],
+            }
+        ],
         "footnotes": [],
     }
 
@@ -99,7 +106,8 @@ def request_raw_socket(socket_path, raw_body, content_length):
     headers = (
         b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
         b"Content-Type: application/json\r\nContent-Length: "
-        + str(length).encode("ascii") + b"\r\n\r\n"
+        + str(length).encode("ascii")
+        + b"\r\n\r\n"
     )
     client.sendall(headers + body)
     try:
@@ -117,7 +125,10 @@ def request_raw_socket(socket_path, raw_body, content_length):
 def decision_receiver(directory, decisions, answers):
     socket_path = directory / "s"
     server = decision_page.DecisionHTTPServer(
-        socket_path, decision_page.render_decision_page(decisions), decisions, answers,
+        socket_path,
+        decision_page.render_decision_page(decisions),
+        decisions,
+        answers,
     )
     stop_event = threading.Event()
     serving = threading.Thread(
@@ -139,8 +150,15 @@ def run_ask(decisions, answers, runner):
     stdout = io.StringIO()
     stderr = io.StringIO()
     code = decision_page.main(
-        ["ask", "--decisions", str(decisions), "--name", "decision-test",
-         "--answers", str(answers)],
+        [
+            "ask",
+            "--decisions",
+            str(decisions),
+            "--name",
+            "decision-test",
+            "--answers",
+            str(answers),
+        ],
         runner,
         stdout,
         stderr,
@@ -148,7 +166,161 @@ def run_ask(decisions, answers, runner):
     return code, stdout.getvalue(), stderr.getvalue()
 
 
+@contextmanager
+def running_ask(decisions_path, answers_path):
+    decisions = json.loads(decisions_path.read_text(encoding="utf-8"))
+    call = {
+        "calls": [],
+        "verification": {},
+        "mounted": threading.Event(),
+        "result": {},
+        "stdout": io.StringIO(),
+        "stderr": io.StringIO(),
+    }
+
+    def platform_runner(arguments):
+        call["calls"].append(arguments)
+        if arguments[2] == "mount":
+            connection = UnixSocketHTTPConnection(arguments[5], timeout=1)
+            try:
+                connection.request("GET", "/", headers={"Connection": "close"})
+                response = connection.getresponse()
+                call["verification"]["status"] = response.status
+                call["verification"]["page"] = response.read()
+            except (OSError, http.client.HTTPException) as error:
+                call["verification"]["error"] = str(error)
+            finally:
+                connection.close()
+                call["mounted"].set()
+            valid_page = call["verification"].get(
+                "status"
+            ) == 200 and b"decision-data" in call["verification"].get("page", b"")
+            return subprocess.CompletedProcess(
+                arguments,
+                0 if valid_page else 1,
+                "https://portal.example/decision-test/\n" if valid_page else "",
+                "" if valid_page else "mount verification failed\n",
+            )
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    command = [
+        "ask",
+        "--decisions",
+        str(decisions_path),
+        "--name",
+        "decision-test",
+        "--answers",
+        str(answers_path),
+    ]
+    call["thread"] = threading.Thread(
+        target=lambda: call["result"].update(
+            {
+                "code": decision_page.main(
+                    command,
+                    platform_runner,
+                    call["stdout"],
+                    call["stderr"],
+                )
+            }
+        ),
+        daemon=True,
+    )
+    call["thread"].start()
+    try:
+        yield call
+    finally:
+        if call["thread"].is_alive() and call["calls"]:
+            try:
+                default_answers = {
+                    item["id"]: {"option": item["recommended"], "note": ""}
+                    for group in decisions["groups"]
+                    for item in group["items"]
+                }
+                request_socket(
+                    call["calls"][0][5],
+                    "POST",
+                    "/submit",
+                    {"answers": default_answers},
+                )
+            except (OSError, http.client.HTTPException):
+                pass
+        call["thread"].join(5)
+
+
+@contextmanager
+def background_decision_page(decisions, answers, call_log):
+    child_code = """
+import json
+import subprocess
+import sys
+sys.path.insert(0, sys.argv[1])
+import decision_page
+
+def run(arguments):
+    try:
+        with open(sys.argv[5], encoding="utf-8") as source:
+            calls = json.load(source)
+    except FileNotFoundError:
+        calls = []
+    calls.append(arguments)
+    with open(sys.argv[5], "w", encoding="utf-8") as output:
+        json.dump(calls, output)
+    link = "https://portal.example/decision-test/" if arguments[2] == "mount" else ""
+    return subprocess.CompletedProcess(arguments, 0, link, "")
+
+arguments = ["ask", "--decisions", sys.argv[2], "--name", sys.argv[3],
+             "--answers", sys.argv[4]]
+raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
+"""
+    process = subprocess.Popen(
+        [
+            "python3",
+            "-B",
+            "-c",
+            child_code,
+            str(DECISION_PAGE_DIRECTORY),
+            str(decisions),
+            "decision-test",
+            str(answers),
+            str(call_log),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        calls = []
+        while time.monotonic() < deadline:
+            if call_log.exists():
+                calls = json.loads(call_log.read_text(encoding="utf-8"))
+                if calls:
+                    break
+            if process.poll() is not None:
+                break
+            time.sleep(0.02)
+        yield process, calls
+    finally:
+        if process.poll() is None:
+            process.send_signal(signal.SIGTERM)
+            try:
+                process.communicate(timeout=12)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate(timeout=5)
+
+
 class DecisionPageCommandTest(unittest.TestCase):
+    def test_decisions_use_the_shared_json_shape_checker(self):
+        with patch.object(
+            decision_page,
+            "check_value",
+            wraps=decision_page.check_value,
+        ) as shared_check:
+            decision_page.validate_decisions(valid_decisions())
+
+        self.assertTrue(shared_check.called)
+
     def test_decision_list_with_duplicate_json_key_exits_two(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             decisions = Path(temporary) / "decisions.json"
@@ -188,7 +360,14 @@ class DecisionPageCommandTest(unittest.TestCase):
         invalid_recommendation["groups"][0]["items"][0]["recommended"] = "Maybe"
         cases = [
             (extra_top_level, "legacy"),
-            ({key: value for key, value in valid_decisions().items() if key != "title"}, "title"),
+            (
+                {
+                    key: value
+                    for key, value in valid_decisions().items()
+                    if key != "title"
+                },
+                "title",
+            ),
             (extra_group_field, "groups[0]"),
             (empty_group, "groups[0].items"),
             (extra_item_field, "groups[0].items[0]"),
@@ -253,14 +432,22 @@ class DecisionPageCommandTest(unittest.TestCase):
                 with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
                     directory = Path(temporary)
                     decisions = directory / "decisions.json"
-                    answers_parent = directory / "missing" if failure == "missing-directory" else directory
+                    answers_parent = (
+                        directory / "missing"
+                        if failure == "missing-directory"
+                        else directory
+                    )
                     answers = answers_parent / "answers.json"
-                    decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+                    decisions.write_text(
+                        json.dumps(valid_decisions()), encoding="utf-8"
+                    )
                     calls = []
 
                     def platform_runner(arguments):
                         calls.append(arguments)
-                        return subprocess.CompletedProcess(arguments, 1, "", "mount failed")
+                        return subprocess.CompletedProcess(
+                            arguments, 1, "", "mount failed"
+                        )
 
                     if failure == "unwritable":
                         patcher = patch(
@@ -292,8 +479,14 @@ class DecisionPageCommandTest(unittest.TestCase):
             "render_decision_page(data)]))"
         )
         result = subprocess.run(
-            ["python3", "-B", "-c", code, str(DECISION_PAGE_DIRECTORY),
-             json.dumps(decisions, ensure_ascii=False)],
+            [
+                "python3",
+                "-B",
+                "-c",
+                code,
+                str(DECISION_PAGE_DIRECTORY),
+                json.dumps(decisions, ensure_ascii=False),
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -318,131 +511,122 @@ class DecisionPageCommandTest(unittest.TestCase):
         self.assertTrue(first_call_id)
         self.assertNotEqual(first_call_id, second_call_id)
 
-    def test_ask_mounts_receives_one_valid_answer_and_unmounts(self):
+    def test_ask_serves_the_page_and_unmounts_after_answer(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions_data = valid_decisions()
-            decisions_data["title"] = "Cleanup decisions"
             decisions = Path(temporary) / "decisions.json"
             answers = Path(temporary) / "answers.json"
+            decisions_data = valid_decisions()
             decisions.write_text(json.dumps(decisions_data), encoding="utf-8")
-            calls = []
-            verification = {}
-            mounted = threading.Event()
-            result = {}
-            stdout = io.StringIO()
-            stderr = io.StringIO()
 
-            def platform_runner(arguments):
-                calls.append(arguments)
-                if arguments[2] == "mount":
-                    connection = UnixSocketHTTPConnection(arguments[5], timeout=1)
-                    try:
-                        connection.request("GET", "/", headers={"Connection": "close"})
-                        response = connection.getresponse()
-                        verification["status"] = response.status
-                        verification["page"] = response.read()
-                    except (OSError, http.client.HTTPException) as error:
-                        verification["error"] = str(error)
-                    finally:
-                        connection.close()
-                        mounted.set()
+            with running_ask(decisions, answers) as call:
+                self.assertTrue(call["mounted"].wait(3), call["stderr"].getvalue())
+                mount = call["calls"][0]
+                self.assertEqual(
+                    mount[:5],
+                    [
+                        "python3",
+                        str(decision_page.PORTAL_SCRIPT),
+                        "mount",
+                        "decision-test",
+                        "--app",
+                    ],
+                )
+                socket_path = mount[5]
+                status, page = request_socket(socket_path, "GET", "/", None)
+                self.assertEqual(status, 200)
+                self.assertIn(b"decision-data", page)
+                self.assertEqual(call["verification"]["status"], 200)
+                self.assertIn(b"Cleanup decisions", page)
+                status, _ = request_socket(socket_path, "GET", "/index.html", None)
+                self.assertEqual(status, 404)
 
-                    if (verification.get("status") != 200
-                            or b"decision-data" not in verification.get("page", b"")):
-                        return subprocess.CompletedProcess(
-                            arguments, 1, "", "mount verification failed\n"
+                answers_data = {"A1": {"option": "Keep", "note": ""}}
+                status, body = request_socket(
+                    socket_path, "POST", "/submit", {"answers": answers_data}
+                )
+                self.assertEqual(status, 200, body)
+                call["thread"].join(5)
+                self.assertFalse(call["thread"].is_alive())
+                self.assertEqual(call["result"]["code"], 0)
+                self.assertEqual(
+                    [entry[2] for entry in call["calls"]], ["mount", "unmount"]
+                )
+                self.assertIn(
+                    "https://portal.example/decision-test/", call["stdout"].getvalue()
+                )
+                self.assertEqual(
+                    json.loads(answers.read_text(encoding="utf-8")),
+                    {"title": "Cleanup decisions", "answers": answers_data},
+                )
+                self.assertFalse(Path(socket_path).exists())
+
+    def test_ask_rejects_invalid_and_oversized_submissions(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            decisions = Path(temporary) / "decisions.json"
+            answers = Path(temporary) / "answers.json"
+            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+
+            with running_ask(decisions, answers) as call:
+                self.assertTrue(call["mounted"].wait(3), call["stderr"].getvalue())
+                socket_path = call["calls"][0][5]
+                invalid_answers = [
+                    {},
+                    {"A1": {"option": "Other", "note": ""}},
+                    {"A1": {"option": "Keep", "note": None}},
+                    {
+                        "A1": {"option": "Keep", "note": ""},
+                        "A2": {"option": "Keep", "note": ""},
+                    },
+                ]
+                for payload in invalid_answers:
+                    with self.subTest(answers=payload):
+                        status, _ = request_socket(
+                            socket_path, "POST", "/submit", {"answers": payload}
                         )
-                    return subprocess.CompletedProcess(
-                        arguments, 0, "https://portal.example/decision-test/\n", ""
-                    )
-                return subprocess.CompletedProcess(arguments, 0, "", "")
+                        self.assertEqual(status, 400)
+                        self.assertFalse(answers.exists())
 
-            arguments = ["ask", "--decisions", str(decisions), "--name", "decision-test",
-                         "--answers", str(answers)]
-            thread = threading.Thread(
-                target=lambda: result.setdefault(
-                    "code", decision_page.main(arguments, platform_runner, stdout, stderr)
-                ),
-                daemon=True,
-            )
-            thread.start()
-            self.assertTrue(mounted.wait(3), stderr.getvalue())
-            mount = calls[0]
-            self.assertEqual(
-                mount,
-                ["python3", str(decision_page.PORTAL_SCRIPT), "mount", "decision-test",
-                 "--app", mount[5]],
-            )
-            socket_path = mount[5]
+                status, _ = request_raw_socket(
+                    socket_path, raw_body=None, content_length=204801
+                )
+                self.assertEqual(status, 400)
+                status, _ = request_raw_socket(
+                    socket_path, raw_body=None, content_length="9" * 5000
+                )
+                self.assertEqual(status, 400)
+                self.assertFalse(answers.exists())
 
-            status, page = request_socket(socket_path, "GET", "/", None)
-            self.assertEqual(status, 200)
-            self.assertIn(b"decision-data", page)
-            self.assertEqual(verification.get("status"), 200, verification.get("error"))
-            self.assertIn(b"decision-data", verification.get("page", b""))
-            self.assertIn(b"Cleanup decisions", page)
-
-            status, body = request_socket(socket_path, "GET", "/index.html", None)
-            self.assertEqual(status, 404, body)
-
-            valid_answers = {"A1": {"option": "Keep", "note": ""}}
-            invalid_answers = [
-                {},
-                {"A1": {"option": "Other", "note": ""}},
-                {"A1": {"option": "Keep", "note": None}},
-                {"A1": {"option": "Keep", "note": ""}, "A2": {"option": "Keep", "note": ""}},
-            ]
-            for answers_data in invalid_answers:
-                with self.subTest(answers=answers_data):
-                    status, body = request_socket(
-                        socket_path, "POST", "/submit",
-                        {"answers": answers_data},
-                    )
-                    self.assertEqual(status, 400, body)
-                    self.assertFalse(answers.exists())
-
-            status, body = request_raw_socket(
-                socket_path, raw_body=None, content_length=204801,
-            )
-            self.assertEqual(status, 400, body)
-            self.assertFalse(answers.exists())
-
-            status, body = request_raw_socket(
-                socket_path, raw_body=None, content_length="9" * 5000,
-            )
-            self.assertEqual(status, 400, body)
-            self.assertFalse(answers.exists())
-
-            status, body = request_socket(
-                socket_path, "POST", "/submit",
-                {"answers": valid_answers},
-            )
-            self.assertEqual(status, 200, body)
-            thread.join(5)
-            self.assertFalse(thread.is_alive())
-            self.assertEqual(result["code"], 0)
-            self.assertEqual(len(calls), 2)
-            self.assertEqual(calls[1], ["python3", str(decision_page.PORTAL_SCRIPT), "unmount", "decision-test"])
-            self.assertIn("https://portal.example/decision-test/", stdout.getvalue())
-            self.assertEqual(
-                json.loads(answers.read_text(encoding="utf-8")),
-                {"title": "Cleanup decisions", "answers": valid_answers},
-            )
-            self.assertFalse(Path(socket_path).exists())
+                answers_data = {"A1": {"option": "Keep", "note": ""}}
+                status, body = request_socket(
+                    socket_path, "POST", "/submit", {"answers": answers_data}
+                )
+                self.assertEqual(status, 200, body)
+                call["thread"].join(5)
+                self.assertFalse(call["thread"].is_alive())
+                self.assertEqual(call["result"]["code"], 0)
+                self.assertEqual(
+                    json.loads(answers.read_text(encoding="utf-8"))["answers"],
+                    answers_data,
+                )
 
     def test_failed_answer_write_leaves_no_file_and_service_accepts_retry(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             directory = Path(temporary)
             answers_path = Path(temporary) / "answers.json"
             decisions = valid_decisions()
-            with decision_receiver(directory, decisions, answers_path) as (socket_path, serving):
+            with decision_receiver(directory, decisions, answers_path) as (
+                socket_path,
+                serving,
+            ):
                 valid_payload = {"answers": {"A1": {"option": "Keep", "note": ""}}}
 
                 def fail_after_partial_write(document, output, ensure_ascii, indent):
                     output.write("{")
                     raise OSError("simulated full disk")
 
-                with patch.object(decision_page.json, "dump", side_effect=fail_after_partial_write):
+                with patch.object(
+                    decision_page.json, "dump", side_effect=fail_after_partial_write
+                ):
                     status, body = request_socket(
                         str(socket_path), "POST", "/submit", valid_payload
                     )
@@ -466,14 +650,18 @@ class DecisionPageCommandTest(unittest.TestCase):
             directory = Path(temporary)
             answers_path = Path(temporary) / "answers.json"
             decisions = valid_decisions()
-            with decision_receiver(directory, decisions, answers_path) as (socket_path, serving):
+            with decision_receiver(directory, decisions, answers_path) as (
+                socket_path,
+                serving,
+            ):
                 raw_answer = (
-                    '{"answers":{"A1":{"option":"Keep","option":"Remove",'
-                    '"note":""}}}'
+                    '{"answers":{"A1":{"option":"Keep","option":"Remove","note":""}}}'
                 )
                 with patch.object(decision_page.DecisionHTTPServer, "handle_error"):
                     status, body = request_raw_socket(
-                        str(socket_path), raw_answer, content_length=None,
+                        str(socket_path),
+                        raw_answer,
+                        content_length=None,
                     )
                 self.assertEqual(status, 400, body)
                 self.assertIn("重复键：option", body.decode("utf-8"))
@@ -483,7 +671,10 @@ class DecisionPageCommandTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             answers = Path(temporary) / "answers.json"
             decisions = valid_decisions()
-            with decision_receiver(Path(temporary), decisions, answers) as (socket_path, serving):
+            with decision_receiver(Path(temporary), decisions, answers) as (
+                socket_path,
+                serving,
+            ):
                 partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 complete = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 try:
@@ -523,8 +714,11 @@ class DecisionPageCommandTest(unittest.TestCase):
 
     def test_slow_page_reader_receives_complete_response_after_timeout_period(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            with large_page_request(Path(temporary), Path(temporary) / "answers.json") as (
-                _, client,
+            with large_page_request(
+                Path(temporary), Path(temporary) / "answers.json"
+            ) as (
+                _,
+                client,
             ):
                 response = http.client.HTTPResponse(client)
                 response.begin()
@@ -545,8 +739,11 @@ class DecisionPageCommandTest(unittest.TestCase):
 
     def test_idle_page_reader_disconnects_and_server_accepts_next_request(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            with large_page_request(Path(temporary), Path(temporary) / "answers.json") as (
-                socket_path, client,
+            with large_page_request(
+                Path(temporary), Path(temporary) / "answers.json"
+            ) as (
+                socket_path,
+                client,
             ):
                 time.sleep(0.8)
                 client.settimeout(2)
@@ -562,7 +759,9 @@ class DecisionPageCommandTest(unittest.TestCase):
                 except socket.timeout:
                     pass
 
-                response_head, response_body = bytes(response_bytes).split(b"\r\n\r\n", 1)
+                response_head, response_body = bytes(response_bytes).split(
+                    b"\r\n\r\n", 1
+                )
                 content_length = int(
                     next(
                         line.split(b":", 1)[1].strip()
@@ -578,77 +777,95 @@ class DecisionPageCommandTest(unittest.TestCase):
         self.assertEqual(next_status, 200)
         self.assertIn(b"decision-data", next_body)
 
-    def test_mount_failure_stops_service_without_unmounting(self):
+    def test_mount_failure_cleans_only_a_mount_created_by_this_call(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             decisions = Path(temporary) / "decisions.json"
             answers = Path(temporary) / "answers.json"
             decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
-            calls = []
+            portal = Path(temporary) / "portal.py"
+            app_file = portal.parent / "apps" / "decision-test.caddy"
 
-            def platform_runner(arguments):
-                calls.append(arguments)
-                return subprocess.CompletedProcess(arguments, 1, "", "name is occupied\n")
+            with self.subTest(result="partial mount from this call"):
+                calls = []
 
-            code, _, _ = run_ask(decisions, answers, platform_runner)
+                def create_then_fail(arguments):
+                    calls.append(arguments)
+                    if arguments[2] == "mount":
+                        app_file.parent.mkdir(parents=True, exist_ok=True)
+                        app_file.write_text(
+                            f"socket={arguments[-1]}\n", encoding="utf-8"
+                        )
+                        return subprocess.CompletedProcess(
+                            arguments, 1, "", "mount failed\n"
+                        )
+                    app_file.unlink(missing_ok=True)
+                    return subprocess.CompletedProcess(arguments, 0, "", "")
 
-            self.assertEqual(code, 1)
-            self.assertEqual(len(calls), 1)
-            self.assertEqual(calls[0][2:5], ["mount", "decision-test", "--app"])
-            self.assertFalse(Path(calls[0][5]).exists())
-            self.assertFalse(answers.exists())
+                with patch.object(decision_page, "PORTAL_SCRIPT", portal):
+                    code, _, _ = run_ask(decisions, answers, create_then_fail)
 
-    def test_term_unmounts_its_site_and_removes_service_without_answer(self):
+                self.assertEqual(code, 1)
+                self.assertEqual([call[2] for call in calls], ["mount", "unmount"])
+                self.assertFalse(app_file.exists())
+
+            with self.subTest(result="preexisting mount from another call"):
+                app_file.parent.mkdir(parents=True, exist_ok=True)
+                app_file.write_text("socket=/tmp/another-call/s\n", encoding="utf-8")
+                calls = []
+
+                def fail_without_replacing(arguments):
+                    calls.append(arguments)
+                    return subprocess.CompletedProcess(
+                        arguments, 1, "", "name is occupied\n"
+                    )
+
+                with patch.object(decision_page, "PORTAL_SCRIPT", portal):
+                    code, _, _ = run_ask(decisions, answers, fail_without_replacing)
+
+                self.assertEqual(code, 1)
+                self.assertEqual([call[2] for call in calls], ["mount"])
+                self.assertEqual(
+                    app_file.read_text(encoding="utf-8"),
+                    "socket=/tmp/another-call/s\n",
+                )
+                self.assertFalse(answers.exists())
+
+    def test_term_unmounts_site_and_removes_socket_without_an_answer(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             decisions = Path(temporary) / "decisions.json"
             answers = Path(temporary) / "answers.json"
             call_log = Path(temporary) / "calls.json"
             decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
-            code = '''
-import json
-import subprocess
-import sys
-sys.path.insert(0, sys.argv[1])
-import decision_page
 
-def run(arguments):
-    try:
-        with open(sys.argv[5], encoding="utf-8") as source:
-            calls = json.load(source)
-    except FileNotFoundError:
-        calls = []
-    calls.append(arguments)
-    with open(sys.argv[5], "w", encoding="utf-8") as output:
-        json.dump(calls, output)
-    link = "https://portal.example/decision-test/" if arguments[2] == "mount" else ""
-    return subprocess.CompletedProcess(arguments, 0, link, "")
-
-arguments = ["ask", "--decisions", sys.argv[2], "--name", sys.argv[3],
-             "--answers", sys.argv[4]]
-raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
-'''
-            process = subprocess.Popen(
-                ["python3", "-B", "-c", code, str(DECISION_PAGE_DIRECTORY),
-                 str(decisions), "decision-test", str(answers), str(call_log)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            partial = None
-            socket_path = None
-            try:
-                deadline = time.monotonic() + 5
-                calls = []
-                while time.monotonic() < deadline:
-                    if call_log.exists():
-                        calls = json.loads(call_log.read_text(encoding="utf-8"))
-                        if calls:
-                            break
-                    if process.poll() is not None:
-                        break
-                    time.sleep(0.02)
+            with background_decision_page(decisions, answers, call_log) as (
+                process,
+                calls,
+            ):
                 self.assertTrue(calls, "mount was not attempted")
                 socket_path = calls[0][5]
                 self.assertTrue(Path(socket_path).exists())
+                process.send_signal(signal.SIGTERM)
+                stdout, stderr = process.communicate(timeout=12)
+                saved_calls = json.loads(call_log.read_text(encoding="utf-8"))
+
+            self.assertEqual(process.returncode, 1, stdout + stderr)
+            self.assertEqual([call[2] for call in saved_calls], ["mount", "unmount"])
+            self.assertFalse(answers.exists())
+            self.assertFalse(Path(socket_path).exists())
+
+    def test_term_interrupts_a_stalled_request_before_idle_timeout(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            decisions = Path(temporary) / "decisions.json"
+            answers = Path(temporary) / "answers.json"
+            call_log = Path(temporary) / "calls.json"
+            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+
+            with background_decision_page(decisions, answers, call_log) as (
+                process,
+                calls,
+            ):
+                self.assertTrue(calls, "mount was not attempted")
+                socket_path = calls[0][5]
                 partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 partial.connect(socket_path)
                 partial.sendall(b"POST /sub")
@@ -664,29 +881,22 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
                     stdout, stderr = process.communicate(timeout=5)
                 elapsed = time.monotonic() - started
                 partial.close()
-                calls = json.loads(call_log.read_text(encoding="utf-8"))
-                self.assertEqual(process.returncode, 1, stdout + stderr)
-                self.assertEqual([call[2] for call in calls], ["mount", "unmount"])
-                self.assertFalse(answers.exists())
-                self.assertFalse(Path(socket_path).exists())
-                self.assertTrue(exited_on_timeout, f"TERM exit waited too long: {elapsed:.2f}s")
-                self.assertLess(elapsed, 11.5, f"TERM exit waited too long: {elapsed:.2f}s")
-            finally:
-                if partial is not None:
-                    partial.close()
-                if process.poll() is None:
-                    process.send_signal(signal.SIGTERM)
-                    try:
-                        process.communicate(timeout=12)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.communicate(timeout=5)
-                if socket_path is not None:
-                    Path(socket_path).unlink(missing_ok=True)
+                saved_calls = json.loads(call_log.read_text(encoding="utf-8"))
+
+            self.assertEqual(process.returncode, 1, stdout + stderr)
+            self.assertEqual([call[2] for call in saved_calls], ["mount", "unmount"])
+            self.assertFalse(answers.exists())
+            self.assertFalse(Path(socket_path).exists())
+            self.assertTrue(
+                exited_on_timeout, f"TERM exit waited too long: {elapsed:.2f}s"
+            )
+            self.assertLess(elapsed, 11.5, f"TERM exit waited too long: {elapsed:.2f}s")
 
     def test_each_object_level_requires_exact_fields(self):
         with_footnote = valid_decisions()
-        with_footnote["footnotes"] = [{"title": "Keep in mind", "lines": ["No action needed."]}]
+        with_footnote["footnotes"] = [
+            {"title": "Keep in mind", "lines": ["No action needed."]}
+        ]
         cases = []
 
         missing_top = valid_decisions()
@@ -722,7 +932,9 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
         deleted_compare["groups"][0]["items"][0]["compare"] = [
             {"lines": "guide.md:1-1", "before": "A paragraph to remove.", "after": ""},
         ]
-        self.assertIs(decision_page.validate_decisions(deleted_compare), deleted_compare)
+        self.assertIs(
+            decision_page.validate_decisions(deleted_compare), deleted_compare
+        )
 
     def test_compare_rejects_invalid_shapes_and_ranges(self):
         cases = (
@@ -731,14 +943,42 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
             ({"before": "Before.", "after": "After."}, "compare 必须是非空数组或 null"),
             ([{"before": "Before.", "after": "After."}], "缺少字段 lines"),
             ([{"lines": "guide.md:1-1", "before": "Before."}], "缺少字段 after"),
-            ([{"lines": "guide.md:1-1", "before": "Before.", "after": "After.", "extra": 1}], "多余字段 extra"),
-            ([{"lines": "guide.md:1-1", "before": "", "after": "After."}], "before 必须是非空字符串"),
-            ([{"lines": "guide.md:1-1", "before": 7, "after": "After."}], "before 必须是非空字符串"),
-            ([{"lines": "guide.md:1-1", "before": "Before.", "after": 7}], "after 必须是字符串"),
+            (
+                [
+                    {
+                        "lines": "guide.md:1-1",
+                        "before": "Before.",
+                        "after": "After.",
+                        "extra": 1,
+                    }
+                ],
+                "多余字段 extra",
+            ),
+            (
+                [{"lines": "guide.md:1-1", "before": "", "after": "After."}],
+                "before 必须是非空字符串",
+            ),
+            (
+                [{"lines": "guide.md:1-1", "before": 7, "after": "After."}],
+                "before 必须是非空字符串",
+            ),
+            (
+                [{"lines": "guide.md:1-1", "before": "Before.", "after": 7}],
+                "after 必须是字符串",
+            ),
             ([None], "必须是对象"),
-            ([{"lines": "guide.md:1", "before": "Before.", "after": "After."}], "行范围"),
-            ([{"lines": "guide.md:0-1", "before": "Before.", "after": "After."}], "行范围"),
-            ([{"lines": "guide.md:2-1", "before": "Before.", "after": "After."}], "行范围"),
+            (
+                [{"lines": "guide.md:1", "before": "Before.", "after": "After."}],
+                "行范围",
+            ),
+            (
+                [{"lines": "guide.md:0-1", "before": "Before.", "after": "After."}],
+                "行范围",
+            ),
+            (
+                [{"lines": "guide.md:2-1", "before": "Before.", "after": "After."}],
+                "行范围",
+            ),
             (
                 [
                     {"lines": "guide.md:1-1", "before": "First.", "after": "First."},
@@ -795,7 +1035,9 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
             elif section == "item":
                 decisions["groups"][0]["items"][0][field] = value
             else:
-                decisions["footnotes"] = [{"title": "Keep in mind", "lines": ["No action needed."]}]
+                decisions["footnotes"] = [
+                    {"title": "Keep in mind", "lines": ["No action needed."]}
+                ]
                 decisions["footnotes"][0][field] = value
             cases.append((decisions, expected))
 

@@ -6,11 +6,12 @@ import sys
 import tokenize
 
 from ..constants import CODE_SUFFIXES
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from text_metrics import count_non_whitespace_characters
 
 
-LineCounts = namedtuple("LineCounts", "code docs comments tests")
+LineCounts = namedtuple("LineCounts", "code docs comments tests doc_chars")
 
 
 def _python_doc_lines(source):
@@ -20,7 +21,12 @@ def _python_doc_lines(source):
         return set()
     result = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and ast.get_docstring(node, clean=False) is not None:
+        if (
+            isinstance(
+                node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            )
+            and ast.get_docstring(node, clean=False) is not None
+        ):
             doc = node.body[0]
             result.update(range(doc.lineno, doc.end_lineno + 1))
     return result
@@ -35,7 +41,9 @@ def _python_comment_lines(source):
                 continue
             line_number, column = token.start
             before = lines[line_number - 1][:column]
-            if before.strip() == "" and not (line_number == 1 and token.string.startswith("#!")):
+            if before.strip() == "" and not (
+                line_number == 1 and token.string.startswith("#!")
+            ):
                 result.add(line_number)
     except (tokenize.TokenError, IndentationError):
         pass
@@ -95,7 +103,9 @@ def _comment_spans(source, language):
                     index = end
                     continue
             else:
-                end = _quoted_end(source, index, char, allow_newlines=language == "Rust")
+                end = _quoted_end(
+                    source, index, char, allow_newlines=language == "Rust"
+                )
                 if end is not None:
                     index = end
                     continue
@@ -105,7 +115,9 @@ def _comment_spans(source, language):
                 end = length
             marker = source[index:end]
             if language == "Rust":
-                is_doc = (marker.startswith("///") and not marker.startswith("////")) or marker.startswith("//!")
+                is_doc = (
+                    marker.startswith("///") and not marker.startswith("////")
+                ) or marker.startswith("//!")
             elif language == "C":
                 is_doc = marker.startswith("///")
             else:
@@ -114,9 +126,10 @@ def _comment_spans(source, language):
             index = end
             continue
         if source.startswith("/*", index):
-            is_doc = (language == "Rust" and
-                      (source.startswith("/**", index) or source.startswith("/*!", index))) or (
-                          language == "C" and source.startswith("/**", index))
+            is_doc = (
+                language == "Rust"
+                and (source.startswith("/**", index) or source.startswith("/*!", index))
+            ) or (language == "C" and source.startswith("/**", index))
             cursor = index + 2
             depth = 1
             while cursor < length and depth:
@@ -141,11 +154,13 @@ def _span_line_categories(source, spans):
         content = line.rstrip("\r\n")
         if content.strip():
             visible = [
-                offset + index for index, char in enumerate(content)
+                offset + index
+                for index, char in enumerate(content)
                 if not char.isspace()
             ]
             covering = [
-                span for span in spans
+                span
+                for span in spans
                 if span[0] < offset + len(content) and span[1] > offset
             ]
             if visible and all(
@@ -161,86 +176,107 @@ def _span_line_categories(source, spans):
         offset += len(line)
 
 
-def _span_counts(source, spans):
-    line_counts = Counter(category for _number, category in _span_line_categories(source, spans))
-    return LineCounts(line_counts["code"], line_counts["docs"], line_counts["comments"], 0)
+def _documentation_characters(source, line_numbers):
+    return sum(
+        count_non_whitespace_characters(line)
+        for number, line in enumerate(source.splitlines(), 1)
+        if number in line_numbers
+    )
+
+
+def _line_counts(categories, doc_chars=0):
+    counts = Counter(category for _number, category in categories)
+    return LineCounts(
+        counts["code"],
+        counts["docs"],
+        counts["comments"],
+        counts["tests"],
+        doc_chars,
+    )
+
+
+def _span_metrics(source, spans):
+    categories = list(_span_line_categories(source, spans))
+    doc_lines = {number for number, category in categories if category == "docs"}
+    return _line_counts(categories, _documentation_characters(source, doc_lines))
+
+
+def _html_comment_spans(source):
+    spans = []
+    start = 0
+    while True:
+        start = source.find("<!--", start)
+        if start < 0:
+            return spans
+        end = source.find("-->", start + 4)
+        if end < 0:
+            spans.append((start, len(source), False))
+            return spans
+        spans.append((start, end + 3, False))
+        start = end + 3
+
+
+def _python_metrics(source):
+    doc_lines = _python_doc_lines(source)
+    comment_lines = _python_comment_lines(source)
+    categories = [
+        (
+            number,
+            "docs"
+            if number in doc_lines
+            else "comments"
+            if number in comment_lines
+            else "code",
+        )
+        for number, line in enumerate(source.splitlines(), 1)
+        if line.strip()
+    ]
+    return _line_counts(categories, _documentation_characters(source, doc_lines))
+
+
+def _shell_metrics(source):
+    categories = []
+    for number, line in enumerate(source.splitlines(), 1):
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        category = (
+            "comments"
+            if stripped.startswith("#")
+            and not (number == 1 and stripped.startswith("#!"))
+            else "code"
+        )
+        categories.append((number, category))
+    return _line_counts(categories)
+
+
+def _code_metrics(path, source):
+    suffix = Path(path).suffix.lower()
+    if suffix == ".html":
+        return _span_metrics(source, _html_comment_spans(source))
+    language = CODE_SUFFIXES[suffix]
+    if language == "Python":
+        return _python_metrics(source)
+    if language == "Shell":
+        return _shell_metrics(source)
+    return _span_metrics(source, _comment_spans(source, language))
 
 
 def count_file(path, category, content):
+    """Count nonblank lines and documentation characters in one source scan."""
     if category == "code":
-        suffix = Path(path).suffix.lower()
-        if suffix == ".html":
-            spans = []
-            start = 0
-            while True:
-                start = content.find("<!--", start)
-                if start < 0:
-                    break
-                end = content.find("-->", start + 4)
-                if end < 0:
-                    spans.append((start, len(content), False))
-                    break
-                spans.append((start, end + 3, False))
-                start = end + 3
-            return _span_counts(content, spans)
-        language = CODE_SUFFIXES[suffix]
-        if language == "Python":
-            docs = _python_doc_lines(content)
-            comments = _python_comment_lines(content)
-            counts = Counter(
-                "docs" if number in docs else "comments" if number in comments else "code"
-                for number, line in enumerate(content.splitlines(), 1)
-                if line.strip()
-            )
-            return LineCounts(counts["code"], counts["docs"], counts["comments"], 0)
-        if language == "Shell":
-            code = comments = 0
-            for number, line in enumerate(content.splitlines(), 1):
-                stripped = line.lstrip()
-                if not stripped:
-                    continue
-                if stripped.startswith("#") and not (number == 1 and stripped.startswith("#!")):
-                    comments += 1
-                else:
-                    code += 1
-            return LineCounts(code, 0, comments, 0)
-        return _span_counts(content, _comment_spans(content, language))
-    if category == "docs":
-        return LineCounts(0, sum(bool(line.strip()) for line in content.splitlines()), 0, 0)
-    if category == "tests":
-        return LineCounts(0, 0, 0, sum(bool(line.strip()) for line in content.splitlines()))
-    if category == "other":
-        return LineCounts(0, 0, 0, 0)
-
-
-def count_doc_chars(path, category, content):
-    """Count non-whitespace characters on lines classified as documentation."""
+        return _code_metrics(path, content)
     if category == "docs":
         documentation_lines = {
-            number for number, line in enumerate(content.splitlines(), 1)
+            number
+            for number, line in enumerate(content.splitlines(), 1)
             if line.strip()
         }
-    elif category == "code":
-        suffix = Path(path).suffix.lower()
-        if suffix == ".html":
-            return 0
-        language = CODE_SUFFIXES[suffix]
-        if language == "Python":
-            documentation_lines = _python_doc_lines(content)
-        elif language == "Shell":
-            return 0
-        else:
-            spans = _comment_spans(content, language)
-            documentation_lines = {
-                number for number, category_name
-                in _span_line_categories(content, spans)
-                if category_name == "docs"
-            }
-    else:
-        return 0
-
-    return sum(
-        count_non_whitespace_characters(line)
-        for number, line in enumerate(content.splitlines(), 1)
-        if number in documentation_lines
-    )
+        return _line_counts(
+            [(number, "docs") for number in documentation_lines],
+            _documentation_characters(content, documentation_lines),
+        )
+    if category == "tests":
+        lines = [line for line in content.splitlines() if line.strip()]
+        return LineCounts(0, 0, 0, len(lines), 0)
+    return LineCounts(0, 0, 0, 0, 0)

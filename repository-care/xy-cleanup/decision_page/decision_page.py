@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
 import json
 import os
@@ -13,11 +14,27 @@ import threading
 from urllib.parse import urlsplit
 
 
-DECISION_KEYS = {"title", "intro", "groups", "footnotes"}
-GROUP_KEYS = {"title", "notes", "items"}
-ITEM_KEYS = {"id", "title", "lines", "options", "recommended", "compare"}
-COMPARE_KEYS = {"lines", "before", "after"}
-FOOTNOTE_KEYS = {"title", "lines"}
+DECISION_SHAPE = {
+    "title": "",
+    "intro": [""],
+    "groups": [
+        {
+            "title": "",
+            "notes": [""],
+            "items": [
+                {
+                    "id": "",
+                    "title": "",
+                    "lines": [""],
+                    "options": [""],
+                    "recommended": "",
+                    "compare": [{"lines": "", "before": "", "after": ""}],
+                }
+            ],
+        }
+    ],
+    "footnotes": [{"title": "", "lines": [""]}],
+}
 MAX_REQUEST_BYTES = 200 * 1024
 # Release the single-threaded service when a connection stops making progress.
 # Comparison pages are about 500 KB, so slow readers need a timeout per send,
@@ -29,34 +46,78 @@ TEMPLATE = Path(__file__).resolve().parent / "templates" / "decision-page.html"
 sys.path.insert(0, str(REPOSITORY_ROOT))
 sys.path.insert(0, str(REPOSITORY_CARE))
 from json_for_html import json_for_html  # noqa: E402
-from json_validation import object_without_duplicate_keys  # noqa: E402
+from json_validation import check_value, object_without_duplicate_keys  # noqa: E402
 from portal_config import PLATFORM_PYTHON, PORTAL_SCRIPT  # noqa: E402
 from text_metrics import count_non_whitespace_characters  # noqa: E402
 
 
-def _require_object(value, expected_keys, label):
+def _decision_shape_view(value):
+    """Adapt optional and empty comparison text for the shared shape checker."""
     if not isinstance(value, dict):
-        raise ValueError(f"{label} 必须是对象")
-    missing = expected_keys - value.keys()
-    extra = value.keys() - expected_keys
-    if missing:
-        field = sorted(missing)[0]
-        raise ValueError(f"{label} 缺少字段 {field}")
-    if extra:
-        field = sorted(extra, key=str)[0]
-        raise ValueError(f"{label} 有多余字段 {field}")
+        return value
+    result = dict(value)
+    groups = result.get("groups")
+    if not isinstance(groups, list):
+        return result
+    result["groups"] = [
+        dict(group) if isinstance(group, dict) else group for group in groups
+    ]
+    for group in result["groups"]:
+        if not isinstance(group, dict) or not isinstance(group.get("items"), list):
+            continue
+        group["items"] = [
+            dict(item) if isinstance(item, dict) else item for item in group["items"]
+        ]
+        for item in group["items"]:
+            if not isinstance(item, dict):
+                continue
+            if "compare" not in item:
+                continue
+            compare = item.get("compare")
+            if compare is None:
+                item["compare"] = [
+                    {
+                        "lines": "optional",
+                        "before": "optional",
+                        "after": "optional",
+                    }
+                ]
+            elif isinstance(compare, list):
+                item["compare"] = [
+                    dict(block) if isinstance(block, dict) else block
+                    for block in compare
+                ]
+                for block in item["compare"]:
+                    if isinstance(block, dict) and block.get("after") == "":
+                        block["after"] = "deleted"
+    return result
 
 
-def _require_text(value, label):
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{label} 必须是非空字符串")
-
-
-def _require_text_list(value, label):
-    if not isinstance(value, list):
-        raise ValueError(f"{label} 必须是字符串数组")
-    for index, text in enumerate(value):
-        _require_text(text, f"{label}[{index}]")
+def _decision_shape_error(value):
+    problems = check_value("决定清单", _decision_shape_view(value), DECISION_SHAPE)
+    if not problems:
+        return None
+    problem = problems[0]
+    if "缺少字段：" in problem:
+        location = problem.split("缺少字段：", 1)[1]
+        field = location.rsplit(".", 1)[-1]
+        return f"{location} 缺少字段 {field}"
+    if "多余字段：" in problem:
+        return problem.replace("多余字段：", "多余字段 ")
+    if problem.endswith("不能为空"):
+        return problem.removesuffix("不能为空") + "必须是非空字符串"
+    if "必须是字符串" in problem:
+        if ".after 必须是字符串" in problem:
+            return problem
+        return problem.replace("必须是字符串", "必须是非空字符串")
+    if ".compare 必须是数组" in problem:
+        return problem.replace("必须是数组", "必须是非空数组或 null")
+    if problem.endswith("必须是数组"):
+        location = problem.removesuffix("必须是数组")
+        field = location.rsplit(".", 1)[-1].strip()
+        if field in {"intro", "notes", "lines", "options"}:
+            return location + "必须是字符串数组"
+    return problem
 
 
 def _parse_compare_line_range(value):
@@ -66,8 +127,9 @@ def _parse_compare_line_range(value):
     if not separator or not path.strip():
         return None
     parts = numbers.split("-")
-    if (len(parts) != 2
-            or any(not part.isascii() or not part.isdecimal() for part in parts)):
+    if len(parts) != 2 or any(
+        not part.isascii() or not part.isdecimal() for part in parts
+    ):
         return None
     start_line, end_line = (int(part) for part in parts)
     if start_line < 1 or end_line < start_line:
@@ -75,89 +137,76 @@ def _parse_compare_line_range(value):
     return path, start_line, end_line
 
 
-def validate_decisions(value):
-    """Validate every decision-list field and return the original object."""
-    _require_object(value, DECISION_KEYS, "决定清单")
-    _require_text(value["title"], "title")
-    _require_text_list(value["intro"], "intro")
-    groups = value["groups"]
-    if not isinstance(groups, list) or not groups:
-        raise ValueError("groups 必须至少包含一组")
+def _validate_compare(item_label, compare):
+    if compare is None:
+        return
+    if not isinstance(compare, list) or not compare:
+        raise ValueError(f"{item_label}.compare 必须是非空数组或 null")
 
+    compare_path = None
+    previous_start = None
+    previous_end = None
+    for index, block in enumerate(compare):
+        block_label = f"{item_label}.compare[{index}]"
+        line_range = _parse_compare_line_range(block["lines"])
+        if line_range is None:
+            raise ValueError(
+                f"{block_label}.lines 行范围无效，必须写成 路径:起始行-结束行：{block['lines']}"
+            )
+        path, start_line, end_line = line_range
+        if compare_path is None:
+            compare_path = path
+        elif path != compare_path:
+            raise ValueError(
+                f"{block_label}.lines 必须与同一 compare 的其他块使用同一个路径：{path}"
+            )
+        if previous_start is not None and start_line <= previous_start:
+            raise ValueError(f"{block_label}.lines 必须按起始行递增：{block['lines']}")
+        if previous_end is not None and start_line <= previous_end:
+            raise ValueError(f"{block_label}.lines 与前一块不能重叠：{block['lines']}")
+        previous_start = start_line
+        previous_end = end_line
+
+
+def _validate_decision_item(item, item_label, item_ids):
+    item_id = item["id"]
+    if item_id in item_ids:
+        raise ValueError(f"{item_label}.id 重复：{item_id}")
+    item_ids.add(item_id)
+    options = item["options"]
+    if len(options) < 2:
+        raise ValueError(f"{item_label}.options 至少需要两个选项")
+    if len(set(options)) != len(options):
+        raise ValueError(f"{item_label}.options 不能重复")
+    if item["recommended"] not in options:
+        raise ValueError(f"{item_label}.recommended 必须是 options 中的选项")
+    _validate_compare(item_label, item["compare"])
+
+
+def _validate_decision_groups(groups):
     item_ids = set()
     for group_index, group in enumerate(groups):
         group_label = f"groups[{group_index}]"
-        _require_object(group, GROUP_KEYS, group_label)
-        _require_text(group["title"], f"{group_label}.title")
-        _require_text_list(group["notes"], f"{group_label}.notes")
         items = group["items"]
-        if not isinstance(items, list) or not items:
+        if not items:
             raise ValueError(f"{group_label}.items 必须至少包含一条")
-
         for item_index, item in enumerate(items):
-            item_label = f"{group_label}.items[{item_index}]"
-            _require_object(item, ITEM_KEYS, item_label)
-            for field in ("id", "title"):
-                _require_text(item[field], f"{item_label}.{field}")
-            item_id = item["id"]
-            if item_id in item_ids:
-                raise ValueError(f"{item_label}.id 重复：{item_id}")
-            item_ids.add(item_id)
-            _require_text_list(item["lines"], f"{item_label}.lines")
-            options = item["options"]
-            if not isinstance(options, list) or len(options) < 2:
-                raise ValueError(f"{item_label}.options 至少需要两个选项")
-            _require_text_list(options, f"{item_label}.options")
-            if len(set(options)) != len(options):
-                raise ValueError(f"{item_label}.options 不能重复")
-            _require_text(item["recommended"], f"{item_label}.recommended")
-            if item["recommended"] not in options:
-                raise ValueError(f"{item_label}.recommended 必须是 options 中的选项")
-            compare = item["compare"]
-            if compare is not None:
-                if not isinstance(compare, list) or not compare:
-                    raise ValueError(f"{item_label}.compare 必须是非空数组或 null")
-                compare_path = None
-                previous_start = None
-                previous_end = None
-                for compare_index, block in enumerate(compare):
-                    block_label = f"{item_label}.compare[{compare_index}]"
-                    _require_object(block, COMPARE_KEYS, block_label)
-                    _require_text(block["lines"], f"{block_label}.lines")
-                    line_range = _parse_compare_line_range(block["lines"])
-                    if line_range is None:
-                        raise ValueError(
-                            f"{block_label}.lines 行范围无效，必须写成 路径:起始行-结束行：{block['lines']}"
-                        )
-                    path, start_line, end_line = line_range
-                    if compare_path is None:
-                        compare_path = path
-                    elif path != compare_path:
-                        raise ValueError(
-                            f"{block_label}.lines 必须与同一 compare 的其他块使用同一个路径：{path}"
-                        )
-                    if previous_start is not None and start_line <= previous_start:
-                        raise ValueError(
-                            f"{block_label}.lines 必须按起始行递增：{block['lines']}"
-                        )
-                    if previous_end is not None and start_line <= previous_end:
-                        raise ValueError(
-                            f"{block_label}.lines 与前一块不能重叠：{block['lines']}"
-                        )
-                    previous_start = start_line
-                    previous_end = end_line
-                    _require_text(block["before"], f"{block_label}.before")
-                    if not isinstance(block["after"], str):
-                        raise ValueError(f"{block_label}.after 必须是字符串")
+            _validate_decision_item(
+                item,
+                f"{group_label}.items[{item_index}]",
+                item_ids,
+            )
 
-    footnotes = value["footnotes"]
-    if not isinstance(footnotes, list):
-        raise ValueError("footnotes 必须是数组")
-    for footnote_index, footnote in enumerate(footnotes):
-        footnote_label = f"footnotes[{footnote_index}]"
-        _require_object(footnote, FOOTNOTE_KEYS, footnote_label)
-        _require_text(footnote["title"], f"{footnote_label}.title")
-        _require_text_list(footnote["lines"], f"{footnote_label}.lines")
+
+def validate_decisions(value):
+    """Validate the fixed shape, then check decision-only constraints."""
+    shape_error = _decision_shape_error(value)
+    if shape_error:
+        raise ValueError(shape_error)
+    groups = value["groups"]
+    if not groups:
+        raise ValueError("groups 必须至少包含一组")
+    _validate_decision_groups(groups)
     return value
 
 
@@ -167,11 +216,13 @@ def _comparison_rows(compare):
 
     def append_unchanged():
         if unchanged_ranges:
-            rows.append({
-                "kind": "unchanged",
-                "count": len(unchanged_ranges),
-                "ranges": list(unchanged_ranges),
-            })
+            rows.append(
+                {
+                    "kind": "unchanged",
+                    "count": len(unchanged_ranges),
+                    "ranges": list(unchanged_ranges),
+                }
+            )
             unchanged_ranges.clear()
 
     for block in compare:
@@ -184,20 +235,26 @@ def _comparison_rows(compare):
             rows.append({"kind": "delete", "lines": block["lines"], "text": before})
         else:
             append_unchanged()
-            rows.append({
-                "kind": "rewrite",
-                "lines": block["lines"],
-                "before": before,
-                "after": after,
-            })
+            rows.append(
+                {
+                    "kind": "rewrite",
+                    "lines": block["lines"],
+                    "before": before,
+                    "after": after,
+                }
+            )
     append_unchanged()
     return rows
 
 
 def _comparison_data(compare):
     return {
-        "before_chars": sum(count_non_whitespace_characters(block["before"]) for block in compare),
-        "after_chars": sum(count_non_whitespace_characters(block["after"]) for block in compare),
+        "before_chars": sum(
+            count_non_whitespace_characters(block["before"]) for block in compare
+        ),
+        "after_chars": sum(
+            count_non_whitespace_characters(block["after"]) for block in compare
+        ),
         "rows": _comparison_rows(compare),
     }
 
@@ -225,9 +282,7 @@ def validate_answers(payload, decisions):
     if not isinstance(payload, dict) or not isinstance(payload.get("answers"), dict):
         raise ValueError("answers 必须是对象")
     items = {
-        item["id"]: item
-        for group in decisions["groups"]
-        for item in group["items"]
+        item["id"]: item for group in decisions["groups"] for item in group["items"]
     }
     answers = payload["answers"]
     missing = items.keys() - answers.keys()
@@ -259,8 +314,12 @@ def _write_answer_document(answers_path, document):
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=answers_path.parent,
-            prefix=f".{answers_path.name}.", suffix=".tmp", delete=False,
+            mode="w",
+            encoding="utf-8",
+            dir=answers_path.parent,
+            prefix=f".{answers_path.name}.",
+            suffix=".tmp",
+            delete=False,
         ) as output:
             temporary_path = Path(output.name)
             json.dump(document, output, ensure_ascii=False, indent=2)
@@ -422,64 +481,120 @@ def _run_platform(arguments):
     return subprocess.run(arguments, capture_output=True, text=True, check=False)
 
 
-def run_ask(decisions, name, answers_path, platform_runner, stdout, stderr, stop_event):
+def _mount_configuration_uses_socket(name, socket_path):
+    configuration = PORTAL_SCRIPT.parent / "apps" / f"{name}.caddy"
+    try:
+        content = configuration.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return str(socket_path) in content
+
+
+@dataclass
+class AskServices:
+    platform_runner: object
+    stdout: object
+    stderr: object
+    stop_event: threading.Event
+
+
+@dataclass
+class AskCall:
+    decisions: dict
+    name: str
+    answers_path: Path
+    services: AskServices
+    temporary: tempfile.TemporaryDirectory
+    socket_path: Path
+    server: object = None
+    serving_thread: object = None
+    mounted: bool = False
+    mount_attempted: bool = False
+    exit_code: int = 1
+
+
+def _start_decision_server(call):
+    page = render_decision_page(call.decisions)
+    call.server = DecisionHTTPServer(
+        call.socket_path, page, call.decisions, call.answers_path
+    )
+    call.serving_thread = threading.Thread(
+        target=call.server.serve_until_complete,
+        args=(call.services.stop_event,),
+    )
+    call.serving_thread.start()
+
+
+def _write_platform_output(call, result):
+    call.services.stdout.write(result.stdout)
+    call.services.stderr.write(result.stderr)
+    call.services.stdout.flush()
+    call.services.stderr.flush()
+
+
+def _mount_decision_page(call):
+    mount_command = [
+        PLATFORM_PYTHON,
+        str(PORTAL_SCRIPT),
+        "mount",
+        call.name,
+        "--app",
+        str(call.socket_path),
+    ]
+    call.mount_attempted = True
+    result = call.services.platform_runner(mount_command)
+    _write_platform_output(call, result)
+    if result.returncode == 0:
+        call.mounted = True
+        call.serving_thread.join()
+        call.exit_code = 0 if call.server.submitted else 1
+
+
+def _stop_decision_page(call):
+    if call.serving_thread is not None:
+        call.services.stop_event.set()
+        call.serving_thread.join()
+    if call.server is not None:
+        call.server.server_close()
+    owns_mount = call.mounted or (
+        call.mount_attempted
+        and _mount_configuration_uses_socket(call.name, call.socket_path)
+    )
+    if not owns_mount:
+        return
+    command = [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "unmount", call.name]
+    try:
+        result = call.services.platform_runner(command)
+        _write_platform_output(call, result)
+        if result.returncode != 0:
+            call.exit_code = 1
+    except Exception as error:
+        call.services.stderr.write(f"错误：无法摘除本次挂载：{error}\n")
+        call.exit_code = 1
+
+
+def run_ask(decisions, name, answers_path, services):
     """Mount the receiver, wait once, then remove only this invocation's mount."""
     temporary = tempfile.TemporaryDirectory(prefix="d", dir="/tmp")
-    socket_path = Path(temporary.name) / "s"
-    server = None
-    serving_thread = None
-    mounted = False
-    exit_code = 1
+    call = AskCall(
+        decisions=decisions,
+        name=name,
+        answers_path=answers_path,
+        services=services,
+        temporary=temporary,
+        socket_path=Path(temporary.name) / "s",
+    )
     try:
-        page = render_decision_page(decisions)
-        server = DecisionHTTPServer(socket_path, page, decisions, answers_path)
-        serving_thread = threading.Thread(
-            target=server.serve_until_complete,
-            args=(stop_event,),
-        )
-        serving_thread.start()
+        _start_decision_server(call)
         # The platform requests the page to verify the mount before mount returns.
-        mount_command = [
-            PLATFORM_PYTHON,
-            str(PORTAL_SCRIPT),
-            "mount",
-            name,
-            "--app",
-            str(socket_path),
-        ]
-        mount_result = platform_runner(mount_command)
-        stdout.write(mount_result.stdout)
-        stderr.write(mount_result.stderr)
-        stdout.flush()
-        stderr.flush()
-        if mount_result.returncode == 0:
-            mounted = True
-            serving_thread.join()
-            exit_code = 0 if server.submitted else 1
+        _mount_decision_page(call)
     except Exception as error:
-        stderr.write(f"错误：决定页面服务失败：{error}\n")
-        exit_code = 1
+        services.stderr.write(f"错误：决定页面服务失败：{error}\n")
+        call.exit_code = 1
     finally:
-        if serving_thread is not None:
-            stop_event.set()
-            serving_thread.join()
-        if server is not None:
-            server.server_close()
-        if mounted:
-            unmount_command = [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "unmount", name]
-            try:
-                unmount_result = platform_runner(unmount_command)
-                stdout.write(unmount_result.stdout)
-                stderr.write(unmount_result.stderr)
-                stdout.flush()
-                stderr.flush()
-                if unmount_result.returncode != 0:
-                    exit_code = 1
-            except Exception as error:
-                stderr.write(f"错误：无法摘除本次挂载：{error}\n")
-                exit_code = 1
+        _stop_decision_page(call)
         temporary.cleanup()
-    return exit_code
+    return call.exit_code
 
 
 def _install_stop_handlers(stop_event):
@@ -522,8 +637,8 @@ def main(argv, platform_runner, stdout, stderr):
     stop_event = threading.Event()
     previous_handlers = _install_stop_handlers(stop_event)
     try:
-        return run_ask(decisions, args.name, answers_path, platform_runner,
-                       stdout, stderr, stop_event)
+        services = AskServices(platform_runner, stdout, stderr, stop_event)
+        return run_ask(decisions, args.name, answers_path, services)
     finally:
         _restore_stop_handlers(previous_handlers)
 

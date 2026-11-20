@@ -20,7 +20,16 @@ class JsonValidationTest(unittest.TestCase):
             {"items": [{"name": str}]},
         )
 
-        self.assertEqual(problems, [
-            "报告.items[0] 多余字段：extra",
-            "报告.items[0].name 不能为空",
-        ])
+        self.assertEqual(
+            problems,
+            [
+                "报告.items[0] 多余字段：extra",
+                "报告.items[0].name 不能为空",
+            ],
+        )
+
+    def test_array_schema_requires_exactly_one_item_shape(self):
+        for shape in ([], [str, int]):
+            with self.subTest(shape=shape):
+                with self.assertRaisesRegex(ValueError, "schema.*长度"):
+                    check_value("报告.items", ["ok"], shape)

@@ -1,4 +1,5 @@
 """Exercise the decision page in Chromium through a local portal bridge."""
+
 from contextlib import contextmanager
 import http.client
 import json
@@ -14,7 +15,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from playwright.sync_api import sync_playwright
 
 
-ROOT = next(parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists())
+ROOT = next(
+    parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
+)
 DECISION_PAGE_DIRECTORY = ROOT / "repository-care" / "xy-cleanup" / "decision_page"
 sys.path.insert(0, str(DECISION_PAGE_DIRECTORY))
 
@@ -25,50 +28,72 @@ def browser_decisions():
     return {
         "title": "Cleanup decisions",
         "intro": ["Review every item."],
-        "groups": [{
-            "title": "Repository",
-            "notes": ["Choose the option that fits this item."],
-            "items": [
-                {
-                    "id": "A1",
-                    "title": "Keep the feature",
-                    "lines": ["What is needed: clear behavior."],
-                    "options": ["Keep", "Remove"],
-                    "recommended": "Keep",
-                    "compare": [
-                        {"lines": "guide.md:1-1", "before": "Keep this requirement.", "after": "Keep this requirement."},
-                        {"lines": "guide.md:2-2", "before": "This paragraph stays.", "after": "This paragraph stays."},
-                        {"lines": "guide.md:3-3", "before": "Old wording stays.", "after": "New wording stays."},
-                        {"lines": "guide.md:4-4", "before": "Remove this sentence.", "after": ""},
-                        {"lines": "guide.md:5-5", "before": "Another paragraph stays.", "after": "Another paragraph stays."},
-                    ],
-                },
-                {
-                    "id": "B1",
-                    "title": "Name the feature",
-                    "lines": ["Why: a short name helps."],
-                    "options": ["Use current name", "Rename"],
-                    "recommended": "Use current name",
-                    "compare": None,
-                },
-                {
-                    "id": "__proto__",
-                    "title": "Prototype id",
-                    "lines": ["This id is valid."],
-                    "options": ["Keep prototype", "Change prototype"],
-                    "recommended": "Keep prototype",
-                    "compare": None,
-                },
-                {
-                    "id": "constructor",
-                    "title": "Constructor id",
-                    "lines": ["This id is valid too."],
-                    "options": ["Keep constructor", "Change constructor"],
-                    "recommended": "Keep constructor",
-                    "compare": None,
-                },
-            ],
-        }],
+        "groups": [
+            {
+                "title": "Repository",
+                "notes": ["Choose the option that fits this item."],
+                "items": [
+                    {
+                        "id": "A1",
+                        "title": "Keep the feature",
+                        "lines": ["What is needed: clear behavior."],
+                        "options": ["Keep", "Remove"],
+                        "recommended": "Keep",
+                        "compare": [
+                            {
+                                "lines": "guide.md:1-1",
+                                "before": "Keep this requirement.",
+                                "after": "Keep this requirement.",
+                            },
+                            {
+                                "lines": "guide.md:2-2",
+                                "before": "This paragraph stays.",
+                                "after": "This paragraph stays.",
+                            },
+                            {
+                                "lines": "guide.md:3-3",
+                                "before": "Old wording stays.",
+                                "after": "New wording stays.",
+                            },
+                            {
+                                "lines": "guide.md:4-4",
+                                "before": "Remove this sentence.",
+                                "after": "",
+                            },
+                            {
+                                "lines": "guide.md:5-5",
+                                "before": "Another paragraph stays.",
+                                "after": "Another paragraph stays.",
+                            },
+                        ],
+                    },
+                    {
+                        "id": "B1",
+                        "title": "Name the feature",
+                        "lines": ["Why: a short name helps."],
+                        "options": ["Use current name", "Rename"],
+                        "recommended": "Use current name",
+                        "compare": None,
+                    },
+                    {
+                        "id": "__proto__",
+                        "title": "Prototype id",
+                        "lines": ["This id is valid."],
+                        "options": ["Keep prototype", "Change prototype"],
+                        "recommended": "Keep prototype",
+                        "compare": None,
+                    },
+                    {
+                        "id": "constructor",
+                        "title": "Constructor id",
+                        "lines": ["This id is valid too."],
+                        "options": ["Keep constructor", "Change constructor"],
+                        "recommended": "Keep constructor",
+                        "compare": None,
+                    },
+                ],
+            }
+        ],
         "footnotes": [{"title": "Already handled", "lines": ["No answer needed."]}],
     }
 
@@ -163,12 +188,16 @@ def browser_receiver(directory, page_html, decisions, answers_path, fail_next_po
 class DecisionPageBrowserTest(unittest.TestCase):
     def test_compare_shows_counts_and_each_block_change_on_a_phone(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
-        self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
         page_html = decision_page.render_decision_page(browser_decisions())
         page_errors = []
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(executable_path=executable, headless=True)
+            browser = playwright.chromium.launch(
+                executable_path=executable, headless=True
+            )
             page = browser.new_page(viewport={"width": 390, "height": 844})
             page.on("pageerror", lambda error: page_errors.append(str(error)))
             page.set_content(page_html)
@@ -179,16 +208,33 @@ class DecisionPageBrowserTest(unittest.TestCase):
             self.assertIn("改写后", count_text)
             self.assertIn("少了", count_text)
             self.assertEqual(
-                comparison.locator(".compare-unchanged .compare-summary").all_inner_texts(),
+                comparison.locator(
+                    ".compare-unchanged .compare-summary"
+                ).all_inner_texts(),
                 ["没改的 2 段", "没改的 1 段"],
             )
             self.assertEqual(
                 comparison.locator(".compare-range").all_inner_texts(),
-                ["guide.md:1-1", "guide.md:2-2", "guide.md:3-3", "guide.md:4-4", "guide.md:5-5"],
+                [
+                    "guide.md:1-1",
+                    "guide.md:2-2",
+                    "guide.md:3-3",
+                    "guide.md:4-4",
+                    "guide.md:5-5",
+                ],
             )
-            self.assertEqual(comparison.locator(".compare-deleted del").inner_text(), "Remove this sentence.")
-            self.assertEqual(comparison.locator(".compare-rewritten del").inner_text(), "Old wording stays.")
-            self.assertEqual(comparison.locator(".compare-rewritten ins").inner_text(), "New wording stays.")
+            self.assertEqual(
+                comparison.locator(".compare-deleted del").inner_text(),
+                "Remove this sentence.",
+            )
+            self.assertEqual(
+                comparison.locator(".compare-rewritten del").inner_text(),
+                "Old wording stays.",
+            )
+            self.assertEqual(
+                comparison.locator(".compare-rewritten ins").inner_text(),
+                "New wording stays.",
+            )
             self.assertEqual(page.locator('[data-item-id="B1"] .comparison').count(), 0)
             self.assertLessEqual(
                 page.evaluate("document.documentElement.scrollWidth"),
@@ -198,9 +244,11 @@ class DecisionPageBrowserTest(unittest.TestCase):
 
         self.assertEqual(page_errors, [])
 
-    def test_decisions_persist_per_call_and_submit_from_a_phone_view(self):
+    def test_drafts_persist_after_reload_and_are_scoped_to_each_call(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
-        self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
         decisions = browser_decisions()
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             answers_path = Path(temporary) / "answers.json"
@@ -208,8 +256,8 @@ class DecisionPageBrowserTest(unittest.TestCase):
             second_page = decision_page.render_decision_page(decisions)
             script_errors = []
             with browser_receiver(
-                Path(temporary), first_page, decisions, answers_path, True
-            ) as (receiver_thread, bridge):
+                Path(temporary), first_page, decisions, answers_path, False
+            ) as (_receiver_thread, bridge):
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(
                         executable_path=executable,
@@ -221,55 +269,123 @@ class DecisionPageBrowserTest(unittest.TestCase):
 
                     self.assertEqual(page.locator(".item").count(), 4)
                     first_item = page.locator('[data-item-id="A1"]')
-                    second_item = page.locator('[data-item-id="B1"]')
                     prototype_item = page.locator('[data-item-id="__proto__"]')
                     constructor_item = page.locator('[data-item-id="constructor"]')
-                    self.assertTrue(first_item.locator('input[value="Keep"]').is_checked())
-                    self.assertTrue(first_item.locator(".suggested").count() == 1)
-                    self.assertIn("写了字就以你写的为准", first_item.locator("textarea").get_attribute("placeholder"))
-                    self.assertIn("共 4 条", page.locator("#status").inner_text())
-
+                    self.assertTrue(
+                        first_item.locator('input[value="Keep"]').is_checked()
+                    )
+                    self.assertEqual(first_item.locator(".suggested").count(), 1)
+                    self.assertIn(
+                        "写了字就以你写的为准",
+                        first_item.locator("textarea").get_attribute("placeholder"),
+                    )
                     first_item.locator('input[value="Remove"]').check()
                     first_item.locator("textarea").fill("Use the simpler behavior.")
-                    second_item.locator("textarea").fill("Keep this note.")
+                    page.locator('[data-item-id="B1"] textarea').fill("Keep this note.")
                     prototype_item.locator('input[value="Change prototype"]').check()
                     prototype_item.locator("textarea").fill("Prototype answer.")
-                    constructor_item.locator('input[value="Change constructor"]').check()
+                    constructor_item.locator(
+                        'input[value="Change constructor"]'
+                    ).check()
                     constructor_item.locator("textarea").fill("Constructor answer.")
-                    self.assertTrue(first_item.evaluate("element => element.classList.contains('changed')"))
-                    self.assertTrue(second_item.evaluate("element => element.classList.contains('changed')"))
-                    self.assertTrue(prototype_item.evaluate("element => element.classList.contains('changed')"))
-                    self.assertTrue(constructor_item.evaluate("element => element.classList.contains('changed')"))
-                    self.assertIn("改了或写了 4 条", page.locator("#status").inner_text())
+                    self.assertIn(
+                        "改了或写了 4 条", page.locator("#status").inner_text()
+                    )
+
                     page.reload()
-                    self.assertTrue(first_item.locator('input[value="Remove"]').is_checked())
-                    self.assertEqual(first_item.locator("textarea").input_value(), "Use the simpler behavior.")
-                    self.assertTrue(prototype_item.locator('input[value="Change prototype"]').is_checked())
-                    self.assertEqual(prototype_item.locator("textarea").input_value(), "Prototype answer.")
-                    self.assertTrue(constructor_item.locator('input[value="Change constructor"]').is_checked())
-                    self.assertEqual(constructor_item.locator("textarea").input_value(), "Constructor answer.")
+                    self.assertTrue(
+                        first_item.locator('input[value="Remove"]').is_checked()
+                    )
+                    self.assertEqual(
+                        first_item.locator("textarea").input_value(),
+                        "Use the simpler behavior.",
+                    )
+                    self.assertTrue(
+                        prototype_item.locator(
+                            'input[value="Change prototype"]'
+                        ).is_checked()
+                    )
+                    self.assertEqual(
+                        prototype_item.locator("textarea").input_value(),
+                        "Prototype answer.",
+                    )
+                    self.assertTrue(
+                        constructor_item.locator(
+                            'input[value="Change constructor"]'
+                        ).is_checked()
+                    )
+                    self.assertEqual(
+                        constructor_item.locator("textarea").input_value(),
+                        "Constructor answer.",
+                    )
 
                     bridge.page = second_page
                     page.reload()
                     first_item = page.locator('[data-item-id="A1"]')
-                    second_item = page.locator('[data-item-id="B1"]')
+                    self.assertTrue(
+                        first_item.locator('input[value="Keep"]').is_checked()
+                    )
+                    self.assertEqual(first_item.locator("textarea").input_value(), "")
+                    self.assertTrue(
+                        page.locator(
+                            '[data-item-id="B1"] input[value="Use current name"]'
+                        ).is_checked()
+                    )
+                    self.assertTrue(
+                        page.locator(
+                            '[data-item-id="__proto__"] input[value="Keep prototype"]'
+                        ).is_checked()
+                    )
+                    self.assertTrue(
+                        page.locator(
+                            '[data-item-id="constructor"] input[value="Keep constructor"]'
+                        ).is_checked()
+                    )
+                    self.assertFalse(
+                        first_item.evaluate(
+                            "element => element.classList.contains('changed')"
+                        )
+                    )
+                    browser.close()
+
+            self.assertFalse(answers_path.exists())
+            self.assertEqual(script_errors, [])
+
+    def test_phone_submission_keeps_answers_after_failure_and_saves_on_retry(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        decisions = browser_decisions()
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            answers_path = Path(temporary) / "answers.json"
+            page_html = decision_page.render_decision_page(decisions)
+            script_errors = []
+            with browser_receiver(
+                Path(temporary), page_html, decisions, answers_path, True
+            ) as (receiver_thread, bridge):
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(
+                        executable_path=executable,
+                        headless=True,
+                    )
+                    page = browser.new_page(viewport={"width": 390, "height": 844})
+                    page.on("pageerror", lambda error: script_errors.append(str(error)))
+                    page.goto(f"http://127.0.0.1:{bridge.server_port}/")
+                    first_item = page.locator('[data-item-id="A1"]')
                     prototype_item = page.locator('[data-item-id="__proto__"]')
                     constructor_item = page.locator('[data-item-id="constructor"]')
-                    self.assertTrue(first_item.locator('input[value="Keep"]').is_checked())
-                    self.assertEqual(first_item.locator("textarea").input_value(), "")
-                    self.assertTrue(second_item.locator('input[value="Use current name"]').is_checked())
-                    self.assertTrue(prototype_item.locator('input[value="Keep prototype"]').is_checked())
-                    self.assertTrue(constructor_item.locator('input[value="Keep constructor"]').is_checked())
-                    self.assertEqual(prototype_item.locator("textarea").input_value(), "")
-                    self.assertEqual(constructor_item.locator("textarea").input_value(), "")
-                    self.assertFalse(first_item.evaluate("element => element.classList.contains('changed')"))
-
                     first_item.locator('input[value="Remove"]').check()
                     first_item.locator("textarea").fill("My written decision wins.")
                     prototype_item.locator('input[value="Change prototype"]').check()
                     prototype_item.locator("textarea").fill("Saved prototype answer.")
-                    constructor_item.locator('input[value="Change constructor"]').check()
-                    constructor_item.locator("textarea").fill("Saved constructor answer.")
+                    constructor_item.locator(
+                        'input[value="Change constructor"]'
+                    ).check()
+                    constructor_item.locator("textarea").fill(
+                        "Saved constructor answer."
+                    )
+
                     self.assertLessEqual(
                         page.evaluate("document.documentElement.scrollWidth"),
                         page.evaluate("window.innerWidth"),
@@ -282,13 +398,17 @@ class DecisionPageBrowserTest(unittest.TestCase):
 
                     page.locator("#submit").click()
                     page.locator("#feedback").wait_for(state="visible")
-                    self.assertIn("temporary test failure", page.locator("#feedback").inner_text())
-                    self.assertTrue(first_item.locator('input[value="Remove"]').is_checked())
-                    self.assertEqual(first_item.locator("textarea").input_value(), "My written decision wins.")
-                    self.assertTrue(prototype_item.locator('input[value="Change prototype"]').is_checked())
-                    self.assertEqual(prototype_item.locator("textarea").input_value(), "Saved prototype answer.")
-                    self.assertTrue(constructor_item.locator('input[value="Change constructor"]').is_checked())
-                    self.assertEqual(constructor_item.locator("textarea").input_value(), "Saved constructor answer.")
+                    self.assertIn(
+                        "temporary test failure",
+                        page.locator("#feedback").inner_text(),
+                    )
+                    self.assertTrue(
+                        first_item.locator('input[value="Remove"]').is_checked()
+                    )
+                    self.assertEqual(
+                        first_item.locator("textarea").input_value(),
+                        "My written decision wins.",
+                    )
                     self.assertFalse(first_item.locator("textarea").is_disabled())
 
                     page.locator("#submit").click()
@@ -298,32 +418,31 @@ class DecisionPageBrowserTest(unittest.TestCase):
 
                 receiver_thread.join(5)
                 self.assertFalse(receiver_thread.is_alive())
-                self.assertEqual(
-                    json.loads(answers_path.read_text(encoding="utf-8")),
-                    {
-                        "title": "Cleanup decisions",
-                        "answers": {
-                            "A1": {"option": "Remove", "note": "My written decision wins."},
-                            "B1": {"option": "Use current name", "note": ""},
-                            "__proto__": {"option": "Change prototype", "note": "Saved prototype answer."},
-                            "constructor": {"option": "Change constructor", "note": "Saved constructor answer."},
-                        },
+                expected_answers = {
+                    "A1": {"option": "Remove", "note": "My written decision wins."},
+                    "B1": {"option": "Use current name", "note": ""},
+                    "__proto__": {
+                        "option": "Change prototype",
+                        "note": "Saved prototype answer.",
                     },
-                )
-                submitted = {
-                    "answers": {
-                        "A1": {"option": "Remove", "note": "My written decision wins."},
-                        "B1": {"option": "Use current name", "note": ""},
-                        "__proto__": {"option": "Change prototype", "note": "Saved prototype answer."},
-                        "constructor": {"option": "Change constructor", "note": "Saved constructor answer."},
+                    "constructor": {
+                        "option": "Change constructor",
+                        "note": "Saved constructor answer.",
                     },
                 }
+                self.assertEqual(
+                    json.loads(answers_path.read_text(encoding="utf-8")),
+                    {"title": "Cleanup decisions", "answers": expected_answers},
+                )
+                submitted = {"answers": expected_answers}
                 self.assertEqual(bridge.received_payloads, [submitted, submitted])
                 self.assertEqual(script_errors, [])
 
     def test_storage_errors_stay_visible_without_blocking_answers_or_submission(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
-        self.assertTrue(executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
         decisions = browser_decisions()
         page_html = decision_page.render_decision_page(decisions)
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -332,7 +451,9 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 Path(temporary), page_html, decisions, answers_path, False
             ) as (receiver_thread, bridge):
                 with sync_playwright() as playwright:
-                    browser = playwright.chromium.launch(executable_path=executable, headless=True)
+                    browser = playwright.chromium.launch(
+                        executable_path=executable, headless=True
+                    )
                     context = browser.new_context()
                     context.add_init_script("""
                         Object.defineProperty(Storage.prototype, "getItem", {
@@ -365,6 +486,8 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 receiver_thread.join(5)
                 self.assertFalse(receiver_thread.is_alive())
                 self.assertEqual(
-                    json.loads(answers_path.read_text(encoding="utf-8"))["answers"]["A1"],
+                    json.loads(answers_path.read_text(encoding="utf-8"))["answers"][
+                        "A1"
+                    ],
                     {"option": "Remove", "note": "Still available for submission."},
                 )

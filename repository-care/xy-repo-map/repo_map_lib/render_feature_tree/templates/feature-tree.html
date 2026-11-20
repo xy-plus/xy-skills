@@ -65,6 +65,7 @@ body.detail-open main{padding-bottom:45vh}
 .metrics{display:flex;flex-wrap:wrap;gap:4px 11px;color:var(--ink2);font-size:12px}
 .metric{white-space:nowrap}.metric i{width:8px;height:8px;border-radius:50%;margin-right:4px}
 .incoming{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:4px;color:var(--muted);font-size:12px}
+.incoming-link{display:inline-flex;align-items:center;gap:4px;color:var(--uses)}
 .uses{display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px;margin-top:6px;font-size:12.5px;color:var(--ink2)}
 .uses-label{font-weight:650;color:var(--ink);margin-right:2px}
 .use-link{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:1px 8px;border:1px solid var(--hair);border-radius:6px;background:var(--surface);color:var(--uses);white-space:nowrap}
@@ -247,14 +248,20 @@ function usesList(featureId) {
 }
 
 function appendIncoming(parent, featureId) {
-  const counts = { import: 0, mention: 0 };
-  for (const use of incomingUses.get(featureId)) {
-    counts[use.by]++;
-  }
-  if (!counts.import && !counts.mention) return;
+  const incoming = incomingUses.get(featureId);
+  if (!incoming.length) return;
   const line = make("div", "incoming");
-  if (counts.import) line.append(make("span", "", `被用 ${counts.import}`));
-  if (counts.mention) line.append(make("span", "", `被提及 ${counts.mention}`));
+  for (const use of incoming) {
+    const source = features[use.feature];
+    const button = make("button", "incoming-link", featureName(source));
+    button.type = "button";
+    button.addEventListener("click", () => {
+      revealFeature(use.feature);
+      openDetails(use.feature);
+    });
+    if (use.by === "mention") button.append(make("small", "mention", "提及"));
+    line.append(button);
+  }
   parent.append(line);
 }
 
@@ -352,7 +359,7 @@ function applyVisibility() {
     toggle.setAttribute("aria-expanded", String(!list.hidden));
   }
   for (const [featureId, block] of ownBlocks) {
-    block.hidden = showDecisions || childLists.get(featureId).hidden;
+    block.hidden = childLists.get(featureId).hidden;
   }
   const filter = document.querySelector("#decision-filter");
   if (filter) filter.setAttribute("aria-pressed", String(showDecisions));
@@ -390,9 +397,11 @@ function renderHeader() {
   for (const key of lineKeys) {
     legend.append(make("span", key, `${lineTitles[key]} ${formatNumber(totalLines[key])}`));
   }
-  const decisionCount = mapData.markers["等你拍板"];
-  if (decisionCount) {
-    const button = make("button", "chip decision", `等你拍板 ${decisionCount}`);
+  const hasDecisions = Object.values(features).some(
+    (feature) => feature.markers.includes("等你拍板"),
+  );
+  if (hasDecisions) {
+    const button = make("button", "chip decision", "等你拍板");
     button.type = "button";
     button.id = "decision-filter";
     button.setAttribute("aria-pressed", "false");

@@ -22,6 +22,13 @@ def publish_repository(output, as_mode):
             raise ArgumentError(f"发布目录缺少 {filename}：{directory}")
 
     try:
+        page = (directory / "index.html").read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ArgumentError(f"无法读取 index.html：{error}") from error
+    if not page.strip():
+        raise ArgumentError("index.html 不能为空")
+
+    try:
         data = json.loads((directory / "map-data.json").read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ArgumentError(f"无法读取 map-data.json：{error}") from error

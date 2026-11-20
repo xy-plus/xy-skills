@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import subprocess
@@ -12,16 +13,22 @@ from cleanup_imports import setup_cleanup_imports  # noqa: E402
 
 setup_cleanup_imports(__file__, ("decision_page",))
 from approvals import plan_data  # noqa: E402
+from cli_errors import report_cli_argument_error  # noqa: E402
 from decision_page import validate_decisions  # noqa: E402
-from json_validation import object_without_duplicate_keys  # noqa: E402
+from json_validation import check_value, object_without_duplicate_keys  # noqa: E402
 from repo_map_lib.git_repository import ArgumentError  # noqa: E402
 
 
-CARD_KEYS = {
-    "feature", "used", "unused", "changed", "todo", "map_issues",
-    "suggestion", "recommended",
+CARD_SHAPE = {
+    "feature": "",
+    "used": [""],
+    "unused": [{"what": "", "evidence": "", "lines": "", "risk": ""}],
+    "changed": [""],
+    "todo": [""],
+    "map_issues": [""],
+    "suggestion": [""],
+    "recommended": "",
 }
-UNUSED_KEYS = {"what", "evidence", "lines", "risk"}
 RECOMMENDATIONS = {"照建议", "留", "不要这个功能"}
 COMMON_OPTIONS = ["照建议", "留", "按我写的改"]
 REMOVE_FEATURE = "不要这个功能"
@@ -34,9 +41,13 @@ class InvalidCardJson(ValueError):
 def parser():
     result = argparse.ArgumentParser(description="校验功能卡片并拼成用户决定清单")
     result.add_argument("--repo", required=True, help="仓根的绝对路径")
-    result.add_argument("--scope", required=True, nargs="+", help="功能 id 列表，或单独写 全部")
+    result.add_argument(
+        "--scope", required=True, nargs="+", help="功能 id 列表，或单独写 全部"
+    )
     result.add_argument("--review", required=True, choices=("变过的", "全部"))
-    result.add_argument("--cards", required=True, nargs="+", help="每个功能卡片 JSON 路径")
+    result.add_argument(
+        "--cards", required=True, nargs="+", help="每个功能卡片 JSON 路径"
+    )
     result.add_argument("--output", required=True, help="决定清单 JSON 路径")
     return result
 
@@ -58,47 +69,39 @@ def _feature_tree(document):
 
 
 def _card_errors(card, label):
+    shape_view = _card_shape_view(card)
+    problems = check_value(label, shape_view, CARD_SHAPE)
     if not isinstance(card, dict):
-        return [f"{label} 必须是对象"]
-    problems = [f"{label} 缺少字段 {key}" for key in sorted(CARD_KEYS - card.keys())]
-    problems.extend(f"{label} 有多余字段 {key}" for key in sorted(card.keys() - CARD_KEYS))
-    if not isinstance(card.get("feature"), str) or not card["feature"].strip():
-        problems.append(f"{label}.feature 必须是非空字符串")
-    for field in ("used", "changed", "todo", "map_issues", "suggestion"):
-        values = card.get(field)
-        if not isinstance(values, list):
-            problems.append(f"{label}.{field} 必须是字符串数组")
-            continue
-        for index, value in enumerate(values):
-            if not isinstance(value, str) or not value.strip():
-                problems.append(f"{label}.{field}[{index}] 必须是非空字符串")
+        return problems
     unused = card.get("unused")
-    if not isinstance(unused, list):
-        problems.append(f"{label}.unused 必须是数组")
-    else:
+    if isinstance(unused, list):
         for index, value in enumerate(unused):
-            item_label = f"{label}.unused[{index}]"
             if not isinstance(value, dict):
-                problems.append(f"{item_label} 必须是对象")
                 continue
-            problems.extend(
-                f"{item_label} 缺少字段 {key}" for key in sorted(UNUSED_KEYS - value.keys())
-            )
-            problems.extend(
-                f"{item_label} 有多余字段 {key}" for key in sorted(value.keys() - UNUSED_KEYS)
-            )
-            for field in ("what", "evidence", "risk"):
-                if field in value and (not isinstance(value[field], str) or not value[field].strip()):
-                    problems.append(f"{item_label}.{field} 必须是非空字符串")
             lines = value.get("lines")
             if type(lines) is not int or lines < 0:
-                problems.append(f"{item_label}.lines 必须是非负整数")
+                problems.append(f"{label}.unused[{index}].lines 必须是非负整数")
     recommendation = card.get("recommended")
     if not isinstance(recommendation, str) or recommendation not in RECOMMENDATIONS:
         problems.append(f"{label}.recommended 必须是 照建议、留、不要这个功能 之一")
     elif recommendation == "照建议" and not card.get("suggestion"):
         problems.append(f"{label}.recommended 为 照建议 时 suggestion 不能为空")
     return problems
+
+
+def _card_shape_view(card):
+    if not isinstance(card, dict):
+        return card
+    result = dict(card)
+    unused = result.get("unused")
+    if isinstance(unused, list):
+        result["unused"] = [
+            dict(item) if isinstance(item, dict) else item for item in unused
+        ]
+        for item in result["unused"]:
+            if isinstance(item, dict) and type(item.get("lines")) is int:
+                item["lines"] = str(item["lines"])
+    return result
 
 
 def _read_cards(paths):
@@ -108,10 +111,12 @@ def _read_cards(paths):
         if not card_path.is_file():
             raise FileNotFoundError(f"卡片文件不存在：{card_path}")
         try:
-            cards.append(json.loads(
-                card_path.read_text(encoding="utf-8"),
-                object_pairs_hook=object_without_duplicate_keys,
-            ))
+            cards.append(
+                json.loads(
+                    card_path.read_text(encoding="utf-8"),
+                    object_pairs_hook=object_without_duplicate_keys,
+                )
+            )
         except (OSError, UnicodeError, ValueError) as error:
             raise InvalidCardJson(f"卡片不是合法 JSON：{card_path}：{error}") from error
     return cards
@@ -122,16 +127,25 @@ def _load_previous_features(repository, commit):
         return {}
     result = subprocess.run(
         ["git", "-C", str(repository), "show", f"{commit}:repo-map/features.json"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if result.returncode != 0:
-        raise ValueError(f"无法读取上次认可提交 {commit} 的功能清单：{result.stderr.strip()}")
+        raise ValueError(
+            f"无法读取上次认可提交 {commit} 的功能清单：{result.stderr.strip()}"
+        )
     try:
-        return _feature_tree(json.loads(
-            result.stdout, object_pairs_hook=object_without_duplicate_keys,
-        ))
+        return _feature_tree(
+            json.loads(
+                result.stdout,
+                object_pairs_hook=object_without_duplicate_keys,
+            )
+        )
     except ValueError as error:
-        raise ValueError(f"上次认可提交 {commit} 的功能清单不是合法 JSON：{error}") from error
+        raise ValueError(
+            f"上次认可提交 {commit} 的功能清单不是合法 JSON：{error}"
+        ) from error
 
 
 def _draft_lines(feature, previous_feature):
@@ -144,11 +158,15 @@ def _draft_lines(feature, previous_feature):
         if isinstance(previous_why, dict) and previous_why.get("text") != why["text"]:
             lines.append(f"原来：{previous_why['text']}")
 
-    previous_items = {
-        item["id"]: item
-        for item in previous_feature.get("items", [])
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    } if previous_feature else {}
+    previous_items = (
+        {
+            item["id"]: item
+            for item in previous_feature.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if previous_feature
+        else {}
+    )
     for item in feature["items"]:
         if item["status"] != "起草":
             continue
@@ -173,12 +191,13 @@ def _append_card_lines(lines, card):
     lines.extend(f"照建议会做：{value}" for value in card["suggestion"])
 
 
-def _decision_item(feature_id, feature, reason, card, previous_features, data):
+def _decision_item(feature_id, reason, card, context):
+    feature = context.values[feature_id]
     lines = [f"本次纳入：{reason}"]
-    lines.extend(_draft_lines(feature, previous_features.get(feature_id)))
+    lines.extend(_draft_lines(feature, context.previous_features.get(feature_id)))
     _append_card_lines(lines, card)
     options = list(COMMON_OPTIONS)
-    if not data["features"][feature_id]["children"]:
+    if not context.data["features"][feature_id]["children"]:
         options.append(REMOVE_FEATURE)
     return {
         "id": feature_id,
@@ -190,7 +209,14 @@ def _decision_item(feature_id, feature, reason, card, previous_features, data):
     }
 
 
-def build_decisions(repository, data, values, planned, commits, cards):
+@dataclass
+class DecisionContext:
+    values: dict
+    data: dict
+    previous_features: dict
+
+
+def _validate_card_set(cards, planned_ids, data):
     by_id = {}
     problems = []
     for index, card in enumerate(cards):
@@ -205,7 +231,6 @@ def build_decisions(repository, data, values, planned, commits, cards):
             problems.append(f"重复卡片：{feature_id}")
         by_id[feature_id] = card
 
-    planned_ids = [feature_id for feature_id, _reason in planned]
     planned_set = set(planned_ids)
     for feature_id in sorted(set(by_id) - set(data["features"])):
         problems.append(f"未知功能卡片：{feature_id}")
@@ -219,27 +244,52 @@ def build_decisions(repository, data, values, planned, commits, cards):
         card = by_id.get(feature_id)
         if not isinstance(card, dict):
             continue
-        if (card.get("recommended") == REMOVE_FEATURE
-                and data["features"][feature_id]["children"]):
+        if (
+            card.get("recommended") == REMOVE_FEATURE
+            and data["features"][feature_id]["children"]
+        ):
             problems.append(f"有子功能的上级不能推荐「不要这个功能」：{feature_id}")
-    if problems:
-        return None, problems
+    return by_id, problems
 
+
+def _load_feature_history(repository, planned_ids, commits):
     previous_features = {}
+    previous_by_commit = {}
     for feature_id in planned_ids:
         commit = commits[feature_id]
         if commit != "无":
-            previous = _load_previous_features(repository, commit)
+            if commit not in previous_by_commit:
+                previous_by_commit[commit] = _load_previous_features(repository, commit)
+            previous = previous_by_commit[commit]
             previous_features[feature_id] = previous.get(feature_id)
+
+    return previous_features
+
+
+def _build_decision_items(planned, by_id, context):
     items = [
         _decision_item(
-            feature_id, values[feature_id], reason, by_id[feature_id],
-            previous_features, data,
+            feature_id,
+            reason,
+            by_id[feature_id],
+            context,
         )
         for feature_id, reason in planned
     ]
+    return items
+
+
+def build_decisions(repository, data, values, planned, commits, cards, plan_commit):
+    planned_ids = [feature_id for feature_id, _reason in planned]
+    by_id, problems = _validate_card_set(cards, planned_ids, data)
+    if problems:
+        return None, problems
+
+    previous_features = _load_feature_history(repository, planned_ids, commits)
+    context = DecisionContext(values, data, previous_features)
+    items = _build_decision_items(planned, by_id, context)
     decisions = {
-        "title": "定期清扫功能审批",
+        "title": f"清扫决定：{Path(repository).name} 计划提交 {plan_commit}",
         "intro": [
             "每个功能只选一项：照建议、留、按我写的改；没有子功能的功能另有「不要这个功能」。",
             "照建议：做卡片「照建议」列出的每件事。",
@@ -259,8 +309,12 @@ def _write_output(path, decisions):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(decisions, ensure_ascii=False, indent=2) + "\n"
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=output_path.parent,
-        prefix=f".{output_path.name}.", suffix=".tmp", delete=False,
+        mode="w",
+        encoding="utf-8",
+        dir=output_path.parent,
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        delete=False,
     ) as temporary_file:
         temporary_path = Path(temporary_file.name)
         temporary_file.write(content)
@@ -270,22 +324,29 @@ def _write_output(path, decisions):
 def main(argv):
     options = parser().parse_args(argv)
     try:
-        data, values, _records, _fingerprints, planned, commits = plan_data(
-            options.repo, options.scope, options.review,
+        data, values, _records, planned, commits, plan_commit = plan_data(
+            options.repo,
+            options.scope,
+            options.review,
         )
         if not planned:
             raise ValueError("范围内没有变过的功能，不用出页")
         cards = _read_cards(options.cards)
         decisions, problems = build_decisions(
-            options.repo, data, values, planned, commits, cards,
+            options.repo,
+            data,
+            values,
+            planned,
+            commits,
+            cards,
+            plan_commit,
         )
         if problems:
             print("\n".join(problems))
             return 1
         _write_output(options.output, decisions)
     except ArgumentError as error:
-        print(str(error), file=sys.stderr)
-        return 2
+        return report_cli_argument_error(error)
     except FileNotFoundError as error:
         print(str(error), file=sys.stderr)
         return 2

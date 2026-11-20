@@ -2,7 +2,9 @@ from pathlib import Path
 import sys
 import unittest
 
-REPOSITORY_ROOT = next(parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists())
+REPOSITORY_ROOT = next(
+    parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
+)
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "xy-repo-map"))
 
 from repo_map_lib.count_lines.metrics import count_file
@@ -37,13 +39,13 @@ def public_function():
             ),
             (
                 "lib.rs",
-                '''//! Crate docs.
+                """//! Crate docs.
 /// Public API docs.
 /* normal start
    /* nested */
    normal end */
 let answer = 42; // inline
-''',
+""",
                 (1, 2, 3),
             ),
         )
@@ -51,6 +53,8 @@ let answer = 42; // inline
             with self.subTest(path=path):
                 counts = count_file(path, "code", source)
                 self.assertEqual((counts.code, counts.docs, counts.comments), expected)
+                expected_doc_chars = 53 if path.endswith(".py") else 30
+                self.assertEqual(counts.doc_chars, expected_doc_chars)
 
     def test_python_docstrings_inside_control_flow_blocks_are_documentation(self):
         source = '''if condition:
@@ -63,7 +67,9 @@ let answer = 42; // inline
         self.assertEqual(counts.docs, 2)
 
     def test_shell_shebang_is_code_but_full_line_hash_is_comment(self):
-        counts = count_file("script.sh", "code", "#!/bin/sh\n# explanation\necho hi # inline\n\n")
+        counts = count_file(
+            "script.sh", "code", "#!/bin/sh\n# explanation\necho hi # inline\n\n"
+        )
         self.assertEqual((counts.code, counts.docs, counts.comments), (2, 0, 1))
 
     def test_rust_string_bodies_do_not_turn_slashes_into_comments(self):
@@ -81,3 +87,4 @@ let answer = 42; // inline
         c_source = "/** API docs\n * continued\n */\nint value;\n/* note */\n"
         c_counts = count_file("file.c", "code", c_source)
         self.assertEqual((c_counts.code, c_counts.docs, c_counts.comments), (1, 3, 1))
+        self.assertEqual(c_counts.doc_chars, 22)

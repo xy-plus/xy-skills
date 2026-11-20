@@ -5,21 +5,39 @@ import unittest
 
 from pathlib import Path
 import sys
-REPOSITORY_ROOT = next(parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists())
+
+REPOSITORY_ROOT = next(
+    parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
+)
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
-from map_fixture import COMMAND, feature, make_workspace
+from map_fixture import (
+    COMMAND,
+    feature,
+    make_workspace,
+    root_feature as make_root_feature,
+)
 
 
 class WorkspaceRenderTest(unittest.TestCase):
     def setUp(self):
-        self.workspace = make_workspace(self)
+        self.workspace = make_workspace(self, ("sub-b", "missing-tool"), ())
         self.output = self.workspace.parent / "rendered"
 
     def render(self):
         return subprocess.run(
-            ["python3", "-B", str(COMMAND), "render-workspace",
-             "--repo", str(self.workspace), "--out", str(self.output)],
-            capture_output=True, text=True, check=False,
+            [
+                "python3",
+                "-B",
+                str(COMMAND),
+                "render-workspace",
+                "--repo",
+                str(self.workspace),
+                "--out",
+                str(self.output),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     def assert_workspace_render_fails(self):
@@ -33,15 +51,22 @@ class WorkspaceRenderTest(unittest.TestCase):
         sub_a_manifest = self.workspace / "sub-a" / "repo-map" / "features.json"
         sub_a = json.loads(sub_a_manifest.read_text(encoding="utf-8"))
         sub_a["external_dependencies"].append("workspace")
-        sub_a_manifest.write_text(json.dumps(sub_a, ensure_ascii=False), encoding="utf-8")
+        sub_a_manifest.write_text(
+            json.dumps(sub_a, ensure_ascii=False), encoding="utf-8"
+        )
         (self.workspace / "sub-a" / "README.md").write_text(
-            "Uses sub-b missing-tool workspace.\n", encoding="utf-8",
+            "Uses sub-b missing-tool workspace.\n",
+            encoding="utf-8",
         )
         root_manifest = self.workspace / "repo-map" / "features.json"
         root_feature = json.loads(root_manifest.read_text(encoding="utf-8"))
         root_feature["external_dependencies"] = ["lib"]
-        root_manifest.write_text(json.dumps(root_feature, ensure_ascii=False), encoding="utf-8")
-        (self.workspace / "README.md").write_text("Workspace uses lib.\n", encoding="utf-8")
+        root_manifest.write_text(
+            json.dumps(root_feature, ensure_ascii=False), encoding="utf-8"
+        )
+        (self.workspace / "README.md").write_text(
+            "Workspace uses lib.\n", encoding="utf-8"
+        )
 
         result = self.render()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -50,7 +75,9 @@ class WorkspaceRenderTest(unittest.TestCase):
             set(data["features"]),
             {"root", "sub-a/root", "sub-a/part", "sub-b/root", "sub-b/part"},
         )
-        self.assertEqual(data["features"]["root"]["children"], ["sub-a/root", "sub-b/root"])
+        self.assertEqual(
+            data["features"]["root"]["children"], ["sub-a/root", "sub-b/root"]
+        )
         self.assertEqual(data["features"]["sub-a/root"]["parent"], "root")
         self.assertEqual(data["features"]["sub-a/part"]["parent"], "sub-a/root")
         self.assertEqual(
@@ -72,25 +99,38 @@ class WorkspaceRenderTest(unittest.TestCase):
             data["features"]["sub-a/root"]["uses"],
             [{"feature": "sub-b/root", "by": "mention"}],
         )
-        self.assertEqual(data["features"]["sub-a/root"]["external_uses"], ["missing-tool"])
+        self.assertEqual(
+            data["features"]["sub-a/root"]["external_uses"], ["missing-tool"]
+        )
         self.assertEqual(
             data["features"]["sub-a/root"]["uses"],
             [{"feature": "sub-b/root", "by": "mention"}],
         )
         self.assertEqual(data["features"]["sub-a/part"]["external_uses"], [])
         self.assertEqual(data["features"]["root"]["external_uses"], ["lib"])
-        self.assertFalse(any(
-            use["feature"] in {"sub-a/part", "sub-b/part"}
-            for use in data["features"]["root"]["uses"]
-        ))
-        self.assertEqual(data["markers"], {"等你拍板": 0})
+        self.assertFalse(
+            any(
+                use["feature"] in {"sub-a/part", "sub-b/part"}
+                for use in data["features"]["root"]["uses"]
+            )
+        )
+        self.assertNotIn("markers", data)
 
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")
         shutil.rmtree(self.workspace / "sub-b")
-        root = feature("root", "", subrepositories=[], external_dependencies=[])
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[],
+            source="原话",
+            items=[],
+        )
         (self.workspace / "repo-map" / "features.json").write_text(
-            json.dumps(root, ensure_ascii=False), encoding="utf-8",
+            json.dumps(root, ensure_ascii=False),
+            encoding="utf-8",
         )
 
         output = self.assert_workspace_render_fails()
@@ -114,7 +154,8 @@ class WorkspaceRenderTest(unittest.TestCase):
 
     def test_render_workspace_reports_an_invalid_child_map(self):
         (self.workspace / "sub-a" / "repo-map" / "features.json").write_text(
-            "{}", encoding="utf-8",
+            "{}",
+            encoding="utf-8",
         )
 
         output = self.assert_workspace_render_fails()
@@ -124,9 +165,17 @@ class WorkspaceRenderTest(unittest.TestCase):
 
     def test_render_workspace_keeps_argument_errors_at_two(self):
         result = subprocess.run(
-            ["python3", "-B", str(COMMAND), "render-workspace", "--repo",
-             str(self.workspace)],
-            capture_output=True, text=True, check=False,
+            [
+                "python3",
+                "-B",
+                str(COMMAND),
+                "render-workspace",
+                "--repo",
+                str(self.workspace),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
         self.assertEqual(result.returncode, 2)

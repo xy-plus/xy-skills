@@ -24,12 +24,11 @@ def write_map(data, directory):
             feature_id: {key: value for key, value in feature.items() if key != "files"}
             for feature_id, feature in data["features"].items()
         },
-        "markers": data["markers"],
     }
     map_text = json_for_html(data) + "\n"
-    template = (Path(__file__).resolve().parent / "templates" / "feature-tree.html").read_text(
-        encoding="utf-8"
-    )
+    template = (
+        Path(__file__).resolve().parent / "templates" / "feature-tree.html"
+    ).read_text(encoding="utf-8")
     page_text = template.replace("__MAP_DATA__", json_for_html(page_data))
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "map-data.json").write_text(map_text, encoding="utf-8")

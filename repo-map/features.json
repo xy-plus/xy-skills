@@ -26,16 +26,6 @@
       "status": "确认"
     },
     {
-      "id": "review-changed-features",
-      "text": "清扫后记录各功能最近认可的状态，使后续可以只重审发生变化的功能。",
-      "status": "确认"
-    },
-    {
-      "id": "define-skill-map",
-      "text": "维护者可以按功能登记这套技能的目标、理由和组成，并据此生成和检查功能图。",
-      "status": "确认"
-    },
-    {
       "id": "declare-skipped-content",
       "text": "功能图和清扫能明确哪些仓库内容不参与统计与审查；没有排除项时也明确声明为空。",
       "status": "确认"
@@ -81,16 +71,6 @@
       "status": "确认"
     },
     {
-      "id": "maintain-feature-map",
-      "text": "已有功能清单的仓库在每次改动时维护功能归属并校验清单。",
-      "status": "确认"
-    },
-    {
-      "id": "record-feature-approvals",
-      "text": "清扫完成后记录用户认可的功能状态，使后续重审只覆盖发生变化的功能。",
-      "status": "确认"
-    },
-    {
       "id": "run-complete-test-suite",
       "text": "使用者能从仓库说明找到并运行覆盖各子项目的完整测试套件。",
       "status": "确认"
@@ -98,11 +78,6 @@
     {
       "id": "require-browser-tests",
       "text": "浏览器测试必须配置 Playwright 和 Chromium；环境缺失时明确失败，不静默跳过。",
-      "status": "确认"
-    },
-    {
-      "id": "check-review-regressions",
-      "text": "修改清扫或审查规则后，按记录的漏审案例做回归对照。",
       "status": "确认"
     },
     {
@@ -637,11 +612,6 @@
             {
               "id": "diagnose-after-third-failure",
               "text": "正式审查第三轮仍不通过时，先判因再开下一组，不得开第四轮。",
-              "status": "确认"
-            },
-            {
-              "id": "audit-informal-loops",
-              "text": "非正式改测循环按每个目录最大的记录轮号计数，达到三轮且无有效判因时报告问题。",
               "status": "确认"
             },
             {
@@ -1549,7 +1519,7 @@
         {
           "id": "xy-repo-map",
           "title": "仓库功能图",
-          "what": "展示本仓及已登记子仓的功能树：各功能做什么、为什么、按目录归属的文件、代码/测试/文档/注释行数、文档字数、用到与被用到的关系、外部依赖及待决定条目数量；可发布，工作树出图时根功能名取主检出目录名。",
+          "what": "让审核者对照仓库当前实现和功能意图，发现偏差、过期或不值得保留的功能，并据此修正功能图或删减功能。",
           "why": {
             "text": "以后审核，就是看仓库实际情况和图的情况，功能多了应该删掉或更新图。",
             "source": "原话",
@@ -1586,11 +1556,6 @@
             {
               "id": "draft-ai-written-items",
               "text": "AI 新写或改写的条目在用户确认该条文字前标为「起草」。",
-              "status": "起草"
-            },
-            {
-              "id": "complete-empty-feature-items",
-              "text": "已有功能尚无条目且改动涉及条目时，会按现状起草该功能的全部条目。",
               "status": "起草"
             }
           ],
@@ -1648,7 +1613,7 @@
             {
               "id": "assign-files",
               "title": "每个文件归到哪个功能",
-              "what": "每个被跟踪文件恰好归到一个功能；没登记的测试跟着它导入的被测代码归属；几个兄弟功能共用的文件归它们最近的共同上级并标「共用」，上下级同时登记的文件归下级。",
+              "what": "按文件实际服务的功能归属，以便规模统计和使用关系计入对应功能；测试按其断言实际检查的行为确定归属。",
               "why": {
                 "text": "行数要算到功能头上，先得知道每个文件是谁的。",
                 "source": "确认",
@@ -1658,38 +1623,13 @@
               "directory": "repository-care/xy-repo-map/repo_map_lib/assign_files",
               "items": [
                 {
-                  "id": "one-owner",
-                  "text": "每份 Git 跟踪文件都归到包含它的最深功能目录对应的功能。",
+                  "id": "service-object-ownership",
+                  "text": "文件按实际服务的功能放置，每份文件只归一个功能；测试按断言实际检查的行为确定归属。",
                   "status": "起草"
                 },
                 {
-                  "id": "leaf-directory",
-                  "text": "功能目录覆盖自己的全部文件；文件位于子功能目录时归该子功能。",
-                  "status": "起草"
-                },
-                {
-                  "id": "registered-owner",
-                  "text": "上级和子功能各自拥有目录中的文件；每份文件只按最深功能目录确定归属。",
-                  "status": "起草"
-                },
-                {
-                  "id": "import-reach",
-                  "text": "代码导入只用于推导 uses 关系，不改变文件归属。",
-                  "status": "起草"
-                },
-                {
-                  "id": "tests-follow-code",
-                  "text": "测试文件按所在的最深功能目录归属，不跟随它导入的代码。",
-                  "status": "起草"
-                },
-                {
-                  "id": "shared-owner",
-                  "text": "多个功能使用同一份文件时，文件仍按所在目录归属，使用关系单独显示。",
-                  "status": "起草"
-                },
-                {
-                  "id": "whole-fallback",
-                  "text": "不需要入口、导入或文件名推断；每份文件都由所在的最深功能目录确定归属。",
+                  "id": "code-structure-priority",
+                  "text": "代码自身的结构和依赖约束优先；文件放不进它服务的功能层时，归到能容纳它的最近功能层。跨语言实现归入接入层，条目跟着实现；另一语言部分自成模块时才单列子功能。",
                   "status": "起草"
                 }
               ],
@@ -1724,7 +1664,7 @@
                 },
                 {
                   "id": "non-text-inputs",
-                  "text": "符号链接、含 NUL 的文件和其他非统计文件不跟随或读取，均归为其他并计零行。",
+                  "text": "读取候选文件的原始字节以识别 NUL；命中后不解码、不计数、不推导关系。",
                   "status": "确认"
                 },
                 {
@@ -1778,7 +1718,7 @@
             {
               "id": "find-dependencies",
               "title": "看出功能之间谁用到谁",
-              "what": "识别 Python 导入，以及代码、文档里写出的路径和目录功能名提及关系。",
+              "what": "识别仓内 Python 导入、代码或文档中的文件路径和功能目录名提及，以及已声明外部依赖的使用关系。",
               "why": {
                 "text": "有些功能和规范会被许多地方依赖，但关系不容易看出来。",
                 "source": "确认",
@@ -1893,11 +1833,6 @@
                   "status": "确认"
                 },
                 {
-                  "id": "show-status-marker-counts",
-                  "text": "汇总显示“等你拍板”标记数量。",
-                  "status": "起草"
-                },
-                {
                   "id": "show-proportional-line-bar",
                   "text": "每个功能显示占父功能比例的行数条。",
                   "status": "确认"
@@ -1924,7 +1859,7 @@
                 },
                 {
                   "id": "pending-decision-filter",
-                  "text": "筛选待决定项时只显示含“等你拍板”条目的功能及其上级，并隐藏其他功能和上级的本级自己的部分。",
+                  "text": "筛选待决定项时只显示带有“等你拍板”标记的功能及其上级，其他功能隐藏。",
                   "status": "起草"
                 },
                 {
@@ -2040,11 +1975,6 @@
           "directory": "repository-care/xy-cleanup",
           "items": [
             {
-              "id": "minimal-result",
-              "text": "只保留实际使用中用到或用户决定留下的功能。",
-              "status": "起草"
-            },
-            {
               "id": "explicit-scope",
               "text": "每次清扫都明确仓库绝对路径和功能范围，范围为功能 id 列表或全部。",
               "status": "确认"
@@ -2058,11 +1988,6 @@
               "id": "isolated-worktree",
               "text": "清扫产生的修改在隔离工作树中完成。",
               "status": "确认"
-            },
-            {
-              "id": "draft-missing-items",
-              "text": "功能没有条目时，在卡片上附上按现状起草的全部条目供用户确认。",
-              "status": "起草"
             },
             {
               "id": "unverified-reason-draft",
@@ -2136,8 +2061,8 @@
             },
             {
               "id": "no-deletion-quota",
-              "text": "清扫不设最低删减数量。",
-              "status": "起草"
+              "text": "清扫不为凑删减比例或数量硬删。",
+              "status": "确认"
             },
             {
               "id": "machine-report-check",
@@ -2200,11 +2125,6 @@
               "status": "确认"
             },
             {
-              "id": "clear-pending-markers",
-              "text": "清扫完成时，范围内没有待确认条目；尚未实现的功能须先完成并登记后再进入清扫。",
-              "status": "起草"
-            },
-            {
               "id": "after-cleanup-report",
               "text": "用户收到清扫后的功能图、前后行数和标记变化、测试结果及遗留问题。",
               "status": "确认"
@@ -2238,6 +2158,11 @@
               "id": "record-each-reviewed-feature",
               "text": "终审通过后，决定页中仍保留的每个功能都记入认可记录。",
               "status": "起草"
+            },
+            {
+              "id": "short-run-usage-coverage",
+              "text": "清扫时按 README「实际使用」所列记录在副本里短跑、统计覆盖，没执行到的按功能汇总，交审查判断。",
+              "status": "确认"
             }
           ],
           "children": [
@@ -2361,17 +2286,17 @@
               "title": "只审变过的功能",
               "what": "重复清扫时默认只审上次认可后新增或变过的功能，并给出上次认可的提交。",
               "why": {
-                "text": "重复清扫时，没变的功能不用重审；大仓库每次全审太慢。",
-                "source": "确认",
-                "quote": "",
-                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261111-044910-xy-skills-cleanup-incremental/decisions/answers.json#answers.L9"
+                "text": "重复清扫时，按上次认可的提交到最新提交之间的改动，确定哪些功能需要重审。",
+                "source": "原话",
+                "quote": "知道上次用户确认过的图对应的commit，到最新的commit，改过的代码对应哪些功能，哪些功能就是要审的",
+                "from": "/data/user/xy/runs/-home-xy-quant-workspace/20261119-164854-quant-engine-repo-map-trial-migration/xy-goal/quotes/43.md"
               },
               "directory": "repository-care/xy-cleanup/changed_features_only",
               "items": [
                 {
                   "id": "review-changed-features",
-                  "text": "重复清扫时按每个功能的清单内容和直属未跳过跟踪文件独立比较认可指纹，只列出从未认可或认可后变过的功能。",
-                  "status": "确认"
+                  "text": "重复清扫时按功能登记和直属文件从上次认可提交到当前提交的变化，只列发生变化的功能。",
+                  "status": "起草"
                 },
                 {
                   "id": "choose-review-scope",
@@ -2385,7 +2310,7 @@
                 },
                 {
                   "id": "record-approved-state",
-                  "text": "审查完成后仅保存本次实际审过的功能认可指纹，保留范围外仍有效的记录，并移除功能图中已不存在的编号。",
+                  "text": "审查完成后，根据决定清单和完整回答记录所答功能当时的提交，保留其他有效记录并删除已不存在的功能记录。",
                   "status": "起草"
                 },
                 {
@@ -2395,12 +2320,12 @@
                 },
                 {
                   "id": "validate-approval-record",
-                  "text": "认可记录必须是仓库内有效的普通 JSON 文件，键不重复且每个指纹格式正确；损坏或指向仓外时明确报错。",
-                  "status": "确认"
+                  "text": "认可记录必须是仓库内有效的普通 JSON 文件，键不重复，值为 40 位小写完整提交号且是当前 HEAD 的祖先；无效时明确报错。",
+                  "status": "起草"
                 },
                 {
                   "id": "show-approval-commit",
-                  "text": "计划逐项显示写下该功能当前认可指纹的最近提交；没有记录时显示「无」，当前记录未提交时拒绝生成计划。",
+                  "text": "计划逐项显示该功能上次认可时的提交；无记录时显示“无”，无效或不在当前历史中的记录拒绝生成计划。",
                   "status": "起草"
                 }
               ],
@@ -2449,13 +2374,13 @@
                 "text": "关键约束要写进代码本身，避免只靠文档提醒而误用。",
                 "source": "原话",
                 "quote": "约束尽量写进代码本身，避免文档软约束造成误用。",
-                "from": "rules/xy-repo-rules/SKILL.md 第 5 条"
+                "from": "rules/xy-repo-rules/SKILL.md@ba80447 第 5 条"
               },
               "directory": "repository-care/xy-cleanup/usage_coverage_check",
               "items": [
                 {
                   "id": "match-usage-sources",
-                  "text": "覆盖记录中的来源逐条对应 README「实际使用」内容；表格按数据行、列表按项、其他内容按段落。",
+                  "text": "覆盖记录中的来源逐条对应 README「实际使用」内容；表格按数据行，其他内容按段落。",
                   "status": "起草"
                 },
                 {

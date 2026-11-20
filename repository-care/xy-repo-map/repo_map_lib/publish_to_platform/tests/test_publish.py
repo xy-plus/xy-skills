@@ -9,7 +9,10 @@ import unittest
 from unittest.mock import patch
 
 import sys
-REPOSITORY_ROOT = next(parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists())
+
+REPOSITORY_ROOT = next(
+    parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
+)
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
 from map_fixture import COMMAND
 
@@ -27,15 +30,25 @@ class PublishTest(unittest.TestCase):
 
     def write_map_data(self, data):
         (self.output / "map-data.json").write_text(
-            json.dumps(data, ensure_ascii=False), encoding="utf-8",
+            json.dumps(data, ensure_ascii=False),
+            encoding="utf-8",
         )
         (self.output / "index.html").write_text("page", encoding="utf-8")
 
     def run_publish(self, *arguments):
         return subprocess.run(
-            ["python3", "-B", str(COMMAND), "publish", "--out", str(self.output),
-             *arguments],
-            capture_output=True, text=True, check=False,
+            [
+                "python3",
+                "-B",
+                str(COMMAND),
+                "publish",
+                "--out",
+                str(self.output),
+                *arguments,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     def publish_with_fake_platform(self, as_mode):
@@ -47,7 +60,9 @@ class PublishTest(unittest.TestCase):
             return subprocess.CompletedProcess(arguments, 0)
 
         output = io.StringIO()
-        with patch("repo_map_lib.publish_to_platform.publish_command.subprocess.run", run):
+        with patch(
+            "repo_map_lib.publish_to_platform.publish_command.subprocess.run", run
+        ):
             with redirect_stdout(output):
                 code = publish_repository(str(self.output), as_mode)
         return code, output.getvalue(), calls
@@ -85,15 +100,20 @@ class PublishTest(unittest.TestCase):
         self.assertIn("choose from 当前, 清扫前, 清扫后", result.stderr)
 
     def test_publish_uses_the_repository_map_name_for_current(self):
-        self.write_map_data({
-            "root": "root",
-            "features": {"root": {"directory_name": "xy-skills"}},
-        })
+        self.write_map_data(
+            {
+                "root": "root",
+                "features": {"root": {"directory_name": "xy-skills"}},
+            }
+        )
 
         code, output, calls = self.publish_with_fake_platform("当前")
 
         expected = [
-            PLATFORM_PYTHON, str(PORTAL_SCRIPT), "publish", "xy-skills-map",
+            PLATFORM_PYTHON,
+            str(PORTAL_SCRIPT),
+            "publish",
+            "xy-skills-map",
             str(self.output.resolve()),
         ]
         self.assertEqual(code, 0)
@@ -104,13 +124,15 @@ class PublishTest(unittest.TestCase):
         )
 
     def test_publish_uses_an_overview_name_when_feature_ids_have_paths(self):
-        self.write_map_data({
-            "root": "root",
-            "features": {
-                "root": {"directory_name": "quant-workspace"},
-                "quant-a/root": {"directory_name": "quant-a"},
-            },
-        })
+        self.write_map_data(
+            {
+                "root": "root",
+                "features": {
+                    "root": {"directory_name": "quant-workspace"},
+                    "quant-a/root": {"directory_name": "quant-a"},
+                },
+            }
+        )
 
         code, _, calls = self.publish_with_fake_platform("当前")
 
@@ -118,10 +140,12 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(calls[0][0][3], "quant-workspace-overview-map")
 
     def test_publish_dates_before_and_after_snapshots_in_the_local_timezone(self):
-        self.write_map_data({
-            "root": "root",
-            "features": {"root": {"directory_name": "quant-deep"}},
-        })
+        self.write_map_data(
+            {
+                "root": "root",
+                "features": {"root": {"directory_name": "quant-deep"}},
+            }
+        )
         date = datetime.now().astimezone().strftime("%Y%m%d")
 
         for as_mode, ending in (("清扫前", "before"), ("清扫后", "after")):
@@ -133,23 +157,47 @@ class PublishTest(unittest.TestCase):
     def test_publish_rejects_unreadable_map_data_without_calling_the_platform(self):
         (self.output / "map-data.json").write_text("not json", encoding="utf-8")
         (self.output / "index.html").write_text("page", encoding="utf-8")
-        with patch("repo_map_lib.publish_to_platform.publish_command.subprocess.run") as platform:
+        with patch(
+            "repo_map_lib.publish_to_platform.publish_command.subprocess.run"
+        ) as platform:
             with self.assertRaisesRegex(ArgumentError, "map-data.json"):
                 publish_repository(str(self.output), "当前")
         platform.assert_not_called()
+
+    def test_publish_rejects_empty_or_non_utf8_page_without_calling_the_platform(self):
+        self.write_map_data(
+            {
+                "root": "root",
+                "features": {"root": {"directory_name": "xy-skills"}},
+            }
+        )
+        page = self.output / "index.html"
+        for content in (b"", b" \n", b"\xff"):
+            with self.subTest(content=content):
+                page.write_bytes(content)
+                with patch(
+                    "repo_map_lib.publish_to_platform.publish_command.subprocess.run"
+                ) as platform:
+                    with self.assertRaisesRegex(ArgumentError, "index.html"):
+                        publish_repository(str(self.output), "当前")
+                platform.assert_not_called()
 
     def test_publish_requires_the_root_feature_in_map_data(self):
         for data in ({"root": "root", "features": {}}, []):
             with self.subTest(data=data):
                 self.write_map_data(data)
-                with patch("repo_map_lib.publish_to_platform.publish_command.subprocess.run") as platform:
+                with patch(
+                    "repo_map_lib.publish_to_platform.publish_command.subprocess.run"
+                ) as platform:
                     with self.assertRaisesRegex(ArgumentError, "缺少根功能"):
                         publish_repository(str(self.output), "当前")
                     platform.assert_not_called()
 
     def test_publish_requires_directory_name_on_the_root_feature(self):
         self.write_map_data({"root": "root", "features": {"root": {}}})
-        with patch("repo_map_lib.publish_to_platform.publish_command.subprocess.run") as platform:
+        with patch(
+            "repo_map_lib.publish_to_platform.publish_command.subprocess.run"
+        ) as platform:
             with self.assertRaisesRegex(ArgumentError, "directory_name"):
                 publish_repository(str(self.output), "当前")
         platform.assert_not_called()

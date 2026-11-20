@@ -42,13 +42,11 @@ claude plugin list
 
 最后核对仅启用 `superpowers@superpowers-dev` 7.0.2；未装在项目范围时，不运行带 `--scope project` 的停用命令。
 
-改动扫描使用 ruff 和 vulture：
+改动扫描使用固定版本的 ruff：
 
 ```bash
-python3 -m pip install --user ruff vulture
+python3 -m pip install --user ruff==0.12.12
 ```
-
-已测版本：ruff 0.12.12、vulture 2.16。改到 Rust 文件时，扫描还需要 Rust 工具链中的 `cargo clippy`。
 
 在全局 `~/.claude/settings.json` 的 `env` 中显式设置 runs 绝对路径并保留现有配置，例如：
 
@@ -82,9 +80,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 @~/xy-skills/rules/xy-repo-rules/SKILL.md
 ```
 
-`xy-workflow` 依赖 Claude Code 插件 `superpowers`（必须是 7.0.2）及本仓库的 `workflow-capabilities/xy-goal`、`workflow-capabilities/xy-review`、`workflow-capabilities/sync-think`；`xy-goal` 依赖 Claude Code 的 hook 和定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见其 README；`workflow-capabilities/xy-review/review_report_check/check.py`、`repository-care/xy-repo-map` 和 `repository-care/xy-cleanup` 共用根目录的 `json_validation.py`。`xy-handoff/handoff_note_check/check_handoff.py` 也使用该模块。`xy-handoff` 单向依赖 `xy-runs` 及 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
-
-`workflow-capabilities/xy-review/change_scan/scan_changes.py` 复用同目录 `duplicate_blocks.py` 检查重复块，以及 `repository-care/xy-repo-map` 的文件分类和 `repo-map/skip.json` 跳过名单；改到 Python 文件时需要 ruff 和 vulture，改到 Rust 文件时需要 `cargo clippy`。工具缺失或运行失败会让扫描失败。
+`xy-workflow` 依赖 Claude Code 插件 `superpowers`（必须是 7.0.2）及本仓库的 `workflow-capabilities/xy-goal`、`workflow-capabilities/xy-review`、`workflow-capabilities/sync-think`；`xy-goal` 依赖 Claude Code 的 hook 和定时任务工具 `CronCreate`、`CronList`、`CronDelete`，运行前提见其 README。`xy-handoff` 使用 `xy-runs` 的运行目录，并依赖 Claude Code 自带的 `claude --bg`、`claude agents`、`claude respawn`、`claude rm`、`SendMessage`、`PushNotification`。
 
 按 [定期清理说明](xy-runs/scheduled_cleanup/README.md) 安装清理定时器，并配置 runs 清理范围。
 
@@ -94,7 +90,7 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 
 有功能图的仓库在根目录放 `repo-map/features.json`；有该文件时，每次改动按 `xy-workflow` 维护清单。格式、命令和推导规则见 [`repository-care/xy-repo-map/SKILL.md`](repository-care/xy-repo-map/SKILL.md)。
 
-清扫收尾时，`repository-care/xy-cleanup` 将认可的功能指纹写入 `repo-map/approved.json`，供下次只审查有变化的功能。
+发布功能图需要 `web-portal`。清扫收尾时，`repository-care/xy-cleanup` 将决定清单中已回答功能当时的提交写入 `repo-map/approved.json`，供下次按提交间的改动规划审查范围。
 
 ## 实际使用
 
@@ -114,8 +110,6 @@ mkdir -p "${RUNS_ROOT:?请先在全局 settings.json 的 env 中设置 RUNS_ROOT
 运行目录满 30 天未改动会被定期清理（见 `xy-runs`），更早的证据只能在会话记录、记忆和提交历史里找。
 
 ## 测试
-
-`xy-review` 测试会实际运行改动扫描，须先安装 ruff 0.12.12、vulture 2.16 和 Rust 工具链中的 `cargo clippy`；缺少任一工具时测试失败，不跳过。
 
 `unittest discover` 不会进入没有 `__init__.py` 的功能子目录，因此按每个含测试文件的目录分别运行；以后新增测试目录会自动加入。任一目录失败时循环立即返回非零状态。从仓库根目录运行：
 
@@ -141,7 +135,7 @@ python -m playwright install chromium
 export XY_REPO_MAP_CHROMIUM=/path/to/chrome
 mapfile -t browser_dirs < <(find . -path './.git' -prune -o -path './.worktrees' -prune -o -type f -name 'browser_*_test.py' -printf '%h\n' | sort -u)
 for browser_dir in "${browser_dirs[@]}"; do
-  XY_REPO_MAP_CHROMIUM="$XY_REPO_MAP_CHROMIUM" python3 -B -m unittest discover -s "$browser_dir" -p 'browser_*_test.py' || exit $?
+  python3 -B -m unittest discover -s "$browser_dir" -p 'browser_*_test.py' || exit $?
 done
 ```
 
