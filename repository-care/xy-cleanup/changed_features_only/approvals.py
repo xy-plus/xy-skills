@@ -1,10 +1,10 @@
 import argparse
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import re
 import stat
-import subprocess
 import sys
 import tempfile
 
@@ -347,59 +347,90 @@ def _is_excluded(path, old_skip, current_skip):
     )
 
 
-def _changed_file_owners(
-    repository, old_commit, head, old_snapshot, current_snapshot, old_skip, current_skip
-):
+@dataclass
+class FileComparison:
+    repository: Path
+    old_commit: str
+    head: str
+    old_snapshot: dict
+    current_snapshot: dict
+    old_skip: set
+    current_skip: set
+
+
+def _record_owner_change(path, old_owner, current_owner, changed, transfers):
+    if old_owner == current_owner:
+        return
+    changed.update((old_owner, current_owner))
+    transfers.append((path, old_owner, current_owner))
+
+
+def _shared_path_owners(context, path):
+    return (
+        _snapshot_owner(path, context.old_snapshot),
+        _snapshot_owner(path, context.current_snapshot),
+    )
+
+
+def _changed_file_owners(context):
     changed = set()
     transfers = []
-    old_paths = _snapshot_paths(repository, old_commit)
-    current_paths = _snapshot_paths(repository, head)
+    old_paths = _snapshot_paths(context.repository, context.old_commit)
+    current_paths = _snapshot_paths(context.repository, context.head)
 
     for path in old_paths & current_paths:
-        if _is_excluded(path, old_skip, current_skip):
+        if _is_excluded(path, context.old_skip, context.current_skip):
             continue
-        old_owner = _snapshot_owner(path, old_snapshot)
-        current_owner = _snapshot_owner(path, current_snapshot)
-        if old_owner != current_owner:
-            changed.update((old_owner, current_owner))
-            transfers.append((path, old_owner, current_owner))
+        old_owner, current_owner = _shared_path_owners(context, path)
+        _record_owner_change(path, old_owner, current_owner, changed, transfers)
 
-    for change in _diff_records(repository, old_commit, head):
-        status = change[0]
-        if status.startswith("R"):
-            old_path, current_path = change[1], change[2]
-            if _is_excluded(old_path, old_skip, current_skip) or _is_excluded(
-                current_path,
-                old_skip,
-                current_skip,
-            ):
-                continue
-            old_owner = _snapshot_owner(old_path, old_snapshot)
-            current_owner = _snapshot_owner(current_path, current_snapshot)
-            if status != "R100" or old_owner != current_owner:
-                changed.update((old_owner, current_owner))
-            if old_owner != current_owner:
-                transfers.append(
-                    (f"{old_path} -> {current_path}", old_owner, current_owner)
-                )
-        elif status.startswith("A"):
-            path = change[1]
-            if not _is_excluded(path, old_skip, current_skip):
-                changed.add(_snapshot_owner(path, current_snapshot))
-        elif status.startswith("D"):
-            path = change[1]
-            if not _is_excluded(path, old_skip, current_skip):
-                changed.add(_snapshot_owner(path, old_snapshot))
-        elif status.startswith(("M", "T")):
-            path = change[1]
-            if _is_excluded(path, old_skip, current_skip):
-                continue
-            old_owner = _snapshot_owner(path, old_snapshot)
-            current_owner = _snapshot_owner(path, current_snapshot)
-            changed.update((old_owner, current_owner))
-            if old_owner != current_owner:
-                transfers.append((path, old_owner, current_owner))
+    for change in _diff_records(context.repository, context.old_commit, context.head):
+        _record_diff_owners(context, change, changed, transfers)
     return changed, transfers
+
+
+def _record_diff_owners(context, change, changed, transfers):
+    status = change[0]
+    if status.startswith("R"):
+        _record_rename_owners(context, status, change[1], change[2], changed, transfers)
+    elif status.startswith("A"):
+        _record_added_owner(context, change[1], changed)
+    elif status.startswith("D"):
+        _record_deleted_owner(context, change[1], changed)
+    elif status.startswith(("M", "T")):
+        _record_modified_owners(context, change[1], changed, transfers)
+
+
+def _record_rename_owners(context, status, old_path, current_path, changed, transfers):
+    if _is_excluded(old_path, context.old_skip, context.current_skip) or _is_excluded(
+        current_path, context.old_skip, context.current_skip
+    ):
+        return
+    old_owner = _snapshot_owner(old_path, context.old_snapshot)
+    current_owner = _snapshot_owner(current_path, context.current_snapshot)
+    if status != "R100" or old_owner != current_owner:
+        changed.update((old_owner, current_owner))
+    if old_owner != current_owner:
+        transfers.append((f"{old_path} -> {current_path}", old_owner, current_owner))
+
+
+def _record_added_owner(context, path, changed):
+    if not _is_excluded(path, context.old_skip, context.current_skip):
+        changed.add(_snapshot_owner(path, context.current_snapshot))
+
+
+def _record_deleted_owner(context, path, changed):
+    if not _is_excluded(path, context.old_skip, context.current_skip):
+        changed.add(_snapshot_owner(path, context.old_snapshot))
+
+
+def _record_modified_owners(context, path, changed, transfers):
+    if _is_excluded(path, context.old_skip, context.current_skip):
+        return
+    old_owner, current_owner = _shared_path_owners(context, path)
+    changed.update((old_owner, current_owner))
+    if old_owner != current_owner:
+        transfers.append((path, old_owner, current_owner))
 
 
 def _skip_set_from_commit(repository, commit):
@@ -440,22 +471,25 @@ def _out_of_scope_message(feature_ids):
     )
 
 
-def _plan_changes(repository, data, values, records, selected, head):
-    current_snapshot = _current_snapshot(data, values)
-    current_skip = _current_skip_set(repository)
-    all_ids = set(data["features"])
-    selected_set = set(selected)
-    outside = all_ids - selected_set
-    changed = set()
-    outside_changes = []
-    snapshots = {}
+@dataclass
+class PlanInputs:
+    repository: Path
+    data: dict
+    values: dict
+    records: dict
+    selected: list
+    head: str
 
-    for feature_id in selected:
-        commit = records.get(feature_id)
+
+def _selected_registration_changes(inputs, current_snapshot):
+    changed = set()
+    snapshots = {}
+    for feature_id in inputs.selected:
+        commit = inputs.records.get(feature_id)
         if commit is None:
             continue
         try:
-            snapshot = _feature_snapshot(repository, commit)
+            snapshot = _feature_snapshot(inputs.repository, commit)
         except ValueError as error:
             raise ValueError(
                 f"认可记录之后的功能图属于旧格式，分不清改动归谁：{feature_id}；"
@@ -469,62 +503,91 @@ def _plan_changes(repository, data, values, records, selected, head):
         snapshots[feature_id] = snapshot
         if _registration_changed(snapshot, current_snapshot, feature_id):
             changed.add(feature_id)
+    return changed, snapshots
 
+
+def _outside_registration_changes(inputs, selected_set, current_snapshot, snapshots):
+    outside_changes = []
+    outside = set(inputs.data["features"]) - selected_set
     for feature_id in sorted(outside):
-        commit = records.get(feature_id)
+        commit = inputs.records.get(feature_id)
         if commit is None:
             outside_changes.append(feature_id)
             continue
         try:
             snapshot = snapshots.get(feature_id)
             if snapshot is None:
-                snapshot = _feature_snapshot(repository, commit)
+                snapshot = _feature_snapshot(inputs.repository, commit)
             if _registration_changed(snapshot, current_snapshot, feature_id):
                 outside_changes.append(feature_id)
         except ValueError:
             outside_changes.append(feature_id)
+    return outside_changes
 
-    root_id = data["root"]
-    root_commit = records.get(root_id)
-    if root_commit is not None:
-        old_skip = _skip_set_from_commit(repository, root_commit)
-        if old_skip != current_skip:
-            if root_id in selected_set:
-                changed.add(root_id)
-            else:
-                raise ValueError(
-                    "跳过名单改过；功能 root 在审查范围外。"
-                    "按 xy-cleanup:map-update-scope 要审全图："
-                    "把范围改成「全部」或把 root 加进范围重跑"
-                )
 
-    for feature_id in selected:
-        commit = records.get(feature_id)
+def _check_skip_boundary(inputs, current_skip, selected_set, changed):
+    root_id = inputs.data["root"]
+    root_commit = inputs.records.get(root_id)
+    if root_commit is None:
+        return
+    old_skip = _skip_set_from_commit(inputs.repository, root_commit)
+    if old_skip == current_skip:
+        return
+    if root_id in selected_set:
+        changed.add(root_id)
+        return
+    raise ValueError(
+        "跳过名单改过；功能 root 在审查范围外。"
+        "按 xy-cleanup:map-update-scope 要审全图："
+        "把范围改成「全部」或把 root 加进范围重跑"
+    )
+
+
+def _changed_file_scope(inputs, snapshots, current_snapshot, current_skip):
+    changed = set()
+    outside_changes = []
+    selected_set = set(inputs.selected)
+    for feature_id in inputs.selected:
+        commit = inputs.records.get(feature_id)
         if commit is None:
             continue
         old_snapshot = snapshots[feature_id]
-        old_skip = _skip_set_from_commit(repository, commit)
-        file_changes, transfers = _changed_file_owners(
-            repository,
+        old_skip = _skip_set_from_commit(inputs.repository, commit)
+        comparison = FileComparison(
+            inputs.repository,
             commit,
-            head,
+            inputs.head,
             old_snapshot,
             current_snapshot,
             old_skip,
             current_skip,
         )
+        file_changes, transfers = _changed_file_owners(comparison)
         changed.update(file_changes & selected_set)
         for path, old_owner, current_owner in transfers:
             if old_owner != current_owner and (
                 old_owner not in selected_set or current_owner not in selected_set
             ):
                 outside_changes.extend(
-                    (
-                        f"{path}（{old_owner}）",
-                        f"{path}（{current_owner}）",
-                    )
+                    (f"{path}（{old_owner}）", f"{path}（{current_owner}）")
                 )
+    return changed, outside_changes
 
+
+def _plan_changes(inputs):
+    current_snapshot = _current_snapshot(inputs.data, inputs.values)
+    current_skip = _current_skip_set(inputs.repository)
+    selected_set = set(inputs.selected)
+    changed, snapshots = _selected_registration_changes(inputs, current_snapshot)
+    outside_changes = _outside_registration_changes(
+        inputs, selected_set, current_snapshot, snapshots
+    )
+    _check_skip_boundary(inputs, current_skip, selected_set, changed)
+    file_changes, file_outside_changes = _changed_file_scope(
+        inputs, snapshots, current_snapshot, current_skip
+    )
+    changed.update(file_changes)
+    outside_changes.extend(file_outside_changes)
     if outside_changes:
         raise ValueError(_out_of_scope_message(outside_changes))
     return changed
@@ -547,7 +610,7 @@ def plan_data(repository, scope, review):
     if review == "全部":
         planned = [(feature_id, "全部重审") for feature_id in selected]
     else:
-        changed = _plan_changes(root, data, values, records, selected, head)
+        changed = _plan_changes(PlanInputs(root, data, values, records, selected, head))
         planned = []
         for feature_id in selected:
             if feature_id not in records:

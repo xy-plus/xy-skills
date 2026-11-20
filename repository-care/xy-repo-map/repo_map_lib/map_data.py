@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 from .constants import (
@@ -198,48 +199,80 @@ def _aggregate_feature_metrics(features, order, paths, owners, counts):
     return lines, doc_chars, files, children, totals, total_doc_chars
 
 
-def _derive_feature_uses(
-    order,
-    features,
-    paths,
-    categories,
-    source_texts,
-    external_mentions,
-    imports,
-    owners,
-    files,
+@dataclass
+class UseInputs:
+    order: list
+    features: dict
+    paths: list
+    categories: dict
+    source_texts: dict
+    external_mentions: dict
+    imports: dict
+    owners: dict
+    files: dict
+
+
+@dataclass
+class UseGraph:
+    by_source: dict
+    external: dict
+
+
+def _record_file_uses(
+    inputs, source_path, uses, external_uses, directories, features_with_files
 ):
+    category = inputs.categories[source_path]
+    if category not in ("code", "docs", "tests"):
+        return
+    source_owner = inputs.owners[source_path]
+    external_uses[source_owner].update(inputs.external_mentions.get(source_path, ()))
+    for target_path in inputs.imports[source_path]:
+        if target_path in inputs.owners:
+            _add_use(
+                uses,
+                source_owner,
+                inputs.owners[target_path],
+                "import",
+                inputs.features,
+            )
+    if category not in ("code", "docs"):
+        return
+    source = inputs.source_texts[source_path]
+    for target_path in file_mentions(source_path, source, inputs.paths):
+        target_owner = inputs.owners.get(target_path)
+        if target_owner is not None:
+            _add_use(uses, source_owner, target_owner, "mention", inputs.features)
+    for target_feature in directory_mentions(
+        source,
+        directories,
+        source_owner,
+        features_with_files,
+    ):
+        _add_use(uses, source_owner, target_feature, "mention", inputs.features)
+
+
+def _derive_feature_uses(inputs):
+    order = inputs.order
+    features = inputs.features
     directories = {
         feature_id: features[feature_id]["directory"] for feature_id in order
     }
     features_with_files = {
-        feature_id for feature_id, feature_files in files.items() if feature_files
+        feature_id
+        for feature_id, feature_files in inputs.files.items()
+        if feature_files
     }
     uses = {}
     external_uses = {feature_id: set() for feature_id in order}
-    for source_path in paths:
-        category = categories[source_path]
-        if category not in ("code", "docs", "tests"):
-            continue
-        source_owner = owners[source_path]
-        external_uses[source_owner].update(external_mentions.get(source_path, ()))
-        for target_path in imports[source_path]:
-            if target_path in owners:
-                _add_use(uses, source_owner, owners[target_path], "import", features)
-        if category not in ("code", "docs"):
-            continue
-        source = source_texts[source_path]
-        for target_path in file_mentions(source_path, source, paths):
-            target_owner = owners.get(target_path)
-            if target_owner is not None:
-                _add_use(uses, source_owner, target_owner, "mention", features)
-        for target_feature in directory_mentions(
-            source,
+    for source_path in inputs.paths:
+        _record_file_uses(
+            inputs,
+            source_path,
+            uses,
+            external_uses,
             directories,
-            source_owner,
             features_with_files,
-        ):
-            _add_use(uses, source_owner, target_feature, "mention", features)
+        )
 
     index = {feature_id: position for position, feature_id in enumerate(order)}
     uses_by_source = {feature_id: [] for feature_id in order}
@@ -252,22 +285,17 @@ def _derive_feature_uses(
         )
     for feature_uses in uses_by_source.values():
         feature_uses.sort(key=lambda item: index[item["feature"]])
-    return uses_by_source, external_uses
+    return UseGraph(uses_by_source, external_uses)
 
 
 def _assemble_features(
     root,
     features,
     order,
-    lines,
-    doc_chars,
-    files,
-    children,
-    totals,
-    total_doc_chars,
-    uses_by_source,
-    external_uses,
+    metrics,
+    use_graph,
 ):
+    lines, doc_chars, files, children, totals, total_doc_chars = metrics
     repository_name = primary_checkout_name(root)
     result = {}
     for feature_id in order:
@@ -293,8 +321,8 @@ def _assemble_features(
                 "total": total_doc_chars[feature_id],
             },
             "files": files[feature_id],
-            "uses": uses_by_source[feature_id],
-            "external_uses": sorted(external_uses[feature_id]),
+            "uses": use_graph.by_source[feature_id],
+            "external_uses": sorted(use_graph.external[feature_id]),
             "markers": markers,
         }
     return result
@@ -317,28 +345,24 @@ def build_map(repository):
     owners = assign_files(features, order, paths)
     metrics = _aggregate_feature_metrics(features, order, paths, owners, counts)
     lines, doc_chars, files, children, totals, total_doc_chars = metrics
-    uses_by_source, external_uses = _derive_feature_uses(
-        order,
-        features,
-        paths,
-        categories,
-        source_texts,
-        external_mentions,
-        imports,
-        owners,
-        files,
+    use_graph = _derive_feature_uses(
+        UseInputs(
+            order,
+            features,
+            paths,
+            categories,
+            source_texts,
+            external_mentions,
+            imports,
+            owners,
+            files,
+        )
     )
     result_features = _assemble_features(
         root,
         features,
         order,
-        lines,
-        doc_chars,
-        files,
-        children,
-        totals,
-        total_doc_chars,
-        uses_by_source,
-        external_uses,
+        metrics,
+        use_graph,
     )
     return {"root": order[0], "features": result_features}

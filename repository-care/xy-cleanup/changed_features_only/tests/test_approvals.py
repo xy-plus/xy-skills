@@ -14,7 +14,7 @@ XY_CLEANUP_DIRECTORY = REPOSITORY_CARE / "xy-cleanup"
 sys.path.insert(0, str(REPOSITORY_CARE / "tests"))
 sys.path.insert(0, str(XY_CLEANUP_DIRECTORY / "changed_features_only"))
 
-from map_fixture import feature, make_cleanup_repo  # noqa: E402
+from map_fixture import make_cleanup_repo  # noqa: E402
 
 
 COMMAND = XY_CLEANUP_DIRECTORY / "changed_features_only" / "approvals.py"

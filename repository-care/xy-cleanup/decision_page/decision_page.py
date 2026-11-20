@@ -57,39 +57,39 @@ def _decision_shape_view(value):
         return value
     result = dict(value)
     groups = result.get("groups")
-    if not isinstance(groups, list):
-        return result
-    result["groups"] = [
-        dict(group) if isinstance(group, dict) else group for group in groups
-    ]
-    for group in result["groups"]:
-        if not isinstance(group, dict) or not isinstance(group.get("items"), list):
-            continue
-        group["items"] = [
-            dict(item) if isinstance(item, dict) else item for item in group["items"]
-        ]
-        for item in group["items"]:
-            if not isinstance(item, dict):
-                continue
-            if "compare" not in item:
-                continue
-            compare = item.get("compare")
-            if compare is None:
-                item["compare"] = [
-                    {
-                        "lines": "optional",
-                        "before": "optional",
-                        "after": "optional",
-                    }
-                ]
-            elif isinstance(compare, list):
-                item["compare"] = [
-                    dict(block) if isinstance(block, dict) else block
-                    for block in compare
-                ]
-                for block in item["compare"]:
-                    if isinstance(block, dict) and block.get("after") == "":
-                        block["after"] = "deleted"
+    if isinstance(groups, list):
+        result["groups"] = [_decision_group_shape_view(group) for group in groups]
+    return result
+
+
+def _decision_group_shape_view(group):
+    if not isinstance(group, dict):
+        return group
+    result = dict(group)
+    items = result.get("items")
+    if isinstance(items, list):
+        result["items"] = [_decision_item_shape_view(item) for item in items]
+    return result
+
+
+def _decision_item_shape_view(item):
+    if not isinstance(item, dict):
+        return item
+    result = dict(item)
+    if "compare" in result:
+        result["compare"] = _compare_shape_view(result["compare"])
+    return result
+
+
+def _compare_shape_view(compare):
+    if compare is None:
+        return [{"lines": "optional", "before": "optional", "after": "optional"}]
+    if not isinstance(compare, list):
+        return compare
+    result = [dict(block) if isinstance(block, dict) else block for block in compare]
+    for block in result:
+        if isinstance(block, dict) and block.get("after") == "":
+            block["after"] = "deleted"
     return result
 
 

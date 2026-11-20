@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 
@@ -8,12 +9,12 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY_CARE = REPOSITORY_ROOT / "repository-care"
 sys.path.insert(0, str(REPOSITORY_CARE / "xy-cleanup" / "changed_features_only"))
 sys.path.insert(0, str(REPOSITORY_CARE / "tests"))
-from map_fixture import build_map, feature, make_repo, root_feature as make_root_feature  # noqa: E402
+from map_fixture import feature, make_repo, root_feature as make_root_feature  # noqa: E402
 import approvals  # noqa: E402
 
 
 class SkipApprovalIntegrationTest(unittest.TestCase):
-    def test_skipped_file_content_does_not_change_approval_fingerprint(self):
+    def test_skipped_file_changes_do_not_enter_the_commit_based_plan(self):
         repository = make_repo(
             self,
             {
@@ -33,24 +34,59 @@ class SkipApprovalIntegrationTest(unittest.TestCase):
                 items=[],
             ),
         )
-        data = build_map(repository)
-        values, _order = approvals.feature_values(repository)
-
-        including_file = approvals.feature_fingerprints(repository, data, values)[
-            "alpha"
-        ]
+        self.configure_git(repository)
+        self.commit(repository, "initial files")
         skip_path = repository / "repo-map" / "skip.json"
         skip_path.write_text(json.dumps(["alpha/ignored.py"]), encoding="utf-8")
-        excluding_file = approvals.feature_fingerprints(repository, data, values)[
-            "alpha"
-        ]
+        skipped = self.commit(repository, "declare skipped file")
+        approvals_path = repository / "repo-map" / "approved.json"
+        approvals_path.write_text(
+            json.dumps({"root": skipped, "alpha": skipped}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.commit(repository, "record approvals")
         (repository / "alpha" / "ignored.py").write_text(
             "secret = 'changed while skipped'\n",
             encoding="utf-8",
         )
-        after_skipped_change = approvals.feature_fingerprints(repository, data, values)[
-            "alpha"
-        ]
+        self.commit(repository, "change skipped file")
 
-        self.assertNotEqual(including_file, excluding_file)
-        self.assertEqual(excluding_file, after_skipped_change)
+        _data, _values, _records, planned, _approvals, _head = approvals.plan_data(
+            repository,
+            ["全部"],
+            "变过的",
+        )
+
+        self.assertEqual(planned, [])
+
+    @staticmethod
+    def configure_git(repository):
+        subprocess.run(
+            ["git", "-C", str(repository), "config", "user.name", "Test"],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repository),
+                "config",
+                "user.email",
+                "test@example.invalid",
+            ],
+            check=True,
+        )
+
+    @staticmethod
+    def commit(repository, message):
+        subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(repository), "commit", "-m", message], check=True
+        )
+        result = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()

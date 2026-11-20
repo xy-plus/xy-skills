@@ -216,6 +216,16 @@ class DecisionContext:
     previous_features: dict
 
 
+@dataclass
+class DecisionPlan:
+    repository: str
+    data: dict
+    values: dict
+    planned: list
+    commits: dict
+    plan_commit: str
+
+
 def _validate_card_set(cards, planned_ids, data):
     by_id = {}
     problems = []
@@ -231,6 +241,13 @@ def _validate_card_set(cards, planned_ids, data):
             problems.append(f"重复卡片：{feature_id}")
         by_id[feature_id] = card
 
+    problems.extend(_card_membership_errors(by_id, planned_ids, data))
+    problems.extend(_card_recommendation_errors(by_id, planned_ids, data))
+    return by_id, problems
+
+
+def _card_membership_errors(by_id, planned_ids, data):
+    problems = []
     planned_set = set(planned_ids)
     for feature_id in sorted(set(by_id) - set(data["features"])):
         problems.append(f"未知功能卡片：{feature_id}")
@@ -240,6 +257,11 @@ def _validate_card_set(cards, planned_ids, data):
     for feature_id in planned_ids:
         if feature_id not in by_id:
             problems.append(f"计划功能缺少卡片：{feature_id}")
+    return problems
+
+
+def _card_recommendation_errors(by_id, planned_ids, data):
+    problems = []
     for feature_id in planned_ids:
         card = by_id.get(feature_id)
         if not isinstance(card, dict):
@@ -249,7 +271,7 @@ def _validate_card_set(cards, planned_ids, data):
             and data["features"][feature_id]["children"]
         ):
             problems.append(f"有子功能的上级不能推荐「不要这个功能」：{feature_id}")
-    return by_id, problems
+    return problems
 
 
 def _load_feature_history(repository, planned_ids, commits):
@@ -279,17 +301,21 @@ def _build_decision_items(planned, by_id, context):
     return items
 
 
-def build_decisions(repository, data, values, planned, commits, cards, plan_commit):
-    planned_ids = [feature_id for feature_id, _reason in planned]
-    by_id, problems = _validate_card_set(cards, planned_ids, data)
+def build_decisions(plan, cards):
+    planned_ids = [feature_id for feature_id, _reason in plan.planned]
+    by_id, problems = _validate_card_set(cards, planned_ids, plan.data)
     if problems:
         return None, problems
 
-    previous_features = _load_feature_history(repository, planned_ids, commits)
-    context = DecisionContext(values, data, previous_features)
-    items = _build_decision_items(planned, by_id, context)
+    previous_features = _load_feature_history(
+        plan.repository, planned_ids, plan.commits
+    )
+    context = DecisionContext(plan.values, plan.data, previous_features)
+    items = _build_decision_items(plan.planned, by_id, context)
     decisions = {
-        "title": f"清扫决定：{Path(repository).name} 计划提交 {plan_commit}",
+        "title": (
+            f"清扫决定：{Path(plan.repository).name} 计划提交 {plan.plan_commit}"
+        ),
         "intro": [
             "每个功能只选一项：照建议、留、按我写的改；没有子功能的功能另有「不要这个功能」。",
             "照建议：做卡片「照建议」列出的每件事。",
@@ -333,13 +359,15 @@ def main(argv):
             raise ValueError("范围内没有变过的功能，不用出页")
         cards = _read_cards(options.cards)
         decisions, problems = build_decisions(
-            options.repo,
-            data,
-            values,
-            planned,
-            commits,
+            DecisionPlan(
+                options.repo,
+                data,
+                values,
+                planned,
+                commits,
+                plan_commit,
+            ),
             cards,
-            plan_commit,
         )
         if problems:
             print("\n".join(problems))

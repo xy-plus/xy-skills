@@ -10,7 +10,7 @@ REPOSITORY_ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
 )
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
-from map_fixture import (
+from map_fixture import (  # noqa: E402
     COMMAND,
     build_map,
     feature,
@@ -135,9 +135,9 @@ class DerivationTest(unittest.TestCase):
         data = build_map(repository)
         features = data["features"]
 
-        self.assertEqual(features["root"].get("doc_chars"), {"own": 2, "total": 24})
-        self.assertEqual(features["package"].get("doc_chars"), {"own": 0, "total": 22})
-        self.assertEqual(features["module"].get("doc_chars"), {"own": 9, "total": 9})
+        self.assertEqual(features["root"].get("doc_chars"), {"own": 2, "total": 18})
+        self.assertEqual(features["package"].get("doc_chars"), {"own": 0, "total": 16})
+        self.assertEqual(features["module"].get("doc_chars"), {"own": 3, "total": 3})
         self.assertEqual(features["api"].get("doc_chars"), {"own": 9, "total": 9})
         self.assertEqual(features["guide"].get("doc_chars"), {"own": 4, "total": 4})
 

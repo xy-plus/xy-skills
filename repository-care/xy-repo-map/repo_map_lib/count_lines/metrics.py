@@ -14,22 +14,24 @@ from text_metrics import count_non_whitespace_characters
 LineCounts = namedtuple("LineCounts", "code docs comments tests doc_chars")
 
 
-def _python_doc_lines(source):
+def _python_documentation(source):
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return set()
-    result = set()
+        return set(), 0
+    lines = set()
+    doc_chars = 0
     for node in ast.walk(tree):
-        if (
-            isinstance(
-                node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            )
-            and ast.get_docstring(node, clean=False) is not None
+        if isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
         ):
+            docstring = ast.get_docstring(node, clean=False)
+            if docstring is None:
+                continue
             doc = node.body[0]
-            result.update(range(doc.lineno, doc.end_lineno + 1))
-    return result
+            lines.update(range(doc.lineno, doc.end_lineno + 1))
+            doc_chars += count_non_whitespace_characters(docstring)
+    return lines, doc_chars
 
 
 def _python_comment_lines(source):
@@ -84,65 +86,72 @@ def _rust_raw_string_end(source, start):
     return len(source) if ending < 0 else ending + len(delimiter)
 
 
+def _quoted_literal_end(source, index, language):
+    if language == "Rust":
+        raw_string_end = _rust_raw_string_end(source, index)
+        if raw_string_end is not None:
+            return raw_string_end
+    char = source[index]
+    if char not in ('"', "'"):
+        return None
+    if language == "Rust" and char == "'":
+        # Rust lifetimes are not quoted strings; only skip character literals.
+        end = _quoted_end(source, index, char, allow_newlines=False)
+        return end if end is not None and end - index <= 6 else None
+    return _quoted_end(source, index, char, allow_newlines=language == "Rust")
+
+
+def _line_comment_span(source, start, language):
+    end = source.find("\n", start)
+    if end < 0:
+        end = len(source)
+    marker = source[start:end]
+    is_doc = (
+        language == "Rust"
+        and (
+            (marker.startswith("///") and not marker.startswith("////"))
+            or marker.startswith("//!")
+        )
+    ) or (language == "C" and marker.startswith("///"))
+    return end, is_doc
+
+
+def _block_comment_span(source, start, language):
+    is_doc = (
+        language == "Rust"
+        and (source.startswith("/**", start) or source.startswith("/*!", start))
+    ) or (language == "C" and source.startswith("/**", start))
+    cursor = start + 2
+    depth = 1
+    while cursor < len(source) and depth:
+        if language == "Rust" and source.startswith("/*", cursor):
+            depth += 1
+            cursor += 2
+        elif source.startswith("*/", cursor):
+            depth -= 1
+            cursor += 2
+        else:
+            cursor += 1
+    return cursor, is_doc
+
+
 def _comment_spans(source, language):
     spans = []
     index = 0
-    length = len(source)
-    while index < length:
-        char = source[index]
-        if language == "Rust":
-            raw_string_end = _rust_raw_string_end(source, index)
-            if raw_string_end is not None:
-                index = raw_string_end
-                continue
-        if char in ('"', "'"):
-            if language == "Rust" and char == "'":
-                # Rust lifetimes are not quoted strings; only skip character literals.
-                end = _quoted_end(source, index, char, allow_newlines=False)
-                if end is not None and end - index <= 6:
-                    index = end
-                    continue
-            else:
-                end = _quoted_end(
-                    source, index, char, allow_newlines=language == "Rust"
-                )
-                if end is not None:
-                    index = end
-                    continue
+    while index < len(source):
+        literal_end = _quoted_literal_end(source, index, language)
+        if literal_end is not None:
+            index = literal_end
+            continue
         if source.startswith("//", index):
-            end = source.find("\n", index)
-            if end < 0:
-                end = length
-            marker = source[index:end]
-            if language == "Rust":
-                is_doc = (
-                    marker.startswith("///") and not marker.startswith("////")
-                ) or marker.startswith("//!")
-            elif language == "C":
-                is_doc = marker.startswith("///")
-            else:
-                is_doc = False
+            end, is_doc = _line_comment_span(source, index, language)
             spans.append((index, end, is_doc))
             index = end
             continue
         if source.startswith("/*", index):
-            is_doc = (
-                language == "Rust"
-                and (source.startswith("/**", index) or source.startswith("/*!", index))
-            ) or (language == "C" and source.startswith("/**", index))
-            cursor = index + 2
-            depth = 1
-            while cursor < length and depth:
-                if language == "Rust" and source.startswith("/*", cursor):
-                    depth += 1
-                    cursor += 2
-                elif source.startswith("*/", cursor):
-                    depth -= 1
-                    cursor += 2
-                else:
-                    cursor += 1
-            spans.append((index, cursor, is_doc))
-            index = cursor
+            end, is_doc = _block_comment_span(source, index, language)
+            spans.append((index, end, is_doc))
+            index = end
             continue
         index += 1
     return spans
@@ -217,7 +226,7 @@ def _html_comment_spans(source):
 
 
 def _python_metrics(source):
-    doc_lines = _python_doc_lines(source)
+    doc_lines, doc_chars = _python_documentation(source)
     comment_lines = _python_comment_lines(source)
     categories = [
         (
@@ -231,7 +240,7 @@ def _python_metrics(source):
         for number, line in enumerate(source.splitlines(), 1)
         if line.strip()
     ]
-    return _line_counts(categories, _documentation_characters(source, doc_lines))
+    return _line_counts(categories, doc_chars)
 
 
 def _shell_metrics(source):

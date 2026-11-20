@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
@@ -330,7 +331,19 @@ def _source_problems(source, index, expected_sources, label):
     if problems or not isinstance(source, dict):
         return problems, False
 
-    source_value = source.get("source")
+    problems.extend(
+        _source_reference_problems(
+            source.get("source"), index, expected_sources, source_label
+        )
+    )
+    problems.extend(_source_use_problems(source.get("uses"), source_label))
+    scenario_errors, any_ran = _source_scenario_problems(source, source_label)
+    problems.extend(scenario_errors)
+    return problems, any_ran
+
+
+def _source_reference_problems(source_value, index, expected_sources, source_label):
+    problems = []
     if not isinstance(source_value, str):
         problems.append(f"{source_label}.source 必须是字符串")
     elif index >= len(expected_sources):
@@ -341,15 +354,22 @@ def _source_problems(source, index, expected_sources, label):
         problems.append(
             f"{source_label}.source 必须恰好对应 {expected_sources[index]}，实际为 {source_value}"
         )
+    return problems
 
-    uses = source.get("uses")
+
+def _source_use_problems(uses, source_label):
+    problems = []
     if not isinstance(uses, list) or not uses:
         problems.append(f"{source_label}.uses 必须是非空字符串数组")
     else:
         for uses_index, use in enumerate(uses):
             if not _nonempty(use):
                 problems.append(f"{source_label}.uses[{uses_index}] 必须是非空字符串")
+    return problems
 
+
+def _source_scenario_problems(source, source_label):
+    problems = []
     scenarios = source.get("scenarios")
     if not isinstance(scenarios, list):
         problems.append(f"{source_label}.scenarios 必须是数组")
@@ -473,13 +493,29 @@ def _validate_unmeasured(unmeasured, code_files, label):
     return problems, set(paths)
 
 
-def _validate_file_coverage(
-    coverage, data, repository, feature_ids, tracked_files, any_ran
-):
+@dataclass
+class FileCoverageContext:
+    data: dict
+    repository: Path
+    feature_ids: list
+    tracked_files: set
+    any_ran: bool
+
+
+def _validate_file_coverage(coverage, context):
     label = "usage-coverage"
-    code_files = _direct_code_files(data, feature_ids, repository, tracked_files)
+    code_files = _direct_code_files(
+        context.data,
+        context.feature_ids,
+        context.repository,
+        context.tracked_files,
+    )
     file_problems, measured = _validate_file_entries(
-        coverage.get("files"), code_files, any_ran, repository, label
+        coverage.get("files"),
+        code_files,
+        context.any_ran,
+        context.repository,
+        label,
     )
     unmeasured_problems, unmeasured = _validate_unmeasured(
         coverage.get("unmeasured"), code_files, label
@@ -507,7 +543,8 @@ def _validate_usage_coverage(coverage, data, repository, feature_ids, tracked_fi
     problems.extend(source_errors)
     problems.extend(
         _validate_file_coverage(
-            coverage, data, repository, feature_ids, tracked_files, any_ran
+            coverage,
+            FileCoverageContext(data, repository, feature_ids, tracked_files, any_ran),
         )
     )
     return problems

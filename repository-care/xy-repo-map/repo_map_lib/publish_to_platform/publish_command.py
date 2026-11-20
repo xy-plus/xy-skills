@@ -28,11 +28,23 @@ def publish_repository(output, as_mode):
     if not page.strip():
         raise ArgumentError("index.html 不能为空")
 
+    data = _read_map_data(directory)
+    name = _publication_name(data, as_mode)
+    result = subprocess.run(
+        [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "publish", name, str(directory)],
+        check=False,
+    )
+    return result.returncode
+
+
+def _read_map_data(directory):
     try:
-        data = json.loads((directory / "map-data.json").read_text(encoding="utf-8"))
+        return json.loads((directory / "map-data.json").read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ArgumentError(f"无法读取 map-data.json：{error}") from error
 
+
+def _publication_name(data, as_mode):
     try:
         root = data["features"][data["root"]]
     except (KeyError, TypeError):
@@ -54,8 +66,4 @@ def publish_repository(output, as_mode):
         date = datetime.now().astimezone().strftime("%Y%m%d")
         ending = "before" if as_mode == "清扫前" else "after"
         name = f"{name}-{date}-{ending}"
-    result = subprocess.run(
-        [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "publish", name, str(directory)],
-        check=False,
-    )
-    return result.returncode
+    return name

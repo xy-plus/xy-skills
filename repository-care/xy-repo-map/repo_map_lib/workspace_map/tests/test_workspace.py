@@ -10,9 +10,8 @@ REPOSITORY_ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
 )
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
-from map_fixture import (
+from map_fixture import (  # noqa: E402
     COMMAND,
-    feature,
     make_workspace,
     root_feature as make_root_feature,
 )

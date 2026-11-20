@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 import subprocess
-import tempfile
 import unittest
 
 import sys
@@ -10,7 +9,7 @@ REPOSITORY_ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
 )
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
-from map_fixture import (
+from map_fixture import (  # noqa: E402
     COMMAND,
     build_map,
     feature,
@@ -19,7 +18,7 @@ from map_fixture import (
 )
 
 
-class FeatureCheckTest(unittest.TestCase):
+class FeatureCheckBase(unittest.TestCase):
     def setUp(self):
         self.repo = make_repo(
             self,
@@ -76,6 +75,8 @@ class FeatureCheckTest(unittest.TestCase):
             ["git", "-C", str(nested), "commit", "-qm", "fixture"], check=True
         )
 
+
+class FeatureCheckTest(FeatureCheckBase):
     def test_allows_subrepositories_only_on_the_root_feature(self):
         self.write("child/readme.md", "child\n")
         child = make_root_feature(
@@ -968,54 +969,3 @@ class FeatureCheckTest(unittest.TestCase):
         for suffix in suffixes:
             with self.subTest(suffix=suffix):
                 self.assertIn(f"legacy{suffix}", result.stdout + result.stderr)
-
-    def test_bad_arguments_exit_with_two(self):
-        result = subprocess.run(
-            [
-                "python3",
-                "-B",
-                str(COMMAND),
-                "check",
-                "--repo",
-                str(self.repo / "missing"),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 2)
-
-    def _assert_repository_error_for_check_and_render(self, repository, message):
-        with tempfile.TemporaryDirectory() as temporary:
-            for command in ("check", "render"):
-                arguments = [
-                    "python3",
-                    "-B",
-                    str(COMMAND),
-                    command,
-                    "--repo",
-                    str(repository),
-                ]
-                if command == "render":
-                    arguments.extend(["--out", str(Path(temporary) / "rendered")])
-                result = subprocess.run(
-                    arguments,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                with self.subTest(command=command):
-                    self.assertEqual(result.returncode, 2)
-                    self.assertIn(message, result.stderr)
-
-    def test_relative_repository_path_exits_with_two(self):
-        self._assert_repository_error_for_check_and_render(
-            "relative/path",
-            "--repo 必须是绝对路径",
-        )
-
-    def test_non_root_repository_path_exits_with_two(self):
-        self._assert_repository_error_for_check_and_render(
-            self.repo / "repo-map",
-            "--repo 必须是仓根",
-        )

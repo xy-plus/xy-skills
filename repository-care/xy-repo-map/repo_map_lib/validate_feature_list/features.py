@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
@@ -98,28 +99,32 @@ def _validate_items(value, current, errors):
         return
     item_ids = set()
     for index, item in enumerate(items):
-        item_label = f"功能 {current} 的 items[{index}]"
-        if not isinstance(item, dict):
-            errors.append(f"{item_label} 必须是对象")
-            continue
-        for key in sorted(ITEM_KEYS - item.keys()):
-            errors.append(f"{item_label}缺少键 {key}")
-        for key in sorted(item.keys() - ITEM_KEYS):
-            errors.append(f"{item_label}有多余键 {key}")
-        item_id = item.get("id")
-        if not isinstance(item_id, str) or FEATURE_ID.fullmatch(item_id) is None:
-            errors.append(f"{item_label}.id 必须匹配 ^[a-z][a-z0-9-]*$：{item_id!r}")
-        elif item_id in item_ids:
-            errors.append(f"功能 {current} 的条目 id 重复：{item_id}")
-        else:
-            item_ids.add(item_id)
-        text = item.get("text")
-        if not _nonempty_text(text) or any(
-            character in text for character in ("\r", "\n", "\u2028", "\u2029")
-        ):
-            errors.append(f"{item_label}.text 必须是非空单行字符串")
-        if item.get("status") not in ("确认", "起草"):
-            errors.append(f"{item_label}.status 只能是 确认、起草")
+        _validate_item(item, index, current, item_ids, errors)
+
+
+def _validate_item(item, index, current, item_ids, errors):
+    item_label = f"功能 {current} 的 items[{index}]"
+    if not isinstance(item, dict):
+        errors.append(f"{item_label} 必须是对象")
+        return
+    for key in sorted(ITEM_KEYS - item.keys()):
+        errors.append(f"{item_label}缺少键 {key}")
+    for key in sorted(item.keys() - ITEM_KEYS):
+        errors.append(f"{item_label}有多余键 {key}")
+    item_id = item.get("id")
+    if not isinstance(item_id, str) or FEATURE_ID.fullmatch(item_id) is None:
+        errors.append(f"{item_label}.id 必须匹配 ^[a-z][a-z0-9-]*$：{item_id!r}")
+    elif item_id in item_ids:
+        errors.append(f"功能 {current} 的条目 id 重复：{item_id}")
+    else:
+        item_ids.add(item_id)
+    text = item.get("text")
+    if not _nonempty_text(text) or any(
+        character in text for character in ("\r", "\n", "\u2028", "\u2029")
+    ):
+        errors.append(f"{item_label}.text 必须是非空单行字符串")
+    if item.get("status") not in ("确认", "起草"):
+        errors.append(f"{item_label}.status 只能是 确认、起草")
 
 
 def _validate_feature_text(value, label, errors):
@@ -131,37 +136,39 @@ def _validate_feature_text(value, label, errors):
     if not isinstance(why, dict):
         errors.append(f"{label}的 why 必须是对象")
     else:
-        for key in sorted(WHY_KEYS - why.keys()):
-            errors.append(f"{label}的 why 缺少键 {key}")
-        for key in sorted(why.keys() - WHY_KEYS):
-            errors.append(f"{label}的 why 有多余键 {key}")
-        source = why.get("source")
-        if not _nonempty_text(why.get("text")):
-            errors.append(f"{label}的 why.text 必须是非空字符串")
-        if source not in ("原话", "确认", "起草"):
-            errors.append(f"{label}的 why.source 只能是 原话、确认、起草")
-        elif source == "原话":
-            if not _nonempty_text(why.get("quote")) or not _nonempty_text(
-                why.get("from")
-            ):
-                errors.append(f"{label}的 why（原话）必须有非空 quote 和 from")
-        elif source == "确认":
-            if why.get("quote") != "" or not _nonempty_text(why.get("from")):
-                errors.append(f"{label}的 why（确认）必须使用空 quote 和非空 from")
-        elif why.get("quote") != "" or why.get("from") != "":
-            errors.append(f"{label}的 why（起草）必须使用空 quote 和空 from")
-        for key in ("quote", "from"):
-            if key in why and not isinstance(why[key], str):
-                errors.append(f"{label}的 why.{key} 必须是字符串")
-        origin = why.get("from")
-        if (
-            isinstance(origin, str)
-            and "answers.json" in origin
-            and not ANSWERS_JSON_REF.fullmatch(origin)
-        ):
-            errors.append(
-                f"功能 {value.get('id')} 的 why.from 中 answers.json 必须引用 JSON 回答键：{origin!r}"
-            )
+        _validate_why(value, why, label, errors)
+
+
+def _validate_why(value, why, label, errors):
+    for key in sorted(WHY_KEYS - why.keys()):
+        errors.append(f"{label}的 why 缺少键 {key}")
+    for key in sorted(why.keys() - WHY_KEYS):
+        errors.append(f"{label}的 why 有多余键 {key}")
+    source = why.get("source")
+    if not _nonempty_text(why.get("text")):
+        errors.append(f"{label}的 why.text 必须是非空字符串")
+    if source not in ("原话", "确认", "起草"):
+        errors.append(f"{label}的 why.source 只能是 原话、确认、起草")
+    elif source == "原话":
+        if not _nonempty_text(why.get("quote")) or not _nonempty_text(why.get("from")):
+            errors.append(f"{label}的 why（原话）必须有非空 quote 和 from")
+    elif source == "确认":
+        if why.get("quote") != "" or not _nonempty_text(why.get("from")):
+            errors.append(f"{label}的 why（确认）必须使用空 quote 和非空 from")
+    elif why.get("quote") != "" or why.get("from") != "":
+        errors.append(f"{label}的 why（起草）必须使用空 quote 和空 from")
+    for key in ("quote", "from"):
+        if key in why and not isinstance(why[key], str):
+            errors.append(f"{label}的 why.{key} 必须是字符串")
+    origin = why.get("from")
+    if (
+        isinstance(origin, str)
+        and "answers.json" in origin
+        and not ANSWERS_JSON_REF.fullmatch(origin)
+    ):
+        errors.append(
+            f"功能 {value.get('id')} 的 why.from 中 answers.json 必须引用 JSON 回答键：{origin!r}"
+        )
 
 
 def _validate_feature_paths(value, parent, current, label, errors):
@@ -185,31 +192,45 @@ def _validate_feature_paths(value, parent, current, label, errors):
                 "请改为非空、无绝对路径、反斜线、空段、. 或 .. 的目录路径。"
             )
     if parent is None:
-        subrepositories = value.get("subrepositories")
-        if not isinstance(subrepositories, list) or any(
-            not isinstance(path, str) for path in subrepositories
-        ):
-            errors.append(f"{label}的 subrepositories 必须是字符串数组")
-        else:
-            for path in subrepositories:
-                if not _safe_relative_path(path, False):
-                    errors.append(
-                        f"{label}的 subrepositories 必须是安全的仓内相对目录路径：{path!r}"
-                    )
-        external_dependencies = value.get("external_dependencies")
-        if not isinstance(external_dependencies, list) or any(
-            not isinstance(name, str) for name in external_dependencies
-        ):
-            errors.append(f"{label}的 external_dependencies 必须是字符串数组")
-        else:
-            for name in external_dependencies:
-                if not name or name.strip() != name or len(name.splitlines()) != 1:
-                    errors.append(
-                        f"{label}的 external_dependencies 名字必须是非空字符串、首尾无空白且不含换行：{name!r}"
-                    )
+        _validate_root_paths(value, label, errors)
 
 
-def _collect_features(value, parent, features, order, errors, label):
+def _validate_root_paths(value, label, errors):
+    subrepositories = value.get("subrepositories")
+    if not isinstance(subrepositories, list) or any(
+        not isinstance(path, str) for path in subrepositories
+    ):
+        errors.append(f"{label}的 subrepositories 必须是字符串数组")
+    else:
+        for path in subrepositories:
+            if not _safe_relative_path(path, False):
+                errors.append(
+                    f"{label}的 subrepositories 必须是安全的仓内相对目录路径：{path!r}"
+                )
+    external_dependencies = value.get("external_dependencies")
+    if not isinstance(external_dependencies, list) or any(
+        not isinstance(name, str) for name in external_dependencies
+    ):
+        errors.append(f"{label}的 external_dependencies 必须是字符串数组")
+    else:
+        for name in external_dependencies:
+            if not name or name.strip() != name or len(name.splitlines()) != 1:
+                errors.append(
+                    f"{label}的 external_dependencies 名字必须是非空字符串、首尾无空白且不含换行：{name!r}"
+                )
+
+
+@dataclass
+class FeatureCollection:
+    features: dict
+    order: list
+    errors: list
+
+
+def _collect_features(value, parent, collection, label):
+    features = collection.features
+    order = collection.order
+    errors = collection.errors
     if not isinstance(value, dict):
         errors.append(f"{label}必须是对象")
         return
@@ -237,7 +258,7 @@ def _collect_features(value, parent, features, order, errors, label):
         return
     for index, child in enumerate(children):
         child_label = f"{label}的第 {index + 1} 个子功能"
-        _collect_features(child, current, features, order, errors, child_label)
+        _collect_features(child, current, collection, child_label)
 
 
 def _validate_paths(features, order, tracked, errors):
@@ -307,8 +328,9 @@ def load_features(repository, tracked_paths):
     except (OSError, UnicodeError, ValueError) as error:
         return {}, [], [f"无法读取 repo-map/features.json：{error}"]
 
-    features, order, errors = {}, [], []
-    _collect_features(document, None, features, order, errors, "根功能")
+    collection = FeatureCollection({}, [], [])
+    _collect_features(document, None, collection, "根功能")
+    features, order, errors = collection.features, collection.order, collection.errors
     if not order or document.get("id") not in features:
         return features, order, errors or ["功能清单必须包含根功能"]
     if errors:
