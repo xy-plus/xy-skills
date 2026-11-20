@@ -2275,6 +2275,11 @@
                   "id": "unix-socket-requests",
                   "text": "页面经 Unix 套接字挂载时，请求照常响应，不因客户端地址为空而出错。",
                   "status": "确认"
+                },
+                {
+                  "id": "fold-decision-details",
+                  "text": "每项决定可带一段默认收起的补充内容，外面只显示标题，点开才看全文。",
+                  "status": "起草"
                 }
               ],
               "children": []
@@ -2359,6 +2364,16 @@
                 {
                   "id": "show-draft-items-on-page",
                   "text": "自动列出功能理由和全部起草条目；改写过的条目同时显示上次认可原文。",
+                  "status": "起草"
+                },
+                {
+                  "id": "fold-unapproved-drafts",
+                  "text": "起草条目只在没有认可记录的功能上默认收起，只显示条数、点开看全文；有认可记录的功能照旧逐条列出。",
+                  "status": "起草"
+                },
+                {
+                  "id": "show-what-for-unapproved-feature",
+                  "text": "没有认可记录的功能，决定项列出功能的「要什么」。",
                   "status": "起草"
                 }
               ],
