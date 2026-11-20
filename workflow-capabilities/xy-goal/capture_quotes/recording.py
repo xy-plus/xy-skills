@@ -2,7 +2,6 @@ from pathlib import Path
 from dataclasses import dataclass
 import json
 import re
-import stat
 import sys
 
 from goal_common import (
@@ -11,6 +10,7 @@ from goal_common import (
     automatic_reason,
     encode_links,
     find_contract,
+    inbox_directory,
     merge_inbox,
     quote_files,
     read_inbox,
@@ -81,9 +81,8 @@ def inbox_record_target(root, session_id, transcript_path):
     project = root / project_name
     project.mkdir(exist_ok=True)
     require_project_directory(root, project)
-    directory = project / "xy-goal-inbox" / session_id
-    quotes = read_inbox(directory)
-    directory.mkdir(parents=True, exist_ok=True)
+    directory = inbox_directory(root, project, session_id, create=True)
+    quotes = read_inbox(root, project, session_id)
     return None, None, directory, max(quotes, default=0) + 1
 
 
@@ -156,21 +155,8 @@ def classify_recorded_quote(path, contract, validation_error, record):
 def stage_corrupt_contract_input(root, contract_path, session_id, text, cause):
     project = contract_path.parents[1]
     require_project_directory(root, project)
-    inbox_root = project / "xy-goal-inbox"
-    try:
-        inbox_root.mkdir()
-    except FileExistsError:
-        pass
-    if not stat.S_ISDIR(inbox_root.lstat().st_mode):
-        raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox_root}")
-    inbox = inbox_root / session_id
-    try:
-        inbox.mkdir()
-    except FileExistsError:
-        pass
-    if not stat.S_ISDIR(inbox.lstat().st_mode):
-        raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox}")
-    quote = inbox / f"{max(read_inbox(inbox), default=0) + 1}.md"
+    inbox = inbox_directory(root, project, session_id, create=True)
+    quote = inbox / f"{max(read_inbox(root, project, session_id), default=0) + 1}.md"
     write_new_quote(quote, text, staged=True)
     detail = str(cause) if cause is not None else "契约原话或关系文件不可读"
     raise HookRecordError(

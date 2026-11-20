@@ -1,5 +1,4 @@
 from contextlib import contextmanager
-from dataclasses import dataclass
 import fcntl
 import glob
 import json
@@ -191,38 +190,22 @@ def parse_links(text, quotes, tasks):
 class Contract:
     def __init__(self, path, goal_content):
         self.path = path
-        self.metadata = self.read_metadata(goal_content)
+        self.metadata = parse_fields(
+            path / "goal.md", ("target", "session_id", "claude_pid"), goal_content, (),
+        )
+        if re.fullmatch(r"[1-9][0-9]*", self.metadata["claude_pid"]) is None:
+            raise GoalError(f"{path / 'goal.md'}: claude_pid 必须是正整数")
         self.quotes = quote_files(path / "quotes")
         self.tasks = self.read_tasks("tasks")
         self.done = self.read_tasks("done")
-        self.validate_task_directories()
-        self.read_links()
-        self.validate_done()
-
-    def read_metadata(self, goal_content):
-        metadata = parse_fields(
-            self.path / "goal.md", ("target", "session_id", "claude_pid"), goal_content, (),
-        )
-        if re.fullmatch(r"[1-9][0-9]*", metadata["claude_pid"]) is None:
-            raise GoalError(f"{self.path / 'goal.md'}: claude_pid 必须是正整数")
-        return metadata
-
-    def validate_task_directories(self):
         overlap = self.tasks.keys() & self.done.keys()
         if overlap:
-            raise GoalError(f"{self.path / 'done'}: 事项同时开放和关闭：{sorted(overlap)}")
-
-    def read_links(self):
+            raise GoalError(f"{path / 'done'}: 事项同时开放和关闭：{sorted(overlap)}")
         links_path = self.path / "links.md"
         self.links, self.dismissed, invalid = parse_links(
             read_text(links_path), self.quotes, self.tasks.keys() | self.done.keys())
         if invalid:
             raise GoalError(f"{links_path}: {invalid[0][1]}{RELINK_USAGE}")
-
-        self.validate_link_sources()
-        self.validate_task_sources()
-
-    def validate_link_sources(self):
         for number, task in self.links:
             if task not in self.tasks:
                 # 关闭事项不再驱动工作；它的映射是历史，不能让整份契约因此读不出来。
@@ -231,26 +214,22 @@ class Contract:
             if reason is not None:
                 # 机器输入挂上后，完好的契约里没有摘除映射的命令，因此只能在挂接时挡住。
                 raise GoalError(f"原话 {number} 是机器输入（{reason}），不能作为出处{RELINK_USAGE}")
-
-    def validate_task_sources(self):
         linked_tasks = {task for _, task in self.links}
         for task in self.tasks:
             if task not in linked_tasks:
                 raise GoalError(
-                    f"{self.path / 'tasks' / (task + '.md')}: 开放事项 {task} 没有原话出处{RELINK_USAGE}"
+                    f"{path / 'tasks' / (task + '.md')}: 开放事项 {task} 没有原话出处{RELINK_USAGE}"
                 )
-
-    def validate_done(self):
         for task, values in self.done.items():
             if "cancel_quote" in values:
                 number = int(values["cancel_quote"])
                 if number not in self.quotes or (number, task) not in self.links:
                     raise GoalError(
-                        f"{self.path / 'done' / (task + '.md')}: 取消原话不存在或缺少映射")
+                        f"{path / 'done' / (task + '.md')}: 取消原话不存在或缺少映射")
             if "cancel_reason" in values:
                 if "evidence" not in values:
                     raise GoalError(
-                        f"{self.path / 'done' / (task + '.md')}: 取消原因只用于带证据的事项")
+                        f"{path / 'done' / (task + '.md')}: 取消原因只用于带证据的事项")
 
     def read_tasks(self, directory):
         tasks = {}
@@ -336,12 +315,65 @@ def session_project(session_id):
     return require_project_name(records[0].parent.name)
 
 
-def read_inbox(directory):
-    return quote_files(directory) if directory.exists() else {}
+def inbox_directory(root, project, session_id, *, create=False):
+    """Return an actual inbox directory, rejecting symlinks at both levels."""
+    require_name(session_id, "inbox 会话 id")
+    if project.parent != root:
+        raise GoalError(f"项目目录必须是根目录下的真实目录，不能是软链接：{project}")
+    try:
+        project_mode = project.lstat().st_mode
+    except FileNotFoundError:
+        if create:
+            raise GoalError(f"项目目录不存在，不能创建 inbox：{project}")
+        return None
+    if not stat.S_ISDIR(project_mode):
+        raise GoalError(f"项目目录必须是根目录下的真实目录，不能是软链接：{project}")
+
+    inbox_root = project / "xy-goal-inbox"
+    if create:
+        try:
+            inbox_root.mkdir()
+        except FileExistsError:
+            pass
+    try:
+        root_mode = inbox_root.lstat().st_mode
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISDIR(root_mode):
+        raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox_root}")
+
+    inbox = inbox_root / session_id
+    if create:
+        try:
+            inbox.mkdir()
+        except FileExistsError:
+            pass
+    try:
+        inbox_mode = inbox.lstat().st_mode
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISDIR(inbox_mode):
+        raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox}")
+    return inbox
 
 
-def incoming_quotes(inbox, contract, last_number):
-    quotes = read_inbox(inbox)
+def checked_inbox_path(root, inbox):
+    project = inbox.parent.parent
+    if inbox.parent != project / "xy-goal-inbox":
+        raise GoalError(f"项目 inbox 路径不符合约定：{inbox}")
+    actual = inbox_directory(root, project, inbox.name)
+    if actual is None:
+        raise GoalError(f"项目 inbox 不存在：{inbox}")
+    return actual
+
+
+def read_inbox(root, project, session_id):
+    directory = inbox_directory(root, project, session_id)
+    return quote_files(directory) if directory is not None else {}
+
+
+def incoming_quotes(root, project, session_id, contract, last_number):
+    quotes = read_inbox(root, project, session_id)
     imported, reasons = {}, {}
     for number, text in enumerate(quotes.values(), start=last_number + 1):
         imported[number] = text
@@ -356,13 +388,11 @@ def merge_inbox(contract, session_id):
     root = contract.path.parents[2]
     project = contract.path.parents[1]
     require_project_directory(root, project)
-    inbox_root = project / "xy-goal-inbox"
-    inbox = inbox_root / session_id
-    if not inbox.exists():
+    inbox = inbox_directory(root, project, session_id)
+    if inbox is None:
         return contract
-    if not stat.S_ISDIR(inbox_root.lstat().st_mode) or not stat.S_ISDIR(inbox.lstat().st_mode):
-        raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox}")
-    quotes, reasons = incoming_quotes(inbox, contract.path, max(contract.quotes, default=0))
+    quotes, reasons = incoming_quotes(
+        root, project, session_id, contract.path, max(contract.quotes, default=0))
     if not quotes:
         return contract
     changes = {contract.path / "quotes" / f"{number}.md": text
@@ -370,7 +400,7 @@ def merge_inbox(contract, session_id):
     dismissed = dict(contract.dismissed)
     dismissed.update(reasons)
     changes[contract.path / "links.md"] = encode_links(contract.links, dismissed)
-    with consume_inputs([inbox]):
+    with consume_inputs(root, [inbox]):
         write_files(changes, [])
     return Contract(contract.path, (contract.path / "goal.md").read_bytes())
 
@@ -386,11 +416,12 @@ def remove_temporary_path(path):
 
 
 @contextmanager
-def consume_inputs(paths):
+def consume_inputs(root, paths):
     """输入先移出可领取的位置；主体失败放回，成功后删除失败只警告。"""
     moved = []
     try:
         for source in paths:
+            source = checked_inbox_path(root, source)
             # 同一父目录内改名，不改目录的 ..；只读 inbox 也能先移出领取位置。
             destination = Path(tempfile.mkdtemp(dir=source.parent, prefix=".goal-inputs-"))
             destination.rmdir()
@@ -407,15 +438,7 @@ def consume_inputs(paths):
             remove_temporary_path(destination)
 
 
-@dataclass(frozen=True)
-class ContractDraft:
-    metadata: dict
-    quotes: dict
-    links: str
-    input_paths: tuple
-
-
-def publish_contract(root, destination, draft):
+def publish_contract(root, destination, *, metadata, quotes, links, input_paths):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     item = destination.parent
     project = item.parent
@@ -429,13 +452,13 @@ def publish_contract(root, destination, draft):
         staging.mkdir(parents=True)
         for name in ("quotes", "tasks", "done"):
             (staging / name).mkdir()
-        for number, text in draft.quotes.items():
+        for number, text in quotes.items():
             (staging / "quotes" / f"{number}.md").write_bytes(text.encode("utf-8"))
-        (staging / "goal.md").write_text(encode_fields(draft.metadata), encoding="utf-8")
-        (staging / "links.md").write_text(draft.links, encoding="utf-8")
+        (staging / "goal.md").write_text(encode_fields(metadata), encoding="utf-8")
+        (staging / "links.md").write_text(links, encoding="utf-8")
         Contract(staging, (staging / "goal.md").read_bytes())
         # 最后的 rename 是主体提交点；此前的输入移动均可恢复，此后只做尽力清理。
-        with consume_inputs(draft.input_paths):
+        with consume_inputs(root, input_paths):
             staging.parent.rename(item)
     finally:
         remove_temporary_path(temporary)

@@ -7,13 +7,14 @@ from datetime import datetime
 from pathlib import Path
 
 from goal_common import (
-    ContractDraft,
     HOOK_COMMANDS,
     TASK_FIELDS,
     Contract,
     GoalError,
     find_contract,
+    inbox_directory,
     incoming_quotes,
+    merge_inbox,
     publish_contract,
     require_name,
     require_pid,
@@ -146,13 +147,14 @@ def open_contract(options, context):
     require_text(options.target, "目标")
     project = context.root / session_project(context.session_id)
     path = project / f"{context.now:%Y%m%d-%H%M%S}-{options.slug}" / "xy-goal"
-    inbox = project / "xy-goal-inbox" / context.session_id
-    quotes, reasons = incoming_quotes(inbox, path, 0)
+    inbox = inbox_directory(context.root, project, context.session_id)
+    quotes, reasons = incoming_quotes(
+        context.root, project, context.session_id, path, 0)
     metadata = {"target": options.target, "session_id": context.session_id,
                 "claude_pid": str(context.claude_pid)}
     links = "".join(f"{number} 不必跟进 {reason}\n" for number, reason in reasons.items())
-    draft = ContractDraft(metadata, quotes, links, (inbox,) if inbox.exists() else ())
-    publish_contract(context.root, path, draft)
+    publish_contract(context.root, path, metadata=metadata, quotes=quotes, links=links,
+                     input_paths=[inbox] if inbox is not None else [])
     print(timer_prompt(path))
     return 0
 
@@ -166,12 +168,13 @@ def execute_contract_command(options, *, path, goal_content, session_id):
     elif options.command == "check":
         return check(contract, session_id)
     elif options.command == "close":
-        validate_close_review(contract, options.review)
+        contract = merge_inbox(contract, session_id)
         if contract.tasks:
             raise GoalError("仍有开放事项：" + "、".join(contract.tasks))
         pending = contract.pending()
         if pending:
             raise GoalError("仍有还没处理的原话：" + "、".join(map(str, pending)))
+        validate_close_review(contract, options.review)
         # 子代理整体复核、CronDelete 和汇报由 agent 按 SKILL.md 完成。
         (contract.path / "goal.md").unlink()
     else:

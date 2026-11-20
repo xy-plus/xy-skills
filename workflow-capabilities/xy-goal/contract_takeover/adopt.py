@@ -8,6 +8,7 @@ from goal_common import (
     encode_fields,
     encode_links,
     find_contract,
+    inbox_directory,
     incoming_quotes,
     require_project_directory,
     session_project,
@@ -54,14 +55,14 @@ def take_over_contract(root, path, contract, session_id, claude_pid):
         raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
     else:
         raise GoalError("原会话进程还在：先在原会话 CronDelete 并结束它")
-    inbox = root / session_project(session_id) / "xy-goal-inbox" / session_id
-    if inbox.exists():
-        require_project_directory(root, inbox.parents[1])
-    quotes, reasons = incoming_quotes(inbox, path, max(contract.quotes, default=0))
+    project = root / session_project(session_id)
+    inbox = inbox_directory(root, project, session_id)
+    quotes, reasons = incoming_quotes(
+        root, project, session_id, path, max(contract.quotes, default=0))
     contract.metadata.update(session_id=session_id, claude_pid=str(claude_pid))
     contract.dismissed.update(reasons)
     changes = {path / "quotes" / f"{number}.md": text for number, text in quotes.items()}
     changes[path / "goal.md"] = encode_fields(contract.metadata)
     changes[path / "links.md"] = encode_links(contract.links, contract.dismissed)
-    with consume_inputs([inbox] if inbox.exists() else []):
+    with consume_inputs(root, [inbox] if inbox is not None else []):
         write_files(changes, [])

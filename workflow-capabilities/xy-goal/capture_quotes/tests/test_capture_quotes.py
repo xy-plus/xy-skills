@@ -16,6 +16,82 @@ from goal_common import quote_files, timer_prompt
 
 class CaptureQuotesTests(GoalTestSupport):
 
+    def test_hooks_reject_symlinked_inbox_root_and_session_without_writing_outside(self):
+        for level in ("root", "session"):
+            with self.subTest(level=level):
+                self.project.mkdir(parents=True, exist_ok=True)
+                outside = self.root.parent / f"outside-{level}"
+                outside.mkdir()
+                inbox_root = self.project / "xy-goal-inbox"
+                inbox = inbox_root / self.session
+                if level == "root":
+                    inbox_root.symlink_to(outside, target_is_directory=True)
+                else:
+                    inbox_root.mkdir()
+                    inbox.symlink_to(outside, target_is_directory=True)
+                try:
+                    before = self.directory_entries(outside)
+                    payload = {
+                        "session_id": self.session,
+                        "transcript_path": str(self.transcript_path()),
+                        "prompt": "不能写进软链目标",
+                    }
+                    result = self.run_goal("hook-prompt", session=None, pid=None,
+                                           stdin=json.dumps(payload))
+                    self.assert_hook_error(result, "hook-prompt",
+                                           message="项目 inbox 必须是实际目录",
+                                           record="这次输入没有记入契约。")
+                    self.assertEqual(self.directory_entries(outside), before)
+                    self.assertTrue((inbox_root if level == "root" else inbox).is_symlink())
+                finally:
+                    if level == "root":
+                        if inbox_root.is_symlink():
+                            inbox_root.unlink()
+                    else:
+                        if inbox.is_symlink():
+                            inbox.unlink()
+                        if inbox_root.is_dir() and not inbox_root.is_symlink():
+                            inbox_root.rmdir()
+
+    def test_open_rejects_symlinked_inbox_root_and_session_without_claiming(self):
+        original_root = self.root
+        for level in ("root", "session"):
+            with self.subTest(level=level):
+                self.root = original_root / f"open-symlink-{level}"
+                self.root.mkdir()
+                self.project.mkdir(parents=True, exist_ok=True)
+                outside = self.root.parent / f"open-outside-{level}"
+                outside.mkdir()
+                (outside / "1.md").write_text("不能导入外部原话", encoding="utf-8")
+                inbox_root = self.project / "xy-goal-inbox"
+                inbox = inbox_root / self.session
+                if level == "root":
+                    inbox_root.symlink_to(outside, target_is_directory=True)
+                else:
+                    inbox_root.mkdir()
+                    inbox.symlink_to(outside, target_is_directory=True)
+                try:
+                    before = self.directory_entries(outside)
+                    code, output, errors = self.run_goal(
+                        "open", f"release-{level}", "目标",
+                        session=self.session, pid=self.pid, stdin="",
+                    )
+                    self.assertEqual(code, 1, output + errors)
+                    self.assertIn("项目 inbox 必须是实际目录", errors)
+                    self.assertEqual(self.directory_entries(outside), before)
+                    self.assertFalse((self.project / f"20261024-093000-release-{level}" / "xy-goal").exists())
+                    self.assertTrue((inbox_root if level == "root" else inbox).is_symlink())
+                finally:
+                    if level == "root":
+                        if inbox_root.is_symlink():
+                            inbox_root.unlink()
+                    else:
+                        if inbox.is_symlink():
+                            inbox.unlink()
+                        if inbox_root.is_dir() and not inbox_root.is_symlink():
+                            inbox_root.rmdir()
+                    self.root = original_root
+
     def test_inbox_hooks_reject_symlink_project_without_writing_outside(self):
         outside = self.replace_project_with_symlink()
         for operation, fields in (

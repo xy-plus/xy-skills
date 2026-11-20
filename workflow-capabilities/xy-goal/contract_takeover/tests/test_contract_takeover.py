@@ -11,6 +11,46 @@ from goal_test_support import (
 
 class ContractTakeoverTests(GoalTestSupport):
 
+    def test_adopt_rejects_symlinked_inbox_root_and_session_without_claiming(self):
+        original_root = self.root
+        for level in ("root", "session"):
+            with self.subTest(level=level):
+                self.root = original_root / f"symlink-{level}"
+                self.root.mkdir()
+                self.session = "session-main"
+                contract = self.open_goal(f"release-{level}")
+                old = subprocess.Popen([sys.executable, "-c", "pass"])
+                old.wait()
+                metadata = contract / "goal.md"
+                metadata.write_text(metadata.read_text().replace(
+                    f'"{self.pid}"', f'"{old.pid}"'))
+                self.session = "new-session"
+                inbox_root = self.project / "xy-goal-inbox"
+                inbox = inbox_root / self.session
+                outside = self.root.parent / f"adopt-outside-{level}"
+                outside.mkdir()
+                (outside / "1.md").write_text("不能接管外部原话", encoding="utf-8")
+                if level == "root":
+                    inbox_root.symlink_to(outside, target_is_directory=True)
+                else:
+                    inbox_root.mkdir()
+                    inbox.symlink_to(outside, target_is_directory=True)
+                try:
+                    before = self.directory_entries(outside)
+                    self.rejects("adopt", str(contract), message="项目 inbox 必须是实际目录")
+                    self.assertEqual(self.directory_entries(outside), before)
+                    self.assertTrue((inbox_root if level == "root" else inbox).is_symlink())
+                finally:
+                    if level == "root":
+                        if inbox_root.is_symlink():
+                            inbox_root.unlink()
+                    else:
+                        if inbox.is_symlink():
+                            inbox.unlink()
+                        if inbox_root.is_dir() and not inbox_root.is_symlink():
+                            inbox_root.rmdir()
+                    self.root = original_root
+
     def test_new_session_adopt_claims_inbox_from_its_own_project(self):
         contract = self.open_goal("release")
         old = subprocess.Popen([sys.executable, "-c", "pass"])

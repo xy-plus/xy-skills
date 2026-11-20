@@ -1,3 +1,4 @@
+import inspect
 import fcntl
 import shlex
 import shutil
@@ -18,9 +19,74 @@ from goal_test_support import (
     tempfile,
 )
 from goal_common import read_text
+import goal_common
 
 
 class GoalTests(GoalTestSupport):
+
+    def test_check_rejects_symlinked_inbox_root_and_session(self):
+        original_root = self.root
+        for level in ("root", "session"):
+            with self.subTest(level=level):
+                self.root = original_root / f"merge-symlink-{level}"
+                self.root.mkdir()
+                self.session = "session-main"
+                self.project.mkdir(parents=True, exist_ok=True)
+                contract = self.open_goal(f"merge-{level}")
+                outside = self.root.parent / f"merge-outside-{level}"
+                outside.mkdir()
+                inbox_root = self.project / "xy-goal-inbox"
+                inbox = inbox_root / self.session
+                if level == "root":
+                    inbox_root.symlink_to(outside, target_is_directory=True)
+                else:
+                    inbox_root.mkdir()
+                    inbox.symlink_to(outside, target_is_directory=True)
+                try:
+                    code, output, errors = self.command("check")
+                    self.assertEqual(code, 1, output + errors)
+                    self.assertIn("项目 inbox 必须是实际目录", errors)
+                    self.assertTrue((contract / "goal.md").is_file())
+                finally:
+                    if level == "root":
+                        if inbox_root.is_symlink():
+                            inbox_root.unlink()
+                    else:
+                        if inbox.is_symlink():
+                            inbox.unlink()
+                        if inbox_root.is_dir() and not inbox_root.is_symlink():
+                            inbox_root.rmdir()
+                    self.root = original_root
+
+    def test_close_merges_inbox_before_rejecting_unhandled_quotes(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 1, "已处理原话")
+        self.succeeds("dismiss", "1", "--reason", "已答")
+        review = self.close_review(contract)
+        self.inbox.mkdir(parents=True)
+        (self.inbox / "1.md").write_text("关闭前暂存的新原话", encoding="utf-8")
+
+        code, output, errors = self.command("close", "--review", str(review))
+
+        self.assertEqual(code, 1, output + errors)
+        self.assertIn("还没处理的原话：2", errors)
+        self.assertFalse(self.inbox.exists(), "close 应先把暂存输入并入契约")
+        self.assertEqual((contract / "quotes" / "2.md").read_text(encoding="utf-8"),
+                         "关闭前暂存的新原话")
+        self.assertTrue((contract / "goal.md").is_file())
+
+    def test_contract_validation_stays_in_init_and_publish_uses_named_inputs(self):
+        split_methods = {
+            "read_metadata", "validate_task_directories", "read_links",
+            "validate_link_sources", "validate_task_sources", "validate_done",
+        }
+        self.assertFalse(split_methods & set(goal_common.Contract.__dict__))
+        self.assertFalse(hasattr(goal_common, "ContractDraft"))
+        signature = inspect.signature(goal_common.publish_contract)
+        self.assertEqual(tuple(signature.parameters),
+                         ("root", "destination", "metadata", "quotes", "links", "input_paths"))
+        self.assertTrue(all(signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+                            for name in ("metadata", "quotes", "links", "input_paths")))
 
     def test_read_text_preserves_filesystem_errors(self):
         path = self.root / "unreadable.md"
