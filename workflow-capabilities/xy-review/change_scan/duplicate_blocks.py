@@ -12,7 +12,6 @@ from repo_map_lib.skip_paths.skip_paths import is_skipped_path
 WINDOW_LINES = 6
 MIN_ALPHANUMERIC_CHARACTERS = 40
 SCANNED_CATEGORIES = {"code", "tests", "docs"}
-TODO_FILENAME = "TODO.md"
 PYTHON_IMPORT_LINE = re.compile(
     r"(?:import\s+[^#;]+|from\s+[^#;]+\s+import\s+[^#;]+)(?:\s+#.*)?"
 )
@@ -26,8 +25,6 @@ def _is_import_line(line):
 def find_duplicate_windows(repository, tracked_files, skip_paths):
     occurrences = defaultdict(list)
     for path in sorted(tracked_files):
-        if Path(path).name == TODO_FILENAME:
-            continue
         if is_skipped_path(path, skip_paths):
             continue
         if file_category_with_skip(repository, path, skip_paths) not in SCANNED_CATEGORIES:

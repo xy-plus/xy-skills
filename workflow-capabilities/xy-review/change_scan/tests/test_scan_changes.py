@@ -66,7 +66,7 @@ class ScanChangesTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
-    def test_changed_paths_keep_added_modified_and_renamed_regular_files(self):
+    def test_changed_paths_ignore_pure_renames_and_keep_added_modified_files(self):
         self.write("modified.md", "before\n")
         self.write("deleted.md", "remove\n")
         self.write("old-name.md", "rename\n")
@@ -81,9 +81,54 @@ class ScanChangesTest(unittest.TestCase):
 
         document = self.scan_document(base)
 
-        self.assertEqual(
-            document["changed"], ["added.md", "modified.md", "new-name.md"]
-        )
+        self.assertEqual(document["changed"], ["added.md", "modified.md"])
+
+    def test_pure_rename_produces_no_changed_path_or_hits(self):
+        repeated = [f"shared block row {number} carries enough words" for number in range(1, 9)]
+        self.write("source.md", "\n".join(repeated) + "\n")
+        self.write("old-name.md", "\n".join(repeated) + "\n")
+        base = self.commit("base")
+        self.git("mv", "old-name.md", "new-name.md")
+        self.commit("rename")
+
+        document = self.scan_document(base)
+
+        self.assertEqual(document["changed"], [])
+        self.assertEqual(document["hits"], [])
+
+    def test_changed_rename_reports_only_hits_near_the_changed_lines(self):
+        repeated = [f"shared block row {number} carries enough words" for number in range(1, 9)]
+        original = [f"filler row {number} remains in the same file" for number in range(1, 17)]
+        original.extend(repeated)
+        self.write("source.md", "\n".join(repeated) + "\n")
+        self.write("old-name.md", "\n".join(original) + "\n")
+        base = self.commit("base")
+        self.git("mv", "old-name.md", "new-name.md")
+        added_filler = [f"added filler row {number} remains distinct" for number in range(1, 9)]
+        with open(self.repository / "new-name.md", "a", encoding="utf-8") as stream:
+            stream.write("\n".join(added_filler + repeated) + "\n")
+        self.commit("rename and append")
+
+        document = self.scan_document(base)
+
+        self.assertEqual(document["changed"], ["new-name.md"])
+        self.assertEqual(document["partial"], {"new-name.md": [[25, 40]]})
+        local_hits = [hit for hit in document["hits"] if hit["path"] == "new-name.md"]
+        self.assertEqual([hit["line"] for hit in local_hits], [33])
+        self.assertTrue(all(hit["lines"][0] >= 25 for hit in local_hits), local_hits)
+
+    def test_changed_rename_deletions_include_lines_on_both_sides(self):
+        original = [f"stable line {number} has enough meaning" for number in range(1, 9)]
+        self.write("old-name.md", "\n".join(original) + "\n")
+        base = self.commit("base")
+        self.git("mv", "old-name.md", "new-name.md")
+        self.write("new-name.md", "\n".join(original[:2] + original[4:]) + "\n")
+        self.commit("rename and delete")
+
+        document = self.scan_document(base)
+
+        self.assertEqual(document["changed"], ["new-name.md"])
+        self.assertEqual(document["partial"], {"new-name.md": [[2, 3]]})
 
     def test_deleted_files_and_gitlinks_are_not_changed_regular_files(self):
         self.write("deleted.md", "remove\n")
@@ -200,7 +245,7 @@ class ScanChangesTest(unittest.TestCase):
         self.write("changed.md", "after\n")
         self.commit("change")
         duplicate_hits = [
-            scan_changes._stable_hit("example", "rule", "changed.md", 1, message)
+            scan_changes._stable_hit("example", "rule", "changed.md", 1, 1, message)
             for message in ("first", "second")
         ]
 
@@ -208,8 +253,6 @@ class ScanChangesTest(unittest.TestCase):
             patch.object(scan_changes, "_duplicate_block_hits", return_value=duplicate_hits),
             patch.object(scan_changes, "_line_count_hits", return_value=[]),
             patch.object(scan_changes, "_ruff_hits", return_value=[]),
-            patch.object(scan_changes, "_vulture_hits", return_value=[]),
-            patch.object(scan_changes, "_clippy_hits", return_value=[]),
             patch.object(scan_changes, "_structural_test_hits", return_value=[]),
         ):
             hits = scan_changes.scan_repository(str(self.repository), base)["hits"]
@@ -236,6 +279,7 @@ class ScanChangesTest(unittest.TestCase):
         self.assertEqual(
             hits[0]["id"], "file-lines:over-1000-lines:over.md:1001"
         )
+        self.assertEqual(hits[0]["lines"], [1001, 1001])
 
     def duplicate_document(self, path, meaningful_lines):
         self.write("source.md", "".join(f"{line}\n" for line in meaningful_lines))
@@ -327,18 +371,17 @@ class ScanChangesTest(unittest.TestCase):
             any(hit["tool"] == "duplicate-blocks" for hit in document["hits"])
         )
 
-    def test_duplicate_blocks_skip_todo_files(self):
+    def test_changed_todo_files_are_scanned_for_duplicate_blocks(self):
         lines = [f"shared content row {number} has enough words" for number in range(1, 7)]
+        self.write("source.md", "\n".join(lines) + "\n")
+        base = self.commit("source")
         self.write("TODO.md", "\n".join(lines) + "\n")
-        base = self.commit("todo source")
-        self.write("copy.md", "\n".join(lines) + "\n")
-        self.commit("copy")
+        self.commit("todo")
 
         document = self.scan_document(base)
 
-        self.assertFalse(
-            any(hit["tool"] == "duplicate-blocks" for hit in document["hits"])
-        )
+        duplicate_hits = [hit for hit in document["hits"] if hit["tool"] == "duplicate-blocks"]
+        self.assertEqual([hit["path"] for hit in duplicate_hits], ["TODO.md"])
 
     def test_ruff_uses_selected_rules_without_repository_configuration(self):
         self.write("pyproject.toml", "[tool.ruff]\nselect = []\n")
@@ -355,18 +398,32 @@ class ScanChangesTest(unittest.TestCase):
         )
         self.assertFalse(any(hit["path"] == "clean.py" for hit in hits), hits)
 
-    def test_vulture_scans_all_python_files_but_reports_changed_dead_code_only(self):
-        self.write("changed.py", "def used():\n    return 1\n\ndef unused():\n    return 2\n")
-        self.write("caller.py", "from changed import used\nprint(used())\n")
+    def test_ruff_function_rules_report_the_function_definition_range(self):
+        self.write("base.py", "value = 1\n")
         base = self.commit("base")
-        self.write("changed.py", "def used():\n    return 3\n\ndef unused():\n    return 2\n")
-        self.commit("python change")
+        self.write(
+            "changed.py",
+            "def complex_function(value):\n"
+            "    if value == 0: value += 1\n"
+            "    if value == 1: value += 1\n"
+            "    if value == 2: value += 1\n"
+            "    if value == 3: value += 1\n"
+            "    if value == 4: value += 1\n"
+            "    if value == 5: value += 1\n"
+            "    if value == 6: value += 1\n"
+            "    if value == 7: value += 1\n"
+            "    if value == 8: value += 1\n"
+            "    if value == 9: value += 1\n"
+            "    if value == 10: value += 1\n"
+            "    return value\n",
+        )
+        self.commit("complex function")
 
         hits = self.scan_document(base)["hits"]
-        vulture_messages = [hit["message"] for hit in hits if hit["tool"] == "vulture"]
+        complexity = [hit for hit in hits if hit["tool"] == "ruff" and "C901" in hit["message"]]
 
-        self.assertTrue(any("unused" in message for message in vulture_messages), hits)
-        self.assertFalse(any("function 'used'" in message for message in vulture_messages), hits)
+        self.assertEqual(len(complexity), 1, hits)
+        self.assertEqual(complexity[0]["lines"], [1, 13])
 
     def test_missing_python_tools_are_errors(self):
         self.write("before.py", "value = 1\n")
@@ -379,66 +436,7 @@ class ScanChangesTest(unittest.TestCase):
         result = self.scan(base, env=environment)
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertRegex(result.stdout + result.stderr, r"ruff|vulture")
-
-    def test_clippy_reports_changed_rust_warnings_but_not_other_workspace_files(self):
-        self.write(
-            "Cargo.toml",
-            '[package]\nname = "scan_fixture"\nversion = "0.1.0"\nedition = "2021"\n',
-        )
-        self.write(
-            "src/lib.rs",
-            "pub mod other;\npub fn changed(values: &Vec<i32>) -> usize { values.len() }\n",
-        )
-        self.write(
-            "src/other.rs",
-            "pub fn unchanged(values: &Vec<i32>) -> usize {\n"
-            "    if values.len() == 0 { 0 } else { values.len() }\n}\n",
-        )
-        base = self.commit("base")
-        self.write(
-            "src/lib.rs",
-            "pub mod other;\npub fn changed(values: &Vec<i32>) -> usize { values.len() + 1 }\n",
-        )
-        self.commit("rust change")
-
-        hits = self.scan_document(base)["hits"]
-        clippy_hits = [hit for hit in hits if hit["tool"] == "cargo-clippy"]
-
-        self.assertTrue(any(hit["path"] == "src/lib.rs" for hit in clippy_hits), hits)
-        self.assertFalse(any(hit["path"] == "src/other.rs" for hit in clippy_hits), hits)
-
-    def test_clippy_checks_modified_member_in_root_package_workspace(self):
-        self.write(
-            "Cargo.toml",
-            '[workspace]\nmembers = ["crates/member"]\nresolver = "2"\n\n'
-            '[package]\nname = "root_fixture"\nversion = "0.1.0"\nedition = "2021"\n',
-        )
-        self.write("src/lib.rs", "pub fn root_function() {}\n")
-        self.write(
-            "crates/member/Cargo.toml",
-            '[package]\nname = "member_fixture"\nversion = "0.1.0"\nedition = "2021"\n',
-        )
-        member_source = "pub fn member_function() {}\n"
-        self.write("crates/member/src/lib.rs", member_source)
-        base = self.commit("workspace base")
-        self.write(
-            "crates/member/src/lib.rs",
-            member_source + "fn unused_member_function() {}\n",
-        )
-        self.commit("member warning")
-
-        hits = self.scan_document(base)["hits"]
-
-        self.assertTrue(
-            any(
-                hit["tool"] == "cargo-clippy"
-                and hit["path"] == "crates/member/src/lib.rs"
-                and "dead_code" in hit["message"]
-                for hit in hits
-            ),
-            hits,
-        )
+        self.assertIn("ruff", result.stdout + result.stderr)
 
     def test_python_structural_tests_ignore_function_names_but_keep_body_names(self):
         self.write(
@@ -459,6 +457,7 @@ class ScanChangesTest(unittest.TestCase):
 
         self.assertEqual(len(structural), 1, hits)
         self.assertEqual(structural[0]["path"], "test_new.py")
+        self.assertEqual(structural[0]["lines"], [1, 2])
         self.assertIn("test_old.py", structural[0]["message"])
 
     def _rust_structural_hits(self, package, library, old_tests, new_tests):

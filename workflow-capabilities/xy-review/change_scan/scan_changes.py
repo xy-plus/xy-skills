@@ -14,7 +14,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care/xy-repo-map"))
 
 from duplicate_blocks import find_duplicate_windows, merge_ranges  # noqa: E402
-from repo_map_lib.git_repository import gitlink_paths, tracked_paths  # noqa: E402
+from repo_map_lib.git_repository import gitlink_paths, run_git, tracked_paths  # noqa: E402
 from repo_map_lib.map_data import file_category_with_skip  # noqa: E402
 from repo_map_lib.skip_paths.skip_paths import is_skipped_path, read_skip_paths  # noqa: E402
 
@@ -27,13 +27,6 @@ RUFF_MAX_ARGUMENTS = 5
 RUFF_MAX_STATEMENTS = 50
 # pylint's too-many-lines default is 1000 physical lines.
 MAX_FILE_LINES = 1000
-VULTURE_DIAGNOSTICS = (
-    "unused function",
-    "unused class",
-    "unused method",
-    "unused property",
-    "unreachable code",
-)
 CODE_CATEGORIES = {"code", "tests"}
 SCANNED_CATEGORIES = {"code", "tests", "docs"}
 RUST_TOKENS = re.compile(
@@ -49,7 +42,7 @@ class ScanError(Exception):
     """An invalid scan request or a failed required tool."""
 
 
-def _run(command, cwd, label, accepted_codes=(0,)):
+def _run(command, cwd, label, accepted_codes):
     try:
         result = subprocess.run(
             command,
@@ -68,13 +61,17 @@ def _run(command, cwd, label, accepted_codes=(0,)):
     return result
 
 
-def _git(repository, *arguments, accepted_codes=(0,)):
-    return _run(
-        ["git", "-C", str(repository), *arguments],
-        repository,
-        "git " + " ".join(arguments[:2]),
-        accepted_codes,
-    )
+def _git(repository, *arguments, accepted_codes):
+    try:
+        result = run_git(repository, *arguments, check=False)
+    except (OSError, ValueError) as error:
+        raise ScanError(f"git {' '.join(arguments[:2])} 运行失败：{error}") from error
+    if result.returncode not in accepted_codes:
+        details = result.stderr.strip() or result.stdout.strip()
+        raise ScanError(
+            f"git {' '.join(arguments[:2])} 运行失败（退出码 {result.returncode}）：{details}"
+        )
+    return result
 
 
 def _regular_tracked_paths(repository):
@@ -88,13 +85,80 @@ def _regular_tracked_paths(repository):
     }
 
 
+def _merge_line_ranges(ranges):
+    merged = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return [[start, end] for start, end in merged]
+
+
+def _diff_new_line_ranges(repository, base, head, renamed_paths):
+    if not renamed_paths:
+        return {}
+    result = _git(
+        repository, "diff", "-M", "-U0", "--no-color", base, head,
+        accepted_codes=(0,),
+    )
+    ranges = {path: [] for path in renamed_paths}
+    current_path = None
+    hunk_pattern = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+    for line in result.stdout.splitlines():
+        if line.startswith("+++ b/"):
+            current_path = line[6:]
+            continue
+        if line.startswith("+++ "):
+            current_path = None
+            continue
+        match = hunk_pattern.match(line)
+        if match is None or current_path not in ranges:
+            continue
+        new_start = int(match.group(1))
+        new_count = int(match.group(2) or "1")
+        if new_count:
+            ranges[current_path].append((new_start, new_start + new_count - 1))
+        else:
+            # A deletion has no new line; include the lines on both sides of its point.
+            ranges[current_path].append((max(1, new_start), max(1, new_start + 1)))
+    return {
+        path: _merge_line_ranges(path_ranges)
+        for path, path_ranges in ranges.items()
+    }
+
+
 def _changed_paths(repository, base, head, regular_files):
     result = _git(
-        repository, "diff", "--name-only", "-z", "--diff-filter=AMRCT", base, head
+        repository, "diff", "-M", "--name-status", "-z", base, head,
+        accepted_codes=(0,),
     )
-    return sorted(
-        set(result.stdout.split("\0")) & regular_files
-    )
+    parts = result.stdout.split("\0")
+    changed = set()
+    renamed_paths = set()
+    index = 0
+    while index < len(parts) and parts[index]:
+        status = parts[index]
+        index += 1
+        if status.startswith("R") or status.startswith("C"):
+            old_path, new_path = parts[index:index + 2]
+            index += 2
+            if status.startswith("R") and status != "R100" and new_path in regular_files:
+                renamed_paths.add(new_path)
+                changed.add(new_path)
+            elif status.startswith("C") and new_path in regular_files:
+                changed.add(new_path)
+        elif status in {"A", "M", "T"}:
+            path = parts[index]
+            index += 1
+            if path in regular_files:
+                changed.add(path)
+        elif status == "D":
+            index += 1
+        else:
+            raise ScanError(f"无法识别 git diff 改动状态：{status}")
+    partial = _diff_new_line_ranges(repository, base, head, renamed_paths)
+    return sorted(changed), partial
 
 
 def _repository_and_revision(repository_value, base_value):
@@ -104,15 +168,21 @@ def _repository_and_revision(repository_value, base_value):
     repository = requested.resolve()
     if not repository.is_dir():
         raise ScanError(f"--repo 不是目录：{repository}")
-    top_level = Path(_git(repository, "rev-parse", "--show-toplevel").stdout.strip()).resolve()
+    top_level = Path(_git(
+        repository, "rev-parse", "--show-toplevel", accepted_codes=(0,)
+    ).stdout.strip()).resolve()
     if repository != top_level:
         raise ScanError(f"--repo 必须指向仓库根目录：{top_level}")
 
-    status = _git(repository, "status", "--porcelain", "--untracked-files=all").stdout
+    status = _git(
+        repository, "status", "--porcelain", "--untracked-files=all", accepted_codes=(0,)
+    ).stdout
     if status:
         raise ScanError("工作树必须干净（git status --porcelain 有输出）")
 
-    head = _git(repository, "rev-parse", "--verify", "HEAD^{commit}").stdout.strip()
+    head = _git(
+        repository, "rev-parse", "--verify", "HEAD^{commit}", accepted_codes=(0,)
+    ).stdout.strip()
     if not base_value or base_value.startswith("-"):
         raise ScanError("--base 必须是 HEAD 的祖先提交且不能等于 HEAD")
     base_result = _git(
@@ -152,19 +222,18 @@ def _skip_paths(repository, tracked_paths):
         raise ScanError(str(error)) from error
 
 
-def _stable_hit(tool, rule, path, line, message):
+def _stable_hit(tool, rule, path, line, line_end, message):
     return {
         "id": f"{tool}:{rule}:{path}:{line}",
         "tool": tool,
         "path": path,
         "line": int(line),
+        "lines": [int(line), int(line_end)],
         "message": message,
     }
 
 
 def _duplicate_block_hits(repository, tracked_paths, skip_paths, changed):
-    # TODO notes can quote code while describing larger work; counting them would
-    # make that copied example look like duplicate implementation.
     windows = find_duplicate_windows(repository, tracked_paths, skip_paths)
     pairs_by_changed_path = {}
     for locations in windows.values():
@@ -197,6 +266,7 @@ def _duplicate_block_hits(repository, tracked_paths, skip_paths, changed):
                 "six-lines-forty-characters",
                 path,
                 start,
+                end,
                 f"与 {locations} 有逐字重复段；连续 6 行且至少 40 个字母数字",
             ))
     return hits
@@ -218,6 +288,7 @@ def _line_count_hits(repository, changed, categories):
                 "over-1000-lines",
                 path,
                 MAX_FILE_LINES + 1,
+                count,
                 f"文件有 {count} 行，超过 1000 行门槛（pylint too-many-lines 默认值）",
             ))
     return hits
@@ -235,6 +306,26 @@ def _relative_path(repository, value):
     if not path.is_absolute():
         path = repository / path
     return Path(os.path.relpath(path, repository)).as_posix()
+
+
+def _function_line_range(repository, path, line):
+    try:
+        source = (repository / path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ScanError(f"无法读取 Ruff 函数命中所在文件 {path}：{error}") from error
+    try:
+        tree = ast.parse(source, filename=path)
+    except SyntaxError as error:
+        raise ScanError(f"无法解析 Ruff 函数命中所在文件 {path}：{error}") from error
+    matches = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.lineno <= line <= node.end_lineno
+    ]
+    if not matches:
+        return [line, line]
+    function = min(matches, key=lambda node: node.end_lineno - node.lineno)
+    return [function.lineno, function.end_lineno]
 
 
 def _ruff_hits(repository, changed, categories):
@@ -262,6 +353,7 @@ def _ruff_hits(repository, changed, categories):
     if not isinstance(diagnostics, list):
         raise ScanError("ruff 输出不是诊断数组")
     hits = []
+    function_ranges = {}
     for diagnostic in diagnostics:
         code = diagnostic.get("code")
         filename = _relative_path(repository, diagnostic.get("filename", ""))
@@ -272,94 +364,19 @@ def _ruff_hits(repository, changed, categories):
         message = diagnostic.get("message")
         if not isinstance(line, int) or not isinstance(message, str):
             raise ScanError("ruff 输出缺少行号或说明")
-        hits.append(_stable_hit("ruff", code, filename, line, f"{code}: {message}"))
-    return hits
-
-
-def _vulture_hits(repository, tracked_paths, skip_paths, changed, categories):
-    all_python = [
-        path for path in tracked_paths
-        if Path(path).suffix.lower() == ".py"
-        and file_category_with_skip(repository, path, skip_paths) in CODE_CATEGORIES
-    ]
-    if not all_python:
-        return []
-    vulture = _tool_path("vulture")
-    result = _run([vulture, *all_python], repository, "vulture", accepted_codes=(0, 3))
-    hits = []
-    for output_line in result.stdout.splitlines():
-        match = re.match(r"^(.*):(\d+): (.*)$", output_line)
-        if match is None:
-            raise ScanError(f"无法解析 vulture 输出：{output_line}")
-        path, line_text, message = match.groups()
-        path = _relative_path(repository, path)
-        if path not in changed or categories[path] not in CODE_CATEGORIES:
-            continue
-        if not any(kind in message for kind in VULTURE_DIAGNOSTICS):
-            continue
-        hits.append(_stable_hit("vulture", message.split(" '", 1)[0], path, int(line_text), message))
-    return hits
-
-
-def _cargo_workspace(repository, rust_path):
-    cargo = _tool_path("cargo")
-    result = _run(
-        [cargo, "locate-project", "--workspace", "--message-format", "plain"],
-        (repository / rust_path).parent,
-        "cargo locate-project",
-    )
-    return Path(result.stdout.strip()).resolve().parent
-
-
-def _clippy_hits(repository, changed, categories):
-    rust_paths = [
-        path for path in changed
-        if Path(path).suffix.lower() == ".rs" and categories[path] in CODE_CATEGORIES
-    ]
-    if not rust_paths:
-        return []
-    cargo = _tool_path("cargo")
-    workspaces = sorted({_cargo_workspace(repository, path) for path in rust_paths})
-    changed_set = set(rust_paths)
-    hits = []
-    for workspace in workspaces:
-        result = _run(
-            [cargo, "clippy", "--workspace", "--all-targets", "--message-format=json",
-             "--manifest-path", str(workspace / "Cargo.toml")],
-            workspace,
-            "cargo clippy",
-        )
-        for line in result.stdout.splitlines():
-            try:
-                item = json.loads(line)
-            except ValueError as error:
-                raise ScanError(f"cargo clippy 输出不是有效 JSON：{error}") from error
-            if item.get("reason") == "compiler-message":
-                hits.extend(_clippy_message_hits(
-                    repository, workspace, changed_set, item.get("message", {})
-                ))
-    return hits
-
-
-def _clippy_message_hits(repository, workspace, changed, message):
-    if message.get("level") != "warning":
-        return []
-    code = message.get("code") or {}
-    rule = code.get("code", "compiler-warning")
-    detail = message.get("message", "Rust 警告")
-    hits = []
-    for span in message.get("spans", []):
-        if not span.get("is_primary"):
-            continue
-        span_path = Path(span["file_name"])
-        if not span_path.is_absolute():
-            span_path = workspace / span_path
-        path = _relative_path(repository, str(span_path))
-        if path in changed:
-            hits.append(_stable_hit(
-                "cargo-clippy", rule, path, span.get("line_start", 1),
-                f"{rule}: {detail}",
-            ))
+        if code in {"C901", "PLR0913", "PLR0915"}:
+            if filename not in function_ranges:
+                function_ranges[filename] = {}
+            if line not in function_ranges[filename]:
+                function_ranges[filename][line] = _function_line_range(
+                    repository, filename, line
+                )
+            line_start, line_end = function_ranges[filename][line]
+        else:
+            line_start = line_end = line
+        hits.append(_stable_hit(
+            "ruff", code, filename, line_start, line_end, f"{code}: {message}"
+        ))
     return hits
 
 
@@ -384,7 +401,12 @@ def _python_test_functions(source, path):
         normalized = _ReplaceLiterals().visit(
             ast.Module(body=node.body, type_ignores=[])
         )
-        functions.append((node.name, ast.dump(normalized, include_attributes=False), node.lineno))
+        functions.append((
+            node.name,
+            ast.dump(normalized, include_attributes=False),
+            node.lineno,
+            node.end_lineno,
+        ))
     return functions
 
 
@@ -433,9 +455,10 @@ def _rust_test_functions(source):
             continue
         function = _rust_test_structure(words, index + 4)
         if function is not None:
-            name, structure, function_index = function
-            line = source.count("\n", 0, tokens[function_index][1]) + 1
-            functions.append((name, structure, line))
+            name, structure, function_index, closing = function
+            line_start = source.count("\n", 0, tokens[function_index][1]) + 1
+            line_end = source.count("\n", 0, tokens[closing][1]) + 1
+            functions.append((name, structure, line_start, line_end))
     return functions
 
 
@@ -470,7 +493,7 @@ def _rust_test_structure(words, start):
         "<literal>" if _is_rust_literal(token) else token
         for token in words[opening:closing + 1]
     ]
-    return words[function_index + 1], " ".join(body), function_index
+    return words[function_index + 1], " ".join(body), function_index, closing
 
 
 def _structural_test_hits(repository, tracked_paths, skip_paths, changed, categories):
@@ -482,40 +505,56 @@ def _structural_test_hits(repository, tracked_paths, skip_paths, changed, catego
         functions = _test_functions_for_path(repository, path, categories)
         if functions is None:
             continue
-        for name, structure, line in functions:
-            occurrences.setdefault((suffix, structure), []).append((path, line, name))
+        for name, structure, line_start, line_end in functions:
+            occurrences.setdefault((suffix, structure), []).append(
+                (path, line_start, line_end, name)
+            )
 
     hits = []
     for (suffix, _structure), members in occurrences.items():
         if len(members) < 2:
             continue
-        for path, line, name in members:
+        for path, line_start, line_end, name in members:
             if path not in changed:
                 continue
             others = sorted(
                 f"{other_path}:{other_line}"
-                for other_path, other_line, _other_name in members
-                if (other_path, other_line) != (path, line)
+                for other_path, other_line, _other_end, _other_name in members
+                if (other_path, other_line) != (path, line_start)
             )
             language = "Python" if suffix == ".py" else "Rust"
             hits.append(_stable_hit(
                 "structural-tests",
                 f"{language}:{name}",
                 path,
-                line,
+                line_start,
+                line_end,
                 f"{language} 测试 {name} 去掉字面量后结构相同；其他位置：{', '.join(others)}",
             ))
     return hits
+
+
+def _hit_is_in_partial_change(hit, partial):
+    changed_ranges = partial.get(hit["path"])
+    if changed_ranges is None:
+        return True
+    hit_start, hit_end = hit["lines"]
+    return any(
+        hit_start <= changed_end and changed_start <= hit_end
+        for changed_start, changed_end in changed_ranges
+    )
 
 
 def scan_repository(repository_value, base_value):
     repository, base, head = _repository_and_revision(repository_value, base_value)
     tracked, regular_files = _regular_tracked_paths(repository)
     skip_paths = _skip_paths(repository, tracked)
-    changed = [
-        path for path in _changed_paths(repository, base, head, regular_files)
+    changed, partial = _changed_paths(repository, base, head, regular_files)
+    changed = [path for path in changed if not is_skipped_path(path, skip_paths)]
+    partial = {
+        path: ranges for path, ranges in partial.items()
         if not is_skipped_path(path, skip_paths)
-    ]
+    }
     categories = {
         path: file_category_with_skip(repository, path, skip_paths)
         for path in tracked
@@ -527,11 +566,10 @@ def scan_repository(repository_value, base_value):
     hits = _duplicate_block_hits(repository, tracked, skip_paths, changed_set)
     hits.extend(_line_count_hits(repository, changed, categories))
     hits.extend(_ruff_hits(repository, changed, categories))
-    hits.extend(_vulture_hits(repository, tracked, skip_paths, changed_set, categories))
-    hits.extend(_clippy_hits(repository, changed, categories))
     hits.extend(_structural_test_hits(
         repository, tracked, skip_paths, changed_set, categories
     ))
+    hits = [hit for hit in hits if _hit_is_in_partial_change(hit, partial)]
     counts = {}
     ordered_hits = []
     for hit in sorted(
@@ -550,6 +588,7 @@ def scan_repository(repository_value, base_value):
         "base": base,
         "head": head,
         "changed": changed,
+        "partial": partial,
         "hits": ordered_hits,
     }
 
