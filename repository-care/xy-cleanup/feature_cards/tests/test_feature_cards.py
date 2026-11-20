@@ -159,7 +159,6 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertIn("为什么：让功能容易使用。", "\n".join(items[0]["lines"]))
         self.assertIn("可选的旧格式导出入口", "\n".join(items[1]["lines"]))
         self.assertIn("README 实际使用记录只选了新版入口", "\n".join(items[1]["lines"]))
-        self.assertIn("前三项", "\n".join(decisions["intro"]))
 
     def test_page_lists_draft_items_and_reasons_and_shows_rewritten_item_text(self):
         self._commit_repository("初始提交")

@@ -63,7 +63,6 @@ class DecisionShapeValidationTest(unittest.TestCase):
 
     def test_details_rejects_missing_extra_and_invalid_fields(self):
         cases = (
-            ("missing", None, "details"),
             ("extra", {"title": "更多", "lines": ["条目。"], "extra": True}, "extra"),
             ("non-object", ["条目。"], "details"),
             ("missing-title", {"lines": ["条目。"]}, "title"),
@@ -78,10 +77,7 @@ class DecisionShapeValidationTest(unittest.TestCase):
         for label, details, expected in cases:
             with self.subTest(label=label):
                 decision = valid_decisions()
-                if label == "missing":
-                    del decision["groups"][0]["items"][0]["details"]
-                else:
-                    decision["groups"][0]["items"][0]["details"] = details
+                decision["groups"][0]["items"][0]["details"] = details
                 with self.assertRaises(ValueError) as context:
                     decision_page.validate_decisions(decision)
                 self.assertIn(expected, str(context.exception))

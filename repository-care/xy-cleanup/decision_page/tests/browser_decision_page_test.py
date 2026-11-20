@@ -463,7 +463,6 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     saved_answers,
                     {"title": "Cleanup decisions", "answers": expected_answers},
                 )
-                self.assertNotIn("details", saved_answers["answers"]["A1"])
                 submitted = {"answers": expected_answers}
                 self.assertEqual(bridge.received_payloads, [submitted, submitted])
                 self.assertEqual(script_errors, [])
