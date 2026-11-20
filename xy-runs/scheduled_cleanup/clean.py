@@ -73,6 +73,31 @@ def checked_directory(root, expected):
 
 def remove_item(path):
     if stat.S_ISDIR(path.lstat().st_mode):
+        # Only widen current-user directories; dirfds keep this walk off symlinks.
+        def add_write_permissions(descriptor):
+            details = os.fstat(descriptor)
+            if details.st_uid == os.getuid():
+                os.fchmod(descriptor, stat.S_IMODE(details.st_mode)
+                          | stat.S_IWUSR | stat.S_IXUSR)
+            with os.scandir(descriptor) as children:
+                for child in children:
+                    if not child.is_dir(follow_symlinks=False):
+                        continue
+                    expected = child.stat(follow_symlinks=False)
+                    child_descriptor = os.open(
+                        child.name, DIRECTORY_OPEN_FLAGS, dir_fd=descriptor)
+                    try:
+                        if not os.path.samestat(expected, os.fstat(child_descriptor)):
+                            raise OSError(f"目录在删除前发生变化：{child.name}")
+                        add_write_permissions(child_descriptor)
+                    finally:
+                        os.close(child_descriptor)
+
+        descriptor = os.open(path, DIRECTORY_OPEN_FLAGS)
+        try:
+            add_write_permissions(descriptor)
+        finally:
+            os.close(descriptor)
         shutil.rmtree(path)
     else:
         path.unlink()

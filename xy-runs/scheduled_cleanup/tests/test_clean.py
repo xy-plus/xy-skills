@@ -159,6 +159,41 @@ class CleanerTestCase(unittest.TestCase):
                     self.assertNotIn(str(preserved), paths)
                     self.assertEqual((status, errors), (0, ""))
 
+    def make_readonly_tree(self, root):
+        directories = [root / "readonly", root / "readonly" / "nested"]
+        directories[-1].mkdir(parents=True)
+        data = directories[-1] / "data"
+        data.write_text("remove", encoding="utf-8")
+        data.chmod(0o400)
+
+        def restore_permissions():
+            for directory in directories:
+                try:
+                    directory.chmod(0o700)
+                except FileNotFoundError:
+                    pass
+
+        self.addCleanup(restore_permissions)
+        for directory in reversed(directories):
+            directory.chmod(0o500)
+        return data
+
+    def test_readonly_nested_directories_are_removed_from_items_and_trash(self):
+        item = self.root / "matter"
+        item_data = self.make_readonly_tree(item)
+        trash = self.root / ".runs-cleaner-trash"
+        leftover = trash / "leftover"
+        leftover_data = self.make_readonly_tree(leftover)
+
+        status, paths, errors = self.run_cleaner([str(self.root)], "delete", self.cutoff)
+
+        self.assertEqual((status, paths, errors), (0, [str(item)], ""))
+        self.assertFalse(item.exists())
+        self.assertFalse(leftover.exists())
+        self.assertFalse(item_data.exists())
+        self.assertFalse(leftover_data.exists())
+        self.assertEqual(list(trash.iterdir()), [])
+
     # Root globs expand, and a missing root does not block existing matches.
     def test_root_globs_and_missing_roots(self):
         first = self.root / "-first"
