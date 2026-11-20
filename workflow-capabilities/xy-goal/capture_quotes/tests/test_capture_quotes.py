@@ -269,22 +269,66 @@ class CaptureQuotesTests(GoalTestSupport):
                     self.assertEqual(self.files(), before, "事项目录读不出时也只新增原话")
                     self.assertFalse((contract / missing).exists())
 
-    def test_hooks_do_not_record_when_quotes_or_links_cannot_be_read(self):
+    def test_unreadable_contract_hooks_stage_the_original_input(self):
         original_root = self.root
         for problem in ("missing-quotes", "invalid-quote", "missing-links", "invalid-links"):
             for command in ("hook-prompt", "hook-answer"):
                 with self.subTest(problem=problem, command=command):
-                    self.root = original_root / f"{problem}-{command}"
+                    self.root = original_root / f"stage-{problem}-{command}"
                     self.root.mkdir()
                     contract = self.open_goal("release")
                     bad_path = self.make_contract_file_unreadable(contract, problem)
-                    before = self.files()
-                    payload = {"session_id": self.session, "prompt": "不能假装记录",
-                               "tool_name": "AskUserQuestion", "tool_input": {}, "tool_response": "继续"}
-                    result = self.run_goal(command, session=None, pid=None, stdin=json.dumps(payload))
-                    self.assert_hook_error(result, command, message=str(bad_path),
-                                           record="这次输入没有记入契约。")
-                    self.assertEqual(self.files(), before)
+                    quote_files_before = {
+                        path.name: path.read_bytes() for path in (contract / "quotes").glob("*")
+                    } if (contract / "quotes").exists() else None
+                    fields = ({"prompt": "损坏期间也不能丢"} if command == "hook-prompt" else
+                              {"tool_name": "AskUserQuestion", "tool_input": {"question": "继续吗？"},
+                               "tool_response": "继续"})
+                    result = self.run_goal(
+                        command, session=None, pid=None,
+                        stdin=json.dumps({"session_id": self.session, **fields}),
+                    )
+                    saved = self.inbox / "1.md"
+                    context = self.assert_hook_error(
+                        result, command, message=str(bad_path),
+                        record="这次输入已暂存，修好契约后按原序并入。",
+                    )
+                    expected = (fields["prompt"] if command == "hook-prompt" else
+                                json.dumps({"tool_input": fields["tool_input"],
+                                            "tool_response": fields["tool_response"]},
+                                           ensure_ascii=False, indent=2))
+                    self.assertEqual(saved.read_bytes(), expected.encode("utf-8"))
+                    self.assertIn(str(saved), context)
+                    quote_files_after = {
+                        path.name: path.read_bytes() for path in (contract / "quotes").glob("*")
+                    } if (contract / "quotes").exists() else None
+                    self.assertEqual(quote_files_after, quote_files_before)
+
+    def test_check_merges_staged_inputs_once_in_order_before_checking(self):
+        contract = self.open_goal("release")
+        self.quote(contract, 2, "已处理的早期原话")
+        self.quote(contract, 4, "另一条已处理原话")
+        (contract / "links.md").write_text("2 不必跟进 已答\n4 不必跟进 已答\n")
+        (contract / "links.md").write_bytes(b"\xff")
+        for text in ("暂存的第一条", "暂存的第二条"):
+            result = self.run_goal(
+                "hook-prompt", session=None, pid=None,
+                stdin=json.dumps({"session_id": self.session, "prompt": text}),
+            )
+            self.assertIn("已暂存", json.loads(result[1])["hookSpecificOutput"]["additionalContext"])
+
+        (contract / "links.md").write_text("2 不必跟进 已答\n4 不必跟进 已答\n")
+        first = self.command("check")
+        second = self.command("check")
+        for code, output, errors in (first, second):
+            self.assertEqual(code, 1, output + errors)
+            self.assertIn("原话 5 还没处理", errors)
+            self.assertIn("原话 6 还没处理", errors)
+        self.assertEqual((contract / "quotes" / "5.md").read_text(), "暂存的第一条")
+        self.assertEqual((contract / "quotes" / "6.md").read_text(), "暂存的第二条")
+        self.assertFalse(self.inbox.exists())
+        self.assertEqual({path.name for path in (contract / "quotes").iterdir()},
+                         {"2.md", "4.md", "5.md", "6.md"})
 
     def test_hook_keeps_complete_quote_pending_when_classification_write_fails(self):
         contract = self.open_goal("release")

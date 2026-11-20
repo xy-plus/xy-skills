@@ -59,9 +59,22 @@ class GoalTestSupport(unittest.TestCase):
         return path
 
     @staticmethod
-    def transcript_record(record_type, *, uuid=None, parent=None, timestamp=None,
-                          prompt_id=None, origin=None, content=None, subtype=None,
-                          is_meta=False, role="user"):
+    def transcript_record(record_type, **record_fields):
+        expected_fields = {
+            "uuid", "parent", "timestamp", "prompt_id", "origin", "content",
+            "subtype", "is_meta", "role",
+        }
+        if record_fields.keys() != expected_fields:
+            raise TypeError(f"transcript_record fields must be explicit: {sorted(expected_fields)}")
+        uuid = record_fields["uuid"]
+        parent = record_fields["parent"]
+        timestamp = record_fields["timestamp"]
+        prompt_id = record_fields["prompt_id"]
+        origin = record_fields["origin"]
+        content = record_fields["content"]
+        subtype = record_fields["subtype"]
+        is_meta = record_fields["is_meta"]
+        role = record_fields["role"]
         record = {"type": record_type}
         if subtype is not None:
             record["subtype"] = subtype
@@ -83,36 +96,36 @@ class GoalTestSupport(unittest.TestCase):
         records = [
             self.transcript_record(
                 "assistant", uuid="assistant", parent="older", timestamp="2026-10-24T08:59:00.000Z",
-                content=[], role="assistant"),
+                content=[], role="assistant", prompt_id=None, origin=None, subtype=None, is_meta=False),
             self.transcript_record(
                 "system", subtype="stop_hook_summary", uuid="stop", parent="assistant",
-                timestamp="2026-10-24T08:59:30.000Z"),
+                timestamp="2026-10-24T08:59:30.000Z", prompt_id=None, origin=None, content=None, is_meta=False, role="user"),
             self.transcript_record(
                 "system", subtype="turn_duration", uuid="turn", parent="stop",
-                timestamp="2026-10-24T08:59:31.000Z"),
+                timestamp="2026-10-24T08:59:31.000Z", prompt_id=None, origin=None, content=None, is_meta=False, role="user"),
             {"type": "file-history-snapshot", "messageId": "assistant",
              "snapshot": {}, "isSnapshotUpdate": False},
             self.transcript_record(
                 "user", uuid="withdrawn", parent="turn", timestamp="2026-10-24T09:00:00.000Z",
-                prompt_id="withdrawn-prompt", origin="human", content=content),
+                prompt_id="withdrawn-prompt", origin="human", content=content, subtype=None, is_meta=False, role="user"),
             {"type": "api-request", "timestamp": "2026-10-24T09:00:00.100Z"},
             self.transcript_record(
                 "system", subtype="away_summary", uuid="away", parent="turn",
-                timestamp="2026-10-24T09:00:30.000Z"),
+                timestamp="2026-10-24T09:00:30.000Z", prompt_id=None, origin=None, content=None, is_meta=False, role="user"),
             {"type": "queue-operation", "timestamp": "2026-10-24T09:00:31.000Z"},
             self.transcript_record(
                 "system", subtype="scheduled_task_fire", uuid="scheduled", parent="away",
-                timestamp="2026-10-24T09:00:40.000Z"),
+                timestamp="2026-10-24T09:00:40.000Z", prompt_id=None, origin=None, content=None, is_meta=False, role="user"),
             self.transcript_record(
                 "user", uuid="next-user", parent="scheduled", timestamp="2026-10-24T09:01:00.000Z",
-                prompt_id="timer-prompt", content="中性定时提示", is_meta=True),
+                prompt_id="timer-prompt", content="中性定时提示", is_meta=True, origin=None, subtype=None, role="user"),
         ]
         if attachment:
             withdrawn_index = next(index for index, record in enumerate(records)
                                    if record.get("uuid") == "withdrawn")
             records.insert(withdrawn_index + 1, self.transcript_record(
                 "attachment", subtype="total_tokens_reminder", uuid="attachment",
-                parent="withdrawn", timestamp="2026-10-24T09:00:00.050Z"))
+                parent="withdrawn", timestamp="2026-10-24T09:00:00.050Z", prompt_id=None, origin=None, content=None, is_meta=False, role="user"))
         return records
 
     @staticmethod
@@ -150,6 +163,24 @@ class GoalTestSupport(unittest.TestCase):
         self.assertEqual(code, 0, errors)
         self.assertEqual(errors, "")
         return output
+
+    def close_review(self, contract, *, contract_directory=None, fingerprint=None,
+                     verdict="通过", reviewer_session="reviewer-session"):
+        current = self.cli_command("fingerprint", str(contract))
+        self.assertEqual(current.returncode, 0, current.stdout + current.stderr)
+        report = {
+            "contract_directory": str(contract) if contract_directory is None else contract_directory,
+            "verdict": verdict,
+            "fingerprint": current.stdout.strip() if fingerprint is None else fingerprint,
+            "reviewer_session_id": reviewer_session,
+        }
+        path = self.root.parent / "close-review.json"
+        path.write_text(json.dumps(report, ensure_ascii=False) + "\n", encoding="utf-8")
+        return path
+
+    def close_contract(self, contract):
+        report = self.close_review(contract)
+        return self.succeeds("close", "--review", str(report))
 
     def rejects(self, *arguments, message):
         before = self.files()

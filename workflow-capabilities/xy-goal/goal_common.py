@@ -328,6 +328,30 @@ def incoming_quotes(inbox, contract, last_number):
     return imported, reasons
 
 
+def merge_inbox(contract, session_id):
+    """Import staged hook input before the next hook or explicit check."""
+    root = contract.path.parents[2]
+    project = contract.path.parents[1]
+    require_project_directory(root, project)
+    inbox_root = project / "xy-goal-inbox"
+    inbox = inbox_root / session_id
+    if not inbox.exists():
+        return contract
+    if not stat.S_ISDIR(inbox_root.lstat().st_mode) or not stat.S_ISDIR(inbox.lstat().st_mode):
+        raise GoalError(f"项目 inbox 必须是实际目录，不能是软链接：{inbox}")
+    quotes, reasons = incoming_quotes(inbox, contract.path, max(contract.quotes, default=0))
+    if not quotes:
+        return contract
+    changes = {contract.path / "quotes" / f"{number}.md": text
+               for number, text in quotes.items()}
+    dismissed = dict(contract.dismissed)
+    dismissed.update(reasons)
+    changes[contract.path / "links.md"] = encode_links(contract.links, dismissed)
+    with consume_inputs([inbox]):
+        write_files(changes, [])
+    return Contract(contract.path, (contract.path / "goal.md").read_bytes())
+
+
 def remove_temporary_path(path):
     try:
         if path.is_dir() and not path.is_symlink():
@@ -360,7 +384,7 @@ def consume_inputs(paths):
             remove_temporary_path(destination)
 
 
-def publish_contract(root, destination, metadata, quotes, links, input_paths):
+def publish_contract(root, destination, *, metadata, quotes, links, input_paths):
     """先在临时目录写完并重新读取校验，再发布。失败时不留下新契约。"""
     item = destination.parent
     project = item.parent

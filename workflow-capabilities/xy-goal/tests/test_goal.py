@@ -66,8 +66,10 @@ class GoalTests(GoalTestSupport):
                 contract = self.open_goal("release")
                 self.quote(contract, 1, "发布要求")
                 self.add_task(1)
+                review = None
                 if operation == "close":
                     self.succeeds("accept", "T1", "--verdict", "通过")
+                    review = self.close_review(contract)
                 outside = self.replace_project_with_symlink()
                 before = self.directory_entries(outside)
                 arguments = {
@@ -78,7 +80,7 @@ class GoalTests(GoalTestSupport):
                     "dismiss": ("dismiss", "1", "--reason", "已答"),
                     "accept": ("accept", "T1", "--verdict", "通过"),
                     "cancel": ("cancel", "T1", "--quote", "1"),
-                    "close": ("close",),
+                    "close": ("close", "--review", str(review)),
                     "adopt": ("adopt", str(contract)),
                     "hook-prompt": ("hook-prompt",),
                     "hook-answer": ("hook-answer",),
@@ -174,7 +176,7 @@ class GoalTests(GoalTestSupport):
         self.assertEqual((code, output, errors), (0, "", ""))
         self.succeeds("accept", "T1", "--verdict", "通过")
         self.succeeds("cancel", "T2", "--quote", "3")
-        self.succeeds("close")
+        self.close_contract(contract)
         self.assertFalse((contract / "goal.md").exists())
 
     def test_trash_contract_is_neither_found_by_hook_nor_adopted(self):
@@ -194,7 +196,7 @@ class GoalTests(GoalTestSupport):
         contract = self.open_goal("release")
         self.quote(contract, 1, "第一件事")
         self.succeeds("dismiss", "1", "--reason", "已答")
-        self.succeeds("close")
+        self.close_contract(contract)
         before = {path.relative_to(contract): path.read_bytes()
                   for path in contract.rglob("*") if path.is_file()}
         self.hook("hook-prompt", {"session_id": self.session, "prompt": "下一件事"})
@@ -404,16 +406,51 @@ class GoalTests(GoalTestSupport):
         other = self.root / "untouched.txt"
         other.write_text("别的文件")
         self.quote(contract, 1, "发布")
-        self.rejects("close", message="还没处理")
+        report = self.close_review(contract)
+        self.rejects("close", "--review", str(report), message="还没处理")
         self.add_task(1)
-        self.rejects("close", message="开放事项")
+        report = self.close_review(contract)
+        self.rejects("close", "--review", str(report), message="开放事项")
         self.succeeds("accept", "T1", "--verdict", "通过")
         before = self.files()
-        self.succeeds("close")
+        self.close_contract(contract)
         del before[str((contract / "goal.md").relative_to(self.root))]
         self.assertEqual(self.files(), before)
         self.assertTrue(contract.is_dir())
         self.assertEqual(other.read_text(), "别的文件")
+
+    def test_close_requires_a_current_independent_review_report(self):
+        contract = self.open_goal("release")
+        self.rejects_argument_error("close", message="--review")
+
+        report = self.close_review(contract, reviewer_session=self.session)
+        self.rejects("close", "--review", str(report), message="复核者会话")
+
+        report = self.close_review(contract, contract_directory=str(self.root / "another" / "xy-goal"))
+        self.rejects("close", "--review", str(report), message="契约目录")
+
+        report = self.close_review(contract, verdict="不通过")
+        self.rejects("close", "--review", str(report), message="复核结论")
+
+        report = self.close_review(contract)
+        metadata = contract / "goal.md"
+        metadata.write_text(metadata.read_text(encoding="utf-8").replace("交付新版本", "修改后的目标"),
+                            encoding="utf-8")
+        self.rejects("close", "--review", str(report), message="指纹")
+
+    def test_fingerprint_covers_contract_target_and_is_read_only(self):
+        contract = self.open_goal("release")
+        before = self.files()
+        original = self.cli_command("fingerprint", str(contract))
+        self.assertEqual(original.returncode, 0, original.stdout + original.stderr)
+        self.assertRegex(original.stdout, r"^[0-9a-f]{64}\n$")
+        self.assertEqual(self.files(), before)
+        metadata = contract / "goal.md"
+        metadata.write_text(metadata.read_text(encoding="utf-8").replace("交付新版本", "修改后的目标"),
+                            encoding="utf-8")
+        changed = self.cli_command("fingerprint", str(contract))
+        self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+        self.assertNotEqual(original.stdout, changed.stdout)
 
     def test_unicode_line_separators_round_trip_in_native_fields(self):
         original_root = self.root
