@@ -478,14 +478,25 @@ def check(contract, session_id):
 def contract_fingerprint(path, goal_content):
     contract = Contract(path, goal_content)
     links_path = path / "links.md"
-    links_text = links_path.read_text(encoding="utf-8")
-    links_lines = links_text.splitlines(keepends=True)
+    links_bytes = links_path.read_bytes()
+    link_segments = links_bytes.split(b"\n")
+    links_lines = [segment + b"\n" for segment in link_segments[:-1]]
+    if link_segments[-1]:
+        links_lines.append(link_segments[-1])
+
+    def line_content(line):
+        if line.endswith(b"\n"):
+            line = line[:-1]
+            if line.endswith(b"\r"):
+                line = line[:-1]
+        return line
+
     automatic_dismissals = {}
     for number, text in contract.quotes.items():
         reason = automatic_reason(text, path)
-        expected_line = f"{number} 不必跟进 {reason}" if reason is not None else None
+        expected_line = f"{number} 不必跟进 {reason}".encode("utf-8") if reason is not None else None
         if (reason is not None and contract.dismissed.get(number) == reason
-                and any(line.removesuffix("\n").removesuffix("\r") == expected_line
+                and any(line_content(line) == expected_line
                         for line in links_lines)):
             automatic_dismissals[number] = expected_line
 
@@ -506,11 +517,12 @@ def contract_fingerprint(path, goal_content):
             else:
                 entries.append([relative, "other", entry.lstat().st_mode])
     # The automatic input's exact dismissal row is excluded with its quote; every other
-    # mapping remains in the fingerprint. automatic_reason is the single classifier.
-    fingerprint_links = "".join(
+    # mapping remains byte-for-byte in the fingerprint, including its line endings.
+    # automatic_reason is the single classifier.
+    fingerprint_links = b"".join(
         line for line in links_lines
-        if line.removesuffix("\n").removesuffix("\r") not in automatic_dismissals.values()
-    ).encode("utf-8")
+        if line_content(line) not in automatic_dismissals.values()
+    )
     entries.append(["links.md", "file", hashlib.sha256(fingerprint_links).hexdigest()])
     payload = json.dumps({
         "contract_directory": str(path.resolve(strict=True)),

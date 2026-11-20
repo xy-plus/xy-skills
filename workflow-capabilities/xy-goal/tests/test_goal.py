@@ -509,6 +509,17 @@ class GoalTests(GoalTestSupport):
                 self.succeeds("close", "--review", str(review))
                 self.assertFalse((contract / "goal.md").exists())
 
+    def test_close_review_fingerprint_preserves_crlf_in_remaining_links(self):
+        contract = self.open_goal("links-line-ending")
+        self.quote(contract, 1, "已处理原话")
+        links = contract / "links.md"
+        links.write_bytes("1 不必跟进 已处理\r\n".encode("utf-8"))
+        review = self.close_review(contract)
+
+        links.write_bytes("1 不必跟进 已处理\n".encode("utf-8"))
+
+        self.rejects("close", "--review", str(review), message="指纹")
+
     def test_close_review_fingerprint_covers_nonautomatic_changes(self):
         self.root = Path(self.temporary.name) / "runs-human-quote"
         self.root.mkdir()
