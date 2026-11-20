@@ -2,6 +2,7 @@
 
 import argparse
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 import fcntl
 import glob
 import json
@@ -79,39 +80,48 @@ def process_paths(process):
         pass
 
 
+def process_is_owned_by_user(process, user):
+    try:
+        status = (process / "status").read_bytes()
+        owner = next(line.split()[1] for line in status.splitlines()
+                     if line.startswith(b"Uid:"))
+        return int(owner) == user
+    except (OSError, StopIteration, ValueError):
+        return False
+
+
+def process_references_path(process, path, command_path):
+    try:
+        command = os.fsdecode((process / "cmdline").read_bytes())
+        if command_path.search(command):
+            return True
+    except OSError:
+        pass
+    for reference in process_paths(process):
+        if reference_matches_path(reference, path):
+            return True
+    return False
+
+
+def reference_matches_path(reference, path):
+    if reference == path or reference.startswith(path + "/"):
+        return True
+    reference = reference.removesuffix(" (deleted)")
+    return reference == path or reference.startswith(path + "/")
+
+
 def is_in_use(item):
     path = str(item)
     command_path = re.compile(r"(?<![\w/.\-])" + re.escape(path) + r"(?=[/\s\x00]|$)")
     user = os.getuid()
     for process in Path("/proc").iterdir():
-        if not process.name.isdigit():
+        if not process.name.isdigit() or int(process.name) == os.getpid():
             continue
-        if int(process.name) == os.getpid():
-            continue
-        try:
-            # /proc/<pid> ownership changes for non-dumpable processes. The
-            # real UID in status remains readable, so do not use stat.st_uid.
-            status = (process / "status").read_bytes()
-            owner = next(line.split()[1] for line in status.splitlines()
-                         if line.startswith(b"Uid:"))
-            if int(owner) != user:
-                continue
-        except (OSError, StopIteration, ValueError):
-            continue
-        try:
-            command = os.fsdecode((process / "cmdline").read_bytes())
-            if command_path.search(command):
-                return True
-        except OSError:
-            pass
-        for reference in process_paths(process):
-            # A real name may itself end with " (deleted)"; compare the raw
-            # reference first, then the kernel-appended marker version.
-            if reference == path or reference.startswith(path + "/"):
-                return True
-            reference = reference.removesuffix(" (deleted)")
-            if reference == path or reference.startswith(path + "/"):
-                return True
+        # /proc/<pid> ownership changes for non-dumpable processes. The real
+        # UID in status remains readable, so do not use stat.st_uid.
+        if process_is_owned_by_user(process, user) and process_references_path(
+                process, path, command_path):
+            return True
     return False
 
 
@@ -142,6 +152,35 @@ class CleanerError(ValueError):
     """A configured path or explicitly selected target violates the cleanup boundary."""
 
 
+@dataclass(frozen=True)
+class CleanupPlan:
+    roots: dict
+    outer_roots: dict
+    mode: str
+    cutoff: float | None
+    output: object
+    errors: object
+
+
+@dataclass(frozen=True)
+class DeleteCandidate:
+    root: Path
+    outer: Path
+    name: str
+    expected_item: object
+    required: bool
+
+
+@dataclass(frozen=True)
+class ObsoleteDeleteRequest:
+    target_value: str
+    other_sessions_checked: bool
+    settings_path: Path
+    units_directory: Path
+    output: object
+    errors: object
+
+
 def recover_trash(outer, expected, errors):
     trash = outer / TRASH_NAME
     status = 0
@@ -167,83 +206,112 @@ def recover_trash(outer, expected, errors):
     return status
 
 
-def delete_candidate(roots, outer, root, name, expected_item, cutoff, required,
-                     output, errors):
-    item = root / name
+def validate_candidate(plan, candidate, root_descriptor):
+    current = os.stat(candidate.name, dir_fd=root_descriptor, follow_symlinks=False)
+    if not os.path.samestat(candidate.expected_item, current):
+        if candidate.required:
+            raise CleanerError("点名目标已被替换")
+        return None
+    entry = Path(f"/proc/self/fd/{root_descriptor}") / candidate.name
+    if plan.cutoff is not None and not is_expired(entry, plan.cutoff):
+        if candidate.required:
+            raise CleanerError("点名目标的年龄状态已变化")
+        return None
+    if candidate.required and not entry.resolve(strict=True).is_relative_to(candidate.outer):
+        raise CleanerError("软链真实目标不在 RUNS_ROOT 内")
+    if is_in_use(candidate.root / candidate.name):
+        if candidate.required:
+            raise CleanerError("点名目标仍被本用户进程使用")
+        return None
+    return entry
+
+
+def move_candidate_to_trash(root_descriptor, outer_descriptor, handles, name):
     try:
-        with checked_directory(outer, roots[outer]) as outer_descriptor:
+        os.mkdir(TRASH_NAME, dir_fd=outer_descriptor)
+    except FileExistsError:
+        pass
+    trash_descriptor = os.open(TRASH_NAME, DIRECTORY_OPEN_FLAGS,
+                               dir_fd=outer_descriptor)
+    handles.callback(os.close, trash_descriptor)
+    destination = Path(f"/proc/self/fd/{trash_descriptor}") / uuid.uuid4().hex
+    while os.path.lexists(destination):
+        destination = destination.parent / uuid.uuid4().hex
+    os.rename(name, destination.name, src_dir_fd=root_descriptor,
+              dst_dir_fd=trash_descriptor)
+    return destination
+
+
+def delete_candidate(plan, candidate):
+    item = candidate.root / candidate.name
+    try:
+        with checked_directory(candidate.outer, plan.roots[candidate.outer]) as outer_descriptor:
             fcntl.flock(outer_descriptor, fcntl.LOCK_EX)
             with ExitStack() as handles:
-                with checked_directory(root, roots[root]) as root_descriptor:
-                    current = os.stat(name, dir_fd=root_descriptor, follow_symlinks=False)
-                    if not os.path.samestat(expected_item, current):
-                        if required:
-                            raise CleanerError("点名目标已被替换")
+                with checked_directory(candidate.root, plan.roots[candidate.root]) as root_descriptor:
+                    entry = validate_candidate(plan, candidate, root_descriptor)
+                    if entry is None:
                         return 0
-                    entry = Path(f"/proc/self/fd/{root_descriptor}") / name
-                    if cutoff is not None and not is_expired(entry, cutoff):
-                        if required:
-                            raise CleanerError("点名目标的年龄状态已变化")
-                        return 0
-                    if required and not entry.resolve(strict=True).is_relative_to(outer):
-                        raise CleanerError("软链真实目标不在 RUNS_ROOT 内")
-                    if is_in_use(item):
-                        if required:
-                            raise CleanerError("点名目标仍被本用户进程使用")
-                        return 0
-                    try:
-                        os.mkdir(TRASH_NAME, dir_fd=outer_descriptor)
-                    except FileExistsError:
-                        pass
-                    trash_descriptor = os.open(TRASH_NAME, DIRECTORY_OPEN_FLAGS,
-                                               dir_fd=outer_descriptor)
-                    handles.callback(os.close, trash_descriptor)
-                    destination = Path(f"/proc/self/fd/{trash_descriptor}") / uuid.uuid4().hex
-                    while os.path.lexists(destination):
-                        destination = destination.parent / uuid.uuid4().hex
-                    os.rename(name, destination.name, src_dir_fd=root_descriptor,
-                              dst_dir_fd=trash_descriptor)
+                    destination = move_candidate_to_trash(
+                        root_descriptor, outer_descriptor, handles, candidate.name)
                 remove_item(destination)
-                print(json.dumps(str(item), ensure_ascii=True), file=output)
+                print(json.dumps(str(item), ensure_ascii=True), file=plan.output)
     except (OSError, CleanerError) as error:
-        print(f"error: {item}: {error}", file=errors)
+        print(f"error: {item}: {error}", file=plan.errors)
         return 1
     return 0
 
 
 def clean_roots(patterns, mode, cutoff, output, errors):
     """Run expiry checks around two locked transactions: trash recovery and one-item deletion."""
-    status = 0
     roots = expand_roots(patterns, errors)
     outer_roots = {root: next(outer for outer in roots if root.is_relative_to(outer))
                    for root in roots}
-    if mode != "list":
-        for outer in dict.fromkeys(outer_roots.values()):
-            status |= recover_trash(outer, roots[outer], errors)
+    plan = CleanupPlan(roots, outer_roots, mode, cutoff, output, errors)
+    status = recover_all_trash(plan)
     for root in roots:
-        # A previously removed ancestor may have contained this nested root.
-        if not os.path.lexists(root):
-            continue
-        outer = outer_roots[root]
-        try:
-            with checked_directory(root, roots[root]) as root_descriptor:
-                for name in sorted(os.listdir(root_descriptor)):
-                    item = root / name
-                    if name in (TRASH_NAME, ".runs-cleaner-previewed"):
-                        continue
-                    if not is_expired(Path(f"/proc/self/fd/{root_descriptor}") / name, cutoff):
-                        continue
-                    if mode == "list":
-                        if not is_in_use(item):
-                            print(json.dumps(str(item), ensure_ascii=True), file=output)
-                        continue
-                    expected_item = os.stat(name, dir_fd=root_descriptor, follow_symlinks=False)
-                    status |= delete_candidate(roots, outer, root, name, expected_item,
-                                               cutoff, False, output, errors)
-        except OSError as error:
-            print(f"error: {root}: {error}", file=errors)
-            status = 1
+        status |= clean_root(plan, root)
     return status
+
+
+def recover_all_trash(plan):
+    if plan.mode == "list":
+        return 0
+    status = 0
+    for outer in dict.fromkeys(plan.outer_roots.values()):
+        status |= recover_trash(outer, plan.roots[outer], plan.errors)
+    return status
+
+
+def clean_root(plan, root):
+    # A previously removed ancestor may have contained this nested root.
+    if not os.path.lexists(root):
+        return 0
+    status = 0
+    try:
+        with checked_directory(root, plan.roots[root]) as root_descriptor:
+            for name in sorted(os.listdir(root_descriptor)):
+                status |= clean_root_entry(plan, root, root_descriptor, name)
+    except OSError as error:
+        print(f"error: {root}: {error}", file=plan.errors)
+        return 1
+    return status
+
+
+def clean_root_entry(plan, root, root_descriptor, name):
+    if name in (TRASH_NAME, ".runs-cleaner-previewed"):
+        return 0
+    entry = Path(f"/proc/self/fd/{root_descriptor}") / name
+    if not is_expired(entry, plan.cutoff):
+        return 0
+    item = root / name
+    if plan.mode == "list":
+        if not is_in_use(item):
+            print(json.dumps(str(item), ensure_ascii=True), file=plan.output)
+        return 0
+    expected_item = os.stat(name, dir_fd=root_descriptor, follow_symlinks=False)
+    candidate = DeleteCandidate(root, plan.outer_roots[root], name, expected_item, False)
+    return delete_candidate(plan, candidate)
 
 
 def read_runs_root(settings_path):
@@ -264,6 +332,13 @@ def configured_patterns(runs_value, additional_roots):
 
 
 def validate_obsolete_target(root_value, target_value):
+    root, target, root_info = literal_obsolete_paths(root_value, target_value)
+    item_root = validate_obsolete_location(root, target)
+    target_info, resolved_target = validate_obsolete_resolution(root, target)
+    return root, target, item_root, root_info, target_info, resolved_target
+
+
+def literal_obsolete_paths(root_value, target_value):
     if (not os.path.isabs(root_value) or os.path.normpath(root_value) != root_value
             or "\x00" in root_value):
         raise CleanerError("RUNS_ROOT 必须是字面绝对路径")
@@ -282,6 +357,11 @@ def validate_obsolete_target(root_value, target_value):
             or relative.parts[1] in ("xy-goal-inbox", TRASH_NAME)
             or TRASH_NAME in relative.parts):
         raise CleanerError("目标必须位于 RUNS_ROOT 下某项目的一件事目录或其内容中")
+    return root, target, root_info
+
+
+def validate_obsolete_location(root, target):
+    relative = target.relative_to(root)
     project = root / relative.parts[0]
     item_root = root / relative.parts[0] / relative.parts[1]
     try:
@@ -291,6 +371,13 @@ def validate_obsolete_target(root_value, target_value):
             raise CleanerError(f"事项目录必须是真实目录：{item_root}")
         if not os.path.lexists(target):
             raise CleanerError(f"点名目标不存在：{target}")
+    except OSError as error:
+        raise CleanerError(f"目标路径无法安全验证：{target}: {error}") from error
+    return item_root
+
+
+def validate_obsolete_resolution(root, target):
+    try:
         target_info = target.lstat()
         current = target.parent
         while current != root:
@@ -304,7 +391,7 @@ def validate_obsolete_target(root_value, target_value):
             raise CleanerError("软链真实目标不在 RUNS_ROOT 内")
     except (OSError, RuntimeError) as error:
         raise CleanerError(f"目标路径无法安全验证：{target}: {error}") from error
-    return root, target, item_root, root_info, target_info, resolved_target
+    return target_info, resolved_target
 
 
 def find_systemd_reference(directory, paths):
@@ -353,15 +440,14 @@ def find_runner_reference(item_root, target, resolved_target):
     return None
 
 
-def delete_obsolete(target_value, other_sessions_checked, settings_path,
-                    units_directory, output, errors):
-    if not other_sessions_checked:
+def delete_obsolete(request):
+    if not request.other_sessions_checked:
         raise CleanerError("删除前必须显式确认已检查其他会话依赖")
     root, target, item_root, root_info, target_info, resolved_target = validate_obsolete_target(
-        read_runs_root(settings_path), target_value)
+        read_runs_root(request.settings_path), request.target_value)
     if is_in_use(target) or (resolved_target != target and is_in_use(resolved_target)):
         raise CleanerError(f"目标仍被本用户进程使用：{target}")
-    unit = find_systemd_reference(units_directory, (target, resolved_target))
+    unit = find_systemd_reference(request.units_directory, (target, resolved_target))
     if unit is not None:
         raise CleanerError(f"systemd 用户单元引用目标：{unit}")
     task = find_runner_reference(item_root, target, resolved_target)
@@ -370,10 +456,12 @@ def delete_obsolete(target_value, other_sessions_checked, settings_path,
 
     parent_info = target.parent.lstat()
     roots = {root: root_info, target.parent: parent_info}
-    if recover_trash(root, root_info, errors) != 0:
+    outer_roots = {root: root, target.parent: root}
+    if recover_trash(root, root_info, request.errors) != 0:
         return 1
-    return delete_candidate(roots, root, target.parent, target.name, target_info,
-                           None, True, output, errors)
+    plan = CleanupPlan(roots, outer_roots, "delete", None, request.output, request.errors)
+    candidate = DeleteCandidate(target.parent, root, target.name, target_info, True)
+    return delete_candidate(plan, candidate)
 
 
 def configured_cleaner(arguments):
@@ -408,10 +496,13 @@ def obsolete_delete_command(arguments):
     parser.add_argument("--other-sessions-checked", action="store_true", required=True,
                         help="确认已检查其他会话是否依赖此路径")
     options = parser.parse_args(arguments)
-    return delete_obsolete(options.target, options.other_sessions_checked,
-                           Path.home() / ".claude" / "settings.json",
-                           Path.home() / ".config" / "systemd" / "user",
-                           sys.stdout, sys.stderr)
+    request = ObsoleteDeleteRequest(
+        options.target, options.other_sessions_checked,
+        Path.home() / ".claude" / "settings.json",
+        Path.home() / ".config" / "systemd" / "user",
+        sys.stdout, sys.stderr,
+    )
+    return delete_obsolete(request)
 
 
 def main(arguments):

@@ -14,6 +14,8 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
+from cleanup_test_support import stop_process
+
 SCRIPT_DIRECTORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_DIRECTORY))
 import clean
@@ -121,19 +123,11 @@ class CleanerTestCase(unittest.TestCase):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd=self.temporary.name,
         )
-        self.addCleanup(self.stop_process, process)
+        self.addCleanup(stop_process, process)
         ready, _, _ = select.select([process.stdout], [], [], 5)
         self.assertTrue(ready, "child did not become ready")
         self.assertEqual(process.stdout.readline(), "ready\n")
         return process
-
-    @staticmethod
-    def stop_process(process):
-        if process.poll() is None:
-            process.terminate()
-        process.wait(timeout=5)
-        for stream in (process.stdin, process.stdout, process.stderr):
-            stream.close()
 
     def roots(self):
         return [str(self.root), str(self.root / "-*"),
@@ -323,7 +317,7 @@ class CleanerTestCase(unittest.TestCase):
                 )
                 self.assertTrue(item.exists(), name)
                 self.assertEqual((status, paths, errors), (0, [], ""))
-                self.stop_process(process)
+                stop_process(process)
                 shutil.rmtree(item)
 
     # Command-line paths match complete roots, never prefixes or suffix siblings.
@@ -337,7 +331,7 @@ class CleanerTestCase(unittest.TestCase):
                 process = self.start_process(item, "idle", [f"--output={path}"])
                 self.run_cleaner([str(self.root)], "delete", self.cutoff)
                 self.assertEqual(item.exists(), kept)
-                self.stop_process(process)
+                stop_process(process)
                 if kept:
                     shutil.rmtree(item)
 
@@ -351,7 +345,7 @@ class CleanerTestCase(unittest.TestCase):
                     os.readlink(f"/proc/{process.pid}/cwd")
                 self.run_cleaner([str(self.root)], "delete", self.cutoff)
                 self.assertEqual(item.exists(), kept)
-                self.stop_process(process)
+                stop_process(process)
 
 
     def keep_fresh(self, directory):
@@ -689,7 +683,7 @@ os.close(handle)
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
             writers.append(writer)
-            self.addCleanup(self.stop_process, writer)
+            self.addCleanup(stop_process, writer)
             ready, _, _ = select.select([writer.stdout], [], [], 5)
             self.assertTrue(ready)
             self.assertEqual(writer.stdout.readline(), "waiting\n")

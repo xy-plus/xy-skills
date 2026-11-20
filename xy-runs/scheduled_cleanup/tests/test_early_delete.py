@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 
+from cleanup_test_support import stop_process
+
 
 SCRIPT = Path(__file__).resolve().parents[1] / "clean.py"
 
@@ -114,13 +116,13 @@ class EarlyDeleteTests(unittest.TestCase):
         process = subprocess.Popen([sys.executable, "-c", process_code], env=environment,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True)
-        self.addCleanup(self.stop_process, process)
+        self.addCleanup(stop_process, process)
         ready, _, _ = select.select([process.stdout], [], [], 5)
         self.assertTrue(ready)
         self.assertEqual(process.stdout.readline(), "ready\n")
         result = self.assert_rejected_unchanged(self.target)
         self.assertIn("进程", result.stderr)
-        self.stop_process(process)
+        stop_process(process)
 
         unit = self.units / "uses-target.service"
         unit.write_text(f"ExecStart=/bin/tool {self.target}\n", encoding="utf-8")
@@ -147,15 +149,6 @@ class EarlyDeleteTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(link.is_symlink())
         self.assertEqual((data / "keep.txt").read_text(encoding="utf-8"), "保留")
-
-    @staticmethod
-    def stop_process(process):
-        if process.poll() is None:
-            process.terminate()
-        process.wait(timeout=5)
-        for stream in (process.stdin, process.stdout, process.stderr):
-            stream.close()
-
 
 if __name__ == "__main__":
     unittest.main()
