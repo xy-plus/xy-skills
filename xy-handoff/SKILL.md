@@ -26,7 +26,7 @@ description: 每会话常驻；收到用户消息、拆大任务、交办或收�
 
 `quotes` 至少一条，写任务依据的用户原话；派方从原话延伸的事要关联来源原话，并把证据（怎么从那句原话来、不做会出什么事、做了能得到什么、代价多少）写进 `facts`。下文 `<本 skill 目录>` 指本 SKILL.md 所在目录：用 Skill 工具加载时是 Claude Code 给出的 Base directory，经 CLAUDE.md 引入时是引入路径所在目录。
 
-目录用任务所在仓库的主检出根目录；与仓库无关则用 `$HOME/tmp`（`claude --bg` 只能在已信任目录启动，家目录的信任不保存）。启动前用 `claude agents --json --all` 查现有名字；`-n` 必填，取能说明任务的短名，尽量用中文且不与现有会话重名；名字也是 SendMessage 收件地址。检查和启动使用同一命令；交接说明、启动目录和名字都显式给出，检查不过不会启动：
+目录用任务所在仓库的主检出根目录；与仓库无关则用 `$HOME/tmp`（`claude --bg` 只能在已信任目录启动，家目录的信任不保存）。`-n` 必填，取能说明任务的短名，尽量用中文；名字也是 SendMessage 收件地址。脚本会先检查名字再启动；交接说明、启动目录和名字都显式给出，检查不过不会启动：
 
 ```bash
 python3 <本 skill 目录>/handoff_note_check/check_handoff.py start \

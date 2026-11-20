@@ -37,6 +37,28 @@ def read_document(path):
         return json.load(stream, object_pairs_hook=object_without_duplicate_keys)
 
 
+def active_session_names():
+    result = subprocess.run(
+        ["claude", "agents", "--json", "--all"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"claude agents 退出码 {result.returncode}")
+    try:
+        payload = json.loads(result.stdout, object_pairs_hook=object_without_duplicate_keys)
+    except (ValueError, TypeError) as error:
+        raise ValueError(f"claude agents 未返回有效 JSON：{error}") from error
+    sessions = payload.get("sessions") if isinstance(payload, dict) else payload
+    if not isinstance(sessions, list):
+        raise ValueError("claude agents JSON 缺少会话列表")
+    names = set()
+    for session in sessions:
+        if not isinstance(session, dict) or not isinstance(session.get("name"), str):
+            raise ValueError("claude agents JSON 中有无效会话名字")
+        names.add(session["name"])
+    return names
+
+
 def start(handoff_path, directory, name):
     try:
         handoff = Path(handoff_path).resolve(strict=True)
@@ -58,6 +80,14 @@ def start(handoff_path, directory, name):
     if not name.strip() or any(char in name for char in "\x00\r\n"):
         print("会话名字不能为空或包含控制字符")
         return 2
+    try:
+        names = active_session_names()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"无法检查现有会话：{error}")
+        return 1
+    if name in names:
+        print(f"会话名字已存在：{name}")
+        return 1
     prompt = (f"请先读交接说明 {handoff}，然后照做。这件事由你全权负责，"
               "结论按交接说明里的回复方式汇报。")
     try:

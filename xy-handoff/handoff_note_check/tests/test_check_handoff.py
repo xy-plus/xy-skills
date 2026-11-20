@@ -33,6 +33,9 @@ class CheckHandoffTest(unittest.TestCase):
             "#!/usr/bin/env python3\n"
             "import json, os, sys\n"
             "Path = __import__('pathlib').Path\n"
+            "if sys.argv[1:] == ['agents', '--json', '--all']:\n"
+            "    print(json.dumps({'sessions': json.loads(os.environ.get('HANDOFF_EXISTING_SESSIONS', '[]'))}))\n"
+            "    sys.exit(int(os.environ.get('HANDOFF_AGENTS_EXIT', '0')))\n"
             "Path(os.environ['HANDOFF_LAUNCH_LOG']).write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}))\n"
             "sys.stdout.write('backgrounded · fake · handoff-name\\n')\n",
             encoding="utf-8",
@@ -40,7 +43,7 @@ class CheckHandoffTest(unittest.TestCase):
         executable.chmod(0o755)
         return directory
 
-    def run_start(self, name="handoff-name"):
+    def run_start(self, name="handoff-name", existing_sessions=(), agents_exit=0):
         directory = self.fake_claude()
         launch_log = self.path.parent / "launch.json"
         start_directory = self.path.parent / "start-here"
@@ -48,6 +51,9 @@ class CheckHandoffTest(unittest.TestCase):
         environment = os.environ.copy()
         environment["PATH"] = str(directory) + os.pathsep + environment.get("PATH", "")
         environment["HANDOFF_LAUNCH_LOG"] = str(launch_log)
+        environment["HANDOFF_EXISTING_SESSIONS"] = json.dumps(
+            [{"name": session_name} for session_name in existing_sessions])
+        environment["HANDOFF_AGENTS_EXIT"] = str(agents_exit)
         result = subprocess.run(
             [sys.executable, "-B", str(Path(__file__).resolve().parents[1] / "check_handoff.py"),
              "start", str(self.path), "--dir", str(start_directory), "--name", name],
@@ -171,3 +177,23 @@ class CheckHandoffTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("done_when", result.stdout)
         self.assertFalse(launch_log.exists())
+
+    def test_start_does_not_launch_when_session_name_already_exists(self):
+        self.path.write_text(json.dumps(handoff(), ensure_ascii=False), encoding="utf-8")
+        result, launch_log, _ = self.run_start(existing_sessions=("handoff-name",))
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("会话名字已存在", result.stdout)
+        self.assertFalse(launch_log.exists())
+
+    def test_start_does_not_launch_when_session_list_cannot_be_checked(self):
+        self.path.write_text(json.dumps(handoff(), ensure_ascii=False), encoding="utf-8")
+        result, launch_log, _ = self.run_start(agents_exit=1)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("无法检查现有会话", result.stdout)
+        self.assertFalse(launch_log.exists())
+
+    def test_skill_does_not_require_a_manual_name_list_before_start(self):
+        skill = (Path(__file__).resolve().parents[2] / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("启动前用 `claude agents --json --all` 查现有名字", skill)
