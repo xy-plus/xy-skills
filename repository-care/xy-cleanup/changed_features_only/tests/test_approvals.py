@@ -147,6 +147,9 @@ class ApprovalPlanTest(unittest.TestCase):
 
     def record(self, feature_ids=("alpha",), repository=None, title=None):
         decisions_path, answers_path = self.record_files(feature_ids, title)
+        return self.run_record_files(decisions_path, answers_path, repository)
+
+    def run_record_files(self, decisions_path, answers_path, repository=None):
         return self.run_approvals(
             "record",
             "--repo",
@@ -415,15 +418,7 @@ class ApprovalPlanTest(unittest.TestCase):
         answers["title"] = self.title(self.approval_base)
         answers_path.write_text(json.dumps(answers), encoding="utf-8")
 
-        result = self.run_approvals(
-            "record",
-            "--repo",
-            str(self.repository),
-            "--decisions",
-            str(decisions_path),
-            "--answers",
-            str(answers_path),
-        )
+        result = self.run_record_files(decisions_path, answers_path)
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("title", result.stdout + result.stderr)
@@ -435,15 +430,7 @@ class ApprovalPlanTest(unittest.TestCase):
             json.dumps({"title": self.title(), "answers": {}}), encoding="utf-8"
         )
 
-        result = self.run_approvals(
-            "record",
-            "--repo",
-            str(self.repository),
-            "--decisions",
-            str(decisions_path),
-            "--answers",
-            str(answers_path),
-        )
+        result = self.run_record_files(decisions_path, answers_path)
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("缺少回答", result.stdout + result.stderr)

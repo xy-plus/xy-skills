@@ -86,8 +86,8 @@ class FeatureCardsTest(unittest.TestCase):
             paths.append(path)
         return paths
 
-    def run_cards(self, cards, scope=("全部",), review="全部", add_args=()):
-        arguments = [
+    def build_card_command(self, scope=("全部",), review="全部"):
+        return [
             "python3",
             "-B",
             str(COMMAND),
@@ -98,6 +98,9 @@ class FeatureCardsTest(unittest.TestCase):
             "--review",
             review,
         ]
+
+    def run_cards(self, cards, scope=("全部",), review="全部", add_args=()):
+        arguments = self.build_card_command(scope, review)
         paths = self.write_cards(cards)
         return self.run_card_paths(paths, arguments, add_args)
 
@@ -340,17 +343,7 @@ class FeatureCardsTest(unittest.TestCase):
                 self.assertFalse(self.output.exists())
 
     def test_missing_or_duplicate_key_card_json_exits_two(self):
-        arguments = [
-            "python3",
-            "-B",
-            str(COMMAND),
-            "--repo",
-            str(self.repository),
-            "--scope",
-            "全部",
-            "--review",
-            "全部",
-        ]
+        arguments = self.build_card_command()
         paths = self.write_cards(self.default_cards())
         paths[0].write_text('{"feature":"root","feature":"root"}', encoding="utf-8")
 
