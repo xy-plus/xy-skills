@@ -4,11 +4,13 @@ import argparse
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 import fcntl
+import fnmatch
 import glob
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import stat
 import sys
@@ -395,6 +397,132 @@ def validate_obsolete_resolution(root, target):
     return target_info, resolved_target
 
 
+SYSTEMD_VARIABLE = re.compile(r"(?<!\$)\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+SYSTEMD_UNRESOLVED_VARIABLE = re.compile(r"(?<!\$)\$\{[^}]+\}|(?<!\$)\$[A-Za-z_][A-Za-z0-9_]*")
+SYSTEMD_ENVIRONMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+SYSTEMD_PATH_DIRECTIVES = {
+    "BindPaths", "BindReadOnlyPaths", "CacheDirectory", "ConfigurationDirectory",
+    "DirectoryNotEmpty", "EnvironmentFile", "ExecSearchPath", "InaccessiblePaths",
+    "LogsDirectory", "MakeDirectory", "PathExists", "PathExistsGlob", "PIDFile",
+    "ReadOnlyPaths", "ReadWritePaths", "RootDirectory", "RootImage", "RuntimeDirectory",
+    "StateDirectory", "TemporaryFileSystem", "WorkingDirectory",
+}
+ABSOLUTE_PATH_TOKEN = re.compile(r"/[^\s\"'`;]+")
+
+
+def parse_systemd_environment(content, unit):
+    variables = {}
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("#", ";")):
+            continue
+        directive, separator, value = line.partition("=")
+        if not separator or directive.strip() != "Environment":
+            continue
+        try:
+            assignments = shlex.split(value, posix=True)
+        except ValueError as error:
+            raise CleanerError(f"无法解析 systemd Environment=：{unit}: {error}") from error
+        for assignment in assignments:
+            name, equals, content_value = assignment.partition("=")
+            if not equals or SYSTEMD_ENVIRONMENT_NAME.fullmatch(name) is None:
+                raise CleanerError(f"无法解析 systemd Environment= 变量：{unit}")
+            variables[name] = content_value
+    return variables
+
+
+def expand_systemd_variables(value, variables):
+    expanded = value
+    for _ in range(len(variables) + 1):
+        current = SYSTEMD_VARIABLE.sub(
+            lambda match: variables.get(match[1] or match[2], match.group()), expanded)
+        if current == expanded:
+            break
+        expanded = current
+    unresolved = [match.group() for match in SYSTEMD_UNRESOLVED_VARIABLE.finditer(expanded)]
+    return expanded, unresolved
+
+
+def systemd_unit_lines(content, unit):
+    expanded_content = content.replace("%h", str(Path.home()))
+    variables = parse_systemd_environment(expanded_content, unit)
+    lines = []
+    for line in expanded_content.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        directive, separator, value = line.partition("=")
+        directive = directive.strip()
+        if not separator or directive == "Environment":
+            continue
+        expanded, unresolved = expand_systemd_variables(value, variables)
+        if unresolved and (directive in SYSTEMD_PATH_DIRECTIVES or directive.startswith("Exec")):
+            names = ", ".join(dict.fromkeys(unresolved))
+            raise CleanerError(f"systemd 单元路径变量无法解析（{names}）：{unit}")
+        lines.append((directive, expanded))
+    return lines
+
+
+def systemd_glob_paths(lines):
+    patterns = set()
+    for _, value in lines:
+        try:
+            tokens = shlex.split(value, posix=True)
+        except ValueError:
+            tokens = value.split()
+        for token in tokens:
+            expressions = [token]
+            if "=" in token:
+                expressions.append(token.split("=", 1)[1])
+            for expression in expressions:
+                for match in ABSOLUTE_PATH_TOKEN.finditer(expression):
+                    pattern = match.group().rstrip(",")
+                    if glob.has_magic(pattern):
+                        patterns.add(pattern)
+    return patterns
+
+
+def systemd_absolute_paths(lines):
+    paths = set()
+    for _, value in lines:
+        for match in ABSOLUTE_PATH_TOKEN.finditer(value):
+            paths.add(match.group().rstrip(","))
+    return paths
+
+
+def paths_and_ancestors(paths):
+    candidates = set()
+    for path in paths:
+        current = Path(path)
+        while True:
+            candidates.add(current)
+            if current.parent == current:
+                break
+            current = current.parent
+    return {str(path) for path in candidates}
+
+
+def path_matches_systemd_pattern(path, pattern):
+    path_parts = Path(path).parts
+    pattern_parts = Path(pattern).parts
+    positions = {0}
+    for pattern_part in pattern_parts:
+        if pattern_part == "**":
+            expanded = set(positions)
+            for position in positions:
+                while position < len(path_parts):
+                    position += 1
+                    expanded.add(position)
+            positions = expanded
+        else:
+            positions = {
+                position + 1 for position in positions
+                if position < len(path_parts)
+                and fnmatch.fnmatchcase(path_parts[position], pattern_part)
+            }
+    return len(path_parts) in positions
+
+
 def find_systemd_reference(directory, paths):
     if not os.path.lexists(directory):
         return None
@@ -407,11 +535,13 @@ def find_systemd_reference(directory, paths):
             if not (entry.is_file() or entry.is_symlink()):
                 continue
             content = entry.read_bytes().decode("utf-8", errors="surrogateescape")
-            # Expand the systemd home specifier used by installed units before
-            # comparing literal target paths; deliberately do not guess at globs
-            # or environment-variable expressions.
-            expanded_content = content.replace("%h", str(Path.home()))
-            if any(str(path) in expanded_content for path in paths):
+            lines = systemd_unit_lines(content, entry)
+            if any(reference_matches_path(reference, str(path))
+                   for reference in systemd_absolute_paths(lines) for path in paths):
+                return entry
+            candidates = paths_and_ancestors(paths)
+            if any(path_matches_systemd_pattern(path, pattern)
+                   for pattern in systemd_glob_paths(lines) for path in candidates):
                 return entry
     except OSError as error:
         raise CleanerError(f"无法完整检查 systemd 用户单元：{error}") from error

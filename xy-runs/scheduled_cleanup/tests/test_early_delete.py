@@ -156,6 +156,64 @@ class EarlyDeleteTests(unittest.TestCase):
 
         self.assertIn("systemd", result.stderr)
 
+    def test_delete_rejects_systemd_environment_variable_reference(self):
+        self.root = self.home / "runs"
+        self.project = self.root / "-home-xy-project"
+        self.item = self.project / "20261120-110000-task"
+        self.target = self.item / "obsolete-build"
+        self.target.mkdir(parents=True)
+        (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
+        (self.home / ".claude" / "settings.json").write_text(
+            json.dumps({"env": {"RUNS_ROOT": str(self.root)}}), encoding="utf-8")
+        unit = self.units / "uses-target.service"
+        relative_target = self.target.relative_to(self.root)
+        unit.write_text(
+            f"Environment=RUNS_ROOT={self.root}\n"
+            f"ExecStart=/bin/tool $RUNS_ROOT/{relative_target}\n",
+            encoding="utf-8",
+        )
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn("systemd", result.stderr)
+        self.assertIn(str(unit), result.stderr)
+
+    def test_delete_rejects_systemd_globs_matching_target_or_ancestor(self):
+        unit = self.units / "uses-target.service"
+        patterns = (str(self.item / "*"), str(self.project / "*"))
+        for pattern in patterns:
+            with self.subTest(pattern=pattern):
+                self.target.mkdir(parents=True, exist_ok=True)
+                (self.target / "output.txt").write_text("作废产物", encoding="utf-8")
+                unit.write_text(f"ExecStart=/bin/tool {pattern}\n", encoding="utf-8")
+                result = self.assert_rejected_unchanged(self.target)
+                self.assertIn("systemd", result.stderr)
+                self.assertIn(str(unit), result.stderr)
+
+    def test_delete_fails_closed_for_unresolved_systemd_path_variable(self):
+        unit = self.units / "uses-target.service"
+        relative_target = self.target.relative_to(self.root)
+        unit.write_text(f"ExecStart=/bin/tool $UNKNOWN_ROOT/{relative_target}\n",
+                         encoding="utf-8")
+
+        result = self.assert_rejected_unchanged(self.target)
+
+        self.assertIn("systemd", result.stderr)
+        self.assertIn(str(unit), result.stderr)
+
+    def test_cleaner_unit_glob_outside_runs_root_does_not_block_deletion(self):
+        unit = self.units / "runs-cleaner.service"
+        unit.write_text(
+            "ExecStart=/usr/bin/python3 /skills/xy-runs/clean.py configured "
+            "--mode delete --additional-root %h/.codex-subagent*/sessions/*/*\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_delete(self.target)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.target.exists())
+
     def test_delete_unlinks_in_root_symlink_without_touching_its_target(self):
         data = self.item / "real-data"
         data.mkdir()
