@@ -65,6 +65,18 @@ def root_feature(feature_id, directory, **fields):
     return result
 
 
+def empty_root_feature():
+    return root_feature(
+        "root",
+        "",
+        children=[],
+        source="原话",
+        items=[],
+        subrepositories=[],
+        external_dependencies=[],
+    )
+
+
 def make_repo(test_case, files, feature_tree):
     temporary = tempfile.TemporaryDirectory()
     test_case.addCleanup(temporary.cleanup)

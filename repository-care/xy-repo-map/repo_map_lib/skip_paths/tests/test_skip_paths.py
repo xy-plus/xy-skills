@@ -5,13 +5,17 @@ import sys
 import unittest
 from unittest.mock import patch
 
-import sys
-
 REPOSITORY_ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
 )
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
-from map_fixture import COMMAND, feature, make_repo, root_feature as make_root_feature
+from map_fixture import (  # noqa: E402
+    COMMAND,
+    empty_root_feature,
+    feature,
+    make_repo,
+    root_feature as make_root_feature,
+)
 
 from repo_map_lib.map_data import build_map as derive_map  # noqa: E402
 
@@ -26,15 +30,7 @@ class SkipPathsTest(unittest.TestCase):
         repository = make_repo(
             self,
             {"README.md": "Guide.\n"},
-            make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            ),
+            empty_root_feature(),
         )
         (repository / "repo-map/skip.json").unlink()
 
@@ -192,15 +188,7 @@ class SkipPathsTest(unittest.TestCase):
                 "alpha/main.py": "value = 1\n",
                 "docs/guide.md": "Guide.\n",
             },
-            make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            ),
+            empty_root_feature(),
         )
         invalid_lists = (
             ([7], "必须是字符串"),

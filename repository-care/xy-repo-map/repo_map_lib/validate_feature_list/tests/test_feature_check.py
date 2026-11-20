@@ -12,6 +12,7 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
 from map_fixture import (  # noqa: E402
     COMMAND,
     build_map,
+    empty_root_feature,
     feature,
     make_repo,
     root_feature as make_root_feature,
@@ -23,15 +24,7 @@ class FeatureCheckBase(unittest.TestCase):
         self.repo = make_repo(
             self,
             {"README.md": "仓库说明。\n"},
-            make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            ),
+            empty_root_feature(),
         )
 
     def write(self, relative, content):
@@ -346,15 +339,7 @@ class FeatureCheckTest(FeatureCheckBase):
         self.assertIn("重复键：id", result.stdout + result.stderr)
 
     def test_rejects_entries_as_an_unknown_feature_field(self):
-        root = make_root_feature(
-            "root",
-            "",
-            subrepositories=[],
-            external_dependencies=[],
-            children=[],
-            source="原话",
-            items=[],
-        )
+        root = empty_root_feature()
         root["entries"] = []
         self.set_features(root)
 
@@ -367,15 +352,7 @@ class FeatureCheckTest(FeatureCheckBase):
         self.assertIn("请删除", output)
 
     def test_rejects_a_missing_feature_key(self):
-        root = make_root_feature(
-            "root",
-            "",
-            subrepositories=[],
-            external_dependencies=[],
-            children=[],
-            source="原话",
-            items=[],
-        )
+        root = empty_root_feature()
         del root["what"]
         del root["subrepositories"]
         del root["external_dependencies"]
@@ -388,15 +365,7 @@ class FeatureCheckTest(FeatureCheckBase):
                 self.assertIn(f"根功能缺少键 {key}", output)
 
     def test_requires_items_on_root_and_child_features(self):
-        root = make_root_feature(
-            "root",
-            "",
-            subrepositories=[],
-            external_dependencies=[],
-            items=[],
-            children=[],
-            source="原话",
-        )
+        root = empty_root_feature()
         del root["items"]
         self.set_features(root)
         result = self.check()
@@ -604,15 +573,7 @@ class FeatureCheckTest(FeatureCheckBase):
         ]
         for source, quote, origin, expected in invalid:
             with self.subTest(source=source, quote=quote, origin=origin):
-                root = make_root_feature(
-                    "root",
-                    "",
-                    subrepositories=[],
-                    external_dependencies=[],
-                    children=[],
-                    source="原话",
-                    items=[],
-                )
+                root = empty_root_feature()
                 root["why"].update(source=source, quote=quote, **{"from": origin})
                 self.set_features(root)
                 result = self.check()
@@ -706,15 +667,7 @@ class FeatureCheckTest(FeatureCheckBase):
         self.assertIn("目录", output)
 
     def test_rejects_missing_or_non_string_feature_directories(self):
-        root = make_root_feature(
-            "root",
-            "",
-            subrepositories=[],
-            external_dependencies=[],
-            children=[],
-            source="原话",
-            items=[],
-        )
+        root = empty_root_feature()
         del root["directory"]
         self.set_features(root)
         result = self.check()

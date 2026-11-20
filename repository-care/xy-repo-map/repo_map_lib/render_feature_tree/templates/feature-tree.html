@@ -230,12 +230,7 @@ function usesList(featureId) {
   for (const use of ordered) {
     const target = features[use.feature];
     const sameParent = target.parent === feature.parent ? " same-parent" : "";
-    const button = make("button", `use-link${sameParent}`, featureName(target));
-    button.type = "button";
-    button.addEventListener("click", () => {
-      revealFeature(use.feature);
-      openDetails(use.feature);
-    });
+    const button = makeUseButton(use.feature, `use-link${sameParent}`);
     if (use.by === "mention") button.append(make("small", "mention", "提及"));
     line.append(button);
   }
@@ -252,17 +247,21 @@ function appendIncoming(parent, featureId) {
   if (!incoming.length) return;
   const line = make("div", "incoming");
   for (const use of incoming) {
-    const source = features[use.feature];
-    const button = make("button", "incoming-link", featureName(source));
-    button.type = "button";
-    button.addEventListener("click", () => {
-      revealFeature(use.feature);
-      openDetails(use.feature);
-    });
+    const button = makeUseButton(use.feature, "incoming-link");
     if (use.by === "mention") button.append(make("small", "mention", "提及"));
     line.append(button);
   }
   parent.append(line);
+}
+
+function makeUseButton(featureId, className) {
+  const button = make("button", className, featureName(features[featureId]));
+  button.type = "button";
+  button.addEventListener("click", () => {
+    revealFeature(featureId);
+    openDetails(featureId);
+  });
+  return button;
 }
 
 function descendantsHaveDecision(featureId) {

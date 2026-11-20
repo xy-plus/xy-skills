@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
 from map_fixture import (  # noqa: E402
     COMMAND,
     build_map,
+    empty_root_feature,
     feature,
     make_repo,
     root_feature as make_root_feature,
@@ -221,15 +222,7 @@ class DerivationTest(unittest.TestCase):
                 "assets/binary.go": "placeholder\n",
                 "tests/test_parser.py": "value = 2\n",
             },
-            make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            ),
+            empty_root_feature(),
         )
         link = repository / "assets/link.py"
         link.unlink()
@@ -250,15 +243,7 @@ class DerivationTest(unittest.TestCase):
                 "src/helper_tests.rs": "#[test]\nfn helper() {}\n",
                 "src/tests.rs": "#[test]\nfn integration() {}\n",
             },
-            make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            ),
+            empty_root_feature(),
         )
 
         data = map_data.build_map(repository)
@@ -271,15 +256,7 @@ class DerivationTest(unittest.TestCase):
             {
                 "assets/data.bin": "placeholder\n",
             },
-            make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            ),
+            empty_root_feature(),
         )
         other_path = repository / "assets/data.bin"
         read_bytes = Path.read_bytes
@@ -304,15 +281,7 @@ class DerivationTest(unittest.TestCase):
                 "assets/binary.go": "placeholder\n",
                 "vendor/legacy.bin": "package legacy\nvalue = 1\n",
             },
-            make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            ),
+            empty_root_feature(),
         )
         symlink = repository / "assets/link.go"
         symlink.unlink()
@@ -449,15 +418,7 @@ class DerivationTest(unittest.TestCase):
             {
                 "src/missing.py": "value = 1\n",
             },
-            make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            ),
+            empty_root_feature(),
         )
         (repository / "src/missing.py").unlink()
 
@@ -843,15 +804,7 @@ class DerivationTest(unittest.TestCase):
             (primary / "README.md").write_text("Root.\n", encoding="utf-8")
             feature_path = primary / "repo-map" / "features.json"
             feature_path.parent.mkdir()
-            root_feature = make_root_feature(
-                "root",
-                "",
-                subrepositories=[],
-                external_dependencies=[],
-                children=[],
-                source="原话",
-                items=[],
-            )
+            root_feature = empty_root_feature()
             feature_path.write_text(json.dumps(root_feature), encoding="utf-8")
             (feature_path.parent / "skip.json").write_text("[]\n", encoding="utf-8")
             subprocess.run(["git", "-C", str(primary), "init", "-q"], check=True)

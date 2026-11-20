@@ -12,8 +12,8 @@ REPOSITORY_ROOT = next(
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
 from map_fixture import (  # noqa: E402
     COMMAND,
+    empty_root_feature,
     make_workspace,
-    root_feature as make_root_feature,
 )
 
 
@@ -118,15 +118,7 @@ class WorkspaceRenderTest(unittest.TestCase):
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")
         shutil.rmtree(self.workspace / "sub-b")
-        root = make_root_feature(
-            "root",
-            "",
-            subrepositories=[],
-            external_dependencies=[],
-            children=[],
-            source="原话",
-            items=[],
-        )
+        root = empty_root_feature()
         (self.workspace / "repo-map" / "features.json").write_text(
             json.dumps(root, ensure_ascii=False),
             encoding="utf-8",
