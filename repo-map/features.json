@@ -450,12 +450,12 @@
         {
           "id": "xy-review",
           "title": "对抗审查",
-          "what": "主审和剃刀先各自从用户原话和已审 spec 推导根与最少要求，再对照代码或文档；报告用脚本校验，代码审查另回应扫描命中，三轮未过先判因。",
+          "what": "主审和剃刀先各自从用户原话和已审 spec 推导根与最少要求，再对照代码或文档；主审逐块对照对象与推导 need，同一 need 对上多块时先写合成后的写法再判断是否合并；报告用脚本校验，代码审查另回应扫描命中，三轮未过先判因。",
           "why": {
-            "text": "AI 喜欢做加法、不喜欢做减法，项目会膨胀得很快；一个代理同时做加法和减法效果不好，所以拆成两个。",
+            "text": "用户决定本次把反向对照并入 S1，要求审查者逐块核对对象与推导 need，并判断同一 need 下多块是否应合并。",
             "source": "原话",
-            "quote": "如果只开一个代理，同时做加法和减法效果不好，而且 AI 会喜欢做加法，不喜欢做减法，导致项目膨胀非常快。",
-            "from": "20261110 清扫决定页面第一页 A6"
+            "quote": "这次并进 S1 一起做（推荐）",
+            "from": "/data/user/xy/runs/-home-xy-xy-skills/20261120-112623-xy-skills-full-review/xy-goal/quotes/36.md"
           },
           "directory": "workflow-capabilities/xy-review",
           "items": [
@@ -688,18 +688,23 @@
               "id": "record-cleanup-category-conclusions",
               "text": "代码审查的剃刀按工作流程清理清单的每类记录看过的地方和结论。",
               "status": "起草"
+            },
+            {
+              "id": "reverse-map-object-blocks",
+              "text": "主审逐块对照对象与推导 need；同一 need 对上多块时先写出合成后的写法，再判断是否同根合并。",
+              "status": "起草"
             }
           ],
           "children": [
             {
               "id": "review-report-check",
               "title": "检查审查报告的格式",
-              "what": "按文件名匹配并校验推导、主审、剃刀和判因报告模板，核对结论与发现；代码审查还逐条回应扫描命中和清理类别，并拒绝重复 JSON 键。",
+              "what": "按文件名匹配并校验推导、主审、剃刀和判因报告模板，核对结论与发现；检查主审反向对照的块不重复、need 与同轮推导一致，多块对应项的 blocks 匹配且 merged_text 非空；代码审查还逐条回应扫描命中和清理类别，并拒绝重复 JSON 键。",
               "why": {
-                "text": "格式靠审查者自觉会走样，报告就没法机器核对。",
-                "source": "确认",
-                "quote": "",
-                "from": "20261110 清扫决定页面第一页"
+                "text": "用户决定本次把反向对照并入 S1，并由检查器校验对应结构。",
+                "source": "原话",
+                "quote": "这次并进 S1 一起做（推荐）",
+                "from": "/data/user/xy/runs/-home-xy-xy-skills/20261120-112623-xy-skills-full-review/xy-goal/quotes/36.md"
               },
               "directory": "workflow-capabilities/xy-review/review_report_check",
               "items": [
@@ -776,6 +781,11 @@
                 {
                   "id": "cleanup-report-rescans-submission",
                   "text": "单独检查代码审查报告时重跑送审扫描，并核对提交、命中和报告回应一致。",
+                  "status": "起草"
+                },
+                {
+                  "id": "validate-reverse-mapping",
+                  "text": "检查主审 mapping.items 非空且块名不重复，need 与同轮 derivation-main.json 一致；多块映射须有匹配的 merges 且 merged_text 非空。",
                   "status": "起草"
                 }
               ],

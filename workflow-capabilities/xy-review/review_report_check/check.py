@@ -271,7 +271,7 @@ def _decided_by_problems(path, decided_by):
     return problems
 
 
-def _main_mapping_problems(document, report_path):
+def _main_mapping_problems(document, derivation_document):
     mapping = document.get("mapping") if isinstance(document, dict) else None
     if not isinstance(mapping, dict):
         return []
@@ -281,22 +281,14 @@ def _main_mapping_problems(document, report_path):
         return ["报告.mapping.items 不能为空"]
     if not isinstance(merges, list):
         return []
-    derivation_needs = _round_main_derivation_needs(report_path)
+    derivation_needs = _round_main_derivation_needs(derivation_document)
     blocks_by_need, problems = _mapping_item_blocks(items, derivation_needs)
     merge_entries, merge_problems = _mapping_merge_entries(merges)
     problems.extend(merge_problems)
     return problems + _mapping_merge_problems(blocks_by_need, merge_entries)
 
 
-def _round_main_derivation_needs(report_path):
-    derivation_path = pathlib.Path(report_path).parent / "derivation-main.json"
-    try:
-        derivation = json.loads(
-            derivation_path.read_text(encoding="utf-8"),
-            object_pairs_hook=object_without_duplicate_keys,
-        )
-    except (OSError, UnicodeDecodeError, ValueError, TypeError):
-        return None
+def _round_main_derivation_needs(derivation):
     if not isinstance(derivation, dict) or not isinstance(derivation.get("needs"), list):
         return None
     return {
@@ -308,12 +300,24 @@ def _round_main_derivation_needs(report_path):
 def _mapping_item_blocks(items, derivation_needs):
     blocks_by_need = {}
     problems = []
+    seen_blocks = set()
     for index, item in enumerate(items):
         item_blocks, item_problems = _mapping_item_blocks_for_one(index, item, derivation_needs)
         problems.extend(item_problems)
         if item_blocks is not None:
             need, block = item_blocks
+            normalized_block = block.strip()
+            if normalized_block in seen_blocks:
+                problems.append(f"报告.mapping.items[{index}].block 重复：{block}")
+            seen_blocks.add(normalized_block)
             blocks_by_need.setdefault(need, []).append(block)
+        elif isinstance(item, dict):
+            block = item.get("block")
+            if isinstance(block, str) and block.strip():
+                normalized_block = block.strip()
+                if normalized_block in seen_blocks:
+                    problems.append(f"报告.mapping.items[{index}].block 重复：{block}")
+                seen_blocks.add(normalized_block)
     return blocks_by_need, problems
 
 
@@ -349,6 +353,7 @@ def _mapping_merge_entries(merges):
         blocks = merge.get("blocks")
         decision = merge.get("decision")
         reason = merge.get("reason")
+        merged_text = merge.get("merged_text")
         if not isinstance(need, str) or not need.strip():
             problems.append(f"报告.mapping.merges[{index}].need 必须是非空字符串")
             continue
@@ -356,6 +361,8 @@ def _mapping_merge_entries(merges):
             problems.append(f"报告.mapping.merges[{index}].decision 只能是「合并」或「不合」")
         if not isinstance(reason, str) or not reason.strip():
             problems.append(f"报告.mapping.merges[{index}].reason 不能为空")
+        if not isinstance(merged_text, str) or not merged_text.strip():
+            problems.append(f"报告.mapping.merges[{index}].merged_text 不能为空")
         if not isinstance(blocks, list) or any(not isinstance(block, str) for block in blocks):
             problems.append(f"报告.mapping.merges[{index}].blocks 必须是对象块名称数组")
             continue
@@ -587,7 +594,7 @@ def _parse_document(text):
         return None, [f"JSON 无效：{error}"]
 
 
-def _check_parsed_document(document, filename, report_path):
+def _check_parsed_document(document, filename, report_path, round_derivation=None):
     if filename not in REPORTS:
         return ["报告文件名只能是 " + "、".join(REPORTS)]
     report_kind, _shape = REPORTS[filename]
@@ -601,7 +608,7 @@ def _check_parsed_document(document, filename, report_path):
     if report_kind in ("主审报告", "剃刀报告", "推导报告"):
         problems += check_rule_quotes(document, report_kind)
     if report_kind == "主审报告":
-        problems += _main_mapping_problems(document, report_path)
+        problems += _main_mapping_problems(document, round_derivation)
         return problems + _main_verdict_problems(document)
     if report_kind == "剃刀报告":
         problems += _user_visible_problems(document)
@@ -618,7 +625,7 @@ def _check_document(text, filename, report_path):
     return _check_parsed_document(document, filename, report_path)
 
 
-def _round_derivation_problems(report_path, filename):
+def _round_derivation_document(report_path, filename):
     derivation_name = (
         "derivation-main.json" if filename == "review-main.json"
         else "derivation-razor.json"
@@ -627,16 +634,23 @@ def _round_derivation_problems(report_path, filename):
     try:
         text = derivation_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
-        return [f"该轮报告缺少或无法读取对应推导文件 {derivation_path}：{error}"]
-    problems = _check_document(text, derivation_name, derivation_path)
-    return [f"{derivation_path}：{problem}" for problem in problems]
+        return None, [f"该轮报告缺少或无法读取对应推导文件 {derivation_path}：{error}"]
+    document, problems = _parse_document(text)
+    if not problems:
+        problems = _check_parsed_document(document, derivation_name, derivation_path)
+    return document, [f"{derivation_path}：{problem}" for problem in problems]
 
 
 def check(text, filename, report_path):
     """按 SKILL.md 声明的文件名选模板并校验报告。"""
-    problems = _check_document(text, filename, report_path)
+    document, problems = _parse_document(text)
     if filename in ("review-main.json", "review-razor.json"):
-        problems += _round_derivation_problems(report_path, filename)
+        derivation, derivation_problems = _round_derivation_document(report_path, filename)
+        if not problems:
+            problems = _check_parsed_document(document, filename, report_path, derivation)
+        problems += derivation_problems
+    elif not problems:
+        problems = _check_parsed_document(document, filename, report_path)
     return problems
 
 
@@ -692,9 +706,14 @@ def _history_report_problems(round_path, name, number):
         return [f"{report_path}：无法读取必需报告：{error}"], False
     document, report_problems = _parse_document(text)
     if not report_problems:
-        report_problems = _check_parsed_document(document, name, report_path)
         if name in ("review-main.json", "review-razor.json"):
-            report_problems += _round_derivation_problems(report_path, name)
+            derivation, derivation_problems = _round_derivation_document(report_path, name)
+            report_problems = _check_parsed_document(
+                document, name, report_path, derivation
+            )
+            report_problems += derivation_problems
+        else:
+            report_problems = _check_parsed_document(document, name, report_path)
     if report_problems:
         return [f"{report_path}：{problem}" for problem in report_problems], False
     failed = document.get("verdict") == "不通过"
@@ -785,9 +804,14 @@ def main(argv):
     kind = REPORTS.get(path.name, (None, None))[0]
     document, problems = _parse_document(text)
     if not problems:
-        problems = _check_parsed_document(document, path.name, path)
         if path.name in ("review-main.json", "review-razor.json"):
-            problems += _round_derivation_problems(path, path.name)
+            derivation, derivation_problems = _round_derivation_document(path, path.name)
+            problems = _check_parsed_document(
+                document, path.name, path, derivation
+            )
+            problems += derivation_problems
+        else:
+            problems = _check_parsed_document(document, path.name, path)
         if kind == "剃刀报告" and is_code_review_report(path):
             problems += _submitted_scan_problems(path, document)
     location_problems, group_path, group_match = _report_location_problems(path, kind)

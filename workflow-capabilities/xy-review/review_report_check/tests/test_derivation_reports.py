@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import test_check as support
 
@@ -48,6 +49,7 @@ class DerivationReportTest(unittest.TestCase):
             "need": REPORT_NEED,
             "blocks": ["规则 A", "另一块"],
             "decision": "不合",
+            "merged_text": "写成一条按职责区分的规则。",
             "reason": "两块承担不同职责。",
         }]
         self.assert_rejected("review-main.json", report, "mapping.merges", "items")
@@ -55,6 +57,55 @@ class DerivationReportTest(unittest.TestCase):
         report["mapping"]["merges"][0]["blocks"] = ["规则 A", "规则 B"]
         report["mapping"]["merges"].append(dict(report["mapping"]["merges"][0]))
         self.assert_rejected("review-main.json", report, "mapping.merges", "恰有一条")
+
+    def test_main_mapping_rejects_a_repeated_block_even_when_merge_matches(self):
+        report = main_report(verdict="不通过")
+        report["mapping"]["items"] = [
+            {"block": "规则 A", "need": REPORT_NEED},
+            {"block": "规则 A", "need": REPORT_NEED},
+        ]
+        report["mapping"]["merges"] = [{
+            "need": REPORT_NEED,
+            "blocks": ["规则 A", "规则 A"],
+            "decision": "合并",
+            "merged_text": "写成一条规则。",
+            "reason": "合成一条规则。",
+        }]
+
+        self.assert_rejected("review-main.json", report, "mapping.items", "重复")
+
+    def test_main_mapping_requires_nonblank_merged_text(self):
+        report = main_report(verdict="不通过")
+        report["mapping"]["items"] = [
+            {"block": "规则 A", "need": REPORT_NEED},
+            {"block": "规则 B", "need": REPORT_NEED},
+        ]
+        report["mapping"]["merges"] = [{
+            "need": REPORT_NEED,
+            "blocks": ["规则 A", "规则 B"],
+            "decision": "不合",
+            "reason": "两块承担不同职责。",
+            "merged_text": "   ",
+        }]
+
+        self.assert_rejected("review-main.json", report, "mapping.merges[0].merged_text", "不能为空")
+        del report["mapping"]["merges"][0]["merged_text"]
+        self.assert_rejected("review-main.json", report, "mapping.merges[0]", "merged_text")
+
+    def test_main_report_parses_same_round_derivation_once(self):
+        report = main_report()
+        derivation_text = json.dumps(derivation_report(), ensure_ascii=False)
+        original_loads = json.loads
+
+        with patch.object(check.json, "loads", wraps=original_loads) as loads:
+            code, problems = self.run_report("review-main.json", report)
+
+        self.assertEqual((code, problems), (0, []))
+        derivation_calls = [
+            call for call in loads.call_args_list
+            if call.args and call.args[0] == derivation_text
+        ]
+        self.assertEqual(len(derivation_calls), 1, loads.call_args_list)
 
     def test_main_mapping_requires_nonpassing_verdict_for_unmapped_or_merged_needs(self):
         report = main_report()
@@ -70,6 +121,7 @@ class DerivationReportTest(unittest.TestCase):
             "need": REPORT_NEED,
             "blocks": ["规则 A", "规则 B"],
             "decision": "合并",
+            "merged_text": "写成一条规则。",
             "reason": "合成一条规则。",
         }]
         self.assert_rejected("review-main.json", report, "mapping", "不能判通过")
