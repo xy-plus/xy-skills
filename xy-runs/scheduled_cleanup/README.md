@@ -1,12 +1,14 @@
 # runs-cleaner
 
-Linux 临时目录清理器，仅用 Python 标准库；需 Python 3.9 以上、`/proc`、`flock`。根目录的直接子项是清理单位；仅当其自身和全部后代的 mtime、ctime 都早于 30 天前且本用户无进程在用时，才整项删除。保留期固定 30 天，不提供天数参数。
+Linux 临时目录清理器，仅用 Python 标准库；需 Python 3.9 以上、`/proc`、`flock`。根目录的直接子项是清理单位，保留期固定 30 天且不可配置；完整到期判据见 [xy-runs 规则](../SKILL.md#什么时候删)。
 
 ## 命令行
 
 ```text
 python3 /absolute/path/to/clean.py --mode list ROOT_OR_GLOB [ROOT_OR_GLOB ...]
 python3 /absolute/path/to/clean.py --mode delete ROOT_OR_GLOB [ROOT_OR_GLOB ...]
+python3 /absolute/path/to/clean.py configured --mode list --additional-root ROOT_OR_GLOB
+python3 /absolute/path/to/clean.py delete-obsolete --target ABSOLUTE_TARGET --other-sessions-checked
 ```
 
 必须写明模式和至少一个根目录；通配符须加引号，由脚本展开，根可重复或嵌套。`list` 仅向标准输出列候选，不改目录或清空回收目录；`delete` 删除所有合格项，并输出成功删除项的原路径。
@@ -47,26 +49,22 @@ systemctl --user daemon-reload
 
 ## 首次启用定时清理
 
-首次启用前，从与 service 相同的 `$HOME/.claude/settings.json` 读取并校验 `env.RUNS_ROOT`。命令先对根路径 `glob.escape`，再追加 `/-*`、`/-*/xy-goal-inbox`；Codex 会话 glob 不变。运行后逐项检查清单：
+首次启用前先检查 `settings.json` 里的 `env.RUNS_ROOT`。首次预览和 systemd 使用同一个 `configured` 入口；它每次读取设置、校验根路径，并只让追加的层级模式参与匹配。运行后逐项检查清单：
 
 ```bash
-RUNS_ROOT="$(python3 -c 'import json, os; from pathlib import Path; root = json.loads((Path.home() / ".claude/settings.json").read_text())["env"]["RUNS_ROOT"]; assert isinstance(root, str) and os.path.isabs(root), "env.RUNS_ROOT must be an absolute path"; print(root)')" &&
-: "${RUNS_ROOT:?settings.json env.RUNS_ROOT must be an absolute path}" &&
-RUNS_ROOT_GLOB="$(python3 -c 'import glob, sys; print(glob.escape(sys.argv[1]))' "$RUNS_ROOT")" &&
-python3 "$HOME/xy-skills/xy-runs/scheduled_cleanup/clean.py" --mode list \
-  "$HOME/.codex-subagent*/sessions/*/*" \
-  "$RUNS_ROOT_GLOB" "$RUNS_ROOT_GLOB/-*" "$RUNS_ROOT_GLOB/-*/xy-goal-inbox"
+python3 "$HOME/xy-skills/xy-runs/scheduled_cleanup/clean.py" configured --mode list \
+  --additional-root "$HOME/.codex-subagent*/sessions/*/*"
 ```
 
-确认清单范围和候选项后，在根目录建立预览门槛，再启用每日定时器：
+确认清单范围和候选项后，在设置中的 RUNS_ROOT 下建立预览门槛，再启用每日定时器。将 `<RUNS_ROOT>` 替换为 `settings.json` 中 `env.RUNS_ROOT` 的绝对路径：
 
 ```bash
-touch "$RUNS_ROOT/.runs-cleaner-previewed"
+touch "<RUNS_ROOT>/.runs-cleaner-previewed"
 systemctl --user enable --now runs-cleaner.timer
 systemctl --user list-timers runs-cleaner.timer
 ```
 
-service 以 `--mode delete` 运行。每次启动先核验 `RUNS_ROOT` 为绝对路径，再要求根下 `.runs-cleaner-previewed` 存在；否则报错且不启动清理器。标记只对当前根有效；换 `RUNS_ROOT` 后，须在新根重跑 `--mode list`、检查清单并重建标记；旧根标记无效。
+service 调用同一个 `configured --mode delete` 入口。入口要求 RUNS_ROOT 下的 `.runs-cleaner-previewed` 是普通文件；否则报错并停止。标记只对当前根有效；换 RUNS_ROOT 后，须在新根重跑 `configured --mode list`、检查清单并重建标记；旧根标记无效。
 
 定时器 `OnCalendar=daily`；service 标准输出/错误写入 journal。用户管理器须持续运行；本机已开启 linger。
 

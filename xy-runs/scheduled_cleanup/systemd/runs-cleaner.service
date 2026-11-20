@@ -3,8 +3,8 @@ Description=Delete expired and unused temporary items
 
 [Service]
 Type=oneshot
-# --mode delete requires a preview marker in the configured RUNS_ROOT.
-# systemd passes the quoted globs literally; clean.py expands them.
-ExecStart=/usr/bin/python3 -c "import glob, json, os, sys; from pathlib import Path; runs = json.loads((Path.home() / '.claude/settings.json').read_text())['env']['RUNS_ROOT']; (isinstance(runs, str) and os.path.isabs(runs)) or sys.exit('env.RUNS_ROOT must be an absolute path'); preview = Path(runs) / '.runs-cleaner-previewed'; (preview.exists() and not preview.is_symlink() and preview.is_file()) or sys.exit('RUNS_ROOT preview marker is missing: ' + str(preview)); runs = glob.escape(runs); os.execv(sys.executable, [sys.executable, sys.argv[1], *sys.argv[2:], runs, runs + '/-*', runs + '/-*/xy-goal-inbox'])" "%h/xy-skills/xy-runs/scheduled_cleanup/clean.py" --mode delete "%h/.codex-subagent*/sessions/*/*"
+# The configured entry reads RUNS_ROOT, builds its literal three-level patterns,
+# and requires the preview marker before starting delete mode.
+ExecStart=/usr/bin/python3 "%h/xy-skills/xy-runs/scheduled_cleanup/clean.py" configured --mode delete --additional-root "%h/.codex-subagent*/sessions/*/*"
 StandardOutput=journal
 StandardError=journal

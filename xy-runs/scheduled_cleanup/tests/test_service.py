@@ -44,6 +44,16 @@ class ServiceTests(unittest.TestCase):
         return subprocess.run(command, env=environment, text=True, capture_output=True,
                               check=False, cwd=self.home)
 
+    def launch_real_configured_cleaner(self, mode):
+        environment = os.environ.copy()
+        environment.update(HOME=str(self.home), RUNS_ROOT="/must-not-use-environment")
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_DIRECTORY / "clean.py"), "configured",
+             "--mode", mode, "--additional-root",
+             str(self.home / ".codex-subagent*" / "sessions" / "*" / "*")],
+            env=environment, text=True, capture_output=True, check=False, cwd=self.home,
+        )
+
     def test_timer_catches_up_after_power_off(self):
         timer = configparser.ConfigParser(interpolation=None)
         timer.read(TIMER)
@@ -51,7 +61,7 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(timer["Timer"].getboolean("Persistent"))
 
     # The launcher must read settings at each invocation and preserve spaced paths.
-    def test_service_reads_settings_each_time_and_starts_in_delete_mode(self):
+    def test_service_calls_the_configured_entry_in_delete_mode(self):
         for name in ("first runs", "second runs"):
             with self.subTest(name=name):
                 runs = self.home / name
@@ -61,9 +71,8 @@ class ServiceTests(unittest.TestCase):
                 result = self.launch()
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), [
-                    "--mode", "delete",
+                    "configured", "--mode", "delete", "--additional-root",
                     str(self.home / ".codex-subagent*" / "sessions" / "*" / "*"),
-                    str(runs), str(runs / "-*"), str(runs / "-*" / "xy-goal-inbox"),
                 ])
 
     # Only a regular preview marker under the configured root authorizes deletion.
@@ -80,7 +89,7 @@ class ServiceTests(unittest.TestCase):
                 if symlink:
                     marker.symlink_to(previous_marker)
                 self.settings.write_text(json.dumps({"env": {"RUNS_ROOT": str(runs)}}))
-                result = self.launch()
+                result = self.launch_real_configured_cleaner("delete")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")
                 self.assertIn(".runs-cleaner-previewed", result.stderr)
@@ -98,7 +107,7 @@ class ServiceTests(unittest.TestCase):
         for case, settings in cases:
             with self.subTest(case=case):
                 self.settings.write_text(json.dumps(settings))
-                result = self.launch()
+                result = self.launch_real_configured_cleaner("delete")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")
                 self.assertIn("RUNS_ROOT", result.stderr)
@@ -113,9 +122,8 @@ class ServiceTests(unittest.TestCase):
         sibling = self.home / "run1"
         (sibling / "-other-project").mkdir(parents=True)
         self.settings.write_text(json.dumps({"env": {"RUNS_ROOT": str(runs)}}))
-        result = self.launch()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        patterns = json.loads(result.stdout)[-3:]
+        patterns = clean.configured_patterns(str(runs), [
+            str(self.home / ".codex-subagent*" / "sessions" / "*" / "*")])[-3:]
         errors = io.StringIO()
         roots = clean.expand_roots(patterns, errors)
         self.assertEqual(set(roots), {runs, project, inbox})
