@@ -84,16 +84,7 @@ def _card_errors(card, label):
     problems = check_value(label, shape_view, CARD_SHAPE)
     if not isinstance(card, dict):
         return problems
-    map_issues = card.get("map_issues")
-    if isinstance(map_issues, dict):
-        for field, prefix, label in MAP_ISSUE_JUDGMENTS:
-            value = map_issues.get(field)
-            if not isinstance(value, str):
-                continue
-            if value.strip() in UNSUPPORTED_BARE_JUDGMENTS:
-                problems.append(f"{label}不能只写结论词；正面结论必须在冒号后写依据")
-            elif value.startswith(prefix) and not value[len(prefix) :].strip():
-                problems.append(f"{label}的正面结论冒号后必须写依据")
+    problems.extend(_map_issue_errors(card, label))
     unused = card.get("unused")
     if isinstance(unused, list):
         for index, value in enumerate(unused):
@@ -107,6 +98,26 @@ def _card_errors(card, label):
         problems.append(f"{label}.recommended 必须是 照建议、留、不要这个功能 之一")
     elif recommendation == "照建议" and not card.get("suggestion"):
         problems.append(f"{label}.recommended 为 照建议 时 suggestion 不能为空")
+    return problems
+
+
+def _map_issue_errors(card, label):
+    map_issues = card.get("map_issues")
+    if not isinstance(map_issues, dict):
+        return []
+    problems = []
+    for field, prefix, issue_label in MAP_ISSUE_JUDGMENTS:
+        value = map_issues.get(field)
+        if not isinstance(value, str):
+            continue
+        if value.strip() in UNSUPPORTED_BARE_JUDGMENTS:
+            problems.append(
+                f"{label}.{field}（{issue_label}）不能只写结论词；正面结论必须在冒号后写依据"
+            )
+        elif value.startswith(prefix) and not value[len(prefix) :].strip():
+            problems.append(
+                f"{label}.{field}（{issue_label}）的正面结论冒号后必须写依据"
+            )
     return problems
 
 

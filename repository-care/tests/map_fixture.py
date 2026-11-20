@@ -38,7 +38,7 @@ def feature(feature_id, directory, *, children, source, items):
     return result
 
 
-def root_feature(
+def root_feature(  # noqa: PLR0913 -- expose every required root field as a keyword
     feature_id,
     directory,
     *,
