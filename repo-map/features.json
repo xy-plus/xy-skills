@@ -2375,6 +2375,11 @@
                   "id": "show-what-for-unapproved-feature",
                   "text": "没有认可记录的功能，决定项列出功能的「要什么」。",
                   "status": "起草"
+                },
+                {
+                  "id": "show-feature-path-in-title",
+                  "text": "决定页每个功能的标题按图根到本功能的顺序显示完整层级，根功能只显示自身标题，局部范围仍显示计划外的上级。",
+                  "status": "起草"
                 }
               ],
               "children": []

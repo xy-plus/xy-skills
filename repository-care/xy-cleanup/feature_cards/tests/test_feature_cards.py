@@ -45,6 +45,7 @@ class FeatureCardsTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         self.primary = make_cleanup_repo(self)
+        self._add_alpha_child_feature(self.primary)
         subprocess.run(
             ["git", "-C", str(self.primary), "config", "user.name", "Test"], check=True
         )
@@ -110,7 +111,7 @@ class FeatureCardsTest(unittest.TestCase):
         return subprocess.run(arguments, capture_output=True, text=True, check=False)
 
     def default_cards(self):
-        return [card("root"), card("alpha"), card("beta")]
+        return [card("root"), card("alpha"), card("alpha-child"), card("beta")]
 
     def test_cards_use_the_shared_json_shape_checker(self):
         with patch.object(
@@ -142,11 +143,14 @@ class FeatureCardsTest(unittest.TestCase):
         decisions = json.loads(self.output.read_text(encoding="utf-8"))
         self.assertIs(decision_page.validate_decisions(decisions), decisions)
         items = decisions["groups"][0]["items"]
-        self.assertEqual(len(items), 3)
-        self.assertEqual([item["id"] for item in items], ["root", "alpha", "beta"])
+        self.assertEqual(len(items), 4)
+        self.assertEqual(
+            [item["id"] for item in items],
+            ["root", "alpha", "alpha-child", "beta"],
+        )
         self.assertEqual(items[0]["options"], ["照建议", "留", "按我写的改"])
         self.assertEqual(
-            items[2]["options"],
+            items[3]["options"],
             ["照建议", "留", "按我写的改", "不要这个功能"],
         )
         self.assertEqual(items[1]["recommended"], "照建议")
@@ -159,6 +163,37 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertIn("为什么：让功能容易使用。", "\n".join(items[0]["lines"]))
         self.assertIn("可选的旧格式导出入口", "\n".join(items[1]["lines"]))
         self.assertIn("README 实际使用记录只选了新版入口", "\n".join(items[1]["lines"]))
+
+    def test_three_level_feature_title_lists_each_ancestor_from_root(self):
+        result = self.run_cards(self.default_cards())
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        items = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ]
+        child = next(item for item in items if item["id"] == "alpha-child")
+        self.assertEqual(child["title"], "Root › Alpha › Alpha 子功能")
+
+    def test_root_feature_title_contains_only_its_own_title(self):
+        result = self.run_cards(self.default_cards())
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        items = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ]
+        root = next(item for item in items if item["id"] == "root")
+        self.assertEqual(root["title"], "Root")
+
+    def test_scoped_feature_title_still_starts_at_the_map_root(self):
+        result = self.run_cards(
+            [card("alpha-child")], scope=("alpha-child",), review="全部"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][0]
+        self.assertEqual(item["title"], "Root › Alpha › Alpha 子功能")
 
     def test_page_lists_draft_items_and_reasons_and_shows_rewritten_item_text(self):
         self._commit_repository("初始提交")
@@ -210,7 +245,9 @@ class FeatureCardsTest(unittest.TestCase):
         self._commit_repository("起草 alpha 条目")
 
         result = self.run_cards(
-            [card("alpha")], scope=("alpha",), review="全部"
+            [card("alpha"), card("alpha-child")],
+            scope=("alpha",),
+            review="全部",
         )
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -256,14 +293,14 @@ class FeatureCardsTest(unittest.TestCase):
 
     def test_leaf_can_recommend_removal(self):
         cards = self.default_cards()
-        cards[2]["recommended"] = "不要这个功能"
+        cards[3]["recommended"] = "不要这个功能"
 
         result = self.run_cards(cards)
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         decisions = json.loads(self.output.read_text(encoding="utf-8"))
         self.assertEqual(
-            decisions["groups"][0]["items"][2]["recommended"],
+            decisions["groups"][0]["items"][3]["recommended"],
             "不要这个功能",
         )
 
@@ -271,12 +308,26 @@ class FeatureCardsTest(unittest.TestCase):
         cases = (
             (self.default_cards()[:-1], ("全部",), "缺少卡片"),
             (
-                [card("root"), card("alpha"), card("beta"), card("beta")],
+                [
+                    card("root"),
+                    card("alpha"),
+                    card("alpha-child"),
+                    card("beta"),
+                    card("beta"),
+                ],
                 ("全部",),
                 "重复卡片",
             ),
-            ([card("alpha"), card("beta")], ("alpha",), "多出的卡片"),
-            ([card("alpha"), card("missing")], ("alpha",), "未知功能"),
+            (
+                [card("alpha"), card("alpha-child"), card("beta")],
+                ("alpha",),
+                "多出的卡片",
+            ),
+            (
+                [card("alpha"), card("alpha-child"), card("missing")],
+                ("alpha",),
+                "未知功能",
+            ),
         )
         for cards, scope, label in cases:
             with self.subTest(label=label):
@@ -370,6 +421,38 @@ class FeatureCardsTest(unittest.TestCase):
         self._commit_repository_at(self.repository, message)
 
     @staticmethod
+    def _add_alpha_child_feature(repository):
+        manifest = repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        alpha = document["children"][0]
+        alpha["children"] = [
+            {
+                "id": "alpha-child",
+                "title": "Alpha 子功能",
+                "what": "提供 Alpha 子功能。",
+                "why": {
+                    "text": "让 Alpha 子功能容易使用。",
+                    "source": "原话",
+                    "quote": "用户需要 Alpha 子功能。",
+                    "from": "测试契约",
+                },
+                "directory": "alpha/child",
+                "items": [
+                    {
+                        "id": "core",
+                        "text": "用户可以使用 Alpha 子功能。",
+                        "status": "确认",
+                    }
+                ],
+                "children": [],
+            }
+        ]
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        child_file = repository / "alpha" / "child" / "main.py"
+        child_file.parent.mkdir(parents=True)
+        child_file.write_text("value = 3\n", encoding="utf-8")
+
+    @staticmethod
     def _commit_repository_at(repository, message):
         status = subprocess.run(
             [
@@ -396,7 +479,7 @@ class FeatureCardsTest(unittest.TestCase):
 
     def _record_and_commit(self, features, message):
         feature_ids = (
-            ("root", "alpha", "beta")
+            ("root", "alpha", "alpha-child", "beta")
             if features == "全部"
             else tuple(features.split())
             if isinstance(features, str)

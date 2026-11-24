@@ -17,6 +17,7 @@ from cli_errors import report_cli_argument_error  # noqa: E402
 from decision_page import validate_decisions  # noqa: E402
 from json_validation import check_value, object_without_duplicate_keys  # noqa: E402
 from repo_map_lib.git_repository import ArgumentError  # noqa: E402
+from repo_map_lib.validate_feature_list.features import feature_chain  # noqa: E402
 
 
 CARD_SHAPE = {
@@ -198,6 +199,11 @@ def _append_card_lines(lines, card):
 
 def _decision_item(feature_id, reason, card, context):
     feature = context.values[feature_id]
+    features = context.data["features"]
+    title = " › ".join(
+        features[ancestor_id]["title"]
+        for ancestor_id in reversed(list(feature_chain(feature_id, features)))
+    )
     previous_feature = context.previous_features.get(feature_id)
     unapproved = context.commits[feature_id] == "无"
     draft_items = _draft_item_lines(
@@ -222,7 +228,7 @@ def _decision_item(feature_id, reason, card, context):
         options.append(REMOVE_FEATURE)
     return {
         "id": feature_id,
-        "title": feature["title"],
+        "title": title,
         "lines": lines,
         "options": options,
         "recommended": card["recommended"],
