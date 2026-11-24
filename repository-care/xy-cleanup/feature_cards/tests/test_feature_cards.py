@@ -88,17 +88,9 @@ class FeatureCardsTest(unittest.TestCase):
         return paths
 
     def build_card_command(self, scope=("全部",), review="全部"):
-        return [
-            "python3",
-            "-B",
-            str(COMMAND),
-            "--repo",
-            str(self.repository),
-            "--scope",
-            *scope,
-            "--review",
-            review,
-        ]
+        arguments = ["python3", "-B", str(COMMAND), "--repo", str(self.repository)]
+        arguments.extend(("--scope", *scope, "--review", review))
+        return arguments
 
     def run_cards(self, cards, scope=("全部",), review="全部", add_args=()):
         arguments = self.build_card_command(scope, review)
@@ -494,33 +486,26 @@ class FeatureCardsTest(unittest.TestCase):
         title = f"清扫决定：{self.repository.name} 计划提交 {head}"
         decisions = self.directory / "record-decisions.json"
         answers = self.directory / "record-answers.json"
+        decision_items = [
+            {
+                "id": feature_id,
+                "title": feature_id,
+                "lines": ["认可。"],
+                "options": ["照建议", "留"],
+                "recommended": "照建议",
+                "compare": None,
+                "details": None,
+            }
+            for feature_id in feature_ids
+        ]
+        decision_document = {
+            "title": title,
+            "intro": ["逐项决定。"],
+            "groups": [{"title": "功能", "notes": [], "items": decision_items}],
+            "footnotes": [],
+        }
         decisions.write_text(
-            json.dumps(
-                {
-                    "title": title,
-                    "intro": ["逐项决定。"],
-                    "groups": [
-                        {
-                            "title": "功能",
-                            "notes": [],
-                            "items": [
-                                {
-                                    "id": feature_id,
-                                    "title": feature_id,
-                                    "lines": ["认可。"],
-                                    "options": ["照建议", "留"],
-                                    "recommended": "照建议",
-                                    "compare": None,
-                                    "details": None,
-                                }
-                                for feature_id in feature_ids
-                            ],
-                        }
-                    ],
-                    "footnotes": [],
-                },
-                ensure_ascii=False,
-            ),
+            json.dumps(decision_document, ensure_ascii=False),
             encoding="utf-8",
         )
         answers.write_text(
