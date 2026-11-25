@@ -146,11 +146,11 @@ def _make_greedy_layout_rendered_tree(test_case):
         make_root_feature(
             "root",
             "",
+            source="原话",
+            children=children,
+            items=[],
             subrepositories=[],
             external_dependencies=[],
-            children=children,
-            source="原话",
-            items=[],
         ),
     )
     output = repository.parent / "rendered"
