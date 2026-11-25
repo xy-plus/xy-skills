@@ -1,6 +1,5 @@
 import json
 import re
-import subprocess
 import unittest
 
 from pathlib import Path
@@ -11,11 +10,11 @@ REPOSITORY_ROOT = next(
 )
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
 from map_fixture import (
-    COMMAND,
     build_map,
     feature,
     make_repo,
     root_feature as make_root_feature,
+    run_map_command,
 )
 
 
@@ -71,25 +70,8 @@ class RenderTest(unittest.TestCase):
         )
         self.output = self.repository.parent / "rendered"
 
-    def run_command(self, command, repository, output):
-        return subprocess.run(
-            [
-                "python3",
-                "-B",
-                str(COMMAND),
-                command,
-                "--repo",
-                str(repository),
-                "--out",
-                str(output),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
     def test_render_writes_map_data_and_a_self_contained_page(self):
-        result = self.run_command("render", self.repository, self.output)
+        result = run_map_command("render", self.repository, self.output)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         data = json.loads((self.output / "map-data.json").read_text(encoding="utf-8"))
         self.assertEqual(data, build_map(self.repository))
@@ -128,7 +110,7 @@ class RenderTest(unittest.TestCase):
     def test_render_does_not_write_a_page_when_the_feature_list_is_invalid(self):
         feature_path = self.repository / "repo-map" / "features.json"
         feature_path.write_text("{}", encoding="utf-8")
-        result = self.run_command("render", self.repository, self.output)
+        result = run_map_command("render", self.repository, self.output)
         self.assertEqual(result.returncode, 1)
         self.assertFalse(self.output.exists())
 
@@ -136,7 +118,7 @@ class RenderTest(unittest.TestCase):
         self.output.mkdir()
         keep_file = self.output / "keep.txt"
         keep_file.write_text("keep", encoding="utf-8")
-        result = self.run_command("render", self.repository, self.output)
+        result = run_map_command("render", self.repository, self.output)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("--out 必须不存在或为空", result.stdout + result.stderr)
         self.assertEqual(keep_file.read_text(encoding="utf-8"), "keep")

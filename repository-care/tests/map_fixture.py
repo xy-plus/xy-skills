@@ -10,6 +10,25 @@ COMMAND = ROOT / "repository-care" / "xy-repo-map" / "repo_map.py"
 LIBRARY = ROOT / "repository-care" / "xy-repo-map"
 MISSING = object()
 
+
+def run_map_command(command, repository, output):
+    return subprocess.run(
+        [
+            "python3",
+            "-B",
+            str(COMMAND),
+            command,
+            "--repo",
+            str(repository),
+            "--out",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 sys.path.insert(0, str(ROOT / "repository-care"))
 sys.path.insert(0, str(LIBRARY))
 from repo_map_lib.map_data import build_map as build_repository_map  # noqa: E402
@@ -24,11 +43,11 @@ def feature(feature_id, directory, *, children, source, items):
             "text": "让功能容易使用。",
             "source": source,
             "quote": "用户说过的话。" if source == "原话" else "",
-            "from": "测试契约"
-            if source == "原话"
-            else "本次回答"
-            if source == "确认"
-            else "",
+            "from": (
+                "测试契约"
+                if source == "原话"
+                else "本次回答" if source == "确认" else ""
+            ),
         },
         "directory": directory,
         "children": children,

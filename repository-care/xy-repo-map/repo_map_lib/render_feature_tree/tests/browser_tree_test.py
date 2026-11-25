@@ -1,6 +1,5 @@
 import json
 import os
-import subprocess
 import unittest
 
 from playwright.sync_api import sync_playwright
@@ -12,7 +11,12 @@ REPOSITORY_ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
 )
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
-from map_fixture import COMMAND, feature, make_repo, root_feature as make_root_feature
+from map_fixture import (
+    feature,
+    make_repo,
+    root_feature as make_root_feature,
+    run_map_command,
+)
 
 
 def _row_for_title(test_case, page, title):
@@ -96,21 +100,7 @@ def _make_rendered_tree(test_case):
         encoding="utf-8",
     )
     output = repository.parent / "rendered"
-    rendered = subprocess.run(
-        [
-            "python3",
-            "-B",
-            str(COMMAND),
-            "render",
-            "--repo",
-            str(repository),
-            "--out",
-            str(output),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    rendered = run_map_command("render", repository, output)
     test_case.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
     expected = json.loads((output / "map-data.json").read_text(encoding="utf-8"))
     test_case.assertEqual(

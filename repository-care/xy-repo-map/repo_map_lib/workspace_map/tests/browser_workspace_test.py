@@ -1,5 +1,4 @@
 import os
-import subprocess
 import unittest
 
 from playwright.sync_api import sync_playwright
@@ -11,7 +10,7 @@ REPOSITORY_ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
 )
 sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
-from map_fixture import COMMAND, make_workspace
+from map_fixture import make_workspace, run_map_command
 
 
 class BrowserWorkspaceTest(unittest.TestCase):
@@ -22,21 +21,7 @@ class BrowserWorkspaceTest(unittest.TestCase):
         )
         workspace = make_workspace(self, ("sub-b",), ("sub-a",))
         output = workspace.parent / "rendered"
-        rendered = subprocess.run(
-            [
-                "python3",
-                "-B",
-                str(COMMAND),
-                "render-workspace",
-                "--repo",
-                str(workspace),
-                "--out",
-                str(output),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        rendered = run_map_command("render-workspace", workspace, output)
         self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
