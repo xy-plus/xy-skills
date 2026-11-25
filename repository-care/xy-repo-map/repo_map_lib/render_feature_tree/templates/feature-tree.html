@@ -6,8 +6,8 @@
 <title>仓库功能树</title>
 <link rel="icon" href="data:,">
 <style>
-:root{color-scheme:light dark;--page:#f3f5f7;--surface:#fff;--ink:#10151b;--ink2:#4d5966;--muted:#8792a0;--hair:#dde3e9;--track:#e8ecf0;--code:#2a78d6;--tests:#eb6834;--docs:#1baf7a;--comments:#eda100;--uses:#2a78d6;--sans:system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
-@media(prefers-color-scheme:dark){:root{--page:#0d1013;--surface:#161a1f;--ink:#eef1f4;--ink2:#b9c2cc;--muted:#7f8a97;--hair:#2a3038;--track:#232a32;--code:#3987e5;--tests:#d95926;--docs:#199e70;--comments:#c98500;--uses:#3987e5}}
+:root{color-scheme:light dark;--page:#f3f5f7;--surface:#fff;--ink:#10151b;--ink2:#4d5966;--muted:#8792a0;--hair:#dde3e9;--track:#e8ecf0;--code:#2a78d6;--tests:#eb6834;--docs:#1baf7a;--comments:#eda100;--uses:#2a78d6;--branch-1:#2a78d6;--branch-2:#eb6834;--branch-3:#1baf7a;--branch-4:#eda100;--branch-5:#e87ba4;--branch-6:#008300;--branch-7:#6250d6;--branch-8:#e34948;--sans:system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--page:#0d1013;--surface:#161a1f;--ink:#eef1f4;--ink2:#b9c2cc;--muted:#7f8a97;--hair:#2a3038;--track:#232a32;--code:#3987e5;--tests:#d95926;--docs:#199e70;--comments:#c98500;--uses:#3987e5;--branch-1:#3987e5;--branch-2:#d95926;--branch-3:#199e70;--branch-4:#c98500;--branch-5:#d55181;--branch-6:#008300;--branch-7:#9085e9;--branch-8:#e66767}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 var(--sans)}
@@ -31,13 +31,31 @@ button.chip{cursor:pointer}
 .chip.decision{background:#fab219;border-color:#fab219;color:#0b0b0b;font-weight:650}
 .chip[aria-pressed=true]{box-shadow:0 0 0 2px var(--ink)}
 .sticky{position:sticky;top:0;z-index:4;background:color-mix(in srgb,var(--page) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--hair)}
-.sticky .wrap{display:flex;align-items:center;justify-content:flex-end;height:48px}
+.sticky .wrap{display:flex;align-items:center;justify-content:space-between;gap:8px;height:48px}
+.view-switch{display:flex;align-items:center;gap:4px}
+.view-switch button{min-width:34px;height:30px;padding:0 8px;border:1px solid var(--hair);border-radius:8px;background:var(--surface);text-align:center;color:var(--ink2);font-size:13px}
+.view-switch button[aria-pressed=true]{color:var(--ink);font-weight:650;box-shadow:inset 0 0 0 1px var(--ink)}
 .toolbar{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px}
 .toolbar button{min-width:30px;height:30px;border:1px solid var(--hair);border-radius:8px;background:var(--surface);text-align:center}
 .toolbar button:last-child{padding:0 9px}
 #depth-value{min-width:14px;text-align:center;color:var(--ink);font-weight:650}
 main{padding-top:10px;padding-bottom:0}
+main[hidden]{display:none}
 body.detail-open main{padding-bottom:45vh}
+.picture-wide{width:100%;margin:0 auto;padding:0 14px}
+.picture-note{margin:0 0 8px;color:var(--muted);font-size:12px}
+.picture-scroll{width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain}
+#picture-svg{display:block;max-width:none;height:auto}
+.tree-edge{fill:none;stroke:var(--tree-color);stroke-opacity:.5;stroke-width:1.6}
+.picture-node{cursor:pointer;outline:none}
+.picture-hit-area{fill:transparent;pointer-events:all}
+.picture-node circle{fill:var(--node-color);stroke:var(--page);stroke-width:2}
+.picture-node:hover circle{stroke:var(--ink);stroke-width:3}
+.picture-node:focus-visible circle,.picture-node.selected circle{stroke:var(--ink);stroke-width:4}
+.picture-label{fill:var(--ink);paint-order:stroke;stroke:var(--page);stroke-width:5px;stroke-linejoin:round}
+.picture-label.leaf-label{fill:var(--ink2)}
+.picture-root-label{fill:var(--root-label-color);font-weight:700;text-anchor:middle}
+#picture-view[hidden],#text-view[hidden],#picture-tools[hidden],#text-tools[hidden]{display:none}
 .tree{background:var(--surface);border:1px solid var(--hair);border-radius:14px;padding:8px 12px}
 .feature-node{min-width:0}
 .feature-row{display:flex;align-items:stretch;min-height:46px;border-radius:10px;min-width:0}
@@ -93,7 +111,7 @@ body.detail-open main{padding-bottom:45vh}
 .detail-list button{color:var(--uses);overflow-wrap:anywhere}
 .detail-list small{margin-left:5px;color:var(--muted);font-size:11px}
 .items-list li{overflow-wrap:anywhere}
-@media(max-width:520px){.wrap{padding-left:12px;padding-right:12px}.hero{padding-top:15px}.feature-title{font-size:14px}.feature-title .directory-name{font-size:11px}.meter-line{gap:5px}.metrics{gap:3px 7px}.feature-children{margin-left:10px}.own-summary{margin-left:38px}.detail-panel{padding-left:14px;padding-right:14px}}
+@media(max-width:520px){.wrap{padding-left:12px;padding-right:12px}.hero{padding-top:15px}.sticky .wrap{gap:6px}.view-switch{gap:3px}.view-switch button{min-width:32px;padding:0 7px}.toolbar{gap:4px}.toolbar button{min-width:29px}.picture-wide{padding-left:12px;padding-right:12px}.picture-note{font-size:11px;white-space:nowrap}.feature-title{font-size:14px}.feature-title .directory-name{font-size:11px}.meter-line{gap:5px}.metrics{gap:3px 7px}.feature-children{margin-left:10px}.own-summary{margin-left:38px}.detail-panel{padding-left:14px;padding-right:14px}}
 </style>
 </head>
 <body>
@@ -107,9 +125,16 @@ body.detail-open main{padding-bottom:45vh}
   <div class="signals" id="marker-list"></div>
 </header>
 <nav class="sticky"><div class="wrap">
-  <div class="toolbar"><span>层级</span><button type="button" id="depth-minus" aria-label="少一层">−</button><b id="depth-value">2</b><button type="button" id="depth-plus" aria-label="多一层">＋</button><button type="button" id="depth-all">全部</button></div>
+  <div class="view-switch" aria-label="视图"><button type="button" id="view-picture" aria-pressed="true">图</button><button type="button" id="view-text" aria-pressed="false">文字</button></div>
+  <div class="toolbar" id="picture-tools"><button type="button" id="picture-zoom-out" aria-label="缩小">−</button><button type="button" id="picture-zoom-in" aria-label="放大">＋</button><button type="button" id="picture-zoom-fit">全图</button></div>
+  <div class="toolbar" id="text-tools" hidden><span>层级</span><button type="button" id="depth-minus" aria-label="少一层">−</button><b id="depth-value">2</b><button type="button" id="depth-plus" aria-label="多一层">＋</button><button type="button" id="depth-all">全部</button></div>
 </div></nav>
-<main class="wrap"><div class="tree" id="tree"></div></main>
+<main>
+  <section id="picture-view">
+    <div class="picture-wide"><p class="picture-note" id="picture-note"></p><div class="picture-scroll" id="picture-scroll"><svg id="picture-svg" role="group" aria-label="功能关系树"></svg></div></div>
+  </section>
+  <section class="wrap" id="text-view" hidden><div class="tree" id="tree"></div></section>
+</main>
 <aside class="detail-panel" id="detail-panel" hidden></aside>
 <script id="map-data" type="application/json">__MAP_DATA__</script>
 <script>
@@ -128,14 +153,21 @@ for (const [sourceId, feature] of Object.entries(features)) {
 const lineKeys = ["code", "tests", "docs", "comments"];
 const lineTitles = { code: "代码", tests: "测试", docs: "文档", comments: "注释" };
 const sourceLabels = { 原话: "你的原话", 确认: "你确认过", 起草: "AI 起草 · 等你拍板" };
+const rootPictureRadius = 44;
 const rows = new Map();
 const childLists = new Map();
 const ownBlocks = new Map();
 const featureOrder = new Map(Object.keys(features).map((featureId, index) => [featureId, index]));
+const pictureNodes = new Map();
 const manualExpansion = new Map();
 let depth = 2;
 let maximumDepth = 1;
 let showDecisions = false;
+let currentView = "picture";
+let selectedFeatureId = null;
+let pictureLayout = null;
+let pictureScale = 0;
+let pictureFitScale = 0;
 
 function make(tag, className, text) {
   const element = document.createElement(tag);
@@ -154,6 +186,566 @@ function formatNumber(value) {
 
 function featureName(feature) {
   return `${feature.title}（${feature.directory_name}）`;
+}
+
+function featureGroupPlan() {
+  const composite = Object.keys(features).some((featureId) => featureId.includes("/"));
+  const groups = [];
+  const groupByKey = new Map();
+  const groupByFeature = new Map();
+  if (composite) {
+    const local = { key: "local", colorIndex: 1, childIds: [], leafCount: 0 };
+    groups.push(local);
+    groupByKey.set(local.key, local);
+  }
+  for (const childId of rootFeature.children) {
+    const key = composite
+      ? childId.includes("/") ? `repository:${childId}` : "local"
+      : `branch:${childId}`;
+    let group = groupByKey.get(key);
+    if (!group) {
+      group = { key, colorIndex: groups.length + 1, childIds: [], leafCount: 0 };
+      groups.push(group);
+      groupByKey.set(key, group);
+    }
+    group.childIds.push(childId);
+  }
+
+  function assignGroup(featureId, group) {
+    groupByFeature.set(featureId, group);
+    for (const childId of features[featureId].children) assignGroup(childId, group);
+  }
+  for (const group of groups) {
+    for (const childId of group.childIds) assignGroup(childId, group);
+  }
+
+  const leafCounts = new Map();
+  function countLeaves(featureId) {
+    if (leafCounts.has(featureId)) return leafCounts.get(featureId);
+    const children = features[featureId].children;
+    const count = children.length
+      ? children.reduce((sum, childId) => sum + countLeaves(childId), 0)
+      : 1;
+    leafCounts.set(featureId, count);
+    return count;
+  }
+  for (const group of groups) {
+    group.leafCount = group.childIds.reduce((sum, childId) => sum + countLeaves(childId), 0);
+    group.color = group.colorIndex <= 8
+      ? `var(--branch-${group.colorIndex})`
+      : "var(--muted)";
+  }
+  return { composite, groups, groupByFeature };
+}
+
+function choosePictureSides(groups) {
+  const active = groups.filter((group) => group.childIds.length);
+  if (active.length < 2) return { left: [], right: active };
+  const total = active.reduce((sum, group) => sum + group.leafCount, 0);
+  let leftLeaves = 0;
+  let split = 1;
+  let bestDifference = Infinity;
+  for (let index = 1; index < active.length; index++) {
+    leftLeaves += active[index - 1].leafCount;
+    const difference = Math.abs(total - 2 * leftLeaves);
+    if (difference < bestDifference) {
+      bestDifference = difference;
+      split = index;
+    }
+  }
+  return { left: active.slice(0, split), right: active.slice(split) };
+}
+
+function pictureNodeStyle(featureId, level, composite, context) {
+  const feature = features[featureId];
+  const isRoot = featureId === rootId;
+  const isRepositoryRoot = composite && feature.parent === rootId && featureId.includes("/");
+  const isLeaf = feature.children.length === 0;
+  const fontSize = isRoot ? 15 : isRepositoryRoot ? 19 : isLeaf ? 13 : level === 1 ? 15 : 13.5;
+  const fontWeight = isRoot || isRepositoryRoot ? 700 : isLeaf ? 400 : 600;
+  const label = isRoot || isRepositoryRoot ? feature.directory_name : feature.title;
+  const color = isRoot
+    ? composite ? "var(--branch-1)" : "var(--ink)"
+    : context.groupByFeature.get(featureId).color;
+  return { isRoot, isRepositoryRoot, isLeaf, fontSize, fontWeight, label, color };
+}
+
+function breakPictureLabel(value, context, style, maxWidth, maxLines) {
+  const pieces = value.match(/[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*|\s+|./gu) || [value];
+  const lines = [];
+  let line = "";
+  context.font = `${style.fontWeight} ${style.fontSize}px ${style.fontFamily}`;
+  while (pieces.length) {
+    const piece = pieces.shift();
+    if (!line || context.measureText(line + piece).width <= maxWidth) {
+      line += piece;
+      continue;
+    }
+    let breakAt = -1;
+    for (let index = 0; index < line.length; index++) {
+      if ("、，：）".includes(line[index]) || /\s/.test(line[index])) breakAt = index;
+    }
+    if (breakAt >= 0) {
+      lines.push(line.slice(0, breakAt + 1).trim());
+      line = line.slice(breakAt + 1).trim();
+    } else {
+      lines.push(line.trim());
+      line = "";
+    }
+    if (lines.length >= maxLines - 1) {
+      line = (line + piece + pieces.join("")).trim();
+      pieces.length = 0;
+    } else {
+      pieces.unshift(piece);
+    }
+  }
+  if (line || !lines.length) lines.push(line.trim());
+  return lines;
+}
+
+function pictureRadius(featureId, maximumLines) {
+  if (featureId === rootId) return rootPictureRadius;
+  const lineCount = sumLines(features[featureId].lines.total);
+  return maximumLines ? 4 + 18 * Math.sqrt(lineCount / maximumLines) : 4;
+}
+
+function pictureNodeInfo(featureId, level, context, measure, maximumLines) {
+  const feature = features[featureId];
+  const style = pictureNodeStyle(featureId, level, context.composite, context);
+  style.fontFamily = context.fontFamily;
+  const radius = pictureRadius(featureId, maximumLines);
+  const isRoot = featureId === rootId;
+  let lines;
+  if (isRoot) {
+    lines = pictureRootLines(style.label);
+  } else if (style.isLeaf) {
+    lines = [style.label];
+  } else {
+    lines = breakPictureLabel(style.label, measure, style, 210, 3);
+  }
+  measure.font = `${style.fontWeight} ${style.fontSize}px ${style.fontFamily}`;
+  const labelWidth = Math.max(0, ...lines.map((line) => measure.measureText(line).width));
+  const lineHeight = style.fontSize * 1.2;
+  let top;
+  let bottom;
+  if (isRoot) {
+    top = -radius;
+    bottom = radius;
+  } else if (style.isLeaf) {
+    top = Math.min(-radius, -style.fontSize * 0.8 - 3);
+    bottom = Math.max(radius, style.fontSize * 0.6 + 3);
+  } else {
+    top = Math.min(
+      -radius,
+      -radius - 8 - (lines.length - 1) * lineHeight - style.fontSize * 0.8 - 3,
+    );
+    bottom = Math.max(radius, -radius - 8 + style.fontSize * 0.25 + 3);
+  }
+  const labelInset = style.isLeaf ? 0 : 10 + labelWidth + 3;
+  const labelOutset = style.isLeaf ? 10 + labelWidth + 3 : 0;
+  return {
+    featureId,
+    level,
+    feature,
+    ...style,
+    lines,
+    lineHeight,
+    radius,
+    labelWidth,
+    inwardExtent: radius + labelInset,
+    outwardExtent: radius + labelOutset,
+    top,
+    bottom,
+  };
+}
+
+function buildPictureSubtree(featureId, level, infoByFeature) {
+  const info = infoByFeature.get(featureId);
+  const childIds = info.feature.children;
+  const own = [{ featureId, level, y: 0, info }];
+  if (!childIds.length) return { nodes: own, top: info.top, bottom: info.bottom, info };
+
+  const children = childIds.map((childId) =>
+    buildPictureSubtree(childId, level + 1, infoByFeature));
+  const centers = [0];
+  for (let index = 1; index < children.length; index++) {
+    const previous = children[index - 1];
+    const current = children[index];
+    const baseGap = Math.max(
+      25,
+      previous.info.radius + current.info.radius + 9,
+    );
+    const distance = Math.max(
+      baseGap,
+      previous.bottom - current.top + 10,
+    );
+    centers.push(centers[index - 1] + distance);
+  }
+  const parentY = (centers[0] + centers[centers.length - 1]) / 2;
+  let top = info.top;
+  let bottom = info.bottom;
+  const nodes = [...own];
+  for (let index = 0; index < children.length; index++) {
+    const offset = centers[index] - parentY;
+    const child = children[index];
+    top = Math.min(top, child.top + offset);
+    bottom = Math.max(bottom, child.bottom + offset);
+    for (const node of child.nodes) nodes.push({ ...node, y: node.y + offset });
+  }
+  return { nodes, top, bottom, info };
+}
+
+function combinePictureSide(childIds, side, infoByFeature, groupByFeature) {
+  const branches = childIds.map((childId) =>
+    buildPictureSubtree(childId, 1, infoByFeature));
+  if (!branches.length) return { nodes: [], top: 0, bottom: 0 };
+  const centers = [0];
+  for (let index = 1; index < branches.length; index++) {
+    const previous = branches[index - 1];
+    const current = branches[index];
+    const previousGroup = groupByFeature.get(childIds[index - 1]);
+    const currentGroup = groupByFeature.get(childIds[index]);
+    const firstBranchGap = 18;
+    const groupGap = previousGroup.key === currentGroup.key ? 0 : 28;
+    const parentGap = 12;
+    const baseGap = Math.max(
+      25,
+      previous.info.radius + current.info.radius + 9,
+    ) + firstBranchGap + groupGap + parentGap;
+    const distance = Math.max(
+      baseGap,
+      previous.bottom - current.top + firstBranchGap + groupGap + parentGap,
+    );
+    centers.push(centers[index - 1] + distance);
+  }
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (let index = 0; index < branches.length; index++) {
+    top = Math.min(top, branches[index].top + centers[index]);
+    bottom = Math.max(bottom, branches[index].bottom + centers[index]);
+  }
+  const shift = -(top + bottom) / 2;
+  const nodes = [];
+  for (let index = 0; index < branches.length; index++) {
+    for (const node of branches[index].nodes) {
+      nodes.push({ ...node, y: node.y + centers[index] + shift, side });
+    }
+  }
+  return { nodes, top: top + shift, bottom: bottom + shift };
+}
+
+function pictureRootLines(name) {
+  return name.match(/[^-]+-?/g) || [name];
+}
+
+function addPictureText(node, lines, x, baselines, info, className, anchor) {
+  const svgNamespace = "http://www.w3.org/2000/svg";
+  const label = document.createElementNS(svgNamespace, "text");
+  label.setAttribute("class", className);
+  label.setAttribute("text-anchor", anchor);
+  label.setAttribute("font-size", String(info.fontSize));
+  label.setAttribute("font-weight", String(info.fontWeight));
+  label.setAttribute("font-family", "var(--sans)");
+  for (let index = 0; index < lines.length; index++) {
+    const span = document.createElementNS(svgNamespace, "tspan");
+    span.setAttribute("x", String(x));
+    span.setAttribute("y", String(baselines[index]));
+    span.textContent = lines[index];
+    label.append(span);
+  }
+  node.append(label);
+}
+
+function renderPicture() {
+  const svgNamespace = "http://www.w3.org/2000/svg";
+  const context = featureGroupPlan();
+  const split = choosePictureSides(context.groups);
+  const leftKeys = new Set(split.left.map((group) => group.key));
+  const rightKeys = new Set(split.right.map((group) => group.key));
+  const leftIds = rootFeature.children.filter((childId) =>
+    leftKeys.has(context.groupByFeature.get(childId)?.key));
+  const rightIds = rootFeature.children.filter((childId) =>
+    rightKeys.has(context.groupByFeature.get(childId)?.key));
+  const maximumLines = Math.max(
+    0,
+    ...Object.entries(features)
+      .filter(([featureId]) => featureId !== rootId)
+      .map(([, feature]) => sumLines(feature.lines.total)),
+  );
+  const measureCanvas = document.createElement("canvas");
+  const measure = measureCanvas.getContext("2d");
+  const fontFamily = getComputedStyle(document.body).fontFamily;
+  const infoByFeature = new Map();
+  context.fontFamily = fontFamily;
+  for (const featureId of Object.keys(features)) {
+    const level = featureId === rootId ? 0 : featureLevel(featureId);
+    infoByFeature.set(
+      featureId,
+      pictureNodeInfo(featureId, level, context, measure, maximumLines),
+    );
+  }
+
+  const left = combinePictureSide(leftIds, -1, infoByFeature, context.groupByFeature);
+  const right = combinePictureSide(rightIds, 1, infoByFeature, context.groupByFeature);
+  const maximumDepthOnSide = Math.max(
+    0,
+    ...[...left.nodes, ...right.nodes].map((node) => node.level),
+  );
+  const levelExtents = new Map();
+  for (const node of [...left.nodes, ...right.nodes]) {
+    const extent = levelExtents.get(node.level) || { inward: 0, outward: 0 };
+    extent.inward = Math.max(extent.inward, node.info.inwardExtent);
+    extent.outward = Math.max(extent.outward, node.info.outwardExtent);
+    levelExtents.set(node.level, extent);
+  }
+  const distanceByLevel = new Map();
+  let distance = 0;
+  const rootRadius = rootPictureRadius;
+  for (let level = 1; level <= maximumDepthOnSide; level++) {
+    const extent = levelExtents.get(level) || { inward: 0, outward: 0 };
+    if (level === 1) distance = rootRadius + extent.inward + 34;
+    else {
+      const previous = levelExtents.get(level - 1) || { outward: 0 };
+      distance += previous.outward + extent.inward + 34;
+    }
+    distanceByLevel.set(level, distance);
+  }
+  const maximumSideExtent = Math.max(
+    rootRadius + 36,
+    ...[...levelExtents.entries()].map(([level, extent]) =>
+      distanceByLevel.get(level) + extent.outward + 36),
+  );
+  const width = Math.ceil(maximumSideExtent * 2);
+  const rootX = width / 2;
+  const verticalExtent = Math.max(
+    rootRadius,
+    Math.abs(left.top), Math.abs(left.bottom), Math.abs(right.top), Math.abs(right.bottom),
+  );
+  const height = Math.ceil((verticalExtent + 42) * 2);
+  const centerY = height / 2;
+  const rootPictureInfo = infoByFeature.get(rootId);
+  const nodePositions = new Map();
+  nodePositions.set(rootId, {
+    featureId: rootId,
+    x: rootX,
+    y: centerY,
+    side: 1,
+    info: rootPictureInfo,
+  });
+  for (const node of [...left.nodes, ...right.nodes]) {
+    const x = rootX + node.side * distanceByLevel.get(node.level);
+    const positioned = {
+      ...node,
+      x,
+      y: centerY + node.y,
+      parentId: node.info.feature.parent,
+    };
+    nodePositions.set(node.featureId, positioned);
+  }
+
+  const svg = document.querySelector("#picture-svg");
+  svg.replaceChildren();
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  const definitions = document.createElementNS(svgNamespace, "defs");
+  const marker = document.createElementNS(svgNamespace, "marker");
+  marker.setAttribute("id", "picture-arrow");
+  marker.setAttribute("viewBox", "0 0 10 10");
+  marker.setAttribute("refX", "8");
+  marker.setAttribute("refY", "5");
+  marker.setAttribute("markerWidth", "6");
+  marker.setAttribute("markerHeight", "6");
+  marker.setAttribute("orient", "auto");
+  marker.setAttribute("markerUnits", "strokeWidth");
+  const arrow = document.createElementNS(svgNamespace, "path");
+  arrow.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+  arrow.setAttribute("fill", "context-stroke");
+  arrow.setAttribute("opacity", "0.5");
+  marker.append(arrow);
+  definitions.append(marker);
+  svg.append(definitions);
+
+  for (const [featureId, node] of nodePositions) {
+    if (featureId === rootId) continue;
+    const parent = nodePositions.get(node.parentId);
+    const side = node.side;
+    const startX = parent.x + side * parent.info.radius;
+    const endX = node.x - side * node.info.radius;
+    const deltaX = endX - startX;
+    const edge = document.createElementNS(svgNamespace, "path");
+    edge.setAttribute("class", "tree-edge");
+    edge.setAttribute(
+      "d",
+      `M ${startX} ${parent.y} C ${startX + deltaX * 0.45} ${parent.y}, ${endX - deltaX * 0.45} ${node.y}, ${endX} ${node.y}`,
+    );
+    edge.setAttribute("marker-end", "url(#picture-arrow)");
+    edge.style.setProperty("--tree-color", node.info.color);
+    svg.append(edge);
+  }
+
+  for (const [featureId, position] of nodePositions) {
+    const info = position.info;
+    const node = document.createElementNS(svgNamespace, "g");
+    node.setAttribute("class", `picture-node${featureId === rootId ? " root-node" : ""}`);
+    node.setAttribute("role", "button");
+    node.setAttribute("tabindex", "0");
+    node.setAttribute("aria-label", featureName(features[featureId]));
+    node.setAttribute("data-feature-id", featureId);
+    node.setAttribute("transform", `translate(${position.x} ${position.y})`);
+    if (selectedFeatureId === featureId) node.classList.add("selected");
+    const color = featureId === rootId
+      ? context.composite ? "var(--branch-1)" : "var(--ink)"
+      : info.color;
+    node.style.setProperty("--node-color", color);
+
+    const hitArea = document.createElementNS(svgNamespace, "rect");
+    const horizontalLabel = info.labelWidth + 10;
+    let hitLeft;
+    let hitRight;
+    if (featureId === rootId) {
+      hitLeft = -info.radius;
+      hitRight = info.radius;
+    } else if (info.isLeaf) {
+      hitLeft = position.side > 0 ? -info.radius : -info.radius - horizontalLabel;
+      hitRight = position.side > 0 ? info.radius + horizontalLabel : info.radius;
+    } else {
+      hitLeft = position.side > 0 ? -info.radius - horizontalLabel : -info.radius;
+      hitRight = position.side > 0 ? info.radius : info.radius + horizontalLabel;
+    }
+    hitArea.setAttribute("class", "picture-hit-area");
+    hitArea.setAttribute("x", String(hitLeft - 3));
+    hitArea.setAttribute("y", String(info.top - 3));
+    hitArea.setAttribute("width", String(hitRight - hitLeft + 6));
+    hitArea.setAttribute("height", String(info.bottom - info.top + 6));
+    node.append(hitArea);
+
+    const circle = document.createElementNS(svgNamespace, "circle");
+    circle.setAttribute("r", String(info.radius));
+    node.append(circle);
+    if (featureId === rootId) {
+      const rootLines = pictureRootLines(rootFeature.directory_name);
+      const lineHeight = 17;
+      const firstBaseline = -((rootLines.length - 1) * lineHeight) / 2 + 5;
+      const rootLabelInfo = { fontSize: 15, fontWeight: 700 };
+      node.style.setProperty(
+        "--root-label-color",
+        context.composite ? "#fff" : "var(--surface)",
+      );
+      addPictureText(
+        node,
+        rootLines,
+        0,
+        rootLines.map((_, index) => firstBaseline + index * lineHeight),
+        rootLabelInfo,
+        "picture-root-label",
+        "middle",
+      );
+    } else {
+      const isInternal = !info.isLeaf;
+      const labelX = position.side * (isInternal ? -1 : 1) * (info.radius + 10);
+      const anchorDirection = position.side * (isInternal ? -1 : 1);
+      const anchor = anchorDirection > 0 ? "start" : "end";
+      const firstBaseline = isInternal
+        ? -info.radius - 8 - (info.lines.length - 1) * info.lineHeight
+        : info.fontSize * 0.35;
+      addPictureText(
+        node,
+        info.lines,
+        labelX,
+        info.lines.map((_, index) => firstBaseline + index * info.lineHeight),
+        info,
+        `picture-label${info.isLeaf ? " leaf-label" : ""}`,
+        anchor,
+      );
+    }
+    node.addEventListener("click", () => openDetails(featureId));
+    node.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openDetails(featureId);
+      }
+    });
+    pictureNodes.set(featureId, node);
+    svg.append(node);
+  }
+
+  const note = context.composite
+    ? "箭头从上级指向子功能；圆越大行数越多（含子功能）；同色同仓"
+    : "箭头从上级指向子功能；圆越大行数越多（含子功能）；同色同顶层分支";
+  document.querySelector("#picture-note").textContent = note;
+  pictureLayout = { width, height };
+  refreshPictureScale(false);
+}
+
+function updatePictureSelection() {
+  for (const [featureId, node] of pictureNodes) {
+    node.classList.toggle("selected", featureId === selectedFeatureId);
+  }
+}
+
+function refreshPictureScale(preserveCenter = true) {
+  if (!pictureLayout) return;
+  const scroller = document.querySelector("#picture-scroll");
+  const svg = document.querySelector("#picture-svg");
+  const oldWidth = pictureLayout.width * pictureScale;
+  const centerRatio = oldWidth
+    ? (scroller.scrollLeft + scroller.clientWidth / 2) / oldWidth
+    : 0.5;
+  const oldFit = pictureFitScale;
+  pictureFitScale = Math.min(1, scroller.clientWidth / pictureLayout.width);
+  const targetScale = pictureScale <= oldFit + 0.001
+    ? pictureFitScale
+    : Math.max(pictureFitScale, Math.min(2, pictureScale));
+  pictureScale = targetScale;
+  svg.style.width = `${pictureLayout.width * pictureScale}px`;
+  svg.style.height = `${pictureLayout.height * pictureScale}px`;
+  requestAnimationFrame(() => {
+    scroller.scrollLeft = preserveCenter
+      ? centerRatio * pictureLayout.width * pictureScale - scroller.clientWidth / 2
+      : 0;
+  });
+}
+
+function setPictureScale(scale) {
+  const scroller = document.querySelector("#picture-scroll");
+  const svg = document.querySelector("#picture-svg");
+  const oldWidth = pictureLayout.width * pictureScale;
+  const centerRatio = oldWidth
+    ? (scroller.scrollLeft + scroller.clientWidth / 2) / oldWidth
+    : 0.5;
+  pictureScale = Math.max(pictureFitScale, Math.min(2, scale));
+  svg.style.width = `${pictureLayout.width * pictureScale}px`;
+  svg.style.height = `${pictureLayout.height * pictureScale}px`;
+  requestAnimationFrame(() => {
+    scroller.scrollLeft = centerRatio * pictureLayout.width * pictureScale - scroller.clientWidth / 2;
+  });
+}
+
+function changeView(view, filterDecisions = false) {
+  if (view === "picture" && currentView === "text") showDecisions = false;
+  const enteringPicture = view === "picture" && currentView !== "picture";
+  if (view === "text" && filterDecisions) showDecisions = true;
+  currentView = view;
+  document.querySelector("#picture-view").hidden = view !== "picture";
+  document.querySelector("#text-view").hidden = view !== "text";
+  document.querySelector("#picture-tools").hidden = view !== "picture";
+  document.querySelector("#text-tools").hidden = view !== "text";
+  document.querySelector("#view-picture").setAttribute("aria-pressed", String(view === "picture"));
+  document.querySelector("#view-text").setAttribute("aria-pressed", String(view === "text"));
+  if (enteringPicture) refreshPictureScale();
+  applyVisibility();
+}
+
+function openRelatedFeature(featureId) {
+  if (currentView === "picture") {
+    openDetails(featureId);
+    const node = pictureNodes.get(featureId);
+    if (node) node.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  } else {
+    revealFeature(featureId);
+    openDetails(featureId);
+  }
 }
 
 function featureLevel(featureId) {
@@ -257,10 +849,7 @@ function appendIncoming(parent, featureId) {
 function makeUseButton(featureId, className) {
   const button = make("button", className, featureName(features[featureId]));
   button.type = "button";
-  button.addEventListener("click", () => {
-    revealFeature(featureId);
-    openDetails(featureId);
-  });
+  button.addEventListener("click", () => openRelatedFeature(featureId));
   return button;
 }
 
@@ -405,8 +994,12 @@ function renderHeader() {
     button.id = "decision-filter";
     button.setAttribute("aria-pressed", "false");
     button.addEventListener("click", () => {
-      showDecisions = !showDecisions;
-      applyVisibility();
+      if (currentView === "picture") {
+        changeView("text", true);
+      } else {
+        showDecisions = !showDecisions;
+        applyVisibility();
+      }
     });
     document.querySelector("#marker-list").append(button);
   }
@@ -422,10 +1015,7 @@ function relationList(items, externalUses) {
     const line = make("li", "");
     const button = make("button", "", featureName(features[item.feature]));
     button.type = "button";
-    button.addEventListener("click", () => {
-      revealFeature(item.feature);
-      openDetails(item.feature);
-    });
+    button.addEventListener("click", () => openRelatedFeature(item.feature));
     line.append(button);
     if (item.by === "mention") line.append(make("small", "", "提及"));
     list.append(line);
@@ -498,11 +1088,15 @@ function openDetails(featureId) {
   panel.append(make("h3", "", "被用到"), relationList(incomingUses.get(featureId), []));
   panel.hidden = false;
   document.body.classList.add("detail-open");
+  selectedFeatureId = featureId;
+  updatePictureSelection();
 }
 
 function closeDetails() {
   document.querySelector("#detail-panel").hidden = true;
   document.body.classList.remove("detail-open");
+  selectedFeatureId = null;
+  updatePictureSelection();
 }
 
 function revealFeature(featureId) {
@@ -526,10 +1120,28 @@ function setDepth(value) {
 renderHeader();
 const tree = document.querySelector("#tree");
 for (const childId of rootFeature.children) tree.append(renderFeature(childId, 1));
+renderPicture();
 document.querySelector("#page-title").addEventListener("click", () => openDetails(rootId));
+document.querySelector("#view-picture").addEventListener("click", () => changeView("picture"));
+document.querySelector("#view-text").addEventListener("click", () => changeView("text"));
+document.querySelector("#picture-zoom-out").addEventListener(
+  "click",
+  () => setPictureScale(pictureScale / 1.25),
+);
+document.querySelector("#picture-zoom-in").addEventListener(
+  "click",
+  () => setPictureScale(pictureScale * 1.25),
+);
+document.querySelector("#picture-zoom-fit").addEventListener(
+  "click",
+  () => setPictureScale(pictureFitScale),
+);
 document.querySelector("#depth-minus").addEventListener("click", () => setDepth(Math.max(1, depth - 1)));
 document.querySelector("#depth-plus").addEventListener("click", () => setDepth(Math.min(maximumDepth, depth + 1)));
 document.querySelector("#depth-all").addEventListener("click", () => setDepth(maximumDepth));
+window.addEventListener("resize", () => {
+  if (!document.querySelector("#picture-view").hidden) refreshPictureScale();
+});
 applyVisibility();
 </script>
 </body>

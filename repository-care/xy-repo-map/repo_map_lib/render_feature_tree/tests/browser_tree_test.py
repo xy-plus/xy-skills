@@ -123,6 +123,150 @@ def _make_rendered_tree(test_case):
     return output, expected, payload, external_name
 
 
+def _assert_picture_view_and_switching(test_case, page, expected):
+    picture_button = page.get_by_role("button", name="图", exact=True)
+    text_button = page.get_by_role("button", name="文字", exact=True)
+    test_case.assertEqual(picture_button.get_attribute("aria-pressed"), "true")
+    test_case.assertEqual(text_button.get_attribute("aria-pressed"), "false")
+    test_case.assertTrue(page.locator("#picture-view").is_visible())
+    test_case.assertFalse(page.locator("#text-view").is_visible())
+
+    svg = page.locator("#picture-svg")
+    test_case.assertEqual(
+        page.locator("#picture-svg .picture-node").count(),
+        len(expected["features"]),
+    )
+    edges = page.locator("#picture-svg .tree-edge")
+    test_case.assertEqual(edges.count(), len(expected["features"]) - 1)
+    test_case.assertGreater(
+        sum(bool(feature["uses"]) for feature in expected["features"].values()), 0
+    )
+    test_case.assertLessEqual(
+        page.locator("#picture-note").evaluate(
+            "element => element.getBoundingClientRect().height"
+        ),
+        18,
+    )
+
+    label_boxes = svg.locator(".picture-node text").evaluate_all(
+        "labels => labels.map(label => { const box = label.getBoundingClientRect(); "
+        "return {left: box.left, right: box.right, top: box.top, bottom: box.bottom}; })"
+    )
+    for index, left in enumerate(label_boxes):
+        for right in label_boxes[index + 1 :]:
+            test_case.assertFalse(
+                left["left"] < right["right"]
+                and right["left"] < left["right"]
+                and left["top"] < right["bottom"]
+                and right["top"] < left["bottom"],
+                f"picture labels overlap: {left} and {right}",
+            )
+    circle_boxes = svg.locator(".picture-node circle").evaluate_all(
+        "circles => circles.map(circle => { const box = circle.getBoundingClientRect(); "
+        "return {left: box.left, right: box.right, top: box.top, bottom: box.bottom}; })"
+    )
+    for index, left in enumerate(circle_boxes):
+        for right in circle_boxes[index + 1 :]:
+            test_case.assertFalse(
+                left["left"] < right["right"]
+                and right["left"] < left["right"]
+                and left["top"] < right["bottom"]
+                and right["top"] < left["bottom"],
+                f"picture circles overlap: {left} and {right}",
+            )
+
+    original_url = page.url
+    page.get_by_role("button", name="Guide（guide）", exact=True).click()
+    panel = page.locator("#detail-panel")
+    test_case.assertTrue(panel.is_visible())
+    test_case.assertEqual(panel.locator("h2").text_content(), "Guide（guide）")
+    test_case.assertEqual(page.url, original_url)
+    selected = page.locator('.picture-node[data-feature-id="guide"]')
+    test_case.assertTrue(
+        selected.evaluate("node => node.classList.contains('selected')")
+    )
+    panel.get_by_role("button", name="关闭详情").click()
+    test_case.assertFalse(
+        selected.evaluate("node => node.classList.contains('selected')")
+    )
+    guide_button = page.get_by_role("button", name="Guide（guide）", exact=True)
+    guide_button.focus()
+    page.keyboard.press("Enter")
+    test_case.assertTrue(panel.is_visible())
+    panel.get_by_role("button", name="关闭详情").click()
+    guide_button.focus()
+    page.keyboard.press("Space")
+    test_case.assertTrue(panel.is_visible())
+    panel.get_by_role("button", name="关闭详情").click()
+
+    page.get_by_role("button", name="Consumer（consumer）", exact=True).click()
+    panel.locator(".detail-list").first.get_by_role(
+        "button", name="Ready（ready）", exact=True
+    ).click()
+    test_case.assertEqual(panel.locator("h2").text_content(), "Ready（ready）")
+    test_case.assertTrue(
+        page.locator('.picture-node[data-feature-id="ready"]').evaluate(
+            "node => node.classList.contains('selected')"
+        )
+    )
+    panel.get_by_role("button", name="关闭详情").click()
+
+    text_button.click()
+    test_case.assertTrue(page.locator("#text-view").is_visible())
+    test_case.assertFalse(page.locator("#picture-view").is_visible())
+    picture_button.click()
+    test_case.assertTrue(page.locator("#picture-view").is_visible())
+    text_button.click()
+
+
+def _assert_picture_zoom_and_decision_filter(test_case, page):
+    page.get_by_role("button", name="图", exact=True).click()
+    svg = page.locator("#picture-svg")
+    starting_width = svg.evaluate("element => element.getBoundingClientRect().width")
+    page.get_by_role("button", name="放大", exact=True).click()
+    larger_width = svg.evaluate("element => element.getBoundingClientRect().width")
+    test_case.assertGreater(larger_width, starting_width)
+    page.get_by_role("button", name="缩小", exact=True).click()
+    smaller_width = svg.evaluate("element => element.getBoundingClientRect().width")
+    test_case.assertLess(smaller_width, larger_width)
+    page.get_by_role("button", name="全图", exact=True).click()
+    fitted_width = svg.evaluate("element => element.getBoundingClientRect().width")
+    natural_width = float(svg.get_attribute("width"))
+    test_case.assertAlmostEqual(fitted_width, starting_width, delta=1)
+    for _ in range(8):
+        page.get_by_role("button", name="放大", exact=True).click()
+    maximum_width = svg.evaluate("element => element.getBoundingClientRect().width")
+    test_case.assertLessEqual(maximum_width, natural_width * 2 + 1)
+    for _ in range(20):
+        page.get_by_role("button", name="缩小", exact=True).click()
+    minimum_width = svg.evaluate("element => element.getBoundingClientRect().width")
+    test_case.assertGreaterEqual(minimum_width, fitted_width - 1)
+    test_case.assertLessEqual(
+        page.evaluate("document.documentElement.scrollWidth"),
+        page.evaluate("window.innerWidth"),
+    )
+
+    page.locator("#decision-filter").click()
+    test_case.assertTrue(page.locator("#text-view").is_visible())
+    test_case.assertEqual(
+        page.locator("#decision-filter").get_attribute("aria-pressed"), "true"
+    )
+    test_case.assertNotIn(
+        "Alpha",
+        page.locator(
+            ".feature-row:not([hidden]) .feature-title .title"
+        ).all_text_contents(),
+    )
+    page.get_by_role("button", name="图", exact=True).click()
+    test_case.assertEqual(
+        page.locator("#decision-filter").get_attribute("aria-pressed"), "false"
+    )
+    page.get_by_role("button", name="文字", exact=True).click()
+    test_case.assertEqual(
+        page.locator("#decision-filter").get_attribute("aria-pressed"), "false"
+    )
+
+
 def _assert_theme_and_tree_rows(test_case, page, expected, payload):
     original_dark_preference = page.evaluate(
         "matchMedia('(prefers-color-scheme: dark)').matches"
@@ -357,6 +501,22 @@ def _assert_phone_layout(test_case, page):
         page.evaluate("document.documentElement.scrollWidth"),
         page.evaluate("window.innerWidth"),
     )
+    test_case.assertLessEqual(
+        page.locator(".sticky").evaluate(
+            "element => element.getBoundingClientRect().height"
+        ),
+        50,
+    )
+    for view, controls in (("图", "#picture-tools"), ("文字", "#text-tools")):
+        page.get_by_role("button", name=view, exact=True).click()
+        left = page.locator(".view-switch").evaluate(
+            "element => element.getBoundingClientRect().right"
+        )
+        toolbar = page.locator(controls).evaluate(
+            "element => { const box = element.getBoundingClientRect(); return {left: box.left, right: box.right}; }"
+        )
+        test_case.assertGreaterEqual(toolbar["left"], left)
+        test_case.assertLessEqual(toolbar["right"], page.evaluate("window.innerWidth"))
 
 
 class BrowserTreeTest(unittest.TestCase):
@@ -377,6 +537,14 @@ class BrowserTreeTest(unittest.TestCase):
             page.on("pageerror", lambda error: script_errors.append(str(error)))
             page.goto((output / "index.html").as_uri())
             checks = (
+                (
+                    "default picture view, nodes, details, and switching",
+                    lambda: _assert_picture_view_and_switching(self, page, expected),
+                ),
+                (
+                    "picture zoom and decision filter",
+                    lambda: _assert_picture_zoom_and_decision_filter(self, page),
+                ),
                 (
                     "tree text, expansion, and theme",
                     lambda: _assert_theme_and_tree_rows(self, page, expected, payload),
