@@ -92,17 +92,14 @@ class FeatureCardsTest(unittest.TestCase):
         return paths
 
     def build_card_command(self, scope=("全部",), review="全部"):
-        return [
-            "python3",
+        command = [
+            sys.executable,
             "-B",
             str(COMMAND),
             "--repo",
             str(self.repository),
-            "--scope",
-            *scope,
-            "--review",
-            review,
         ]
+        return [*command, "--scope", *scope, "--review", review]
 
     def run_cards(self, cards, scope=("全部",), review="全部", add_args=()):
         arguments = self.build_card_command(scope, review)
@@ -116,6 +113,10 @@ class FeatureCardsTest(unittest.TestCase):
 
     def default_cards(self):
         return [card("root"), card("alpha"), card("beta")]
+
+    def first_decision_item(self):
+        decisions = json.loads(self.output.read_text(encoding="utf-8"))
+        return decisions["groups"][0]["items"][0]
 
     def test_cards_use_the_shared_json_shape_checker(self):
         with patch.object(
@@ -218,9 +219,7 @@ class FeatureCardsTest(unittest.TestCase):
         result = self.run_cards([card("alpha")], scope=("alpha",), review="变过的")
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
-            "items"
-        ][0]
+        item = self.first_decision_item()
         self.assertEqual(
             item["lines"][:2],
             ["要什么\t现在的 alpha 功能说明。", "原来\t提供 alpha 功能。"],
@@ -269,9 +268,7 @@ class FeatureCardsTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        details = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
-            "items"
-        ][0]["details"]
+        details = self.first_decision_item()["details"]
         self.assertEqual(
             details,
             {
@@ -335,9 +332,7 @@ class FeatureCardsTest(unittest.TestCase):
         result = self.run_cards([card("alpha")], scope=("alpha",), review="全部")
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
-            "items"
-        ][0]
+        item = self.first_decision_item()
         self.assertEqual(
             item["lines"][:2],
             ["要什么\t提供 alpha 功能。", "谁在用\t现在有人用 alpha。"],
@@ -377,9 +372,7 @@ class FeatureCardsTest(unittest.TestCase):
         result = self.run_cards([value], scope=("alpha",), review="全部")
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        details = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
-            "items"
-        ][0]["details"]
+        details = self.first_decision_item()["details"]
         self.assertEqual(
             details,
             {
