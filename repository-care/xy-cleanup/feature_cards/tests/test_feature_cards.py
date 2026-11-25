@@ -92,14 +92,17 @@ class FeatureCardsTest(unittest.TestCase):
         return paths
 
     def build_card_command(self, scope=("全部",), review="全部"):
-        command = [
+        return [
             sys.executable,
             "-B",
             str(COMMAND),
             "--repo",
             str(self.repository),
+            "--scope",
+            *scope,
+            "--review",
+            review,
         ]
-        return [*command, "--scope", *scope, "--review", review]
 
     def run_cards(self, cards, scope=("全部",), review="全部", add_args=()):
         arguments = self.build_card_command(scope, review)
@@ -201,11 +204,87 @@ class FeatureCardsTest(unittest.TestCase):
             item["lines"],
             [
                 "要什么\t提供 alpha 功能。",
-                "谁在用\t值班人员用 alpha 看状态。维护者用 alpha 改配置。",
-                "照建议会做\t删除旧 alpha 入口。",
-                "照建议会做\t改图上文字 1 处，见细节。",
+                "谁在用\t值班人员用 alpha 看状态；维护者用 alpha 改配置。",
+                "照建议会做\t删除旧 alpha 入口；改图上文字 1 处，见细节。",
             ],
         )
+
+    def test_multiple_used_who_are_joined_with_mixed_periods(self):
+        value = card(
+            "alpha",
+            used=[
+                {"who": "值班人员看 alpha 状态。", "evidence": "查值班配置。"},
+                {"who": "维护者改 alpha 配置", "evidence": "查维护脚本。"},
+            ],
+        )
+
+        result = self.run_cards([value], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            self.first_decision_item()["lines"][1],
+            "谁在用\t值班人员看 alpha 状态；维护者改 alpha 配置。",
+        )
+
+    def test_multiple_unused_descriptions_are_joined_once(self):
+        value = card(
+            "alpha",
+            used=[],
+            unused=[
+                {
+                    "what": "旧版导出按钮。",
+                    "evidence": "README 未提到。",
+                    "lines": 1,
+                    "risk": "旧调用方可能还在用。",
+                },
+                {
+                    "what": "调试命令",
+                    "evidence": "仓内没有调用。",
+                    "lines": 2,
+                    "risk": "维护者可能手工使用。",
+                },
+            ],
+        )
+
+        result = self.run_cards([value], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            self.first_decision_item()["lines"],
+            ["要什么\t提供 alpha 功能。", "没人用\t旧版导出按钮；调试命令。"],
+        )
+
+    def test_multiple_suggestions_are_joined_with_mixed_periods(self):
+        value = card(
+            "alpha",
+            suggestion=["删除旧 alpha 入口。", "保留新版入口"],
+            recommended="照建议",
+        )
+
+        result = self.run_cards([value], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            self.first_decision_item()["lines"][-1],
+            "照建议会做\t删除旧 alpha 入口；保留新版入口。",
+        )
+
+    def test_only_map_issues_produce_one_summarized_action_line(self):
+        value = card(
+            "alpha",
+            map_issues=["改 alpha 的功能说明。", "补上 alpha 的条目。"],
+            recommended="照建议",
+        )
+
+        result = self.run_cards([value], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        action_lines = [
+            line
+            for line in self.first_decision_item()["lines"]
+            if line.startswith("照建议会做\t")
+        ]
+        self.assertEqual(action_lines, ["照建议会做\t改图上文字 2 处，见细节。"])
 
     def test_approved_changed_what_shows_its_previous_wording(self):
         self._commit_repository("初始提交")
@@ -225,27 +304,46 @@ class FeatureCardsTest(unittest.TestCase):
             ["要什么\t现在的 alpha 功能说明。", "原来\t提供 alpha 功能。"],
         )
 
-    def test_approved_draft_items_are_folded_with_previous_wording(self):
+    def test_approved_draft_items_are_listed_after_front_lines_with_previous_wording(self):
+        manifest = self.repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        alpha = document["children"][0]
+        alpha["items"].append(
+            {"id": "extra", "text": "提供 alpha 附加能力。", "status": "确认"}
+        )
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
         self._commit_repository("初始提交")
         self._record_and_commit("全部", "认可全图")
-        manifest = self.repository / "repo-map" / "features.json"
         document = json.loads(manifest.read_text(encoding="utf-8"))
         alpha = document["children"][0]
         alpha["items"][0]["text"] = "提供新版 alpha 功能。"
         alpha["items"][0]["status"] = "起草"
+        alpha["items"][1]["status"] = "起草"
         manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
         self._commit_repository("更新 alpha 草稿")
 
-        result = self.run_cards([card("alpha")], scope=("alpha",), review="变过的")
+        value = card(
+            "alpha",
+            suggestion=["删除旧 alpha 入口。"],
+            recommended="照建议",
+        )
+        result = self.run_cards([value], scope=("alpha",), review="变过的")
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         item = self.first_decision_item()
-        draft_line = "起草条目 core\t提供新版 alpha 功能。（原来：提供 alpha 功能。）"
-        self.assertNotIn(draft_line, item["lines"])
-        self.assertIn(draft_line, item["details"]["lines"])
         self.assertEqual(
-            item["details"]["title"], "细节：理由、依据 1 条、起草条目 1 条"
+            item["lines"],
+            [
+                "要什么\t提供 alpha 功能。",
+                "谁在用\t现在有人用 alpha。",
+                "照建议会做\t删除旧 alpha 入口。",
+                "起草条目 core\t提供新版 alpha 功能。（原来：提供 alpha 功能。）",
+                "起草条目 extra\t提供 alpha 附加能力。",
+            ],
         )
+        self.assertEqual(item["details"]["title"], "细节：理由、依据 1 条")
+        self.assertNotIn("起草条目 core\t提供新版 alpha 功能。", item["details"]["lines"])
+        self.assertNotIn("起草条目 extra\t提供 alpha 附加能力。", item["details"]["lines"])
 
     def test_approved_draft_reason_and_changes_are_in_the_details(self):
         self._commit_repository("初始提交")

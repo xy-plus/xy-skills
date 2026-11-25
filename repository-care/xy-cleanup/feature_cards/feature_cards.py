@@ -192,15 +192,29 @@ def _draft_item_lines(feature, previous_feature):
     return lines
 
 
+def _join_front_sentences(values):
+    return "；".join(value.removesuffix("。") for value in values) + "。"
+
+
 def _front_card_lines(card):
     lines = []
     if card["used"]:
-        who = "".join(item["who"] for item in card["used"])
-        lines.append(f"谁在用\t{who}")
-    lines.extend(f"没人用\t{item['what']}" for item in card["unused"])
-    lines.extend(f"照建议会做\t{value}" for value in card["suggestion"])
-    if card["map_issues"]:
-        lines.append(f"照建议会做\t改图上文字 {len(card['map_issues'])} 处，见细节。")
+        lines.append(
+            "谁在用\t"
+            + _join_front_sentences([item["who"] for item in card["used"]])
+        )
+    if card["unused"]:
+        lines.append(
+            "没人用\t"
+            + _join_front_sentences([item["what"] for item in card["unused"]])
+        )
+    if card["suggestion"] or card["map_issues"]:
+        actions = [
+            value.removesuffix("。") for value in card["suggestion"]
+        ]
+        if card["map_issues"]:
+            actions.append(f"改图上文字 {len(card['map_issues'])} 处，见细节")
+        lines.append(f"照建议会做\t{_join_front_sentences(actions)}")
     return lines
 
 
@@ -240,7 +254,7 @@ def _details_title(feature, card, *, unapproved, draft_items):
         title_parts.append(f"图上要改 {len(card['map_issues'])} 处")
     if card["todo"]:
         title_parts.append(f"TODO 大问题 {len(card['todo'])} 条")
-    if draft_items:
+    if unapproved and draft_items:
         title_parts.append(f"起草条目 {len(draft_items)} 条")
     return "细节：" + "、".join(title_parts)
 
@@ -261,13 +275,16 @@ def _decision_item(feature_id, card, context):
         if previous_what != feature["what"]:
             lines.append(f"原来\t{previous_what}")
     lines.extend(_front_card_lines(card))
+    if not unapproved:
+        lines.extend(draft_items)
     detail_lines = _reason_detail_lines(
         feature, previous_feature, unapproved=unapproved
     )
     if not unapproved:
         detail_lines.extend(f"变了什么\t{value}" for value in card["changed"])
     detail_lines.extend(_detail_card_lines(card))
-    detail_lines.extend(draft_items)
+    if unapproved:
+        detail_lines.extend(draft_items)
     details = {
         "title": _details_title(
             feature,
