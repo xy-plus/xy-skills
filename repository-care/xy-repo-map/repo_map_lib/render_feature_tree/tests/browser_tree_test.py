@@ -130,7 +130,6 @@ def _assert_picture_note(test_case, page):
 
 
 def _assert_picture_edges_are_parent_child_only(test_case, page, expected):
-    svg = page.locator("#picture-svg")
     test_case.assertEqual(
         page.locator("#picture-svg .picture-node").count(),
         len(expected["features"]),
