@@ -113,7 +113,7 @@ def _make_rendered_tree(test_case):
     return output, expected, payload, external_name
 
 
-def _assert_picture_view_and_switching(test_case, page, expected):
+def _assert_default_picture_view(test_case, page):
     picture_button = page.get_by_role("button", name="图", exact=True)
     text_button = page.get_by_role("button", name="文字", exact=True)
     test_case.assertEqual(picture_button.get_attribute("aria-pressed"), "true")
@@ -121,6 +121,15 @@ def _assert_picture_view_and_switching(test_case, page, expected):
     test_case.assertTrue(page.locator("#picture-view").is_visible())
     test_case.assertFalse(page.locator("#text-view").is_visible())
 
+
+def _assert_picture_note(test_case, page):
+    test_case.assertEqual(
+        page.locator("#picture-note").text_content(),
+        "箭头从上级指向子功能；圆越大，行数越多（含子功能）；颜色区分各个顶层分支。",
+    )
+
+
+def _assert_picture_edges_are_parent_child_only(test_case, page, expected):
     svg = page.locator("#picture-svg")
     test_case.assertEqual(
         page.locator("#picture-svg .picture-node").count(),
@@ -131,13 +140,30 @@ def _assert_picture_view_and_switching(test_case, page, expected):
     test_case.assertGreater(
         sum(bool(feature["uses"]) for feature in expected["features"].values()), 0
     )
-    test_case.assertLessEqual(
-        page.locator("#picture-note").evaluate(
-            "element => element.getBoundingClientRect().height"
-        ),
-        18,
+    expected_edges = {
+        (feature_id, feature["parent"])
+        for feature_id, feature in expected["features"].items()
+        if feature_id != expected["root"]
+    }
+    actual_edges = {
+        (edge.get_attribute("data-feature-id"), edge.get_attribute("data-parent-feature-id"))
+        for edge in edges.all()
+    }
+    test_case.assertEqual(actual_edges, expected_edges)
+    test_case.assertGreater(page.locator("#picture-svg marker").count(), 0)
+    marker_colors = edges.evaluate_all(
+        "edges => edges.map(edge => { "
+        "const id = edge.getAttribute('marker-end').match(/#([^)]*)/)[1]; "
+        "return {stroke: getComputedStyle(edge).stroke, "
+        "fill: getComputedStyle(document.querySelector(`#${id} path`)).fill}; "
+        "})"
     )
+    for colors in marker_colors:
+        test_case.assertEqual(colors["fill"], colors["stroke"])
 
+
+def _assert_picture_labels_and_circles_do_not_overlap(test_case, page):
+    svg = page.locator("#picture-svg")
     label_boxes = svg.locator(".picture-node text").evaluate_all(
         "labels => labels.map(label => { const box = label.getBoundingClientRect(); "
         "return {left: box.left, right: box.right, top: box.top, bottom: box.bottom}; })"
@@ -165,6 +191,8 @@ def _assert_picture_view_and_switching(test_case, page, expected):
                 f"picture circles overlap: {left} and {right}",
             )
 
+
+def _assert_picture_node_opens_details_and_tracks_selection(test_case, page):
     original_url = page.url
     page.get_by_role("button", name="Guide（guide）", exact=True).click()
     panel = page.locator("#detail-panel")
@@ -179,6 +207,10 @@ def _assert_picture_view_and_switching(test_case, page, expected):
     test_case.assertFalse(
         selected.evaluate("node => node.classList.contains('selected')")
     )
+
+
+def _assert_picture_nodes_support_keyboard(test_case, page):
+    panel = page.locator("#detail-panel")
     guide_button = page.get_by_role("button", name="Guide（guide）", exact=True)
     guide_button.focus()
     page.keyboard.press("Enter")
@@ -189,6 +221,9 @@ def _assert_picture_view_and_switching(test_case, page, expected):
     test_case.assertTrue(panel.is_visible())
     panel.get_by_role("button", name="关闭详情").click()
 
+
+def _assert_related_feature_selects_picture_node(test_case, page):
+    panel = page.locator("#detail-panel")
     page.get_by_role("button", name="Consumer（consumer）", exact=True).click()
     panel.locator(".detail-list").first.get_by_role(
         "button", name="Ready（ready）", exact=True
@@ -201,12 +236,52 @@ def _assert_picture_view_and_switching(test_case, page, expected):
     )
     panel.get_by_role("button", name="关闭详情").click()
 
+
+def _assert_view_switching(test_case, page):
+    picture_button = page.get_by_role("button", name="图", exact=True)
+    text_button = page.get_by_role("button", name="文字", exact=True)
     text_button.click()
     test_case.assertTrue(page.locator("#text-view").is_visible())
     test_case.assertFalse(page.locator("#picture-view").is_visible())
     picture_button.click()
     test_case.assertTrue(page.locator("#picture-view").is_visible())
     text_button.click()
+
+
+def _assert_picture_sides_balance_actual_height(test_case, page):
+    result = page.evaluate(
+        """() => {
+          const makeGroups = (prefix) => ["a", "b", "c", "d"].map((key) => ({
+            key: `${prefix}-${key}`, childIds: [`${prefix}-${key}`],
+          }));
+          const rootChildren = ["a", "b", "c", "d"];
+          const groups = makeGroups("balance");
+          const heights = [100, 200, 100, 20];
+          const branches = new Map(rootChildren.map((key, index) => [
+            key, {top: -heights[index] / 2, bottom: heights[index] / 2, info: {radius: 0}},
+          ]));
+          const groupByFeature = new Map(rootChildren.map((key, index) => [key, groups[index]]));
+          const balanced = choosePictureSides(groups, rootChildren, branches, groupByFeature);
+          const tiedGroups = makeGroups("tie");
+          const tiedBranches = new Map(rootChildren.map((key) => [
+            `tie-${key}`, {top: -25, bottom: 25, info: {radius: 0}},
+          ]));
+          const tiedFeatureGroups = new Map(rootChildren.map((key, index) => [
+            `tie-${key}`, tiedGroups[index],
+          ]));
+          const tied = choosePictureSides(tiedGroups, rootChildren.map((key) => `tie-${key}`), tiedBranches, tiedFeatureGroups);
+          return {
+            left: balanced.left.map((group) => group.key),
+            right: balanced.right.map((group) => group.key),
+            tiedLeft: tied.left.map((group) => group.key),
+            tiedRight: tied.right.map((group) => group.key),
+          };
+        }"""
+    )
+    test_case.assertEqual(result["left"], ["balance-a", "balance-c"])
+    test_case.assertEqual(result["right"], ["balance-b", "balance-d"])
+    test_case.assertEqual(result["tiedLeft"], ["tie-a", "tie-b"])
+    test_case.assertEqual(result["tiedRight"], ["tie-c", "tie-d"])
 
 
 def _assert_picture_zoom_and_decision_filter(test_case, page):
@@ -483,6 +558,12 @@ def _assert_details(test_case, page, root_feature):
 
 
 def _assert_phone_layout(test_case, page):
+    test_case.assertNotEqual(
+        page.locator("#picture-note").evaluate(
+            "element => getComputedStyle(element).whiteSpace"
+        ),
+        "nowrap",
+    )
     panel_limit = page.locator(".detail-panel").evaluate(
         "element => parseFloat(getComputedStyle(element).maxHeight)"
     )
@@ -528,8 +609,48 @@ class BrowserTreeTest(unittest.TestCase):
             page.goto((output / "index.html").as_uri())
             checks = (
                 (
-                    "default picture view, nodes, details, and switching",
-                    lambda: _assert_picture_view_and_switching(self, page, expected),
+                    "默认打开图视图",
+                    lambda: _assert_default_picture_view(self, page),
+                ),
+                (
+                    "图视图说明完整且可换行",
+                    lambda: _assert_picture_note(self, page),
+                ),
+                (
+                    "只画上下级，不画功能引用",
+                    lambda: _assert_picture_edges_are_parent_child_only(
+                        self, page, expected
+                    ),
+                ),
+                (
+                    "标签和圆互不重叠",
+                    lambda: _assert_picture_labels_and_circles_do_not_overlap(
+                        self, page
+                    ),
+                ),
+                (
+                    "点击节点弹详情且选中描边随开关变化",
+                    lambda: _assert_picture_node_opens_details_and_tracks_selection(
+                        self, page
+                    ),
+                ),
+                (
+                    "键盘 Enter 和空格能打开详情",
+                    lambda: _assert_picture_nodes_support_keyboard(self, page),
+                ),
+                (
+                    "详情关联功能会选中图节点",
+                    lambda: _assert_related_feature_selects_picture_node(
+                        self, page
+                    ),
+                ),
+                (
+                    "图文视图切换",
+                    lambda: _assert_view_switching(self, page),
+                ),
+                (
+                    "按实际排布高度平衡两侧并稳定处理平局",
+                    lambda: _assert_picture_sides_balance_actual_height(self, page),
                 ),
                 (
                     "picture zoom and decision filter",

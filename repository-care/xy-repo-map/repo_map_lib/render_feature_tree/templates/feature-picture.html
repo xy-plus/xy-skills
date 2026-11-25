@@ -1,12 +1,19 @@
 <script>
 "use strict";
+
+const rootPictureRadius = 44;
+const pictureNodes = new Map();
+let pictureLayout = null;
+let pictureScale = 0;
+let pictureFitScale = 0;
+
 function featureGroupPlan() {
   const composite = Object.keys(features).some((featureId) => featureId.includes("/"));
   const groups = [];
   const groupByKey = new Map();
   const groupByFeature = new Map();
   if (composite) {
-    const local = { key: "local", colorIndex: 1, childIds: [], leafCount: 0 };
+    const local = { key: "local", colorIndex: 1, childIds: [] };
     groups.push(local);
     groupByKey.set(local.key, local);
   }
@@ -16,7 +23,7 @@ function featureGroupPlan() {
       : `branch:${childId}`;
     let group = groupByKey.get(key);
     if (!group) {
-      group = { key, colorIndex: groups.length + 1, childIds: [], leafCount: 0 };
+      group = { key, colorIndex: groups.length + 1, childIds: [] };
       groups.push(group);
       groupByKey.set(key, group);
     }
@@ -31,18 +38,7 @@ function featureGroupPlan() {
     for (const childId of group.childIds) assignGroup(childId, group);
   }
 
-  const leafCounts = new Map();
-  function countLeaves(featureId) {
-    if (leafCounts.has(featureId)) return leafCounts.get(featureId);
-    const children = features[featureId].children;
-    const count = children.length
-      ? children.reduce((sum, childId) => sum + countLeaves(childId), 0)
-      : 1;
-    leafCounts.set(featureId, count);
-    return count;
-  }
   for (const group of groups) {
-    group.leafCount = group.childIds.reduce((sum, childId) => sum + countLeaves(childId), 0);
     group.color = group.colorIndex <= 8
       ? `var(--branch-${group.colorIndex})`
       : "var(--muted)";
@@ -50,22 +46,93 @@ function featureGroupPlan() {
   return { composite, groups, groupByFeature };
 }
 
-function choosePictureSides(groups) {
+function pictureSideLayout(childIds, branchesByChild, groupByFeature) {
+  const branches = childIds.map((childId) => branchesByChild.get(childId));
+  if (!branches.length) return { branches, centers: [], top: 0, bottom: 0 };
+  const centers = [0];
+  for (let index = 1; index < branches.length; index++) {
+    const previous = branches[index - 1];
+    const current = branches[index];
+    const previousGroup = groupByFeature.get(childIds[index - 1]);
+    const currentGroup = groupByFeature.get(childIds[index]);
+    const firstBranchGap = 18;
+    const groupGap = previousGroup.key === currentGroup.key ? 0 : 28;
+    const parentGap = 12;
+    const extraGap = firstBranchGap + groupGap + parentGap;
+    const baseGap = Math.max(
+      25,
+      previous.info.radius + current.info.radius + 9,
+    ) + extraGap;
+    const distance = Math.max(
+      baseGap,
+      previous.bottom - current.top + extraGap,
+    );
+    centers.push(centers[index - 1] + distance);
+  }
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (let index = 0; index < branches.length; index++) {
+    top = Math.min(top, branches[index].top + centers[index]);
+    bottom = Math.max(bottom, branches[index].bottom + centers[index]);
+  }
+  return { branches, centers, top, bottom };
+}
+
+function choosePictureSides(groups, rootChildIds, branchesByChild, groupByFeature) {
   const active = groups.filter((group) => group.childIds.length);
-  if (active.length < 2) return { left: [], right: active };
-  const total = active.reduce((sum, group) => sum + group.leafCount, 0);
-  let leftLeaves = 0;
-  let split = 1;
-  let bestDifference = Infinity;
-  for (let index = 1; index < active.length; index++) {
-    leftLeaves += active[index - 1].leafCount;
-    const difference = Math.abs(total - 2 * leftLeaves);
-    if (difference < bestDifference) {
-      bestDifference = difference;
-      split = index;
+  if (!active.length) {
+    return {
+      left: [],
+      right: [],
+      leftLayout: pictureSideLayout([], branchesByChild, groupByFeature),
+      rightLayout: pictureSideLayout([], branchesByChild, groupByFeature),
+    };
+  }
+
+  let best = null;
+  const candidates = [];
+  // Enumerate right-first for stable ties; continuous splits take precedence.
+  function enumerateAssignments(index, leftGroups) {
+    if (index === active.length) {
+      candidates.push([...leftGroups]);
+      return;
+    }
+    enumerateAssignments(index + 1, leftGroups);
+    leftGroups.push(active[index]);
+    enumerateAssignments(index + 1, leftGroups);
+    leftGroups.pop();
+  }
+  enumerateAssignments(1, [active[0]]);
+
+  for (const left of candidates) {
+    const leftKeys = new Set(left.map((group) => group.key));
+    const right = active.filter((group) => !leftKeys.has(group.key));
+    const leftChildIds = rootChildIds.filter((childId) =>
+      leftKeys.has(groupByFeature.get(childId)?.key));
+    const rightKeys = new Set(right.map((group) => group.key));
+    const rightChildIds = rootChildIds.filter((childId) =>
+      rightKeys.has(groupByFeature.get(childId)?.key));
+    const leftLayout = pictureSideLayout(leftChildIds, branchesByChild, groupByFeature);
+    const rightLayout = pictureSideLayout(rightChildIds, branchesByChild, groupByFeature);
+    const difference = Math.abs(
+      (leftLayout.bottom - leftLayout.top)
+      - (rightLayout.bottom - rightLayout.top),
+    );
+    const contiguous = left.length < active.length
+      && left.every((group, index) => group === active[index]);
+    if (
+      !best
+      || difference < best.difference - 0.001
+      || (
+        Math.abs(difference - best.difference) <= 0.001
+        && contiguous
+        && !best.contiguous
+      )
+    ) {
+      best = { left, right, leftLayout, rightLayout, difference, contiguous };
     }
   }
-  return { left: active.slice(0, split), right: active.slice(split) };
+  return best;
 }
 
 function pictureNodeStyle(featureId, level, composite, context) {
@@ -207,35 +274,9 @@ function buildPictureSubtree(featureId, level, infoByFeature) {
   return { nodes, top, bottom, info };
 }
 
-function combinePictureSide(childIds, side, infoByFeature, groupByFeature) {
-  const branches = childIds.map((childId) =>
-    buildPictureSubtree(childId, 1, infoByFeature));
+function combinePictureSide(layout, side) {
+  const { branches, centers, top, bottom } = layout;
   if (!branches.length) return { nodes: [], top: 0, bottom: 0 };
-  const centers = [0];
-  for (let index = 1; index < branches.length; index++) {
-    const previous = branches[index - 1];
-    const current = branches[index];
-    const previousGroup = groupByFeature.get(childIds[index - 1]);
-    const currentGroup = groupByFeature.get(childIds[index]);
-    const firstBranchGap = 18;
-    const groupGap = previousGroup.key === currentGroup.key ? 0 : 28;
-    const parentGap = 12;
-    const baseGap = Math.max(
-      25,
-      previous.info.radius + current.info.radius + 9,
-    ) + firstBranchGap + groupGap + parentGap;
-    const distance = Math.max(
-      baseGap,
-      previous.bottom - current.top + firstBranchGap + groupGap + parentGap,
-    );
-    centers.push(centers[index - 1] + distance);
-  }
-  let top = Infinity;
-  let bottom = -Infinity;
-  for (let index = 0; index < branches.length; index++) {
-    top = Math.min(top, branches[index].top + centers[index]);
-    bottom = Math.max(bottom, branches[index].bottom + centers[index]);
-  }
   const shift = -(top + bottom) / 2;
   const nodes = [];
   for (let index = 0; index < branches.length; index++) {
@@ -257,7 +298,6 @@ function addPictureText(node, lines, x, baselines, info, className, anchor) {
   label.setAttribute("text-anchor", anchor);
   label.setAttribute("font-size", String(info.fontSize));
   label.setAttribute("font-weight", String(info.fontWeight));
-  label.setAttribute("font-family", "var(--sans)");
   for (let index = 0; index < lines.length; index++) {
     const span = document.createElementNS(svgNamespace, "tspan");
     span.setAttribute("x", String(x));
@@ -271,13 +311,6 @@ function addPictureText(node, lines, x, baselines, info, className, anchor) {
 function renderPicture() {
   const svgNamespace = "http://www.w3.org/2000/svg";
   const context = featureGroupPlan();
-  const split = choosePictureSides(context.groups);
-  const leftKeys = new Set(split.left.map((group) => group.key));
-  const rightKeys = new Set(split.right.map((group) => group.key));
-  const leftIds = rootFeature.children.filter((childId) =>
-    leftKeys.has(context.groupByFeature.get(childId)?.key));
-  const rightIds = rootFeature.children.filter((childId) =>
-    rightKeys.has(context.groupByFeature.get(childId)?.key));
   const maximumLines = Math.max(
     0,
     ...Object.entries(features)
@@ -296,9 +329,20 @@ function renderPicture() {
       pictureNodeInfo(featureId, level, context, measure, maximumLines),
     );
   }
-
-  const left = combinePictureSide(leftIds, -1, infoByFeature, context.groupByFeature);
-  const right = combinePictureSide(rightIds, 1, infoByFeature, context.groupByFeature);
+  const branchesByChild = new Map(
+    rootFeature.children.map((childId) => [
+      childId,
+      buildPictureSubtree(childId, 1, infoByFeature),
+    ]),
+  );
+  const split = choosePictureSides(
+    context.groups,
+    rootFeature.children,
+    branchesByChild,
+    context.groupByFeature,
+  );
+  const left = combinePictureSide(split.leftLayout, -1);
+  const right = combinePictureSide(split.rightLayout, 1);
   const maximumDepthOnSide = Math.max(
     0,
     ...[...left.nodes, ...right.nodes].map((node) => node.level),
@@ -361,21 +405,27 @@ function renderPicture() {
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
   const definitions = document.createElementNS(svgNamespace, "defs");
-  const marker = document.createElementNS(svgNamespace, "marker");
-  marker.setAttribute("id", "picture-arrow");
-  marker.setAttribute("viewBox", "0 0 10 10");
-  marker.setAttribute("refX", "8");
-  marker.setAttribute("refY", "5");
-  marker.setAttribute("markerWidth", "6");
-  marker.setAttribute("markerHeight", "6");
-  marker.setAttribute("orient", "auto");
-  marker.setAttribute("markerUnits", "strokeWidth");
-  const arrow = document.createElementNS(svgNamespace, "path");
-  arrow.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
-  arrow.setAttribute("fill", "context-stroke");
-  arrow.setAttribute("opacity", "0.5");
-  marker.append(arrow);
-  definitions.append(marker);
+  const markerByColor = new Map();
+  for (const group of context.groups) {
+    if (markerByColor.has(group.color)) continue;
+    const markerId = `picture-arrow-${group.colorIndex}`;
+    const marker = document.createElementNS(svgNamespace, "marker");
+    marker.setAttribute("id", markerId);
+    marker.setAttribute("viewBox", "0 0 10 10");
+    marker.setAttribute("refX", "8");
+    marker.setAttribute("refY", "5");
+    marker.setAttribute("markerWidth", "6");
+    marker.setAttribute("markerHeight", "6");
+    marker.setAttribute("orient", "auto");
+    marker.setAttribute("markerUnits", "strokeWidth");
+    const arrow = document.createElementNS(svgNamespace, "path");
+    arrow.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+    arrow.style.setProperty("fill", group.color);
+    arrow.setAttribute("opacity", "0.5");
+    marker.append(arrow);
+    definitions.append(marker);
+    markerByColor.set(group.color, markerId);
+  }
   svg.append(definitions);
 
   for (const [featureId, node] of nodePositions) {
@@ -387,11 +437,13 @@ function renderPicture() {
     const deltaX = endX - startX;
     const edge = document.createElementNS(svgNamespace, "path");
     edge.setAttribute("class", "tree-edge");
+    edge.setAttribute("data-feature-id", featureId);
+    edge.setAttribute("data-parent-feature-id", node.parentId);
     edge.setAttribute(
       "d",
       `M ${startX} ${parent.y} C ${startX + deltaX * 0.45} ${parent.y}, ${endX - deltaX * 0.45} ${node.y}, ${endX} ${node.y}`,
     );
-    edge.setAttribute("marker-end", "url(#picture-arrow)");
+    edge.setAttribute("marker-end", `url(#${markerByColor.get(node.info.color)})`);
     edge.style.setProperty("--tree-color", node.info.color);
     svg.append(edge);
   }
@@ -406,10 +458,7 @@ function renderPicture() {
     node.setAttribute("data-feature-id", featureId);
     node.setAttribute("transform", `translate(${position.x} ${position.y})`);
     if (selectedFeatureId === featureId) node.classList.add("selected");
-    const color = featureId === rootId
-      ? context.composite ? "var(--branch-1)" : "var(--ink)"
-      : info.color;
-    node.style.setProperty("--node-color", color);
+    node.style.setProperty("--node-color", info.color);
 
     const hitArea = document.createElementNS(svgNamespace, "rect");
     const horizontalLabel = info.labelWidth + 10;
@@ -483,8 +532,8 @@ function renderPicture() {
   }
 
   const note = context.composite
-    ? "箭头从上级指向子功能；圆越大行数越多（含子功能）；同色同仓"
-    : "箭头从上级指向子功能；圆越大行数越多（含子功能）；同色同顶层分支";
+    ? "箭头从上级指向子功能；圆越大，行数越多（含子功能）；颜色区分各仓。"
+    : "箭头从上级指向子功能；圆越大，行数越多（含子功能）；颜色区分各个顶层分支。";
   document.querySelector("#picture-note").textContent = note;
   pictureLayout = { width, height };
   refreshPictureScale(false);
@@ -527,31 +576,5 @@ function refreshPictureScale(preserveCenter = true) {
 
 function setPictureScale(scale) {
   displayPictureScale(Math.max(pictureFitScale, Math.min(2, scale)));
-}
-
-function changeView(view, filterDecisions = false) {
-  if (view === "picture" && currentView === "text") showDecisions = false;
-  const enteringPicture = view === "picture" && currentView !== "picture";
-  if (view === "text" && filterDecisions) showDecisions = true;
-  currentView = view;
-  document.querySelector("#picture-view").hidden = view !== "picture";
-  document.querySelector("#text-view").hidden = view !== "text";
-  document.querySelector("#picture-tools").hidden = view !== "picture";
-  document.querySelector("#text-tools").hidden = view !== "text";
-  document.querySelector("#view-picture").setAttribute("aria-pressed", String(view === "picture"));
-  document.querySelector("#view-text").setAttribute("aria-pressed", String(view === "text"));
-  if (enteringPicture) refreshPictureScale();
-  applyVisibility();
-}
-
-function openRelatedFeature(featureId) {
-  if (currentView === "picture") {
-    openDetails(featureId);
-    const node = pictureNodes.get(featureId);
-    if (node) node.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
-  } else {
-    revealFeature(featureId);
-    openDetails(featureId);
-  }
 }
 </script>

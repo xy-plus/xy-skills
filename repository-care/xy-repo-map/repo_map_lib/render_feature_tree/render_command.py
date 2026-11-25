@@ -30,9 +30,9 @@ def write_map(data, directory):
         Path(__file__).resolve().parent / "templates" / "feature-tree.html"
     ).read_text(encoding="utf-8")
     picture_view = (
-        Path(__file__).resolve().parent / "picture_view.html"
+        Path(__file__).resolve().parent / "templates" / "feature-picture.html"
     ).read_text(encoding="utf-8")
-    page_text = template.replace("__PICTURE_VIEW_CODE__", picture_view)
+    page_text = template.replace("__FEATURE_PICTURE_SCRIPT__", picture_view)
     page_text = page_text.replace("__MAP_DATA__", json_for_html(page_data))
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "map-data.json").write_text(map_text, encoding="utf-8")

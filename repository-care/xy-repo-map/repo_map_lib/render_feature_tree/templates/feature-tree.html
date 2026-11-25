@@ -40,7 +40,6 @@ button.chip{cursor:pointer}
 .toolbar button:last-child{padding:0 9px}
 #depth-value{min-width:14px;text-align:center;color:var(--ink);font-weight:650}
 main{padding-top:10px;padding-bottom:0}
-main[hidden]{display:none}
 body.detail-open main{padding-bottom:45vh}
 .picture-wide{width:100%;margin:0 auto;padding:0 14px}
 .picture-note{margin:0 0 8px;color:var(--muted);font-size:12px}
@@ -55,7 +54,7 @@ body.detail-open main{padding-bottom:45vh}
 .picture-label{fill:var(--ink);paint-order:stroke;stroke:var(--page);stroke-width:5px;stroke-linejoin:round}
 .picture-label.leaf-label{fill:var(--ink2)}
 .picture-root-label{fill:var(--root-label-color);font-weight:700;text-anchor:middle}
-#picture-view[hidden],#text-view[hidden],#picture-tools[hidden],#text-tools[hidden]{display:none}
+#picture-tools[hidden],#text-tools[hidden]{display:none}
 .tree{background:var(--surface);border:1px solid var(--hair);border-radius:14px;padding:8px 12px}
 .feature-node{min-width:0}
 .feature-row{display:flex;align-items:stretch;min-height:46px;border-radius:10px;min-width:0}
@@ -92,11 +91,9 @@ body.detail-open main{padding-bottom:45vh}
 .external-label{color:var(--muted);font-size:10.5px}
 .mention{color:var(--muted);font-size:10.5px}
 .feature-children{margin-left:18px;border-left:1px solid var(--hair);padding-left:0}
-.feature-children[hidden]{display:none}
 .own-summary{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;margin:6px 0 9px 46px;padding:7px 9px;background:var(--page);color:var(--ink2);font-size:13px;border-radius:7px}
 .own-summary[hidden]{display:none}
 .detail-panel{position:fixed;z-index:5;left:0;right:0;bottom:0;max-height:44vh;overflow:auto;background:var(--surface);border-top:1px solid var(--hair);border-radius:16px 16px 0 0;box-shadow:0 -8px 30px #0002;padding:12px max(16px,calc((100% - 760px)/2)) 18px}
-.detail-panel[hidden]{display:none}
 .detail-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
 .detail-panel h2{font-size:17px;margin:0;display:flex;gap:8px;align-items:baseline;overflow-wrap:anywhere}
 .detail-path{font:12px var(--mono);color:var(--muted);margin:0;word-break:break-all}
@@ -111,7 +108,7 @@ body.detail-open main{padding-bottom:45vh}
 .detail-list button{color:var(--uses);overflow-wrap:anywhere}
 .detail-list small{margin-left:5px;color:var(--muted);font-size:11px}
 .items-list li{overflow-wrap:anywhere}
-@media(max-width:520px){.wrap{padding-left:12px;padding-right:12px}.hero{padding-top:15px}.sticky .wrap{gap:6px}.view-switch{gap:3px}.view-switch button{min-width:32px;padding:0 7px}.toolbar{gap:4px}.toolbar button{min-width:29px}.picture-wide{padding-left:12px;padding-right:12px}.picture-note{font-size:11px;white-space:nowrap}.feature-title{font-size:14px}.feature-title .directory-name{font-size:11px}.meter-line{gap:5px}.metrics{gap:3px 7px}.feature-children{margin-left:10px}.own-summary{margin-left:38px}.detail-panel{padding-left:14px;padding-right:14px}}
+@media(max-width:520px){.wrap{padding-left:12px;padding-right:12px}.hero{padding-top:15px}.sticky .wrap{gap:6px}.view-switch{gap:3px}.view-switch button{min-width:32px;padding:0 7px}.toolbar{gap:4px}.toolbar button{min-width:29px}.picture-wide{padding-left:12px;padding-right:12px}.picture-note{font-size:11px}.feature-title{font-size:14px}.feature-title .directory-name{font-size:11px}.meter-line{gap:5px}.metrics{gap:3px 7px}.feature-children{margin-left:10px}.own-summary{margin-left:38px}.detail-panel{padding-left:14px;padding-right:14px}}
 </style>
 </head>
 <body>
@@ -153,21 +150,16 @@ for (const [sourceId, feature] of Object.entries(features)) {
 const lineKeys = ["code", "tests", "docs", "comments"];
 const lineTitles = { code: "代码", tests: "测试", docs: "文档", comments: "注释" };
 const sourceLabels = { 原话: "你的原话", 确认: "你确认过", 起草: "AI 起草 · 等你拍板" };
-const rootPictureRadius = 44;
 const rows = new Map();
 const childLists = new Map();
 const ownBlocks = new Map();
 const featureOrder = new Map(Object.keys(features).map((featureId, index) => [featureId, index]));
-const pictureNodes = new Map();
 const manualExpansion = new Map();
 let depth = 2;
 let maximumDepth = 1;
 let showDecisions = false;
 let currentView = "picture";
 let selectedFeatureId = null;
-let pictureLayout = null;
-let pictureScale = 0;
-let pictureFitScale = 0;
 
 function make(tag, className, text) {
   const element = document.createElement(tag);
@@ -187,10 +179,6 @@ function formatNumber(value) {
 function featureName(feature) {
   return `${feature.title}（${feature.directory_name}）`;
 }
-</script>
-__PICTURE_VIEW_CODE__
-<script>
-"use strict";
 
 function featureLevel(featureId) {
   let level = 0;
@@ -201,6 +189,10 @@ function featureLevel(featureId) {
   }
   return level;
 }
+</script>
+__FEATURE_PICTURE_SCRIPT__
+<script>
+"use strict";
 
 function appendSourceLabel(parent, source) {
   const modifier = source === "原话" ? " quote" : source === "起草" ? " draft" : "";
@@ -553,6 +545,32 @@ function revealFeature(featureId) {
   applyVisibility();
   const row = rows.get(featureId);
   if (row) row.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function changeView(view, filterDecisions = false) {
+  if (view === "picture" && currentView === "text") showDecisions = false;
+  const enteringPicture = view === "picture" && currentView !== "picture";
+  if (view === "text" && filterDecisions) showDecisions = true;
+  currentView = view;
+  document.querySelector("#picture-view").hidden = view !== "picture";
+  document.querySelector("#text-view").hidden = view !== "text";
+  document.querySelector("#picture-tools").hidden = view !== "picture";
+  document.querySelector("#text-tools").hidden = view !== "text";
+  document.querySelector("#view-picture").setAttribute("aria-pressed", String(view === "picture"));
+  document.querySelector("#view-text").setAttribute("aria-pressed", String(view === "text"));
+  if (enteringPicture) refreshPictureScale();
+  applyVisibility();
+}
+
+function openRelatedFeature(featureId) {
+  if (currentView === "picture") {
+    openDetails(featureId);
+    const node = pictureNodes.get(featureId);
+    if (node) node.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  } else {
+    revealFeature(featureId);
+    openDetails(featureId);
+  }
 }
 
 function setDepth(value) {
