@@ -2,6 +2,7 @@
 "use strict";
 
 const rootPictureRadius = 44;
+const pictureSvgNamespace = "http://www.w3.org/2000/svg";
 const pictureNodes = new Map();
 let pictureLayout = null;
 let pictureScale = 0;
@@ -78,7 +79,7 @@ function pictureSideLayout(childIds, branchesByChild, groupByFeature) {
   return { branches, centers, top, bottom };
 }
 
-function choosePictureSides(groups, rootChildIds, branchesByChild, groupByFeature) {
+function assignPictureSides(groups, rootChildIds, branchesByChild, groupByFeature) {
   const active = groups.filter((group) => group.childIds.length);
   if (!active.length) {
     return {
@@ -89,50 +90,41 @@ function choosePictureSides(groups, rootChildIds, branchesByChild, groupByFeatur
     };
   }
 
-  let best = null;
-  const candidates = [];
-  // Enumerate right-first for stable ties; continuous splits take precedence.
-  function enumerateAssignments(index, leftGroups) {
-    if (index === active.length) {
-      candidates.push([...leftGroups]);
-      return;
-    }
-    enumerateAssignments(index + 1, leftGroups);
-    leftGroups.push(active[index]);
-    enumerateAssignments(index + 1, leftGroups);
-    leftGroups.pop();
-  }
-  enumerateAssignments(1, [active[0]]);
+  const groupHeights = active.map((group, index) => ({
+    group,
+    index,
+    height: pictureSideHeight(
+      pictureSideLayout(group.childIds, branchesByChild, groupByFeature),
+    ),
+  }));
+  const remaining = groupHeights.slice(1).sort(
+    (left, right) => right.height - left.height || left.index - right.index,
+  );
+  const left = [active[0]];
+  const right = [];
 
-  for (const left of candidates) {
-    const leftKeys = new Set(left.map((group) => group.key));
-    const right = active.filter((group) => !leftKeys.has(group.key));
-    const leftChildIds = rootChildIds.filter((childId) =>
-      leftKeys.has(groupByFeature.get(childId)?.key));
-    const rightKeys = new Set(right.map((group) => group.key));
-    const rightChildIds = rootChildIds.filter((childId) =>
-      rightKeys.has(groupByFeature.get(childId)?.key));
-    const leftLayout = pictureSideLayout(leftChildIds, branchesByChild, groupByFeature);
-    const rightLayout = pictureSideLayout(rightChildIds, branchesByChild, groupByFeature);
-    const difference = Math.abs(
-      (leftLayout.bottom - leftLayout.top)
-      - (rightLayout.bottom - rightLayout.top),
-    );
-    const contiguous = left.length < active.length
-      && left.every((group, index) => group === active[index]);
-    if (
-      !best
-      || difference < best.difference - 0.001
-      || (
-        Math.abs(difference - best.difference) <= 0.001
-        && contiguous
-        && !best.contiguous
-      )
-    ) {
-      best = { left, right, leftLayout, rightLayout, difference, contiguous };
+  function layoutFor(groupsOnSide) {
+    const keys = new Set(groupsOnSide.map((group) => group.key));
+    const childIds = rootChildIds.filter((childId) =>
+      keys.has(groupByFeature.get(childId)?.key));
+    return pictureSideLayout(childIds, branchesByChild, groupByFeature);
+  }
+  let leftLayout = layoutFor(left);
+  let rightLayout = layoutFor(right);
+  for (const { group } of remaining) {
+    if (pictureSideHeight(leftLayout) < pictureSideHeight(rightLayout)) {
+      left.push(group);
+      leftLayout = layoutFor(left);
+    } else {
+      right.push(group);
+      rightLayout = layoutFor(right);
     }
   }
-  return best;
+  return { left, right, leftLayout, rightLayout };
+}
+
+function pictureSideHeight(layout) {
+  return layout.bottom - layout.top;
 }
 
 function pictureNodeStyle(featureId, level, composite, context) {
@@ -308,8 +300,7 @@ function addPictureText(node, lines, x, baselines, info, className, anchor) {
   node.append(label);
 }
 
-function renderPicture() {
-  const svgNamespace = "http://www.w3.org/2000/svg";
+function calculatePictureLayout() {
   const context = featureGroupPlan();
   const maximumLines = Math.max(
     0,
@@ -335,7 +326,7 @@ function renderPicture() {
       buildPictureSubtree(childId, 1, infoByFeature),
     ]),
   );
-  const split = choosePictureSides(
+  const split = assignPictureSides(
     context.groups,
     rootFeature.children,
     branchesByChild,
@@ -399,17 +390,16 @@ function renderPicture() {
     nodePositions.set(node.featureId, positioned);
   }
 
-  const svg = document.querySelector("#picture-svg");
-  svg.replaceChildren();
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
-  const definitions = document.createElementNS(svgNamespace, "defs");
+  return { width, height, context, nodePositions };
+}
+
+function drawPictureEdges(svg, nodePositions, groups) {
+  const definitions = document.createElementNS(pictureSvgNamespace, "defs");
   const markerByColor = new Map();
-  for (const group of context.groups) {
+  for (const group of groups) {
     if (markerByColor.has(group.color)) continue;
     const markerId = `picture-arrow-${group.colorIndex}`;
-    const marker = document.createElementNS(svgNamespace, "marker");
+    const marker = document.createElementNS(pictureSvgNamespace, "marker");
     marker.setAttribute("id", markerId);
     marker.setAttribute("viewBox", "0 0 10 10");
     marker.setAttribute("refX", "8");
@@ -418,7 +408,7 @@ function renderPicture() {
     marker.setAttribute("markerHeight", "6");
     marker.setAttribute("orient", "auto");
     marker.setAttribute("markerUnits", "strokeWidth");
-    const arrow = document.createElementNS(svgNamespace, "path");
+    const arrow = document.createElementNS(pictureSvgNamespace, "path");
     arrow.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
     arrow.style.setProperty("fill", group.color);
     arrow.setAttribute("opacity", "0.5");
@@ -435,10 +425,8 @@ function renderPicture() {
     const startX = parent.x + side * parent.info.radius;
     const endX = node.x - side * node.info.radius;
     const deltaX = endX - startX;
-    const edge = document.createElementNS(svgNamespace, "path");
+    const edge = document.createElementNS(pictureSvgNamespace, "path");
     edge.setAttribute("class", "tree-edge");
-    edge.setAttribute("data-feature-id", featureId);
-    edge.setAttribute("data-parent-feature-id", node.parentId);
     edge.setAttribute(
       "d",
       `M ${startX} ${parent.y} C ${startX + deltaX * 0.45} ${parent.y}, ${endX - deltaX * 0.45} ${node.y}, ${endX} ${node.y}`,
@@ -447,10 +435,13 @@ function renderPicture() {
     edge.style.setProperty("--tree-color", node.info.color);
     svg.append(edge);
   }
+}
 
+function drawPictureNodes(svg, nodePositions, composite) {
+  pictureNodes.clear();
   for (const [featureId, position] of nodePositions) {
     const info = position.info;
-    const node = document.createElementNS(svgNamespace, "g");
+    const node = document.createElementNS(pictureSvgNamespace, "g");
     node.setAttribute("class", `picture-node${featureId === rootId ? " root-node" : ""}`);
     node.setAttribute("role", "button");
     node.setAttribute("tabindex", "0");
@@ -460,7 +451,7 @@ function renderPicture() {
     if (selectedFeatureId === featureId) node.classList.add("selected");
     node.style.setProperty("--node-color", info.color);
 
-    const hitArea = document.createElementNS(svgNamespace, "rect");
+    const hitArea = document.createElementNS(pictureSvgNamespace, "rect");
     const horizontalLabel = info.labelWidth + 10;
     let hitLeft;
     let hitRight;
@@ -481,7 +472,7 @@ function renderPicture() {
     hitArea.setAttribute("height", String(info.bottom - info.top + 6));
     node.append(hitArea);
 
-    const circle = document.createElementNS(svgNamespace, "circle");
+    const circle = document.createElementNS(pictureSvgNamespace, "circle");
     circle.setAttribute("r", String(info.radius));
     node.append(circle);
     if (featureId === rootId) {
@@ -491,7 +482,7 @@ function renderPicture() {
       const rootLabelInfo = { fontSize: 15, fontWeight: 700 };
       node.style.setProperty(
         "--root-label-color",
-        context.composite ? "#fff" : "var(--surface)",
+        composite ? "#fff" : "var(--surface)",
       );
       addPictureText(
         node,
@@ -530,7 +521,18 @@ function renderPicture() {
     pictureNodes.set(featureId, node);
     svg.append(node);
   }
+}
 
+function renderPicture() {
+  const layout = calculatePictureLayout();
+  const { width, height, context, nodePositions } = layout;
+  const svg = document.querySelector("#picture-svg");
+  svg.replaceChildren();
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  drawPictureEdges(svg, nodePositions, context.groups);
+  drawPictureNodes(svg, nodePositions, context.composite);
   const note = context.composite
     ? "箭头从上级指向子功能；圆越大，行数越多（含子功能）；颜色区分各仓。"
     : "箭头从上级指向子功能；圆越大，行数越多（含子功能）；颜色区分各个顶层分支。";

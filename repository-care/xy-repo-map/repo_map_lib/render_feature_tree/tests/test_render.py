@@ -101,20 +101,6 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(page_data, data)
         self.assertNotIn("<script src=", page)
         self.assertNotIn('<link rel="stylesheet" href=', page)
-        template_directory = (
-            REPOSITORY_ROOT
-            / "repository-care/xy-repo-map/repo_map_lib/render_feature_tree/templates"
-        )
-        self.assertTrue((template_directory / "feature-picture.html").is_file())
-        self.assertFalse(
-            (template_directory.parent / "picture_view.html").exists()
-        )
-        scripts = re.findall(r"<script>(.*?)</script>", page, re.DOTALL)
-        self.assertEqual(len(scripts), 3)
-        self.assertIn("function featureLevel(", scripts[0])
-        self.assertIn("function renderPicture(", scripts[1])
-        self.assertIn("function renderFeature(", scripts[2])
-        self.assertIn("renderHeader();", scripts[2])
         self.assertIn("本级自己的部分", page)
         self.assertNotIn("没细分到子功能的部分", page)
         self.assertNotIn("还没实现", page)

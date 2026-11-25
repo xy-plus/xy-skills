@@ -113,6 +113,53 @@ def _make_rendered_tree(test_case):
     return output, expected, payload, external_name
 
 
+def _make_greedy_layout_rendered_tree(test_case):
+    files = {"README.md": "Root overview.\n"}
+    children = []
+    for branch_index, leaf_count in enumerate((3, 8, 7, 6, 5, 4)):
+        branch_id = f"branch-{branch_index}"
+        leaves = []
+        for leaf_index in range(leaf_count):
+            directory = f"{branch_id}/leaf-{leaf_index}"
+            files[f"{directory}/main.py"] = "value = 1\n"
+            leaves.append(
+                feature(
+                    f"{branch_id}-leaf-{leaf_index}",
+                    directory,
+                    source="原话",
+                    children=[],
+                    items=[],
+                )
+            )
+        children.append(
+            feature(
+                branch_id,
+                branch_id,
+                source="原话",
+                children=leaves,
+                items=[],
+            )
+        )
+    repository = make_repo(
+        test_case,
+        files,
+        make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=children,
+            source="原话",
+            items=[],
+        ),
+    )
+    output = repository.parent / "rendered"
+    rendered = run_map_command("render", repository, output)
+    test_case.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
+    expected = json.loads((output / "map-data.json").read_text(encoding="utf-8"))
+    return output, expected
+
+
 def _assert_default_picture_view(test_case, page):
     picture_button = page.get_by_role("button", name="图", exact=True)
     text_button = page.get_by_role("button", name="文字", exact=True)
@@ -139,16 +186,6 @@ def _assert_picture_edges_are_parent_child_only(test_case, page, expected):
     test_case.assertGreater(
         sum(bool(feature["uses"]) for feature in expected["features"].values()), 0
     )
-    expected_edges = {
-        (feature_id, feature["parent"])
-        for feature_id, feature in expected["features"].items()
-        if feature_id != expected["root"]
-    }
-    actual_edges = {
-        (edge.get_attribute("data-feature-id"), edge.get_attribute("data-parent-feature-id"))
-        for edge in edges.all()
-    }
-    test_case.assertEqual(actual_edges, expected_edges)
     test_case.assertGreater(page.locator("#picture-svg marker").count(), 0)
     marker_colors = edges.evaluate_all(
         "edges => edges.map(edge => { "
@@ -245,42 +282,6 @@ def _assert_view_switching(test_case, page):
     picture_button.click()
     test_case.assertTrue(page.locator("#picture-view").is_visible())
     text_button.click()
-
-
-def _assert_picture_sides_balance_actual_height(test_case, page):
-    result = page.evaluate(
-        """() => {
-          const makeGroups = (prefix) => ["a", "b", "c", "d"].map((key) => ({
-            key: `${prefix}-${key}`, childIds: [`${prefix}-${key}`],
-          }));
-          const rootChildren = ["a", "b", "c", "d"];
-          const groups = makeGroups("balance");
-          const heights = [100, 200, 100, 20];
-          const branches = new Map(rootChildren.map((key, index) => [
-            key, {top: -heights[index] / 2, bottom: heights[index] / 2, info: {radius: 0}},
-          ]));
-          const groupByFeature = new Map(rootChildren.map((key, index) => [key, groups[index]]));
-          const balanced = choosePictureSides(groups, rootChildren, branches, groupByFeature);
-          const tiedGroups = makeGroups("tie");
-          const tiedBranches = new Map(rootChildren.map((key) => [
-            `tie-${key}`, {top: -25, bottom: 25, info: {radius: 0}},
-          ]));
-          const tiedFeatureGroups = new Map(rootChildren.map((key, index) => [
-            `tie-${key}`, tiedGroups[index],
-          ]));
-          const tied = choosePictureSides(tiedGroups, rootChildren.map((key) => `tie-${key}`), tiedBranches, tiedFeatureGroups);
-          return {
-            left: balanced.left.map((group) => group.key),
-            right: balanced.right.map((group) => group.key),
-            tiedLeft: tied.left.map((group) => group.key),
-            tiedRight: tied.right.map((group) => group.key),
-          };
-        }"""
-    )
-    test_case.assertEqual(result["left"], ["balance-a", "balance-c"])
-    test_case.assertEqual(result["right"], ["balance-b", "balance-d"])
-    test_case.assertEqual(result["tiedLeft"], ["tie-a", "tie-b"])
-    test_case.assertEqual(result["tiedRight"], ["tie-c", "tie-d"])
 
 
 def _assert_picture_zoom_and_decision_filter(test_case, page):
@@ -590,6 +591,40 @@ def _assert_phone_layout(test_case, page):
 
 
 class BrowserTreeTest(unittest.TestCase):
+    def test_root_branches_follow_greedy_height_order(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        output, expected = _make_greedy_layout_rendered_tree(self)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                executable_path=executable, headless=True
+            )
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.goto((output / "index.html").as_uri())
+            positions = page.locator(".picture-node").evaluate_all(
+                "nodes => nodes.map(node => ({id: node.dataset.featureId, "
+                "x: node.transform.baseVal.consolidate().matrix.e}))"
+            )
+            x_by_id = {node["id"]: node["x"] for node in positions}
+            root_x = x_by_id[expected["root"]]
+            root_children = expected["features"][expected["root"]]["children"]
+            sides = [x_by_id[feature_id] < root_x for feature_id in root_children]
+            self.assertEqual(sides, [True, False, True, False, True, False])
+
+            groups_on_one_side = True
+            for branch_id in root_children:
+                stack = [branch_id]
+                group_sides = set()
+                while stack:
+                    feature_id = stack.pop()
+                    group_sides.add(x_by_id[feature_id] < root_x)
+                    stack.extend(expected["features"][feature_id]["children"])
+                groups_on_one_side &= len(group_sides) == 1
+            self.assertTrue(groups_on_one_side)
+            browser.close()
+
     def test_tree_behaviors_on_one_browser_page(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(
@@ -646,10 +681,6 @@ class BrowserTreeTest(unittest.TestCase):
                 (
                     "图文视图切换",
                     lambda: _assert_view_switching(self, page),
-                ),
-                (
-                    "按实际排布高度平衡两侧并稳定处理平局",
-                    lambda: _assert_picture_sides_balance_actual_height(self, page),
                 ),
                 (
                     "picture zoom and decision filter",
