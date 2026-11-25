@@ -209,9 +209,7 @@ def _front_card_lines(card):
             + _join_front_sentences([item["what"] for item in card["unused"]])
         )
     if card["suggestion"] or card["map_issues"]:
-        actions = [
-            value.removesuffix("。") for value in card["suggestion"]
-        ]
+        actions = list(card["suggestion"])
         if card["map_issues"]:
             actions.append(f"改图上文字 {len(card['map_issues'])} 处，见细节")
         lines.append(f"照建议会做\t{_join_front_sentences(actions)}")
@@ -457,7 +455,7 @@ def build_decisions(plan, cards):
         "intro": [
             first_intro,
             "每个功能选一项；写了备注就以备注为准。",
-            "选「照建议」「留」「按我写的改」都表示认可这张卡片上的「要什么」和细节里的理由、条目；不对的地方写进备注。",
+            "选「照建议」「留」「按我写的改」都表示认可这张卡片上的「要什么」、理由和起草条目，收在细节里的也算；不对的地方写进备注。",
             "「留」不动代码、测试、文档和 TODO；「不要这个功能」连图上的登记一起删，只有没有子功能的功能能选。",
         ],
         "groups": groups,
