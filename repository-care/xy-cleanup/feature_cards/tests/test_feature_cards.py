@@ -201,7 +201,7 @@ class FeatureCardsTest(unittest.TestCase):
             item["lines"],
             [
                 "要什么\t提供 alpha 功能。",
-                "谁在用\t值班人员用 alpha 看状态。；维护者用 alpha 改配置。",
+                "谁在用\t值班人员用 alpha 看状态。维护者用 alpha 改配置。",
                 "照建议会做\t删除旧 alpha 入口。",
                 "照建议会做\t改图上文字 1 处，见细节。",
             ],
@@ -225,7 +225,7 @@ class FeatureCardsTest(unittest.TestCase):
             ["要什么\t现在的 alpha 功能说明。", "原来\t提供 alpha 功能。"],
         )
 
-    def test_approved_draft_items_remain_individually_visible(self):
+    def test_approved_draft_items_are_folded_with_previous_wording(self):
         self._commit_repository("初始提交")
         self._record_and_commit("全部", "认可全图")
         manifest = self.repository / "repo-map" / "features.json"
@@ -239,12 +239,12 @@ class FeatureCardsTest(unittest.TestCase):
         result = self.run_cards([card("alpha")], scope=("alpha",), review="变过的")
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
-            "items"
-        ][0]
-        self.assertIn(
-            "起草条目 core\t提供新版 alpha 功能。（原来：提供 alpha 功能。）",
-            item["lines"],
+        item = self.first_decision_item()
+        draft_line = "起草条目 core\t提供新版 alpha 功能。（原来：提供 alpha 功能。）"
+        self.assertNotIn(draft_line, item["lines"])
+        self.assertIn(draft_line, item["details"]["lines"])
+        self.assertEqual(
+            item["details"]["title"], "细节：理由、依据 1 条、起草条目 1 条"
         )
 
     def test_approved_draft_reason_and_changes_are_in_the_details(self):

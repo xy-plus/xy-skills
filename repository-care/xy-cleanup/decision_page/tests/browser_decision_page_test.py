@@ -250,6 +250,13 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 "grid",
             )
             self.assertEqual(
+                tagged_line.evaluate(
+                    "element => getComputedStyle(element).alignItems"
+                ),
+                "baseline",
+                "桌面两栏应让标签和正文首行基线对齐",
+            )
+            self.assertEqual(
                 page.locator('[data-item-id="A1"] .line').nth(1).inner_text(),
                 "旧格式行保持原样。",
             )

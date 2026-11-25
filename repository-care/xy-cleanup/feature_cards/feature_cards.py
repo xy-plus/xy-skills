@@ -195,7 +195,7 @@ def _draft_item_lines(feature, previous_feature):
 def _front_card_lines(card):
     lines = []
     if card["used"]:
-        who = "；".join(item["who"] for item in card["used"])
+        who = "".join(item["who"] for item in card["used"])
         lines.append(f"谁在用\t{who}")
     lines.extend(f"没人用\t{item['what']}" for item in card["unused"])
     lines.extend(f"照建议会做\t{value}" for value in card["suggestion"])
@@ -240,7 +240,7 @@ def _details_title(feature, card, *, unapproved, draft_items):
         title_parts.append(f"图上要改 {len(card['map_issues'])} 处")
     if card["todo"]:
         title_parts.append(f"TODO 大问题 {len(card['todo'])} 条")
-    if unapproved and draft_items:
+    if draft_items:
         title_parts.append(f"起草条目 {len(draft_items)} 条")
     return "细节：" + "、".join(title_parts)
 
@@ -261,16 +261,13 @@ def _decision_item(feature_id, card, context):
         if previous_what != feature["what"]:
             lines.append(f"原来\t{previous_what}")
     lines.extend(_front_card_lines(card))
-    if not unapproved:
-        lines.extend(draft_items)
     detail_lines = _reason_detail_lines(
         feature, previous_feature, unapproved=unapproved
     )
     if not unapproved:
         detail_lines.extend(f"变了什么\t{value}" for value in card["changed"])
     detail_lines.extend(_detail_card_lines(card))
-    if unapproved:
-        detail_lines.extend(draft_items)
+    detail_lines.extend(draft_items)
     details = {
         "title": _details_title(
             feature,
