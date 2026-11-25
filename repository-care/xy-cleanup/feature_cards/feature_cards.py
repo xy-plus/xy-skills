@@ -198,16 +198,18 @@ def _join_front_sentences(values):
 
 def _front_card_lines(card):
     lines = []
-    if card["used"]:
-        lines.append(
-            "谁在用\t"
-            + _join_front_sentences([item["who"] for item in card["used"]])
+    if card["used"] or card["unused"]:
+        who = (
+            _join_front_sentences([item["who"] for item in card["used"]])
+            if card["used"]
+            else ""
         )
-    if card["unused"]:
-        lines.append(
-            "没人用\t"
-            + _join_front_sentences([item["what"] for item in card["unused"]])
-        )
+        if card["unused"]:
+            unused = _join_front_sentences(
+                [item["what"] for item in card["unused"]]
+            )
+            who += f"没人用：{unused}"
+        lines.append(f"谁在用\t{who}")
     if card["suggestion"] or card["map_issues"]:
         actions = list(card["suggestion"])
         if card["map_issues"]:

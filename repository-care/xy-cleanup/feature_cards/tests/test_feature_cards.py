@@ -189,6 +189,14 @@ class FeatureCardsTest(unittest.TestCase):
                 {"who": "值班人员用 alpha 看状态。", "evidence": "查值班配置。"},
                 {"who": "维护者用 alpha 改配置。", "evidence": "查维护脚本。"},
             ],
+            unused=[
+                {
+                    "what": "旧版导出按钮。",
+                    "evidence": "README 未提到。",
+                    "lines": 1,
+                    "risk": "旧调用方可能还在用。",
+                }
+            ],
             suggestion=["删除旧 alpha 入口。"],
             map_issues=["把 alpha 的功能说明改成人话。"],
             recommended="照建议",
@@ -204,10 +212,15 @@ class FeatureCardsTest(unittest.TestCase):
             item["lines"],
             [
                 "要什么\t提供 alpha 功能。",
-                "谁在用\t值班人员用 alpha 看状态；维护者用 alpha 改配置。",
+                "谁在用\t值班人员用 alpha 看状态；维护者用 alpha 改配置。没人用：旧版导出按钮。",
                 "照建议会做\t删除旧 alpha 入口；改图上文字 1 处，见细节。",
             ],
         )
+        self.assertEqual(
+            [line for line in item["lines"] if line.startswith("谁在用\t")],
+            ["谁在用\t值班人员用 alpha 看状态；维护者用 alpha 改配置。没人用：旧版导出按钮。"],
+        )
+        self.assertFalse(any(line.startswith("没人用") for line in item["lines"]))
 
     def test_multiple_used_who_are_joined_with_mixed_periods(self):
         value = card(
@@ -251,7 +264,10 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
             self.first_decision_item()["lines"],
-            ["要什么\t提供 alpha 功能。", "没人用\t旧版导出按钮；调试命令。"],
+            [
+                "要什么\t提供 alpha 功能。",
+                "谁在用\t没人用：旧版导出按钮；调试命令。",
+            ],
         )
 
     def test_multiple_suggestions_are_joined_with_mixed_periods(self):
