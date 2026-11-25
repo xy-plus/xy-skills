@@ -11,18 +11,14 @@ LIBRARY = ROOT / "repository-care" / "xy-repo-map"
 MISSING = object()
 
 
+def map_command_arguments(command, repository):
+    return ["python3", "-B", str(COMMAND), command, "--repo", str(repository)]
+
+
 def run_map_command(command, repository, output):
+    arguments = [*map_command_arguments(command, repository), "--out", str(output)]
     return subprocess.run(
-        [
-            "python3",
-            "-B",
-            str(COMMAND),
-            command,
-            "--repo",
-            str(repository),
-            "--out",
-            str(output),
-        ],
+        arguments,
         capture_output=True,
         text=True,
         check=False,

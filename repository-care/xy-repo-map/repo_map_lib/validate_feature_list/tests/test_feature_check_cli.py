@@ -4,20 +4,16 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from test_feature_check import COMMAND, FeatureCheckBase  # noqa: E402
+from test_feature_check import (  # noqa: E402
+    FeatureCheckBase,
+    map_command_arguments,
+)
 
 
 class FeatureCheckCliTest(FeatureCheckBase):
     def test_bad_arguments_exit_with_two(self):
         result = subprocess.run(
-            [
-                "python3",
-                "-B",
-                str(COMMAND),
-                "check",
-                "--repo",
-                str(self.repo / "missing"),
-            ],
+            map_command_arguments("check", self.repo / "missing"),
             capture_output=True,
             text=True,
             check=False,
@@ -27,14 +23,7 @@ class FeatureCheckCliTest(FeatureCheckBase):
     def _assert_repository_error_for_check_and_render(self, repository, message):
         with tempfile.TemporaryDirectory() as temporary:
             for command in ("check", "render"):
-                arguments = [
-                    "python3",
-                    "-B",
-                    str(COMMAND),
-                    command,
-                    "--repo",
-                    str(repository),
-                ]
+                arguments = map_command_arguments(command, repository)
                 if command == "render":
                     arguments.extend(["--out", str(Path(temporary) / "rendered")])
                 result = subprocess.run(
