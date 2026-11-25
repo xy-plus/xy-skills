@@ -27,7 +27,12 @@ COMMAND = XY_CLEANUP_DIRECTORY / "feature_cards" / "feature_cards.py"
 def card(feature_id, **changes):
     value = {
         "feature": feature_id,
-        "used": [f"实际使用中运行了 {feature_id}。"],
+        "used": [
+            {
+                "who": f"现在有人用 {feature_id}。",
+                "evidence": f"README 实际使用记录提到 {feature_id}。",
+            }
+        ],
         "unused": [],
         "changed": [],
         "todo": [],
@@ -123,7 +128,7 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertTrue(shared_check.called)
 
-    def test_valid_cards_make_a_decision_page_accepted_by_decision_page(self):
+    def test_output_uses_the_decision_page_schema(self):
         cards = self.default_cards()
         cards[1]["unused"] = [
             {
@@ -141,24 +146,6 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         decisions = json.loads(self.output.read_text(encoding="utf-8"))
         self.assertIs(decision_page.validate_decisions(decisions), decisions)
-        items = decisions["groups"][0]["items"]
-        self.assertEqual(len(items), 3)
-        self.assertEqual([item["id"] for item in items], ["root", "alpha", "beta"])
-        self.assertEqual(items[0]["options"], ["照建议", "留", "按我写的改"])
-        self.assertEqual(
-            items[2]["options"],
-            ["照建议", "留", "按我写的改", "不要这个功能"],
-        )
-        self.assertEqual(items[1]["recommended"], "照建议")
-        self.assertIsNone(items[1]["details"])
-        self.assertIn("要什么：提供 alpha 功能。", items[1]["lines"])
-        intro = "\n".join(decisions["intro"])
-        for choice in ("照建议：", "留：", "按我写的改：", "不要这个功能：", "前三项"):
-            self.assertIn(choice, intro)
-        self.assertIn("包括收起的", intro)
-        self.assertIn("为什么：让功能容易使用。", "\n".join(items[0]["lines"]))
-        self.assertIn("可选的旧格式导出入口", "\n".join(items[1]["lines"]))
-        self.assertIn("README 实际使用记录只选了新版入口", "\n".join(items[1]["lines"]))
 
     def test_three_level_feature_title_lists_each_ancestor_from_root(self):
         self._add_alpha_child_feature(self.repository)
@@ -191,18 +178,60 @@ class FeatureCardsTest(unittest.TestCase):
         ][0]
         self.assertEqual(item["title"], "Root › Alpha › Alpha 子功能")
 
-    def test_page_lists_draft_items_and_reasons_and_shows_rewritten_item_text(self):
+    def test_front_lines_put_what_usage_and_actions_in_order(self):
+        value = card(
+            "alpha",
+            used=[
+                {"who": "值班人员用 alpha 看状态。", "evidence": "查值班配置。"},
+                {"who": "维护者用 alpha 改配置。", "evidence": "查维护脚本。"},
+            ],
+            suggestion=["删除旧 alpha 入口。"],
+            map_issues=["把 alpha 的功能说明改成人话。"],
+            recommended="照建议",
+        )
+
+        result = self.run_cards([value], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][0]
+        self.assertEqual(
+            item["lines"],
+            [
+                "要什么\t提供 alpha 功能。",
+                "谁在用\t值班人员用 alpha 看状态。；维护者用 alpha 改配置。",
+                "照建议会做\t删除旧 alpha 入口。",
+                "照建议会做\t改图上文字 1 处，见细节。",
+            ],
+        )
+
+    def test_approved_changed_what_shows_its_previous_wording(self):
         self._commit_repository("初始提交")
-        approval_commit = self._record_and_commit("全部", "认可全图")
+        self._record_and_commit("全部", "认可全图")
+        manifest = self.repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        document["children"][0]["what"] = "现在的 alpha 功能说明。"
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        self._commit_repository("改写 alpha 说明")
+
+        result = self.run_cards([card("alpha")], scope=("alpha",), review="变过的")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][0]
+        self.assertEqual(
+            item["lines"][:2],
+            ["要什么\t现在的 alpha 功能说明。", "原来\t提供 alpha 功能。"],
+        )
+
+    def test_approved_draft_items_remain_individually_visible(self):
+        self._commit_repository("初始提交")
+        self._record_and_commit("全部", "认可全图")
         manifest = self.repository / "repo-map" / "features.json"
         document = json.loads(manifest.read_text(encoding="utf-8"))
         alpha = document["children"][0]
-        alpha["why"] = {
-            "text": "简化用户设置。",
-            "source": "起草",
-            "quote": "",
-            "from": "",
-        }
         alpha["items"][0]["text"] = "提供新版 alpha 功能。"
         alpha["items"][0]["status"] = "起草"
         manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
@@ -214,16 +243,49 @@ class FeatureCardsTest(unittest.TestCase):
         item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
             "items"
         ][0]
-        rendered_lines = "\n".join(item["lines"])
-        self.assertIsNone(item["details"])
-        self.assertFalse(any(line.startswith("要什么：") for line in item["lines"]))
-        self.assertIn("提供新版 alpha 功能。", rendered_lines)
-        self.assertIn("起草", rendered_lines)
-        self.assertIn("简化用户设置。", rendered_lines)
-        self.assertIn("原来：提供 alpha 功能。", rendered_lines)
-        self.assertNotIn(approval_commit, rendered_lines)
+        self.assertIn(
+            "起草条目 core\t提供新版 alpha 功能。（原来：提供 alpha 功能。）",
+            item["lines"],
+        )
 
-    def test_unapproved_feature_folds_draft_items_and_keeps_what_and_why_visible(self):
+    def test_approved_draft_reason_and_changes_are_in_the_details(self):
+        self._commit_repository("初始提交")
+        self._record_and_commit("全部", "认可全图")
+        manifest = self.repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        document["children"][0]["why"] = {
+            "text": "alpha 让用户更快完成工作。",
+            "source": "起草",
+            "quote": "",
+            "from": "",
+        }
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        self._commit_repository("改写 alpha 理由")
+
+        result = self.run_cards(
+            [card("alpha", changed=["改了 alpha 的实现。"])],
+            scope=("alpha",),
+            review="变过的",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        details = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][0]["details"]
+        self.assertEqual(
+            details,
+            {
+                "title": "细节：理由（等你拍板）、变了什么 1 条、依据 1 条",
+                "lines": [
+                    "为什么\talpha 让用户更快完成工作。（起草，等你拍板）",
+                    "原来\t让功能容易使用。",
+                    "变了什么\t改了 alpha 的实现。",
+                    "在用的依据\tREADME 实际使用记录提到 alpha。",
+                ],
+            },
+        )
+
+    def test_unapproved_draft_items_are_folded_in_the_details(self):
         manifest = self.repository / "repo-map" / "features.json"
         document = json.loads(manifest.read_text(encoding="utf-8"))
         alpha = document["children"][0]
@@ -251,19 +313,170 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertEqual(
             item["details"],
             {
-                "title": "起草条目 2 条",
-                "lines": ["core：提供 alpha 核心能力。", "extra：提供 alpha 附加能力。"],
+                "title": "细节：理由（等你拍板）、依据 1 条、起草条目 2 条",
+                "lines": [
+                    "为什么\t让 alpha 易于使用。（起草，等你拍板）",
+                    "在用的依据\tREADME 实际使用记录提到 alpha。",
+                    "起草条目 core\t提供 alpha 核心能力。",
+                    "起草条目 extra\t提供 alpha 附加能力。",
+                ],
             },
         )
+
+    def test_front_contains_what_and_usage_without_unapproved_drafts(self):
+        manifest = self.repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        document["children"][0]["items"] = [
+            {"id": "core", "text": "起草中的 alpha 核心能力。", "status": "起草"}
+        ]
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        self._commit_repository("起草 alpha 条目")
+
+        result = self.run_cards([card("alpha")], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][0]
         self.assertEqual(
-            item["lines"][:3],
+            item["lines"][:2],
+            ["要什么\t提供 alpha 功能。", "谁在用\t现在有人用 alpha。"],
+        )
+        self.assertNotIn("起草中的 alpha 核心能力。", "\n".join(item["lines"]))
+
+    def test_details_summarize_and_list_card_evidence(self):
+        manifest = self.repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        alpha = document["children"][0]
+        alpha["why"] = {
+            "text": "让 alpha 有用。",
+            "source": "起草",
+            "quote": "",
+            "from": "",
+        }
+        alpha["items"] = [
+            {"id": "core", "text": "提供 alpha 核心能力。", "status": "起草"}
+        ]
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        self._commit_repository("起草 alpha 内容")
+        value = card(
+            "alpha",
+            used=[{"who": "值班人员看状态。", "evidence": "查值班配置。"}],
+            unused=[
+                {
+                    "what": "旧版导出按钮。",
+                    "evidence": "查 README 和部署配置。",
+                    "lines": 12,
+                    "risk": "旧用户可能还在用。",
+                }
+            ],
+            todo=["大问题还没解决。"],
+            map_issues=["功能说明需要改。"],
+        )
+
+        result = self.run_cards([value], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        details = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][0]["details"]
+        self.assertEqual(
+            details,
+            {
+                "title": "细节：理由（等你拍板）、依据 2 条、可减 12 行、风险 1 条、图上要改 1 处、TODO 大问题 1 条、起草条目 1 条",
+                "lines": [
+                    "为什么\t让 alpha 有用。（起草，等你拍板）",
+                    "在用的依据\t查值班配置。",
+                    "没人用的依据\t查 README 和部署配置。",
+                    "可减\t12 行",
+                    "风险\t旧用户可能还在用。",
+                    "图上要改\t功能说明需要改。",
+                    "TODO 大问题\t大问题还没解决。",
+                    "起草条目 core\t提供 alpha 核心能力。",
+                ],
+            },
+        )
+
+    def test_recommendation_groups_put_changes_before_keeps(self):
+        cards = self.default_cards()
+        cards[1]["suggestion"] = ["删除 alpha 旧入口。"]
+        cards[1]["recommended"] = "照建议"
+        cards[2]["recommended"] = "不要这个功能"
+
+        result = self.run_cards(cards)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        groups = json.loads(self.output.read_text(encoding="utf-8"))["groups"]
+        self.assertEqual(
             [
-                "本次纳入：全部重审",
-                "要什么：提供 alpha 功能。",
-                "为什么（起草，等你拍板）：让 alpha 易于使用。",
+                (group["title"], [item["id"] for item in group["items"]])
+                for group in groups
+            ],
+            [
+                ("建议改或删（2 个）", ["alpha", "beta"]),
+                ("建议留着不动（1 个）", ["root"]),
             ],
         )
-        self.assertFalse(any("alpha 核心能力" in line for line in item["lines"]))
+
+    def test_recommendation_page_omits_an_empty_group(self):
+        result = self.run_cards(self.default_cards())
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        groups = json.loads(self.output.read_text(encoding="utf-8"))["groups"]
+        self.assertEqual([group["title"] for group in groups], ["建议留着不动（3 个）"])
+
+    def test_item_without_advice_has_no_follow_recommendation_option(self):
+        result = self.run_cards(self.default_cards())
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        items = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ]
+        self.assertEqual(items[0]["options"], ["留", "按我写的改"])
+        self.assertEqual(items[1]["options"], ["留", "按我写的改", "不要这个功能"])
+
+    def test_page_top_has_four_plain_sentences(self):
+        result = self.run_cards(self.default_cards())
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        intro = json.loads(self.output.read_text(encoding="utf-8"))["intro"]
+        self.assertEqual(
+            intro,
+            [
+                "本页 3 个功能：全部重审 3 个。",
+                "每个功能选一项；写了备注就以备注为准。",
+                "选「照建议」「留」「按我写的改」都表示认可这张卡片上的「要什么」和细节里的理由、条目；不对的地方写进备注。",
+                "「留」不动代码、测试、文档和 TODO；「不要这个功能」连图上的登记一起删，只有没有子功能的功能能选。",
+            ],
+        )
+
+    def test_page_top_counts_plan_reasons_in_first_seen_order(self):
+        self._commit_repository("初始提交")
+        self._record_and_commit("alpha", "认可 alpha")
+        manifest = self.repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        document["children"][0]["what"] = "改过的 alpha 说明。"
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        self._commit_repository("改 alpha 说明")
+
+        result = self.run_cards(self.default_cards(), review="变过的")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        intro = json.loads(self.output.read_text(encoding="utf-8"))["intro"]
+        self.assertEqual(
+            intro[0], "本页 3 个功能：没有认可记录 2 个、认可后改过 1 个。"
+        )
+
+    def test_mixed_recommendations_explain_group_order(self):
+        cards = self.default_cards()
+        cards[1]["suggestion"] = ["删除 alpha 旧入口。"]
+        cards[1]["recommended"] = "照建议"
+
+        result = self.run_cards(cards)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        intro = json.loads(self.output.read_text(encoding="utf-8"))["intro"]
+        self.assertTrue(intro[0].endswith("建议改或删的排在前面。"))
 
     def test_plan_with_no_changed_features_is_rejected(self):
         self._commit_repository("初始提交")
@@ -294,7 +507,7 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         decisions = json.loads(self.output.read_text(encoding="utf-8"))
         self.assertEqual(
-            decisions["groups"][0]["items"][2]["recommended"],
+            decisions["groups"][0]["items"][0]["recommended"],
             "不要这个功能",
         )
 
@@ -316,11 +529,71 @@ class FeatureCardsTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertFalse(self.output.exists())
 
+    def test_used_entries_require_nonempty_who_and_evidence(self):
+        cards = self.default_cards()
+        cards[1]["used"][0]["evidence"] = "  "
+
+        result = self.run_cards(cards)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("卡片[1].used[0].evidence", result.stdout + result.stderr)
+
+    def test_used_is_limited_to_three_entries(self):
+        cards = self.default_cards()
+        cards[1]["used"] = [
+            {"who": f"使用者 {index}。", "evidence": f"依据 {index}。"}
+            for index in range(4)
+        ]
+
+        result = self.run_cards(cards)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("卡片[1].used 最多 3 条", result.stdout + result.stderr)
+
+    def test_unapproved_feature_must_not_list_changes_since_approval(self):
+        cards = [card("alpha", changed=["alpha 有改动。"])]
+
+        result = self.run_cards(cards, scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "alpha 没有认可记录，changed 必须为 []",
+            result.stdout + result.stderr,
+        )
+
+    def test_map_issue_alone_is_enough_for_follow_recommendation(self):
+        cards = [
+            card(
+                "alpha",
+                map_issues=["把 alpha 的功能说明改成人话。"],
+                recommended="照建议",
+            )
+        ]
+
+        result = self.run_cards(cards, scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        item = json.loads(self.output.read_text(encoding="utf-8"))["groups"][0][
+            "items"
+        ][0]
+        self.assertIn("照建议", item["options"])
+
+    def test_follow_recommendation_requires_some_advice(self):
+        cards = [card("alpha", recommended="照建议")]
+
+        result = self.run_cards(cards, scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "卡片[0].recommended 为 照建议 时 suggestion 和 map_issues 不能都空",
+            result.stdout + result.stderr,
+        )
+
     def test_rejects_malformed_card_fields(self):
         mutations = (
             lambda value: value.pop("todo"),
             lambda value: value.update(extra="不允许"),
-            lambda value: value["used"].__setitem__(0, "  "),
+            lambda value: value["used"][0].update(who="  "),
             lambda value: value["unused"].append(
                 {
                     "what": "不用的入口。",
@@ -361,7 +634,6 @@ class FeatureCardsTest(unittest.TestCase):
                     "risk": "无。",
                 }
             ),
-            lambda value: value.update(recommended="照建议"),
         )
         for mutate in mutations:
             with self.subTest(mutation=mutate):

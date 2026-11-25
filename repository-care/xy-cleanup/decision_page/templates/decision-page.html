@@ -15,6 +15,7 @@ h2{margin:28px 0 5px;font-size:17px;line-height:1.35;overflow-wrap:anywhere}p{ma
 .intro p,.group-note{font-size:14px}
 .item{min-width:0;margin:10px 0;padding:10px 11px 12px;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--hair);border-left:4px solid var(--hair);border-radius:10px}.item.changed{border-left-color:var(--mark)}
 .head{font-weight:650;overflow-wrap:anywhere}.head .no{margin-right:7px;color:var(--muted);font:700 13px var(--mono)}.line{margin:4px 0 0;color:var(--ink2);font-size:14px}
+.label{color:var(--muted);font-size:12px;font-weight:500;overflow-wrap:anywhere}.labeled-line .label::after{content:" "}
 .decision-details{min-width:0;margin:9px 0 0;padding:8px 10px;border:1px solid var(--hair);border-radius:8px;background:var(--page);overflow-wrap:anywhere}.decision-details summary{color:var(--ink2);font-weight:650;overflow-wrap:anywhere;cursor:pointer}.details-line{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
 .comparison{min-width:0;margin-top:10px;padding:9px 10px;border:1px solid var(--hair);border-radius:8px;background:var(--page)}.compare-counts{margin:0 0 7px;color:var(--ink2);font-size:13px;font-weight:650;overflow-wrap:anywhere}
 .compare-row{margin:5px 0 0;color:var(--ink2);font-size:14px;overflow-wrap:anywhere;white-space:pre-wrap;word-break:break-word}
@@ -28,7 +29,7 @@ h2{margin:28px 0 5px;font-size:17px;line-height:1.35;overflow-wrap:anywhere}p{ma
 textarea{display:block;width:100%;min-height:54px;margin-top:9px;padding:8px 10px;border:1px solid var(--hair);border-radius:9px;background:var(--page);color:var(--ink);font:14px/1.5 var(--sans);resize:vertical}textarea::placeholder{color:var(--muted)}textarea:disabled,.choices input:disabled+span{opacity:.72}
 .footnote{font-size:14px}.bar{position:fixed;right:0;bottom:0;left:0;z-index:5;padding:10px max(12px,calc((100% - 820px)/2 + 12px)) calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--hair);background:var(--surface);box-shadow:0 -8px 30px #0002}
 .status{color:var(--ink2);font-size:13px;overflow-wrap:anywhere}.feedback{margin-top:5px;color:#a74416;font-size:13px;overflow-wrap:anywhere}@media(prefers-color-scheme:dark){.feedback{color:#ffb18b}}
-.bar button{width:100%;margin-top:8px;padding:12px;border:0;border-radius:10px;background:var(--pick);color:#fff;font:650 15px var(--sans);text-align:center;cursor:pointer}.bar button:disabled{opacity:.65;cursor:wait}.bar button[hidden]{display:none}@media(min-width:600px){.wrap{padding-right:14px;padding-left:14px}.bar{padding-right:max(14px,calc((100% - 820px)/2 + 14px));padding-left:max(14px,calc((100% - 820px)/2 + 14px))}}
+.bar button{width:100%;margin-top:8px;padding:12px;border:0;border-radius:10px;background:var(--pick);color:#fff;font:650 15px var(--sans);text-align:center;cursor:pointer}.bar button:disabled{opacity:.65;cursor:wait}.bar button[hidden]{display:none}@media(min-width:600px){.wrap{padding-right:14px;padding-left:14px}.bar{padding-right:max(14px,calc((100% - 820px)/2 + 14px));padding-left:max(14px,calc((100% - 820px)/2 + 14px))}.line.labeled-line{display:grid;grid-template-columns:5em minmax(0,1fr);column-gap:10px}.labeled-line .label::after{content:""}}
 </style>
 <body>
 <main class="wrap">
@@ -68,6 +69,21 @@ function make(tag, className, text) {
   if (className) element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;
+}
+
+function makeLine(text, className = "line") {
+  const line = make("p", className);
+  const separator = text.indexOf("\t");
+  if (separator === -1) {
+    line.textContent = text;
+  } else {
+    line.classList.add("labeled-line");
+    line.append(
+      make("span", "label", text.slice(0, separator)),
+      document.createTextNode(text.slice(separator + 1)),
+    );
+  }
+  return line;
 }
 
 function loadSaved() {
@@ -114,13 +130,13 @@ function renderItem(item) {
   const heading = make("div", "head");
   heading.append(make("span", "no", item.id), document.createTextNode(item.title));
   card.append(heading);
-  for (const line of item.lines) card.append(make("p", "line", line));
+  for (const line of item.lines) card.append(makeLine(line));
 
   if (item.details !== null) {
     const disclosure = make("details", "decision-details");
     disclosure.append(make("summary", "", item.details.title));
     for (const line of item.details.lines) {
-      disclosure.append(make("p", "line details-line", line));
+      disclosure.append(makeLine(line, "line details-line"));
     }
     card.append(disclosure);
   }

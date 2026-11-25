@@ -22,7 +22,7 @@ from repo_map_lib.validate_feature_list.features import feature_chain  # noqa: E
 
 CARD_SHAPE = {
     "feature": "",
-    "used": [""],
+    "used": [{"who": "", "evidence": ""}],
     "unused": [{"what": "", "evidence": "", "lines": "", "risk": ""}],
     "changed": [""],
     "todo": [""],
@@ -31,7 +31,7 @@ CARD_SHAPE = {
     "recommended": "",
 }
 RECOMMENDATIONS = {"照建议", "留", "不要这个功能"}
-COMMON_OPTIONS = ["照建议", "留", "按我写的改"]
+COMMON_OPTIONS = ["留", "按我写的改"]
 REMOVE_FEATURE = "不要这个功能"
 
 
@@ -74,6 +74,9 @@ def _card_errors(card, label):
     problems = check_value(label, shape_view, CARD_SHAPE)
     if not isinstance(card, dict):
         return problems
+    used = card.get("used")
+    if isinstance(used, list) and len(used) > 3:
+        problems.append(f"{label}.used 最多 3 条")
     unused = card.get("unused")
     if isinstance(unused, list):
         for index, value in enumerate(unused):
@@ -85,8 +88,12 @@ def _card_errors(card, label):
     recommendation = card.get("recommended")
     if not isinstance(recommendation, str) or recommendation not in RECOMMENDATIONS:
         problems.append(f"{label}.recommended 必须是 照建议、留、不要这个功能 之一")
-    elif recommendation == "照建议" and not card.get("suggestion"):
-        problems.append(f"{label}.recommended 为 照建议 时 suggestion 不能为空")
+    elif recommendation == "照建议" and not (
+        card.get("suggestion") or card.get("map_issues")
+    ):
+        problems.append(
+            f"{label}.recommended 为 照建议 时 suggestion 和 map_issues 不能都空"
+        )
     return problems
 
 
@@ -149,19 +156,21 @@ def _load_previous_features(repository, commit):
         ) from error
 
 
-def _draft_reason_lines(feature, previous_feature):
+def _reason_detail_lines(feature, previous_feature, *, unapproved):
     lines = []
     why = feature["why"]
-    why_prefix = "为什么（起草，等你拍板）" if why["source"] == "起草" else "为什么"
-    lines.append(f"{why_prefix}：{why['text']}")
+    why_text = why["text"]
     if why["source"] == "起草":
+        why_text += "（起草，等你拍板）"
+    lines.append(f"为什么\t{why_text}")
+    if not unapproved and why["source"] == "起草":
         previous_why = previous_feature.get("why") if previous_feature else None
         if isinstance(previous_why, dict) and previous_why.get("text") != why["text"]:
-            lines.append(f"原来：{previous_why['text']}")
+            lines.append(f"原来\t{previous_why['text']}")
     return lines
 
 
-def _draft_item_lines(feature, previous_feature, *, include_draft_label):
+def _draft_item_lines(feature, previous_feature):
     lines = []
     previous_items = (
         {
@@ -175,8 +184,7 @@ def _draft_item_lines(feature, previous_feature, *, include_draft_label):
     for item in feature["items"]:
         if item["status"] != "起草":
             continue
-        prefix = "起草条目 " if include_draft_label else ""
-        text = f"{prefix}{item['id']}：{item['text']}"
+        text = f"起草条目 {item['id']}\t{item['text']}"
         previous = previous_items.get(item["id"])
         if previous is not None and previous.get("text") != item["text"]:
             text += f"（原来：{previous['text']}）"
@@ -184,20 +192,60 @@ def _draft_item_lines(feature, previous_feature, *, include_draft_label):
     return lines
 
 
-def _append_card_lines(lines, card):
-    lines.extend(f"实际使用：{value}" for value in card["used"])
+def _front_card_lines(card):
+    lines = []
+    if card["used"]:
+        who = "；".join(item["who"] for item in card["used"])
+        lines.append(f"谁在用\t{who}")
+    lines.extend(f"没人用\t{item['what']}" for item in card["unused"])
+    lines.extend(f"照建议会做\t{value}" for value in card["suggestion"])
+    if card["map_issues"]:
+        lines.append(f"照建议会做\t改图上文字 {len(card['map_issues'])} 处，见细节。")
+    return lines
+
+
+def _detail_card_lines(card):
+    lines = [
+        f"在用的依据\t{item['evidence']}"
+        for item in card["used"]
+    ]
     for item in card["unused"]:
-        lines.append(
-            f"没人用：{item['what']}；依据：{item['evidence']}；"
-            f"可减行数：{item['lines']}；风险：{item['risk']}"
+        lines.extend(
+            [
+                f"没人用的依据\t{item['evidence']}",
+                f"可减\t{item['lines']} 行",
+                f"风险\t{item['risk']}",
+            ]
         )
-    lines.extend(f"变了什么：{value}" for value in card["changed"])
-    lines.extend(f"TODO 大问题：{value}" for value in card["todo"])
-    lines.extend(f"图上写偏：{value}" for value in card["map_issues"])
-    lines.extend(f"照建议会做：{value}" for value in card["suggestion"])
+    lines.extend(f"图上要改\t{value}" for value in card["map_issues"])
+    lines.extend(f"TODO 大问题\t{value}" for value in card["todo"])
+    return lines
 
 
-def _decision_item(feature_id, reason, card, context):
+def _details_title(feature, card, *, unapproved, draft_items):
+    title_parts = [
+        "理由（等你拍板）" if feature["why"]["source"] == "起草" else "理由"
+    ]
+    if not unapproved and card["changed"]:
+        title_parts.append(f"变了什么 {len(card['changed'])} 条")
+    evidence_count = len(card["used"]) + len(card["unused"])
+    if evidence_count:
+        title_parts.append(f"依据 {evidence_count} 条")
+    removable_lines = sum(item["lines"] for item in card["unused"])
+    if removable_lines > 0:
+        title_parts.append(f"可减 {removable_lines} 行")
+    if card["unused"]:
+        title_parts.append(f"风险 {len(card['unused'])} 条")
+    if card["map_issues"]:
+        title_parts.append(f"图上要改 {len(card['map_issues'])} 处")
+    if card["todo"]:
+        title_parts.append(f"TODO 大问题 {len(card['todo'])} 条")
+    if unapproved and draft_items:
+        title_parts.append(f"起草条目 {len(draft_items)} 条")
+    return "细节：" + "、".join(title_parts)
+
+
+def _decision_item(feature_id, card, context):
     feature = context.values[feature_id]
     features = context.data["features"]
     title = " › ".join(
@@ -206,24 +254,35 @@ def _decision_item(feature_id, reason, card, context):
     )
     previous_feature = context.previous_features.get(feature_id)
     unapproved = context.commits[feature_id] == "无"
-    draft_items = _draft_item_lines(
-        feature,
-        previous_feature,
-        include_draft_label=not unapproved,
-    )
-    lines = [f"本次纳入：{reason}"]
-    if unapproved:
-        lines.append(f"要什么：{feature['what']}")
-    lines.extend(_draft_reason_lines(feature, previous_feature))
+    draft_items = _draft_item_lines(feature, previous_feature)
+    lines = [f"要什么\t{feature['what']}"]
+    if not unapproved and previous_feature is not None:
+        previous_what = previous_feature.get("what")
+        if previous_what != feature["what"]:
+            lines.append(f"原来\t{previous_what}")
+    lines.extend(_front_card_lines(card))
     if not unapproved:
         lines.extend(draft_items)
-    _append_card_lines(lines, card)
-    details = (
-        {"title": f"起草条目 {len(draft_items)} 条", "lines": draft_items}
-        if unapproved and draft_items
-        else None
+    detail_lines = _reason_detail_lines(
+        feature, previous_feature, unapproved=unapproved
     )
+    if not unapproved:
+        detail_lines.extend(f"变了什么\t{value}" for value in card["changed"])
+    detail_lines.extend(_detail_card_lines(card))
+    if unapproved:
+        detail_lines.extend(draft_items)
+    details = {
+        "title": _details_title(
+            feature,
+            card,
+            unapproved=unapproved,
+            draft_items=draft_items,
+        ),
+        "lines": detail_lines,
+    }
     options = list(COMMON_OPTIONS)
+    if card["suggestion"] or card["map_issues"]:
+        options.insert(0, "照建议")
     if not context.data["features"][feature_id]["children"]:
         options.append(REMOVE_FEATURE)
     return {
@@ -255,7 +314,7 @@ class DecisionPlan:
     plan_commit: str
 
 
-def _validate_card_set(cards, planned_ids, data):
+def _validate_card_set(cards, planned_ids, data, commits):
     by_id = {}
     problems = []
     for index, card in enumerate(cards):
@@ -271,6 +330,10 @@ def _validate_card_set(cards, planned_ids, data):
         by_id[feature_id] = card
 
     problems.extend(_card_membership_errors(by_id, planned_ids, data))
+    for feature_id in planned_ids:
+        card = by_id.get(feature_id)
+        if commits[feature_id] == "无" and isinstance(card, dict) and card.get("changed"):
+            problems.append(f"{feature_id} 没有认可记录，changed 必须为 []")
     problems.extend(_card_recommendation_errors(by_id, planned_ids, data))
     return by_id, problems
 
@@ -321,18 +384,17 @@ def _build_decision_items(planned, by_id, context):
     items = [
         _decision_item(
             feature_id,
-            reason,
             by_id[feature_id],
             context,
         )
-        for feature_id, reason in planned
+        for feature_id, _reason in planned
     ]
     return items
 
 
 def build_decisions(plan, cards):
     planned_ids = [feature_id for feature_id, _reason in plan.planned]
-    by_id, problems = _validate_card_set(cards, planned_ids, plan.data)
+    by_id, problems = _validate_card_set(cards, planned_ids, plan.data, plan.commits)
     if problems:
         return None, problems
 
@@ -346,19 +408,45 @@ def build_decisions(plan, cards):
         plan.commits,
     )
     items = _build_decision_items(plan.planned, by_id, context)
+    change_items = [item for item in items if item["recommended"] != "留"]
+    keep_items = [item for item in items if item["recommended"] == "留"]
+    groups = []
+    if change_items:
+        groups.append(
+            {
+                "title": f"建议改或删（{len(change_items)} 个）",
+                "notes": [],
+                "items": change_items,
+            }
+        )
+    if keep_items:
+        groups.append(
+            {
+                "title": f"建议留着不动（{len(keep_items)} 个）",
+                "notes": [],
+                "items": keep_items,
+            }
+        )
+    reason_counts = {}
+    for _feature_id, reason in plan.planned:
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    reason_summary = "、".join(
+        f"{reason} {count} 个" for reason, count in reason_counts.items()
+    )
+    first_intro = f"本页 {len(items)} 个功能：{reason_summary}。"
+    if change_items and keep_items:
+        first_intro += "建议改或删的排在前面。"
     decisions = {
         "title": (
             f"清扫决定：{Path(plan.repository).name} 计划提交 {plan.plan_commit}"
         ),
         "intro": [
-            "每个功能只选一项：照建议、留、按我写的改；没有子功能的功能另有「不要这个功能」。",
-            "照建议：做卡片「照建议」列出的每件事。",
-            "留：不删改代码、测试、文档或 TODO，也不做卡片建议；仍会确认本页列出的起草条目和理由。",
-            "按我写的改：以「照建议」为底按备注修改；含义不明先问。",
-            "不要这个功能：只给没有子功能的功能，删除该功能实现、测试、文档、TODO 和图上条目。",
-            "前三项都会把本页列出的起草条目（包括收起的）和功能理由照写的确认；点「留」也表示确认这些文字。",
+            first_intro,
+            "每个功能选一项；写了备注就以备注为准。",
+            "选「照建议」「留」「按我写的改」都表示认可这张卡片上的「要什么」和细节里的理由、条目；不对的地方写进备注。",
+            "「留」不动代码、测试、文档和 TODO；「不要这个功能」连图上的登记一起删，只有没有子功能的功能能选。",
         ],
-        "groups": [{"title": "功能审批", "notes": [], "items": items}],
+        "groups": groups,
         "footnotes": [],
     }
     return validate_decisions(decisions), []

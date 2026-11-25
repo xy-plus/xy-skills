@@ -42,7 +42,7 @@ def decisions_document(title, feature_ids):
                     {
                         "id": feature_id,
                         "title": feature_id,
-                        "lines": ["本次纳入：认可后变过"],
+                        "lines": ["认可后变过。"],
                         "options": ["照建议", "留"],
                         "recommended": "照建议",
                         "compare": None,

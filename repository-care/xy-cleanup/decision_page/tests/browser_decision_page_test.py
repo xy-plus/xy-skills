@@ -213,6 +213,68 @@ class DecisionPageBrowserTest(unittest.TestCase):
         )
         self.assertIsNone(page.evaluate("window.pwned"))
 
+    def test_tabbed_lines_show_labels_in_columns_and_fit_a_phone(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        decisions = browser_decisions()
+        item = decisions["groups"][0]["items"][0]
+        item["lines"] = ["要什么\talpha 功能说明完整。", "旧格式行保持原样。"]
+        item["details"] = {
+            "title": "细节：依据 1 条",
+            "lines": ["依据\t查 README 和配置。"],
+        }
+        page_html = decision_page.render_decision_page(decisions)
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                executable_path=executable, headless=True
+            )
+            page = browser.new_page(viewport={"width": 800, "height": 844})
+            page.set_content(page_html)
+
+            tagged_line = page.locator('[data-item-id="A1"] .line').first
+            self.assertEqual(
+                tagged_line.locator(".label").count(),
+                1,
+                "含制表符的行应把标签放进 .label",
+            )
+            self.assertEqual(tagged_line.locator(".label").inner_text(), "要什么")
+            self.assertEqual(
+                tagged_line.evaluate("element => element.childNodes[1].textContent"),
+                "alpha 功能说明完整。",
+            )
+            self.assertEqual(
+                tagged_line.evaluate("element => getComputedStyle(element).display"),
+                "grid",
+            )
+            self.assertEqual(
+                page.locator('[data-item-id="A1"] .line').nth(1).inner_text(),
+                "旧格式行保持原样。",
+            )
+            page.locator(
+                '[data-item-id="A1"] .decision-details summary'
+            ).click()
+            detail_line = page.locator(
+                '[data-item-id="A1"] .decision-details .details-line'
+            )
+            self.assertEqual(detail_line.locator(".label").inner_text(), "依据")
+            self.assertEqual(
+                detail_line.evaluate("element => element.childNodes[1].textContent"),
+                "查 README 和配置。",
+            )
+
+            page.set_viewport_size({"width": 390, "height": 844})
+            self.assertLessEqual(
+                page.evaluate("document.documentElement.scrollWidth"),
+                page.evaluate("window.innerWidth"),
+            )
+            self.assertEqual(
+                tagged_line.evaluate("element => getComputedStyle(element).display"),
+                "block",
+            )
+
     def test_compare_shows_counts_and_each_block_change_on_a_phone(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(
