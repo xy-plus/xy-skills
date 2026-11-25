@@ -2,12 +2,12 @@
 
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
-from test_feature_check import (  # noqa: E402
-    FeatureCheckBase,
-    map_command_arguments,
-)
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "tests"))
+from map_fixture import map_command_arguments  # noqa: E402
+from test_feature_check import FeatureCheckBase  # noqa: E402
 
 
 class FeatureCheckCliTest(FeatureCheckBase):
