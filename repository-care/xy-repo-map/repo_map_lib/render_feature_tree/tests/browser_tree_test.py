@@ -167,6 +167,38 @@ def _assert_default_picture_view(test_case, page):
     test_case.assertEqual(text_button.get_attribute("aria-pressed"), "false")
     test_case.assertTrue(page.locator("#picture-view").is_visible())
     test_case.assertFalse(page.locator("#text-view").is_visible())
+    page.wait_for_timeout(50)
+    metrics = _picture_metrics(page)
+    test_case.assertGreater(metrics["displayedWidth"], metrics["containerWidth"])
+    test_case.assertGreaterEqual(metrics["scale"], 0.75)
+    _assert_picture_root_centered(test_case, metrics)
+
+
+def _picture_metrics(page):
+    return page.evaluate(
+        """() => {
+          const svg = document.querySelector('#picture-svg');
+          const scroller = document.querySelector('#picture-scroll');
+          const root = document.querySelector('.root-node circle')
+            .getBoundingClientRect();
+          return {
+            displayedWidth: svg.getBoundingClientRect().width,
+            containerWidth: scroller.clientWidth,
+            scale: svg.getBoundingClientRect().width
+              / Number(svg.getAttribute('width')),
+            rootCenter: root.left + root.width / 2,
+            containerCenter: scroller.getBoundingClientRect().left
+              + scroller.clientWidth / 2,
+          };
+        }"""
+    )
+
+
+def _assert_picture_root_centered(test_case, metrics):
+    if metrics["displayedWidth"] > metrics["containerWidth"]:
+        test_case.assertAlmostEqual(
+            metrics["rootCenter"], metrics["containerCenter"], delta=3
+        )
 
 
 def _assert_picture_note(test_case, page):
@@ -287,6 +319,26 @@ def _assert_view_switching(test_case, page):
 def _assert_picture_zoom_and_decision_filter(test_case, page):
     page.get_by_role("button", name="图", exact=True).click()
     svg = page.locator("#picture-svg")
+    scroller = page.locator("#picture-scroll")
+    natural_width = float(svg.get_attribute("width"))
+    initial = _picture_metrics(page)
+    test_case.assertGreaterEqual(initial["scale"], 0.75)
+    _assert_picture_root_centered(test_case, initial)
+
+    page.set_viewport_size({"width": 520, "height": 844})
+    page.wait_for_timeout(50)
+    resized_unscaled = _picture_metrics(page)
+    expected_initial_scale = min(
+        1,
+        max(0.75, resized_unscaled["containerWidth"] / natural_width),
+    )
+    test_case.assertAlmostEqual(
+        resized_unscaled["scale"], expected_initial_scale, delta=0.01
+    )
+    _assert_picture_root_centered(test_case, resized_unscaled)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.wait_for_timeout(50)
+
     starting_width = svg.evaluate("element => element.getBoundingClientRect().width")
     page.get_by_role("button", name="放大", exact=True).click()
     larger_width = svg.evaluate("element => element.getBoundingClientRect().width")
@@ -296,8 +348,9 @@ def _assert_picture_zoom_and_decision_filter(test_case, page):
     test_case.assertLess(smaller_width, larger_width)
     page.get_by_role("button", name="全图", exact=True).click()
     fitted_width = svg.evaluate("element => element.getBoundingClientRect().width")
-    natural_width = float(svg.get_attribute("width"))
-    test_case.assertAlmostEqual(fitted_width, starting_width, delta=1)
+    test_case.assertLessEqual(
+        fitted_width, scroller.evaluate("element => element.clientWidth") + 1
+    )
     for _ in range(8):
         page.get_by_role("button", name="放大", exact=True).click()
     maximum_width = svg.evaluate("element => element.getBoundingClientRect().width")
@@ -306,6 +359,30 @@ def _assert_picture_zoom_and_decision_filter(test_case, page):
         page.get_by_role("button", name="缩小", exact=True).click()
     minimum_width = svg.evaluate("element => element.getBoundingClientRect().width")
     test_case.assertGreaterEqual(minimum_width, fitted_width - 1)
+
+    page.get_by_role("button", name="放大", exact=True).click()
+    old_scale = _picture_metrics(page)["scale"]
+    page.set_viewport_size({"width": 1440, "height": 844})
+    page.wait_for_timeout(50)
+    resized_zoomed = _picture_metrics(page)
+    expected_zoomed_scale = max(
+        min(1, resized_zoomed["containerWidth"] / natural_width),
+        min(2, old_scale),
+    )
+    test_case.assertAlmostEqual(
+        resized_zoomed["scale"], expected_zoomed_scale, delta=0.01
+    )
+    desktop_scale = resized_zoomed["scale"]
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.wait_for_timeout(50)
+    resized_zoomed = _picture_metrics(page)
+    expected_zoomed_scale = max(
+        min(1, resized_zoomed["containerWidth"] / natural_width),
+        min(2, desktop_scale),
+    )
+    test_case.assertAlmostEqual(
+        resized_zoomed["scale"], expected_zoomed_scale, delta=0.01
+    )
     test_case.assertLessEqual(
         page.evaluate("document.documentElement.scrollWidth"),
         page.evaluate("window.innerWidth"),

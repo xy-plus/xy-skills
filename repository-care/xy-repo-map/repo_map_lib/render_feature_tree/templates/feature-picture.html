@@ -7,6 +7,7 @@ const pictureNodes = new Map();
 let pictureLayout = null;
 let pictureScale = 0;
 let pictureFitScale = 0;
+let pictureScaleChanged = false;
 
 function featureGroupPlan() {
   const composite = Object.keys(features).some((featureId) => featureId.includes("/"));
@@ -340,9 +341,10 @@ function calculatePictureLayout() {
   );
   const levelExtents = new Map();
   for (const node of [...left.nodes, ...right.nodes]) {
-    const extent = levelExtents.get(node.level) || { inward: 0, outward: 0 };
+    const extent = levelExtents.get(node.level) || { inward: 0, outward: 0, radius: 0 };
     extent.inward = Math.max(extent.inward, node.info.inwardExtent);
     extent.outward = Math.max(extent.outward, node.info.outwardExtent);
+    extent.radius = Math.max(extent.radius, node.info.radius);
     levelExtents.set(node.level, extent);
   }
   const distanceByLevel = new Map();
@@ -352,8 +354,8 @@ function calculatePictureLayout() {
     const extent = levelExtents.get(level) || { inward: 0, outward: 0 };
     if (level === 1) distance = rootRadius + extent.inward + 34;
     else {
-      const previous = levelExtents.get(level - 1) || { outward: 0 };
-      distance += previous.outward + extent.inward + 34;
+      const previous = levelExtents.get(level - 1) || { radius: 0 };
+      distance += previous.radius + extent.inward + 34;
     }
     distanceByLevel.set(level, distance);
   }
@@ -547,7 +549,7 @@ function updatePictureSelection() {
   }
 }
 
-function displayPictureScale(scale, preserveCenter = true) {
+function displayPictureScale(scale, preserveCenter = true, centerRoot = false) {
   if (!pictureLayout) return;
   const scroller = document.querySelector("#picture-scroll");
   const svg = document.querySelector("#picture-svg");
@@ -558,6 +560,12 @@ function displayPictureScale(scale, preserveCenter = true) {
   pictureScale = scale;
   svg.style.width = `${pictureLayout.width * pictureScale}px`;
   svg.style.height = `${pictureLayout.height * pictureScale}px`;
+  if (centerRoot && pictureScale > pictureFitScale) {
+    const displayWidth = pictureLayout.width * pictureScale;
+    const centeredLeft = (displayWidth - scroller.clientWidth) / 2;
+    scroller.scrollLeft = centeredLeft;
+    return;
+  }
   requestAnimationFrame(() => {
     scroller.scrollLeft = preserveCenter
       ? centerRatio * pictureLayout.width * pictureScale - scroller.clientWidth / 2
@@ -568,15 +576,15 @@ function displayPictureScale(scale, preserveCenter = true) {
 function refreshPictureScale(preserveCenter = true) {
   if (!pictureLayout) return;
   const scroller = document.querySelector("#picture-scroll");
-  const oldFit = pictureFitScale;
   pictureFitScale = Math.min(1, scroller.clientWidth / pictureLayout.width);
-  const scale = pictureScale <= oldFit + 0.001
-    ? pictureFitScale
-    : Math.max(pictureFitScale, Math.min(2, pictureScale));
-  displayPictureScale(scale, preserveCenter);
+  const scale = pictureScaleChanged
+    ? Math.max(pictureFitScale, Math.min(2, pictureScale))
+    : Math.min(1, Math.max(pictureFitScale, 0.75));
+  displayPictureScale(scale, preserveCenter, !pictureScaleChanged);
 }
 
 function setPictureScale(scale) {
+  pictureScaleChanged = true;
   displayPictureScale(Math.max(pictureFitScale, Math.min(2, scale)));
 }
 </script>
