@@ -316,7 +316,7 @@ def _assert_view_switching(test_case, page):
     text_button.click()
 
 
-def _assert_picture_zoom_and_decision_filter(test_case, page):
+def _assert_picture_zoom_and_responsive_scaling(test_case, page):
     page.get_by_role("button", name="图", exact=True).click()
     svg = page.locator("#picture-svg")
     scroller = page.locator("#picture-scroll")
@@ -388,6 +388,8 @@ def _assert_picture_zoom_and_decision_filter(test_case, page):
         page.evaluate("window.innerWidth"),
     )
 
+
+def _assert_decision_filter_switches_to_text(test_case, page):
     page.locator("#decision-filter").click()
     test_case.assertTrue(page.locator("#text-view").is_visible())
     test_case.assertEqual(
@@ -760,8 +762,12 @@ class BrowserTreeTest(unittest.TestCase):
                     lambda: _assert_view_switching(self, page),
                 ),
                 (
-                    "picture zoom and decision filter",
-                    lambda: _assert_picture_zoom_and_decision_filter(self, page),
+                    "picture zoom and responsive scaling",
+                    lambda: _assert_picture_zoom_and_responsive_scaling(self, page),
+                ),
+                (
+                    "decision filter switches to text view",
+                    lambda: _assert_decision_filter_switches_to_text(self, page),
                 ),
                 (
                     "tree text, expansion, and theme",
