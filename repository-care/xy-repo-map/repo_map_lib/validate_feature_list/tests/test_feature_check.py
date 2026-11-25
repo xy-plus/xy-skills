@@ -15,7 +15,6 @@ from map_fixture import (  # noqa: E402
     empty_root_feature,
     feature,
     make_repo,
-    map_command_arguments,
     root_feature as make_root_feature,
 )
 
