@@ -594,8 +594,7 @@ class ScanChangesTest(unittest.TestCase):
             if hit["tool"] == "ruff" and "ERA001" in hit["message"]
         ]
 
-        self.assertEqual(len(hits), 1, hits)
-        self.assertEqual(hits[0]["line"], 4)
+        self.assertEqual([hit["line"] for hit in hits], [4], hits)
 
     def test_unchanged_duplicate_block_is_suppressed_when_another_line_changes(self):
         repeated = [f"shared block row {number} carries enough words" for number in range(1, 9)]
