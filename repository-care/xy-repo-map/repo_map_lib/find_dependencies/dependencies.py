@@ -100,6 +100,14 @@ def _import_targets_with_lines(path, source, python_paths):
 def find_cycles(edges):
     """Return multi-node strongly connected components and their internal edges."""
     edges = list(edges)
+    adjacency, reverse = _cycle_adjacency(edges)
+    finish_order = _cycle_finish_order(adjacency)
+    components = _cycle_components(reverse, finish_order)
+    cycle_edges = _internal_cycle_edges(edges, components)
+    return components, cycle_edges
+
+
+def _cycle_adjacency(edges):
     adjacency = {}
     reverse = {}
     for source, target in edges:
@@ -107,50 +115,61 @@ def find_cycles(edges):
         adjacency.setdefault(target, set())
         reverse.setdefault(target, set()).add(source)
         reverse.setdefault(source, set())
+    return adjacency, reverse
 
+
+def _cycle_finish_order(adjacency):
     visited = set()
     finish_order = []
-
-    def visit(node):
-        visited.add(node)
-        for target in sorted(adjacency[node]):
-            if target not in visited:
-                visit(target)
-        finish_order.append(node)
-
     for node in sorted(adjacency):
-        if node not in visited:
-            visit(node)
+        if node in visited:
+            continue
+        stack = [(node, False)]
+        while stack:
+            current, expanded = stack.pop()
+            if expanded:
+                finish_order.append(current)
+            elif current not in visited:
+                visited.add(current)
+                stack.append((current, True))
+                stack.extend(
+                    (target, False)
+                    for target in sorted(adjacency[current], reverse=True)
+                )
+    return finish_order
 
-    visited.clear()
+
+def _cycle_components(reverse, finish_order):
+    visited = set()
     components = []
-
-    def collect(node, component):
-        visited.add(node)
-        component.append(node)
-        for source in sorted(reverse[node]):
-            if source not in visited:
-                collect(source, component)
-
     for node in reversed(finish_order):
         if node in visited:
             continue
         component = []
-        collect(node, component)
+        pending = [node]
+        visited.add(node)
+        while pending:
+            current = pending.pop()
+            component.append(current)
+            for source in sorted(reverse[current], reverse=True):
+                if source not in visited:
+                    visited.add(source)
+                    pending.append(source)
         if len(component) > 1:
             components.append(tuple(sorted(component)))
+    return sorted(components)
 
-    components.sort()
+
+def _internal_cycle_edges(edges, components):
     component_by_node = {
         node: component for component in components for node in component
     }
-    cycle_edges = {
+    return {
         (source, target)
         for source, target in edges
         if source in component_by_node
         and component_by_node[source] == component_by_node.get(target)
     }
-    return components, cycle_edges
 
 
 def file_mentions(path, source, tracked_paths):

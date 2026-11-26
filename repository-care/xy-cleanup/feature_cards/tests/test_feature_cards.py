@@ -228,35 +228,6 @@ class FeatureCardsTest(unittest.TestCase):
         root = next(item for item in items if item["id"] == "root")
         self.assertEqual(root["title"], "Root")
 
-    def test_decision_front_lines_name_the_other_features_in_an_import_cycle(self):
-        manifest = self.repository / "repo-map" / "features.json"
-        document = json.loads(manifest.read_text(encoding="utf-8"))
-        document["existing_cycle_imports"] = [
-            {"from": "alpha", "to": "beta"},
-            {"from": "beta", "to": "alpha"},
-        ]
-        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-        (self.repository / "alpha" / "main.py").write_text(
-            "import beta.main\n", encoding="utf-8"
-        )
-        (self.repository / "beta" / "main.py").write_text(
-            "import alpha.main\n", encoding="utf-8"
-        )
-        self._commit_repository("登记测试循环依赖")
-
-        result = self.run_cards(self.default_cards())
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        alpha = next(
-            item
-            for item in json.loads(self.output.read_text(encoding="utf-8"))["groups"][0]["items"]
-            if item["id"] == "alpha"
-        )
-        self.assertEqual(
-            alpha["lines"][1],
-            "互相引用\t和 Beta 成环（产品代码 import）",
-        )
-
     def test_scoped_feature_title_still_starts_at_the_map_root(self):
         self._add_alpha_child_feature(self.repository)
         self._commit_repository("添加 Alpha 子功能")

@@ -33,6 +33,23 @@ def feature_chain(feature_id, features):
         current = features[current]["parent"]
 
 
+def features_by_id(document):
+    """Return a nested feature document indexed by feature id."""
+    result = {}
+    pending = [document]
+    while pending:
+        feature = pending.pop()
+        if not isinstance(feature, dict):
+            continue
+        feature_id = feature.get("id")
+        if isinstance(feature_id, str):
+            result[feature_id] = feature
+        children = feature.get("children")
+        if isinstance(children, list):
+            pending.extend(reversed(children))
+    return result
+
+
 def is_feature_ancestor(ancestor_id, feature_id, features):
     """Return whether one feature is a strict ancestor of another."""
     return ancestor_id != feature_id and ancestor_id in feature_chain(
@@ -252,26 +269,34 @@ def _validate_existing_cycle_imports(value, label, errors):
 
     seen = set()
     for index, item in enumerate(imports):
-        item_label = f"{label}的 existing_cycle_imports[{index}]"
-        if not isinstance(item, dict):
-            errors.append(f"{item_label}必须是对象")
-            continue
-        if item.keys() != {"from", "to"}:
-            errors.append(f"{item_label}必须恰有 from、to 两个键")
-        source = item.get("from")
-        target = item.get("to")
-        if not isinstance(source, str) or not source.strip():
-            errors.append(f"{item_label}.from 必须是非空字符串")
-        if not isinstance(target, str) or not target.strip():
-            errors.append(f"{item_label}.to 必须是非空字符串")
-        if not isinstance(source, str) or not isinstance(target, str):
-            continue
-        edge = (source, target)
-        if source == target:
-            errors.append(f"{item_label}不能自己引用：{source}")
-        if edge in seen:
-            errors.append(f"{item_label}不能重复：{source} → {target}")
-        seen.add(edge)
+        errors.extend(_existing_cycle_import_item_errors(item, index, label, seen))
+
+
+def _existing_cycle_import_item_errors(item, index, label, seen):
+    item_label = f"{label}的 existing_cycle_imports[{index}]"
+    if not isinstance(item, dict):
+        return [f"{item_label}必须是对象"]
+    errors = []
+    if item.keys() != {"from", "to"}:
+        errors.append(f"{item_label}必须恰有 from、to 两个键")
+    source = item.get("from")
+    target = item.get("to")
+    if not isinstance(source, str) or not source.strip():
+        errors.append(f"{item_label}.from 必须是非空字符串")
+    if not isinstance(target, str) or not target.strip():
+        errors.append(f"{item_label}.to 必须是非空字符串")
+    if isinstance(source, str) and isinstance(target, str):
+        _validate_cycle_import_edge(source, target, item_label, seen, errors)
+    return errors
+
+
+def _validate_cycle_import_edge(source, target, item_label, seen, errors):
+    edge = (source, target)
+    if source == target:
+        errors.append(f"{item_label}不能自己引用：{source}")
+    if edge in seen:
+        errors.append(f"{item_label}不能重复：{source} → {target}")
+    seen.add(edge)
 
 
 def _validate_used_by_repositories(value, label, errors):

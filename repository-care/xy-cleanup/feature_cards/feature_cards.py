@@ -21,7 +21,10 @@ from repo_map_lib.git_repository import (  # noqa: E402
     primary_checkout_path,
     require_repository_root,
 )
-from repo_map_lib.validate_feature_list.features import feature_chain  # noqa: E402
+from repo_map_lib.validate_feature_list.features import (  # noqa: E402
+    feature_chain,
+    features_by_id,
+)
 
 
 CARD_SHAPE = {
@@ -62,22 +65,6 @@ def parser():
         "--cards", required=True, nargs="+", help="每个功能卡片 JSON 路径"
     )
     result.add_argument("--output", required=True, help="决定清单 JSON 路径")
-    return result
-
-
-def _feature_tree(document):
-    result = {}
-    pending = [document]
-    while pending:
-        feature = pending.pop()
-        if not isinstance(feature, dict):
-            continue
-        feature_id = feature.get("id")
-        if isinstance(feature_id, str):
-            result[feature_id] = feature
-        children = feature.get("children")
-        if isinstance(children, list):
-            pending.extend(reversed(children))
     return result
 
 
@@ -156,7 +143,7 @@ def _load_previous_features(repository, commit):
             f"无法读取上次认可提交 {commit} 的功能清单：{result.stderr.strip()}"
         )
     try:
-        return _feature_tree(
+        return features_by_id(
             json.loads(
                 result.stdout,
                 object_pairs_hook=object_without_duplicate_keys,

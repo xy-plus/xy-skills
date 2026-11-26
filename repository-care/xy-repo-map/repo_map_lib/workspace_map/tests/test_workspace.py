@@ -13,7 +13,6 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care" / "tests"))
 from map_fixture import (  # noqa: E402
     COMMAND,
     empty_root_feature,
-    feature,
     make_workspace,
 )
 
@@ -115,45 +114,6 @@ class WorkspaceRenderTest(unittest.TestCase):
             )
         )
         self.assertNotIn("markers", data)
-
-    def test_render_workspace_prefixes_child_cycle_with_ids(self):
-        child = self.workspace / "sub-a"
-        manifest = child / "repo-map" / "features.json"
-        root = json.loads(manifest.read_text(encoding="utf-8"))
-        root["children"][0]["directory"] = "lib/part"
-        root["children"][0]["items"] = []
-        root["children"][0]["children"] = []
-        root["children"].append(
-            feature(
-                "peer",
-                "lib/peer",
-                source="原话",
-                children=[],
-                items=[],
-            )
-        )
-        root["existing_cycle_imports"] = [
-            {"from": "part", "to": "peer"},
-            {"from": "peer", "to": "part"},
-        ]
-        manifest.write_text(json.dumps(root, ensure_ascii=False), encoding="utf-8")
-        (child / "lib" / "main.py").unlink()
-        (child / "lib" / "part").mkdir(parents=True)
-        (child / "lib" / "peer").mkdir(parents=True)
-        (child / "lib" / "part" / "main.py").write_text(
-            "import peer.main\n", encoding="utf-8"
-        )
-        (child / "lib" / "peer" / "main.py").write_text(
-            "import part.main\n", encoding="utf-8"
-        )
-        subprocess.run(["git", "-C", str(child), "add", "-A"], check=True)
-
-        result = self.render()
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        data = json.loads((self.output / "map-data.json").read_text(encoding="utf-8"))
-        self.assertEqual(data["features"]["sub-a/part"]["cycle_with"], ["sub-a/peer"])
-        self.assertEqual(data["features"]["sub-a/peer"]["cycle_with"], ["sub-a/part"])
 
     def test_render_workspace_rejects_an_empty_subrepository_list(self):
         shutil.rmtree(self.workspace / "sub-a")

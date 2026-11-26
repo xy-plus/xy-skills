@@ -2,13 +2,15 @@
 import json
 import subprocess
 
+from .features import features_by_id
+
 
 FEATURES_PATH = "repo-map/features.json"
 MISSING = object()
 
 
-def _git(repository, *arguments):
-    result = subprocess.run(
+def _run_git(repository, *arguments):
+    return subprocess.run(
         ["git", "-C", str(repository), *arguments],
         capture_output=True,
         text=True,
@@ -16,20 +18,17 @@ def _git(repository, *arguments):
         errors="replace",
         check=False,
     )
+
+
+def _git(repository, *arguments):
+    result = _run_git(repository, *arguments)
     if result.returncode:
         raise ValueError(result.stderr.strip() or "Git 命令失败")
     return result.stdout
 
 
 def _feature_map(repository, commit):
-    result = subprocess.run(
-        ["git", "-C", str(repository), "show", f"{commit}:{FEATURES_PATH}"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    result = _run_git(repository, "show", f"{commit}:{FEATURES_PATH}")
     if result.returncode:
         return None
     try:
@@ -39,22 +38,6 @@ def _feature_map(repository, commit):
     if not isinstance(document, dict):
         raise ValueError(f"{commit} 的 {FEATURES_PATH} 根记录必须是对象")
     return document
-
-
-def _features_by_id(document):
-    result = {}
-    pending = [document]
-    while pending:
-        feature = pending.pop()
-        if not isinstance(feature, dict):
-            continue
-        feature_id = feature.get("id")
-        if isinstance(feature_id, str):
-            result[feature_id] = feature
-        children = feature.get("children")
-        if isinstance(children, list):
-            pending.extend(reversed(children))
-    return result
 
 
 def _cycle_imports(document, commit):
@@ -143,8 +126,8 @@ def cycle_registry_change_errors(repository, base, head):
     if new_edges is MISSING:
         return ["送审功能图缺 existing_cycle_imports；名单只能删不能加。"]
 
-    old_features = _features_by_id(old_document)
-    current_features = _features_by_id(new_document)
+    old_features = features_by_id(old_document)
+    current_features = features_by_id(new_document)
     errors = []
     for source, target in sorted(new_edges):
         old_source = _base_feature_id(source, current_features, old_features)
