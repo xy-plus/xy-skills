@@ -16,14 +16,26 @@ from approvals import plan_data  # noqa: E402
 from cli_errors import report_cli_argument_error  # noqa: E402
 from decision_page import validate_decisions  # noqa: E402
 from json_validation import check_value, object_without_duplicate_keys  # noqa: E402
-from repo_map_lib.git_repository import ArgumentError  # noqa: E402
+from repo_map_lib.git_repository import (  # noqa: E402
+    ArgumentError,
+    require_repository_root,
+    run_git,
+)
 from repo_map_lib.validate_feature_list.features import feature_chain  # noqa: E402
 
 
 CARD_SHAPE = {
     "feature": "",
     "used": [{"who": "", "evidence": ""}],
-    "unused": [{"what": "", "evidence": "", "lines": "", "risk": ""}],
+    "unused": [
+        {
+            "what": "",
+            "evidence": "",
+            "reverse_search": "",
+            "lines": "",
+            "risk": "",
+        }
+    ],
     "changed": [""],
     "todo": [""],
     "map_issues": [""],
@@ -227,6 +239,7 @@ def _detail_card_lines(card):
         lines.extend(
             [
                 f"没人用的依据\t{item['evidence']}",
+                f"反查的依据\t{item['reverse_search']}",
                 f"可减\t{item['lines']} 行",
                 f"风险\t{item['risk']}",
             ]
@@ -242,7 +255,7 @@ def _details_title(feature, card, *, unapproved, draft_items):
     ]
     if not unapproved and card["changed"]:
         title_parts.append(f"变了什么 {len(card['changed'])} 条")
-    evidence_count = len(card["used"]) + len(card["unused"])
+    evidence_count = len(card["used"]) + 2 * len(card["unused"])
     if evidence_count:
         title_parts.append(f"依据 {evidence_count} 条")
     removable_lines = sum(item["lines"] for item in card["unused"])
@@ -466,6 +479,36 @@ def build_decisions(plan, cards):
     return validate_decisions(decisions), []
 
 
+def _primary_checkout_path(repository):
+    result = run_git(
+        repository,
+        "worktree",
+        "list",
+        "--porcelain",
+        "-z",
+        check=False,
+    )
+    if result.returncode != 0:
+        message = result.stderr.strip() or "无法读取 Git 工作树列表"
+        raise ValueError(message)
+    for entry in result.stdout.split("\0"):
+        if entry.startswith("worktree "):
+            return Path(entry[len("worktree "):]).resolve()
+    raise ValueError("无法从 Git 工作树列表找到主检出")
+
+
+def _unavailable_reverse_repositories(repository, relative_paths):
+    primary_checkout = _primary_checkout_path(repository)
+    unavailable = []
+    for relative_path in relative_paths:
+        candidate = (primary_checkout / relative_path).resolve()
+        try:
+            require_repository_root(candidate)
+        except (ArgumentError, OSError):
+            unavailable.append(str(candidate))
+    return unavailable
+
+
 def _write_output(path, decisions):
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -494,6 +537,23 @@ def main(argv):
         if not planned:
             raise ValueError("范围内没有变过的功能，不用出页")
         cards = _read_cards(options.cards)
+        has_unused = any(
+            isinstance(card, dict)
+            and isinstance(card.get("unused"), list)
+            and card["unused"]
+            for card in cards
+        )
+        used_by_repositories = values[data["root"]].get("used_by_repositories", [])
+        if has_unused and used_by_repositories:
+            unavailable = _unavailable_reverse_repositories(
+                options.repo,
+                used_by_repositories,
+            )
+            if unavailable:
+                raise ValueError(
+                    "反查不完整，不能判没人用；登记的仓找不到或不是 git 仓："
+                    + ", ".join(unavailable)
+                )
         decisions, problems = build_decisions(
             DecisionPlan(
                 options.repo,

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -132,12 +133,152 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertTrue(shared_check.called)
 
+    def test_rejects_unused_evidence_without_reverse_search(self):
+        value = card(
+            "alpha",
+            used=[],
+            unused=[
+                {
+                    "what": "旧版入口。",
+                    "evidence": "README 没有列它。",
+                    "lines": 3,
+                    "risk": "脚本可能仍在调用。",
+                }
+            ],
+        )
+
+        result = self.run_cards([value], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "缺少字段：卡片[0].unused[0].reverse_search",
+            result.stdout + result.stderr,
+        )
+
+    def test_rejects_empty_reverse_search(self):
+        value = card(
+            "alpha",
+            used=[],
+            unused=[
+                {
+                    "what": "旧版入口。",
+                    "evidence": "README 没有列它。",
+                    "reverse_search": "",
+                    "lines": 3,
+                    "risk": "脚本可能仍在调用。",
+                }
+            ],
+        )
+
+        result = self.run_cards([value], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "卡片[0].unused[0].reverse_search 不能为空",
+            result.stdout + result.stderr,
+        )
+
+    def test_unavailable_registered_repository_blocks_unused_decisions(self):
+        self._set_used_by_repositories(["../missing-reverse-source"])
+        unused = card(
+            "alpha",
+            used=[],
+            unused=[
+                {
+                    "what": "旧版入口。",
+                    "evidence": "README 没有列它。",
+                    "reverse_search": "检查本仓，没有别的引用。",
+                    "lines": 3,
+                    "risk": "脚本可能仍在调用。",
+                }
+            ],
+        )
+
+        result = self.run_cards([unused], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        output = result.stdout + result.stderr
+        self.assertIn("反查不完整，不能判没人用", output)
+        self.assertIn("missing-reverse-source", output)
+
+    def test_existing_registered_repository_allows_unused_decisions(self):
+        reverse_source = self.directory / "reverse-source"
+        self._make_git_repository(reverse_source)
+        self._set_used_by_repositories([os.path.relpath(reverse_source, self.primary)])
+        unused = card(
+            "alpha",
+            used=[],
+            unused=[
+                {
+                    "what": "旧版入口。",
+                    "evidence": "README 没有列它。",
+                    "reverse_search": "检查两个仓的引用，只有测试引用。",
+                    "lines": 3,
+                    "risk": "测试要随删除一起修改。",
+                }
+            ],
+        )
+
+        result = self.run_cards([unused], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unavailable_registered_repository_is_ignored_without_unused_items(self):
+        self._set_used_by_repositories(["../missing-reverse-source"])
+
+        result = self.run_cards(
+            [card("alpha")], scope=("alpha",), review="全部"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_registered_repository_paths_resolve_from_primary_checkout(self):
+        reverse_source = self.directory / "reverse-source"
+        self._make_git_repository(reverse_source)
+        self._set_used_by_repositories([os.path.relpath(reverse_source, self.primary)])
+        deep_checkout = self.directory / "isolated" / "nested" / "worktree"
+        deep_checkout.parent.mkdir(parents=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.repository),
+                "worktree",
+                "add",
+                "--detach",
+                str(deep_checkout),
+                "HEAD",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.repository = deep_checkout
+        unused = card(
+            "alpha",
+            used=[],
+            unused=[
+                {
+                    "what": "旧版入口。",
+                    "evidence": "README 没有列它。",
+                    "reverse_search": "检查登记的两个仓，没有产品代码引用。",
+                    "lines": 3,
+                    "risk": "测试要随删除一起修改。",
+                }
+            ],
+        )
+
+        result = self.run_cards([unused], scope=("alpha",), review="全部")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_output_uses_the_decision_page_schema(self):
         cards = self.default_cards()
         cards[1]["unused"] = [
             {
                 "what": "可选的旧格式导出入口。",
                 "evidence": "README 实际使用记录只选了新版入口。",
+                "reverse_search": "本仓全部分支、tag 和发布产物均没有其他引用。",
                 "lines": 12,
                 "risk": "旧调用方可能需要迁移。",
             }
@@ -193,6 +334,7 @@ class FeatureCardsTest(unittest.TestCase):
                 {
                     "what": "旧版导出按钮。",
                     "evidence": "README 未提到。",
+                    "reverse_search": "检查本仓全部分支、tag、发布产物和说明，没有其他引用。",
                     "lines": 1,
                     "risk": "旧调用方可能还在用。",
                 }
@@ -247,12 +389,14 @@ class FeatureCardsTest(unittest.TestCase):
                 {
                     "what": "旧版导出按钮。",
                     "evidence": "README 未提到。",
+                    "reverse_search": "检查本仓全部分支、tag、发布产物和说明，没有其他引用。",
                     "lines": 1,
                     "risk": "旧调用方可能还在用。",
                 },
                 {
                     "what": "调试命令",
                     "evidence": "仓内没有调用。",
+                    "reverse_search": "检查本仓全部分支、tag、发布产物和说明，没有其他引用。",
                     "lines": 2,
                     "risk": "维护者可能手工使用。",
                 },
@@ -475,6 +619,7 @@ class FeatureCardsTest(unittest.TestCase):
                 {
                     "what": "旧版导出按钮。",
                     "evidence": "查 README 和部署配置。",
+                    "reverse_search": "检查本仓全部分支、tag、发布产物和说明，没有其他引用。",
                     "lines": 12,
                     "risk": "旧用户可能还在用。",
                 }
@@ -490,11 +635,12 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertEqual(
             details,
             {
-                "title": "细节：理由（等你拍板）、依据 2 条、可减 12 行、风险 1 条、图上要改 1 处、TODO 大问题 1 条、起草条目 1 条",
+                "title": "细节：理由（等你拍板）、依据 3 条、可减 12 行、风险 1 条、图上要改 1 处、TODO 大问题 1 条、起草条目 1 条",
                 "lines": [
                     "为什么\t让 alpha 有用。（起草，等你拍板）",
                     "在用的依据\t查值班配置。",
                     "没人用的依据\t查 README 和部署配置。",
+                    "反查的依据\t检查本仓全部分支、tag、发布产物和说明，没有其他引用。",
                     "可减\t12 行",
                     "风险\t旧用户可能还在用。",
                     "图上要改\t功能说明需要改。",
@@ -705,6 +851,7 @@ class FeatureCardsTest(unittest.TestCase):
                 {
                     "what": "不用的入口。",
                     "evidence": "没有调用。",
+                    "reverse_search": "检查本仓全部分支和 tag。",
                     "lines": 1,
                 }
             ),
@@ -712,6 +859,7 @@ class FeatureCardsTest(unittest.TestCase):
                 {
                     "what": "不用的入口。",
                     "evidence": "没有调用。",
+                    "reverse_search": "检查本仓全部分支和 tag。",
                     "lines": 1,
                     "risk": "无。",
                     "extra": True,
@@ -721,6 +869,7 @@ class FeatureCardsTest(unittest.TestCase):
                 {
                     "what": " ",
                     "evidence": "没有调用。",
+                    "reverse_search": "检查本仓全部分支和 tag。",
                     "lines": 1,
                     "risk": "无。",
                 }
@@ -729,6 +878,7 @@ class FeatureCardsTest(unittest.TestCase):
                 {
                     "what": "不用的入口。",
                     "evidence": "没有调用。",
+                    "reverse_search": "检查本仓全部分支和 tag。",
                     "lines": -1,
                     "risk": "无。",
                 }
@@ -737,6 +887,7 @@ class FeatureCardsTest(unittest.TestCase):
                 {
                     "what": "不用的入口。",
                     "evidence": "没有调用。",
+                    "reverse_search": "检查本仓全部分支和 tag。",
                     "lines": True,
                     "risk": "无。",
                 }
@@ -778,6 +929,18 @@ class FeatureCardsTest(unittest.TestCase):
 
     def _commit_repository(self, message):
         self._commit_repository_at(self.repository, message)
+
+    def _set_used_by_repositories(self, repositories):
+        manifest = self.repository / "repo-map" / "features.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        document["used_by_repositories"] = repositories
+        manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        self._commit_repository("登记反查仓")
+
+    @staticmethod
+    def _make_git_repository(path):
+        path.mkdir(parents=True)
+        subprocess.run(["git", "-C", str(path), "init", "-q"], check=True)
 
     @staticmethod
     def _add_alpha_child_feature(repository):

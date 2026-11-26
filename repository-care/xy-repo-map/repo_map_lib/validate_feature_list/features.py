@@ -68,8 +68,15 @@ def _safe_relative_path(value, allow_directory_marker):
     return all(part not in ("", ".", "..") for part in path.split("/"))
 
 
-def _validate_feature_keys(value, allowed_keys, current, label, errors):
-    missing = allowed_keys - value.keys()
+def _validate_feature_keys(
+    value,
+    required_keys,
+    allowed_keys,
+    current,
+    label,
+    errors,
+):
+    missing = required_keys - value.keys()
     extra = value.keys() - allowed_keys
     for key in sorted(missing):
         if key == "items":
@@ -230,6 +237,33 @@ def _validate_root_paths(value, label, errors):
                 errors.append(
                     f"{label}的 external_dependencies 名字必须是非空字符串、首尾无空白且不含换行：{name!r}"
                 )
+    _validate_used_by_repositories(value, label, errors)
+
+
+def _validate_used_by_repositories(value, label, errors):
+    if "used_by_repositories" not in value:
+        return
+    repositories = value["used_by_repositories"]
+    if not isinstance(repositories, list) or any(
+        not isinstance(path, str) for path in repositories
+    ):
+        errors.append(f"{label}的 used_by_repositories 必须是字符串数组")
+        return
+
+    seen = set()
+    for index, path in enumerate(repositories):
+        path_label = f"{label}的 used_by_repositories[{index}]"
+        if not path or path.strip() != path:
+            errors.append(f"{path_label}必须是非空且首尾无空白的字符串：{path!r}")
+        if any(character in path for character in ("\n", "\r", "\u2028", "\u2029")):
+            errors.append(f"{path_label}不能含换行：{path!r}")
+        if path.startswith("/") or path == ".":
+            errors.append(f"{path_label}必须是相对路径且不能是 '.'：{path!r}")
+        if "\\" in path:
+            errors.append(f"{path_label}不能含反斜线：{path!r}")
+        if path in seen:
+            errors.append(f"{path_label}不能重复：{path!r}")
+        seen.add(path)
 
 
 @dataclass
@@ -246,12 +280,20 @@ def _collect_features(value, parent, collection, label):
     if not isinstance(value, dict):
         errors.append(f"{label}必须是对象")
         return
-    allowed_keys = FEATURE_KEYS | (
-        {"subrepositories", "external_dependencies"} if parent is None else set()
-    )
+    root_keys = {"subrepositories", "external_dependencies"} if parent is None else set()
+    required_keys = FEATURE_KEYS | root_keys
+    optional_keys = {"used_by_repositories"} if parent is None else set()
+    allowed_keys = required_keys | optional_keys
     feature_id = value.get("id")
     current = feature_id if isinstance(feature_id, str) else label
-    _validate_feature_keys(value, allowed_keys, current, label, errors)
+    _validate_feature_keys(
+        value,
+        required_keys,
+        allowed_keys,
+        current,
+        label,
+        errors,
+    )
 
     if not isinstance(feature_id, str) or FEATURE_ID.fullmatch(feature_id) is None:
         errors.append(f"{label}的 id 必须匹配 ^[a-z][a-z0-9-]*$：{feature_id!r}")

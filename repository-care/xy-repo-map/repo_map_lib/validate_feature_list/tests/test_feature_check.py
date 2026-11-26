@@ -70,6 +70,78 @@ class FeatureCheckBase(unittest.TestCase):
 
 
 class FeatureCheckTest(FeatureCheckBase):
+    def test_used_by_repositories_is_optional_on_the_root(self):
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        root = empty_root_feature()
+        root["used_by_repositories"] = []
+        self.set_features(root)
+
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_accepts_relative_used_by_repositories_without_checking_paths(self):
+        root = empty_root_feature()
+        root["used_by_repositories"] = ["..", "../not-checked-out", "sibling/repo"]
+        self.set_features(root)
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rejects_invalid_used_by_repository_values(self):
+        cases = [
+            ("不是数组", "other", "used_by_repositories 必须是字符串数组"),
+            ("元素不是字符串", [7], "used_by_repositories 必须是字符串数组"),
+            ("空路径", [""], "used_by_repositories"),
+            ("首尾空白", [" repo"], "used_by_repositories"),
+            ("换行", ["repo\nother"], "used_by_repositories"),
+            ("绝对路径", ["/repo"], "used_by_repositories"),
+            ("反斜线", ["..\\repo"], "used_by_repositories"),
+            ("当前目录", ["."], "used_by_repositories"),
+            ("重复路径", ["../repo", "../repo"], "used_by_repositories"),
+        ]
+        for name, paths, expected in cases:
+            with self.subTest(value=name):
+                root = empty_root_feature()
+                root["used_by_repositories"] = paths
+                self.set_features(root)
+
+                result = self.check()
+                output = result.stdout + result.stderr
+
+                self.assertEqual(result.returncode, 1, output)
+                self.assertIn(expected, output)
+                self.assertNotIn("根功能有多余键 used_by_repositories", output)
+
+    def test_rejects_used_by_repositories_on_a_child_feature(self):
+        self.write("child/readme.md", "child\n")
+        child = feature(
+            "child",
+            "child",
+            children=[],
+            source="原话",
+            items=[],
+        )
+        child["used_by_repositories"] = []
+        root = make_root_feature(
+            "root",
+            "",
+            children=[child],
+            subrepositories=[],
+            external_dependencies=[],
+            source="原话",
+            items=[],
+        )
+        self.set_features(root)
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("子功能有多余键 used_by_repositories", output)
+
     def test_allows_subrepositories_only_on_the_root_feature(self):
         self.write("child/readme.md", "child\n")
         child = make_root_feature(
