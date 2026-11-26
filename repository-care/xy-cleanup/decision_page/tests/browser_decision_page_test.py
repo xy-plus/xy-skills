@@ -249,6 +249,35 @@ class DecisionPageBrowserTest(unittest.TestCase):
         if title is not None:
             self.assertEqual(page.locator("#page-title").inner_text(), title)
 
+    def _assert_failed_submit_shows_receipt_conflict(
+        self, page_html, receipt_html, change_answer=False
+    ):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            answers_path = Path(temporary) / "answers.json"
+            with browser_receiver(
+                Path(temporary), page_html, browser_decisions(), answers_path, True
+            ) as (_receiver_thread, bridge):
+                bridge.received_page_html = receipt_html
+                with sync_playwright() as playwright:
+                    browser, page = self._open_page(
+                        playwright, executable, bridge, []
+                    )
+                    try:
+                        page.evaluate(FAST_PAGE_TIMERS_SCRIPT)
+                        item = page.locator('[data-item-id="A1"]')
+                        if change_answer:
+                            item.locator('input[value="Remove"]').check()
+                            item.locator("textarea").fill("本页尚未保存的回答。")
+                        page.locator("#submit").click()
+                        page.set_default_timeout(1000)
+                        self._assert_conflict_remains_editable(page, item)
+                    finally:
+                        browser.close()
+
     def _expand_folded_details(self, page, item, expected_lines):
         disclosure = item.locator(".decision-details")
         self.assertFalse(disclosure.evaluate("element => element.open"))
@@ -671,10 +700,6 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 self.assertEqual(script_errors, [])
 
     def test_failed_submit_with_a_different_static_answer_shows_conflict(self):
-        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
-        self.assertTrue(
-            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
-        )
         decisions = browser_decisions()
         saved_answers = {
             "A1": {"option": "Keep", "note": "已保存的回答。"},
@@ -688,31 +713,11 @@ class DecisionPageBrowserTest(unittest.TestCase):
             saved_answers,
             call_id=embedded_page_data(page_html)[1]["call_id"],
         )
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            answers_path = Path(temporary) / "answers.json"
-            with browser_receiver(
-                Path(temporary), page_html, decisions, answers_path, True
-            ) as (_receiver_thread, bridge):
-                bridge.received_page_html = receipt_html
-                with sync_playwright() as playwright:
-                    browser, page = self._open_page(
-                        playwright, executable, bridge, []
-                    )
-                    page.evaluate(
-                        FAST_PAGE_TIMERS_SCRIPT
-                    )
-                    item = page.locator('[data-item-id="A1"]')
-                    item.locator('input[value="Remove"]').check()
-                    item.locator("textarea").fill("本页尚未保存的回答。")
-                    page.locator("#submit").click()
-                    self._assert_conflict_remains_editable(page, item)
-                    browser.close()
+        self._assert_failed_submit_shows_receipt_conflict(
+            page_html, receipt_html, change_answer=True
+        )
 
     def test_failed_submit_with_a_different_receipt_id_shows_conflict(self):
-        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
-        self.assertTrue(
-            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
-        )
         decisions = browser_decisions()
         answers = {
             "A1": {"option": "Keep", "note": ""},
@@ -729,24 +734,7 @@ class DecisionPageBrowserTest(unittest.TestCase):
         receipt_html = decision_page.render_received_page(
             decisions, answers, call_id=previous_call_id
         )
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            answers_path = Path(temporary) / "answers.json"
-            with browser_receiver(
-                Path(temporary), page_html, decisions, answers_path, True
-            ) as (_receiver_thread, bridge):
-                bridge.received_page_html = receipt_html
-                with sync_playwright() as playwright:
-                    browser, page = self._open_page(
-                        playwright, executable, bridge, []
-                    )
-                    page.evaluate(
-                        FAST_PAGE_TIMERS_SCRIPT
-                    )
-                    item = page.locator('[data-item-id="A1"]')
-                    page.locator("#submit").click()
-                    page.set_default_timeout(1000)
-                    self._assert_conflict_remains_editable(page, item)
-                    browser.close()
+        self._assert_failed_submit_shows_receipt_conflict(page_html, receipt_html)
 
     def test_409_shows_conflict_without_locking_this_page(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
