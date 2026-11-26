@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+__DECISION_STATE_META__
 <title>决定</title>
 <link rel="icon" href="data:,">
 <style>
@@ -54,6 +55,13 @@ const storageKey = `cleanup-decisions:${pageData.call_id}`;
 const items = decisions.groups.flatMap((group) => group.items);
 const selected = new Map(items.map((item) => [item.id, item.recommended]));
 const notes = new Map(items.map((item) => [item.id, ""]));
+const receivedAnswers = pageData.answers ?? null;
+if (receivedAnswers !== null) {
+  for (const item of items) {
+    selected.set(item.id, receivedAnswers[item.id].option);
+    notes.set(item.id, receivedAnswers[item.id].note);
+  }
+}
 const cards = new Map();
 const feedback = document.querySelector("#feedback");
 const submitButton = document.querySelector("#submit");
@@ -185,6 +193,7 @@ function renderItem(item) {
     input.name = item.id;
     input.value = option;
     input.checked = selected.get(item.id) === option;
+    input.disabled = receivedAnswers !== null;
     label.classList.toggle("picked", input.checked);
     input.addEventListener("change", () => {
       selected.set(item.id, option);
@@ -205,6 +214,7 @@ function renderItem(item) {
   note.placeholder = "写了字就以你写的为准；选项只作参考。可以不填。";
   note.setAttribute("aria-label", `${item.id} 自己的说明`);
   note.value = notes.get(item.id);
+  note.disabled = receivedAnswers !== null;
   note.addEventListener("input", () => {
     notes.set(item.id, note.value);
     save();
@@ -240,6 +250,10 @@ async function submitAnswers() {
   }
 
   if (problem) {
+    if (await pageHasReceivedAnswers()) {
+      lockSubmittedPage();
+      return;
+    }
     submitButton.disabled = false;
     submitButton.textContent = "再提交一次";
     feedback.textContent = `提交失败：${problem}。已选和已写内容还在，可以再试。`;
@@ -247,6 +261,10 @@ async function submitAnswers() {
     return;
   }
 
+  lockSubmittedPage();
+}
+
+function lockSubmittedPage() {
   for (const control of document.querySelectorAll(".item input, .item textarea")) {
     control.disabled = true;
   }
@@ -259,9 +277,27 @@ async function submitAnswers() {
   }
 }
 
-loadSaved();
-document.title = decisions.title;
-document.querySelector("#page-title").textContent = decisions.title;
+async function pageHasReceivedAnswers() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    try {
+      const response = await fetch(window.location.href, { cache: "no-store" });
+      if (!response.ok) continue;
+      const page = new DOMParser().parseFromString(await response.text(), "text/html");
+      if (page.querySelector('meta[name="decision-state"]')?.content === "received") {
+        return true;
+      }
+    } catch (error) {
+      // The page may briefly be unavailable while the portal switches mounts.
+    }
+  }
+  return false;
+}
+
+if (receivedAnswers === null) loadSaved();
+document.title = receivedAnswers === null ? decisions.title : "已收到";
+document.querySelector("#page-title").textContent =
+  receivedAnswers === null ? decisions.title : "已收到";
 for (const paragraph of decisions.intro) {
   document.querySelector("#intro").append(make("p", "", paragraph));
 }
@@ -276,6 +312,10 @@ for (const footnote of decisions.footnotes) {
   container.append(make("h2", "", footnote.title));
   for (const line of footnote.lines) container.append(make("p", "footnote", line));
 }
-submitButton.addEventListener("click", submitAnswers);
-refresh();
+if (receivedAnswers === null) {
+  submitButton.addEventListener("click", submitAnswers);
+  refresh();
+} else {
+  lockSubmittedPage();
+}
 </script>

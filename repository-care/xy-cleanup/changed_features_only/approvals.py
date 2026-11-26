@@ -17,6 +17,7 @@ APPROVED_RELATIVE_PATH = "repo-map/approved.json"
 FEATURES_RELATIVE_PATH = "repo-map/features.json"
 SKIP_RELATIVE_PATH = "repo-map/skip.json"
 APPROVED_VALUE = re.compile(r"^[0-9a-f]{40}$")
+REASK_OPTION = "留，下次还问我"
 EXCLUDED_PATHS = {FEATURES_RELATIVE_PATH, APPROVED_RELATIVE_PATH, SKIP_RELATIVE_PATH}
 sys.path.insert(0, str(REPOSITORY_ROOT))
 sys.path.insert(0, str(REPOSITORY_CARE / "xy-repo-map"))
@@ -31,6 +32,7 @@ from repo_map_lib.validate_feature_list.features import (  # noqa: E402
 )
 from repo_map_lib.git_repository import (  # noqa: E402
     ArgumentError,
+    primary_checkout_name,
     require_repository_root,
     run_git,
     tracked_paths,
@@ -80,6 +82,17 @@ def _require_clean_worktree(repository):
         "status",
         "--porcelain",
         "--untracked-files=all",
+    )
+    if changes:
+        raise ValueError("工作树必须干净；请先提交或清理所有改动")
+
+
+def _require_tracked_worktree_clean(repository):
+    changes = _git_output(
+        repository,
+        "status",
+        "--porcelain",
+        "--untracked-files=no",
     )
     if changes:
         raise ValueError("工作树必须干净；请先提交或清理所有改动")
@@ -599,7 +612,7 @@ def _plan_changes(inputs):
 def plan_data(repository, scope, review):
     """Return the checked map, committed approvals, plan rows, and planning HEAD."""
     root = require_repository_root(repository)
-    _require_clean_worktree(root)
+    _require_tracked_worktree_clean(root)
     head = _head_commit(root)
     data = build_map(root)
     validate_scope(data, scope, "--scope")
@@ -684,7 +697,7 @@ def _answered_features(decisions, answer_document):
 
 
 def _plan_commit_from_title(repository, title, head):
-    prefix = f"清扫决定：{Path(repository).name} 计划提交 "
+    prefix = f"清扫决定：{primary_checkout_name(repository)} 计划提交 "
     if not isinstance(title, str) or not title.startswith(prefix):
         raise ValueError("决定清单 title 必须写本仓的计划提交")
     commit = title[len(prefix) :]
@@ -695,6 +708,66 @@ def _plan_commit_from_title(repository, title, head):
     if not _is_ancestor(repository, commit, head):
         raise ValueError(f"计划提交不是当前 HEAD 的祖先：{commit}")
     return commit
+
+
+def _first_parent_merges(repository, plan_commit, head):
+    merges = []
+    commit = head
+    while commit != plan_commit:
+        fields = _git_output(repository, "rev-list", "--parents", "-n", "1", commit)
+        parents = fields.split()
+        if len(parents) < 2:
+            raise ValueError("计划提交不是当前 HEAD 第一父链上的祖先")
+        first_parent = parents[1]
+        if len(parents) > 2:
+            merges.append((commit, first_parent))
+        commit = first_parent
+    return merges
+
+
+def _mainline_changed_features(repository, plan_commit, head, data, values):
+    current_snapshot = _current_snapshot(data, values)
+    current_skip = _current_skip_set(repository)
+    changed = set()
+    for merge_commit, first_parent in _first_parent_merges(
+        repository, plan_commit, head
+    ):
+        old_snapshot = _feature_snapshot(repository, first_parent)
+        merge_snapshot = _feature_snapshot(repository, merge_commit)
+        _directory_snapshot(
+            old_snapshot, current_snapshot["root"], first_parent, [current_snapshot["root"]]
+        )
+        _directory_snapshot(
+            merge_snapshot,
+            current_snapshot["root"],
+            merge_commit,
+            [current_snapshot["root"]],
+        )
+        comparison = FileComparison(
+            Path(repository),
+            first_parent,
+            merge_commit,
+            old_snapshot,
+            current_snapshot,
+            _skip_set_from_commit(repository, first_parent),
+            current_skip,
+        )
+        transfers = []
+        for change in _diff_records(repository, first_parent, merge_commit):
+            _record_diff_owners(comparison, change, changed, transfers)
+
+        for feature_id in current_snapshot["order"]:
+            if (
+                feature_id not in old_snapshot["features"]
+                or feature_id not in merge_snapshot["features"]
+                or _registration_changed(old_snapshot, merge_snapshot, feature_id)
+            ):
+                changed.add(feature_id)
+        if _skip_set_from_commit(repository, first_parent) != _skip_set_from_commit(
+            repository, merge_commit
+        ):
+            changed.add(current_snapshot["root"])
+    return changed
 
 
 def _reject_reused_answers(repository, records, feature_ids, plan_commit):
@@ -710,13 +783,38 @@ def _reject_reused_answers(repository, records, feature_ids, plan_commit):
         raise ValueError("这份回答对应的功能已经记过：" + ", ".join(reused))
 
 
-def _validate_record_features(values, records, feature_ids, plan_commit, repository):
+def _validate_record_features(
+    values,
+    records,
+    feature_ids,
+    answers,
+    plan_commit,
+    repository,
+    mainline_changed,
+):
     current_ids = set(values)
     selected = [feature_id for feature_id in feature_ids if feature_id in current_ids]
-    _reject_reused_answers(repository, records, selected, plan_commit)
-    drafts = [
+    reask = [
         feature_id
         for feature_id in selected
+        if answers[feature_id]["option"] == REASK_OPTION
+    ]
+    answer_again = set(reask)
+    defer_from_mainline = [
+        feature_id
+        for feature_id in selected
+        if feature_id in mainline_changed and feature_id not in answer_again
+    ]
+    defer = set(defer_from_mainline)
+    to_record = [
+        feature_id
+        for feature_id in selected
+        if feature_id not in answer_again and feature_id not in defer
+    ]
+    _reject_reused_answers(repository, records, to_record, plan_commit)
+    drafts = [
+        feature_id
+        for feature_id in to_record
         if values[feature_id]["why"]["source"] == "起草"
         or any(item["status"] == "起草" for item in values[feature_id]["items"])
     ]
@@ -725,15 +823,26 @@ def _validate_record_features(values, records, feature_ids, plan_commit, reposit
             "拒绝记录：这些功能的 why.source 或 items.status 仍是 起草："
             + ", ".join(drafts)
         )
-    return selected
+    return to_record, reask, defer_from_mainline
 
 
-def _write_approvals(repository, head, values, records, selected):
+def _write_approvals(
+    repository,
+    head,
+    values,
+    records,
+    selected,
+    remove,
+    mainline_deferred,
+):
     approved_path = Path(repository) / APPROVED_RELATIVE_PATH
+    removed = set(remove)
     updated = {
         feature_id: commit
         for feature_id, commit in records.items()
-        if feature_id in values and feature_id not in selected
+        if feature_id in values
+        and feature_id not in selected
+        and feature_id not in removed
     }
     updated.update({feature_id: head for feature_id in selected})
     content = json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -754,7 +863,15 @@ def _write_approvals(repository, head, values, records, selected):
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
-    return f"已记录 {len(selected)} 个功能：{approved_path}"
+    lines = [f"已记录 {len(selected)} 个功能：{approved_path}"]
+    lines.extend(
+        f"留到下次清扫：{feature_id}（主线带来改动）"
+        for feature_id in mainline_deferred
+    )
+    lines.extend(
+        f"留到下次清扫：{feature_id}（用户选择再问）" for feature_id in remove
+    )
+    return "\n".join(lines)
 
 
 def record_decisions(repository, decisions_path, answers_path):
@@ -762,17 +879,34 @@ def record_decisions(repository, decisions_path, answers_path):
     _require_linked_worktree(root)
     _require_clean_worktree(root)
     head = _head_commit(root)
-    _data = build_map(root)
+    data = build_map(root)
     values, _order = feature_values(root)
     records = _read_committed_approvals(root, head)
     decisions = _load_input_json(decisions_path, "决定清单")
     answers = _load_input_json(answers_path, "回答文件")
-    title, feature_ids, _checked_answers = _answered_features(decisions, answers)
+    title, feature_ids, checked_answers = _answered_features(decisions, answers)
     plan_commit = _plan_commit_from_title(root, title, head)
-    selected = _validate_record_features(
-        values, records, feature_ids, plan_commit, root
+    mainline_changed = _mainline_changed_features(
+        root, plan_commit, head, data, values
     )
-    return _write_approvals(root, head, values, records, selected)
+    selected, reask, mainline_deferred = _validate_record_features(
+        values,
+        records,
+        feature_ids,
+        checked_answers,
+        plan_commit,
+        root,
+        mainline_changed,
+    )
+    return _write_approvals(
+        root,
+        head,
+        values,
+        records,
+        selected,
+        reask,
+        mainline_deferred,
+    )
 
 
 def main(argv):

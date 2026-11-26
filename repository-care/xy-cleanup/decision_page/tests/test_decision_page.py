@@ -85,18 +85,19 @@ class UnixSocketHTTPConnection(http.client.HTTPConnection):
         self.sock.connect(self.socket_path)
 
 
-def request_socket(socket_path, method, path, data):
+def request_socket(socket_path, method, path, data, timeout=None):
     body = None if data is None else json.dumps(data).encode("utf-8")
     headers = {"Connection": "close"}
     if body is not None:
         headers["Content-Type"] = "application/json"
         headers["Content-Length"] = str(len(body))
-    connection = UnixSocketHTTPConnection(socket_path, timeout=None)
-    connection.request(method, path, body=body, headers=headers)
-    response = connection.getresponse()
-    result = response.status, response.read()
-    connection.close()
-    return result
+    connection = UnixSocketHTTPConnection(socket_path, timeout=timeout)
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
 
 
 def request_raw_socket(socket_path, raw_body, content_length):
@@ -142,9 +143,9 @@ def decision_receiver(directory, decisions, answers):
         yield str(socket_path), serving
     finally:
         stop_event.set()
+        serving.join(2)
         server.server_close()
         socket_path.unlink(missing_ok=True)
-        serving.join(2)
 
 
 def run_ask(decisions, answers, runner):
@@ -168,7 +169,13 @@ def run_ask(decisions, answers, runner):
 
 
 @contextmanager
-def running_ask(decisions_path, answers_path):
+def running_ask(decisions_path, answers_path, portal_script=None):
+    portal_patcher = (
+        patch.object(decision_page, "PORTAL_SCRIPT", portal_script)
+        if portal_script is not None
+        else nullcontext()
+    )
+    portal_patcher.__enter__()
     decisions = json.loads(decisions_path.read_text(encoding="utf-8"))
     call = {
         "calls": [],
@@ -177,6 +184,7 @@ def running_ask(decisions_path, answers_path):
         "result": {},
         "stdout": io.StringIO(),
         "stderr": io.StringIO(),
+        "published_page": None,
     }
 
     def platform_runner(arguments):
@@ -202,6 +210,10 @@ def running_ask(decisions_path, answers_path):
                 "https://portal.example/decision-test/\n" if valid_page else "",
                 "" if valid_page else "mount verification failed\n",
             )
+        if arguments[2] == "publish":
+            call["published_page"] = (
+                Path(arguments[4]) / "index.html"
+            ).read_text(encoding="utf-8")
         return subprocess.CompletedProcess(arguments, 0, "", "")
 
     command = [
@@ -230,7 +242,10 @@ def running_ask(decisions_path, answers_path):
     try:
         yield call
     finally:
-        if call["thread"].is_alive() and call["calls"]:
+        mount = next(
+            (entry for entry in call["calls"] if entry[2] == "mount"), None
+        )
+        if call["thread"].is_alive() and mount is not None:
             try:
                 default_answers = {
                     item["id"]: {"option": item["recommended"], "note": ""}
@@ -238,7 +253,7 @@ def running_ask(decisions_path, answers_path):
                     for item in group["items"]
                 }
                 request_socket(
-                    call["calls"][0][5],
+                    mount[5],
                     "POST",
                     "/submit",
                     {"answers": default_answers},
@@ -246,6 +261,7 @@ def running_ask(decisions_path, answers_path):
             except (OSError, http.client.HTTPException):
                 pass
         call["thread"].join(5)
+        portal_patcher.__exit__(None, None, None)
 
 
 @contextmanager
@@ -512,6 +528,28 @@ class DecisionPageCommandTest(unittest.TestCase):
         self.assertTrue(first_call_id)
         self.assertNotEqual(first_call_id, second_call_id)
 
+    def test_received_page_contains_a_machine_readable_marker_and_saved_answers(self):
+        self.assertTrue(
+            hasattr(decision_page, "render_received_page"),
+            "决定页模块必须能生成静态已收到页",
+        )
+        answers = {"A1": {"option": "Remove", "note": "用户写的说明。"}}
+
+        page = decision_page.render_received_page(valid_decisions(), answers)
+
+        self.assertIn(
+            '<meta name="decision-state" content="received">', page
+        )
+        embedded = re.search(
+            r'<script id="decision-data" type="application/json">(.*?)</script>',
+            page,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(embedded)
+        page_data = json.loads(embedded.group(1))
+        self.assertEqual(page_data["state"], "received")
+        self.assertEqual(page_data["answers"], answers)
+
     def test_ask_serves_the_page_and_unmounts_after_answer(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             decisions = Path(temporary) / "decisions.json"
@@ -541,7 +579,7 @@ class DecisionPageCommandTest(unittest.TestCase):
                 status, _ = request_socket(socket_path, "GET", "/index.html", None)
                 self.assertEqual(status, 404)
 
-                answers_data = {"A1": {"option": "Keep", "note": ""}}
+                answers_data = {"A1": {"option": "Keep", "note": "用户的备注。"}}
                 status, body = request_socket(
                     socket_path, "POST", "/submit", {"answers": answers_data}
                 )
@@ -550,8 +588,14 @@ class DecisionPageCommandTest(unittest.TestCase):
                 self.assertFalse(call["thread"].is_alive())
                 self.assertEqual(call["result"]["code"], 0)
                 self.assertEqual(
-                    [entry[2] for entry in call["calls"]], ["mount", "unmount"]
+                    [entry[2] for entry in call["calls"]],
+                    ["mount", "unmount", "publish"],
                 )
+                self.assertIn(
+                    '<meta name="decision-state" content="received">',
+                    call["published_page"],
+                )
+                self.assertIn("用户的备注。", call["published_page"])
                 self.assertIn(
                     "https://portal.example/decision-test/", call["stdout"].getvalue()
                 )
@@ -560,6 +604,125 @@ class DecisionPageCommandTest(unittest.TestCase):
                     {"title": "Cleanup decisions", "answers": answers_data},
                 )
                 self.assertFalse(Path(socket_path).exists())
+
+    def test_duplicate_submissions_return_success_only_for_the_saved_answers(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            directory = Path(temporary)
+            answers_path = directory / "answers.json"
+            decisions = valid_decisions()
+            with decision_receiver(directory, decisions, answers_path) as (
+                socket_path,
+                serving,
+            ):
+                submitted = {
+                    "answers": {"A1": {"option": "Keep", "note": "原备注。"}}
+                }
+                status, body = request_socket(
+                    socket_path, "POST", "/submit", submitted
+                )
+                self.assertEqual(status, 200, body)
+                try:
+                    same_status, same_body = request_socket(
+                        socket_path,
+                        "POST",
+                        "/submit",
+                        submitted,
+                        timeout=1,
+                    )
+                    different_status, different_body = request_socket(
+                        socket_path,
+                        "POST",
+                        "/submit",
+                        {
+                            "answers": {
+                                "A1": {"option": "Keep", "note": "不同备注。"}
+                            }
+                        },
+                        timeout=1,
+                    )
+                except (OSError, http.client.HTTPException) as error:
+                    self.fail(f"已提交的服务没有处理重复提交：{error}")
+                self.assertEqual(same_status, 200, same_body)
+                self.assertEqual(different_status, 409, different_body)
+                self.assertEqual(
+                    json.loads(answers_path.read_text(encoding="utf-8"))["answers"],
+                    submitted["answers"],
+                )
+                self.assertTrue(serving.is_alive())
+
+    def test_ask_replaces_only_an_existing_static_received_page(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            directory = Path(temporary)
+            portal_script = directory / "portal.py"
+            decisions = directory / "decisions.json"
+            answers = directory / "answers.json"
+            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+            published = directory / "published" / "decision-test-old"
+            published.mkdir(parents=True)
+            (published / "index.html").write_text(
+                '<meta name="decision-state" content="received">',
+                encoding="utf-8",
+            )
+            site = directory / "sites" / "decision-test"
+            site.parent.mkdir()
+            site.symlink_to(published, target_is_directory=True)
+
+            with running_ask(decisions, answers, portal_script) as call:
+                self.assertTrue(call["mounted"].wait(3), call["stderr"].getvalue())
+                self.assertEqual(
+                    [entry[2] for entry in call["calls"][:2]],
+                    ["unmount", "mount"],
+                )
+                socket_path = next(
+                    entry[5] for entry in call["calls"] if entry[2] == "mount"
+                )
+                status, body = request_socket(
+                    socket_path,
+                    "POST",
+                    "/submit",
+                    {"answers": {"A1": {"option": "Keep", "note": ""}}},
+                )
+                self.assertEqual(status, 200, body)
+                call["thread"].join(5)
+                self.assertFalse(call["thread"].is_alive())
+                self.assertEqual(call["result"]["code"], 0)
+                self.assertEqual(
+                    [entry[2] for entry in call["calls"]],
+                    ["unmount", "mount", "unmount", "publish"],
+                )
+
+    def test_ask_does_not_remove_another_static_site_with_the_same_name(self):
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            directory = Path(temporary)
+            portal_script = directory / "portal.py"
+            decisions = directory / "decisions.json"
+            answers = directory / "answers.json"
+            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+            published = directory / "published" / "decision-test-old"
+            published.mkdir(parents=True)
+            (published / "index.html").write_text("other page", encoding="utf-8")
+            site = directory / "sites" / "decision-test"
+            site.parent.mkdir()
+            site.symlink_to(published, target_is_directory=True)
+            calls = []
+
+            def platform_runner(arguments):
+                calls.append(arguments)
+                return subprocess.CompletedProcess(
+                    arguments,
+                    1,
+                    "",
+                    "挂载名已有目录挂载",
+                )
+
+            with patch.object(decision_page, "PORTAL_SCRIPT", portal_script):
+                code, _stdout, stderr = run_ask(
+                    decisions, answers, platform_runner
+                )
+
+            self.assertEqual(code, 1, stderr)
+            self.assertEqual([entry[2] for entry in calls], ["mount"])
+            self.assertTrue(site.is_symlink())
 
     def test_ask_rejects_invalid_and_oversized_submissions(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -639,8 +802,7 @@ class DecisionPageCommandTest(unittest.TestCase):
                     str(socket_path), "POST", "/submit", valid_payload
                 )
                 self.assertEqual(status, 200, body)
-                serving.join(5)
-                self.assertFalse(serving.is_alive())
+                self.assertTrue(serving.is_alive())
                 self.assertEqual(
                     json.loads(answers_path.read_text(encoding="utf-8")),
                     {"title": decisions["title"], "answers": valid_payload["answers"]},
@@ -707,11 +869,11 @@ class DecisionPageCommandTest(unittest.TestCase):
 
                     self.assertIn(b"HTTP/1.0 200 OK", response)
                     self.assertTrue(answers.exists())
+                    self.assertTrue(serving.is_alive())
                 finally:
                     partial.shutdown(socket.SHUT_WR)
                     partial.close()
                     complete.close()
-            self.assertFalse(serving.is_alive())
 
     def test_slow_page_reader_receives_complete_response_after_timeout_period(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:

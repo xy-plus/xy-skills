@@ -43,7 +43,7 @@ def decisions_document(title, feature_ids):
                         "id": feature_id,
                         "title": feature_id,
                         "lines": ["认可后变过。"],
-                        "options": ["照建议", "留"],
+                        "options": ["照建议", "留", "留，下次还问我"],
                         "recommended": "照建议",
                         "compare": None,
                         "details": None,
@@ -56,11 +56,16 @@ def decisions_document(title, feature_ids):
     }
 
 
-def answers_document(title, feature_ids):
+def answers_document(title, feature_ids, choices=None):
+    choices = choices or {}
     return {
         "title": title,
         "answers": {
-            feature_id: {"option": "照建议", "note": ""} for feature_id in feature_ids
+            feature_id: {
+                "option": choices.get(feature_id, "照建议"),
+                "note": "",
+            }
+            for feature_id in feature_ids
         },
     }
 
@@ -125,9 +130,9 @@ class ApprovalPlanTest(unittest.TestCase):
         return run_git(target, "rev-parse", "HEAD")
 
     def title(self, commit=None):
-        return f"清扫决定：{self.repository.name} 计划提交 {commit or self.plan_commit}"
+        return f"清扫决定：{self.primary.name} 计划提交 {commit or self.plan_commit}"
 
-    def record_files(self, feature_ids=("alpha",), title=None):
+    def record_files(self, feature_ids=("alpha",), title=None, choices=None):
         selected_title = title or self.title()
         decisions_path = self.parent / "decisions.json"
         answers_path = self.parent / "answers.json"
@@ -139,14 +144,17 @@ class ApprovalPlanTest(unittest.TestCase):
         )
         answers_path.write_text(
             json.dumps(
-                answers_document(selected_title, feature_ids), ensure_ascii=False
+                answers_document(selected_title, feature_ids, choices),
+                ensure_ascii=False,
             ),
             encoding="utf-8",
         )
         return decisions_path, answers_path
 
-    def record(self, feature_ids=("alpha",), repository=None, title=None):
-        decisions_path, answers_path = self.record_files(feature_ids, title)
+    def record(self, feature_ids=("alpha",), repository=None, title=None, choices=None):
+        decisions_path, answers_path = self.record_files(
+            feature_ids, title, choices
+        )
         return self.run_record_files(decisions_path, answers_path, repository)
 
     def run_record_files(self, decisions_path, answers_path, repository=None):
@@ -167,9 +175,16 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(result.stdout, "范围内没有变过的功能（范围内 3 个）\n")
 
         (self.repository / "untracked.txt").write_text("dirty\n", encoding="utf-8")
-        dirty = self.plan()
-        self.assertEqual(dirty.returncode, 1, dirty.stdout + dirty.stderr)
-        self.assertIn("工作树必须干净", dirty.stdout + dirty.stderr)
+        untracked = self.plan()
+        self.assertEqual(untracked.returncode, 0, untracked.stdout + untracked.stderr)
+        self.assertEqual(untracked.stdout, "范围内没有变过的功能（范围内 3 个）\n")
+
+        (self.repository / "alpha" / "main.py").write_text(
+            "value = 10\n", encoding="utf-8"
+        )
+        tracked = self.plan()
+        self.assertEqual(tracked.returncode, 1, tracked.stdout + tracked.stderr)
+        self.assertIn("工作树必须干净", tracked.stdout + tracked.stderr)
 
     def test_plan_detects_only_changed_owned_file(self):
         (self.repository / "alpha" / "main.py").write_text(
@@ -507,6 +522,113 @@ class ApprovalPlanTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("主检出", result.stdout + result.stderr)
+
+    def test_record_rejects_linked_worktree_name_in_decision_title(self):
+        result = self.record(
+            ("alpha",),
+            title=f"清扫决定：{self.repository.name} 计划提交 {self.plan_commit}",
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("title", result.stdout + result.stderr)
+
+    def test_reask_removes_old_approval_and_allows_draft_items(self):
+        path = self.repository / "repo-map" / "features.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["children"][0]["items"][0]["status"] = "起草"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        self.commit_changes("起草 alpha")
+
+        result = self.record(
+            ("alpha",), choices={"alpha": "留，下次还问我"}
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        saved = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertNotIn("alpha", saved)
+
+    def test_record_keeps_features_changed_by_a_merged_mainline(self):
+        self._merge_mainline_change("beta-file")
+
+        result = self.record(("alpha", "beta"))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        saved = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        head = run_git(self.repository, "rev-parse", "HEAD")
+        self.assertEqual(saved["alpha"], head)
+        self.assertEqual(saved["beta"], self.approval_base)
+        self.assertIn("留到下次清扫：beta（主线带来改动）", result.stdout)
+
+    def test_record_uses_mainline_feature_registration_changes_and_ignores_its_draft(self):
+        self._merge_mainline_change("beta-registration-draft")
+
+        result = self.record(("alpha", "beta"))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        saved = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        head = run_git(self.repository, "rev-parse", "HEAD")
+        self.assertEqual(saved["alpha"], head)
+        self.assertEqual(saved["beta"], self.approval_base)
+        self.assertIn("留到下次清扫：beta（主线带来改动）", result.stdout)
+
+    def test_reask_removes_approval_even_when_mainline_changed_the_feature(self):
+        self._merge_mainline_change("beta-file")
+
+        result = self.record(
+            ("beta",), choices={"beta": "留，下次还问我"}
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        saved = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertNotIn("beta", saved)
+        self.assertNotIn("留到下次清扫：beta（主线带来改动）", result.stdout)
+
+    def _merge_mainline_change(self, change):
+        run_git(self.repository, "switch", "-c", "cleanup-branch")
+        (self.repository / "alpha" / "main.py").write_text(
+            "value = 10\n", encoding="utf-8"
+        )
+        self.commit_changes("清扫分支自己的 alpha 改动")
+
+        run_git(self.primary, "switch", "-c", "mainline")
+        if change == "beta-file":
+            (self.primary / "beta" / "main.py").write_text(
+                "value = 20\n", encoding="utf-8"
+            )
+        elif change == "beta-registration-draft":
+            path = self.primary / "repo-map" / "features.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["children"][1]["items"][0]["text"] = "Beta 主线改过的要求。"
+            document["children"][1]["items"][0]["status"] = "起草"
+            path.write_text(json.dumps(document), encoding="utf-8")
+        else:
+            self.fail(f"未知主线改动：{change}")
+        run_git(self.primary, "add", "-A")
+        run_git(self.primary, "commit", "-m", "主线改动 beta")
+        mainline_head = run_git(self.primary, "rev-parse", "HEAD")
+        run_git(
+            self.repository,
+            "merge",
+            "--no-ff",
+            "--no-edit",
+            mainline_head,
+        )
 
     def test_record_rejects_drafts_and_old_features_argument(self):
         path = self.repository / "repo-map" / "features.json"

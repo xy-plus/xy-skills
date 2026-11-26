@@ -18,10 +18,12 @@ from decision_page import validate_decisions  # noqa: E402
 from json_validation import check_value, object_without_duplicate_keys  # noqa: E402
 from repo_map_lib.git_repository import (  # noqa: E402
     ArgumentError,
+    primary_checkout_name,
     primary_checkout_path,
     require_repository_root,
 )
 from repo_map_lib.validate_feature_list.features import (  # noqa: E402
+    FEATURE_ID,
     feature_chain,
     features_by_id,
 )
@@ -43,10 +45,12 @@ CARD_SHAPE = {
     "todo": [""],
     "map_issues": [""],
     "suggestion": [""],
+    "cross_feature_changes": [{"feature": "", "change": ""}],
+    "item_changes": [{"item": "", "text": ""}],
     "recommended": "",
 }
 RECOMMENDATIONS = {"照建议", "留", "不要这个功能"}
-COMMON_OPTIONS = ["留", "按我写的改"]
+COMMON_OPTIONS = ["留", "留，下次还问我", "按我写的改"]
 REMOVE_FEATURE = "不要这个功能"
 
 
@@ -88,11 +92,34 @@ def _card_errors(card, label):
     if not isinstance(recommendation, str) or recommendation not in RECOMMENDATIONS:
         problems.append(f"{label}.recommended 必须是 照建议、留、不要这个功能 之一")
     elif recommendation == "照建议" and not (
-        card.get("suggestion") or card.get("map_issues")
+        card.get("suggestion")
+        or card.get("map_issues")
+        or card.get("item_changes")
     ):
         problems.append(
-            f"{label}.recommended 为 照建议 时 suggestion 和 map_issues 不能都空"
+            f"{label}.recommended 为 照建议 时 suggestion、map_issues 和 item_changes 不能都空"
         )
+    item_changes = card.get("item_changes")
+    if isinstance(item_changes, list):
+        seen_items = set()
+        for index, value in enumerate(item_changes):
+            if not isinstance(value, dict):
+                continue
+            item_id = value.get("item")
+            if not isinstance(item_id, str) or FEATURE_ID.fullmatch(item_id) is None:
+                problems.append(
+                    f"{label}.item_changes[{index}].item id 必须匹配 "
+                    "^[a-z][a-z0-9-]*$"
+                )
+            elif item_id in seen_items:
+                problems.append(f"{label}.item_changes 的 item id 重复：{item_id}")
+            else:
+                seen_items.add(item_id)
+            text = value.get("text")
+            if isinstance(text, str) and ("\n" in text or "\r" in text):
+                problems.append(
+                    f"{label}.item_changes[{index}].text 必须是一行文字"
+                )
     return problems
 
 
@@ -195,7 +222,14 @@ def _join_front_sentences(values):
     return "；".join(value.removesuffix("。") for value in values) + "。"
 
 
-def _front_card_lines(card):
+def _feature_title(feature_id, features):
+    return " › ".join(
+        features[ancestor_id]["title"]
+        for ancestor_id in reversed(list(feature_chain(feature_id, features)))
+    )
+
+
+def _front_card_lines(card, features):
     lines = []
     if card["used"] or card["unused"]:
         who = (
@@ -214,6 +248,35 @@ def _front_card_lines(card):
         if card["map_issues"]:
             actions.append(f"改图上文字 {len(card['map_issues'])} 处，见细节")
         lines.append(f"照建议会做\t{_join_front_sentences(actions)}")
+    if card["cross_feature_changes"]:
+        changes = [
+            f"{_feature_title(item['feature'], features)}：{item['change']}"
+            for item in card["cross_feature_changes"]
+        ]
+        lines.append(f"连带改动\t{_join_front_sentences(changes)}")
+    return lines
+
+
+def _item_change_lines(feature, previous_feature, card):
+    current_items = {
+        item["id"]: item
+        for item in feature.get("items", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    previous_items = {
+        item["id"]: item
+        for item in (previous_feature or {}).get("items", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    lines = []
+    for change in card["item_changes"]:
+        line = f"要改的条目 {change['item']}\t{change['text']}"
+        old_item = current_items.get(change["item"])
+        if old_item is None or old_item.get("text") == change["text"]:
+            old_item = previous_items.get(change["item"])
+        if old_item is not None and old_item.get("text") != change["text"]:
+            line += f"（原来：{old_item['text']}）"
+        lines.append(line)
     return lines
 
 
@@ -262,10 +325,7 @@ def _details_title(feature, card, *, unapproved, draft_items):
 def _decision_item(feature_id, card, context):
     feature = context.values[feature_id]
     features = context.data["features"]
-    title = " › ".join(
-        features[ancestor_id]["title"]
-        for ancestor_id in reversed(list(feature_chain(feature_id, features)))
-    )
+    title = _feature_title(feature_id, features)
     previous_feature = context.previous_features.get(feature_id)
     unapproved = context.commits[feature_id] == "无"
     draft_items = _draft_item_lines(feature, previous_feature)
@@ -282,7 +342,16 @@ def _decision_item(feature_id, card, context):
         lines.append(
             f"互相引用\t和 {other_titles} 成环（产品代码 import）"
         )
-    lines.extend(_front_card_lines(card))
+    for source_id in context.planned_ids:
+        source_card = context.cards[source_id]
+        source_title = _feature_title(source_id, features)
+        lines.extend(
+            f"会被连带改\t{source_title} 的建议要改：{change['change']}"
+            for change in source_card["cross_feature_changes"]
+            if change["feature"] == feature_id
+        )
+    lines.extend(_front_card_lines(card, features))
+    lines.extend(_item_change_lines(feature, previous_feature, card))
     if not unapproved:
         lines.extend(draft_items)
     detail_lines = _reason_detail_lines(
@@ -303,7 +372,7 @@ def _decision_item(feature_id, card, context):
         "lines": detail_lines,
     }
     options = list(COMMON_OPTIONS)
-    if card["suggestion"] or card["map_issues"]:
+    if card["suggestion"] or card["map_issues"] or card["item_changes"]:
         options.insert(0, "照建议")
     if not context.data["features"][feature_id]["children"]:
         options.append(REMOVE_FEATURE)
@@ -324,6 +393,8 @@ class DecisionContext:
     data: dict
     previous_features: dict
     commits: dict
+    cards: dict
+    planned_ids: list
 
 
 @dataclass
@@ -352,6 +423,7 @@ def _validate_card_set(cards, planned_ids, data, commits):
         by_id[feature_id] = card
 
     problems.extend(_card_membership_errors(by_id, planned_ids, data))
+    problems.extend(_card_cross_feature_errors(by_id, planned_ids, data))
     for feature_id in planned_ids:
         card = by_id.get(feature_id)
         if commits[feature_id] == "无" and isinstance(card, dict) and card.get("changed"):
@@ -371,6 +443,34 @@ def _card_membership_errors(by_id, planned_ids, data):
     for feature_id in planned_ids:
         if feature_id not in by_id:
             problems.append(f"计划功能缺少卡片：{feature_id}")
+    return problems
+
+
+def _card_cross_feature_errors(by_id, planned_ids, data):
+    problems = []
+    for feature_id in planned_ids:
+        card = by_id.get(feature_id)
+        if not isinstance(card, dict):
+            continue
+        changes = card.get("cross_feature_changes")
+        if not isinstance(changes, list):
+            continue
+        for index, change in enumerate(changes):
+            if not isinstance(change, dict):
+                continue
+            target = change.get("feature")
+            if not isinstance(target, str):
+                continue
+            if target not in data["features"]:
+                problems.append(
+                    f"{feature_id}.cross_feature_changes[{index}].feature "
+                    f"不是图上的功能：{target}"
+                )
+            elif target == feature_id:
+                problems.append(
+                    f"{feature_id}.cross_feature_changes[{index}].feature "
+                    "不能是本卡功能"
+                )
     return problems
 
 
@@ -428,6 +528,8 @@ def build_decisions(plan, cards):
         plan.data,
         previous_features,
         plan.commits,
+        by_id,
+        planned_ids,
     )
     items = _build_decision_items(plan.planned, by_id, context)
     change_items = [item for item in items if item["recommended"] != "留"]
@@ -460,12 +562,14 @@ def build_decisions(plan, cards):
         first_intro += "建议改或删的排在前面。"
     decisions = {
         "title": (
-            f"清扫决定：{Path(plan.repository).name} 计划提交 {plan.plan_commit}"
+            f"清扫决定：{primary_checkout_name(plan.repository)} "
+            f"计划提交 {plan.plan_commit}"
         ),
         "intro": [
             first_intro,
             "每个功能选一项；写了备注就以备注为准。",
             "选「照建议」「留」「按我写的改」都表示认可这张卡片上的「要什么」、理由和起草条目，收在细节里的也算；不对的地方写进备注。",
+            "「留，下次还问我」不算认可，下次清扫会再出卡片。",
             "「留」不动代码、测试、文档和 TODO；「不要这个功能」连图上的登记一起删，只有没有子功能的功能能选。",
         ],
         "groups": groups,

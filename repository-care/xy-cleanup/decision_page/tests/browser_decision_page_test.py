@@ -110,7 +110,12 @@ class DecisionPageBridgeHandler(BaseHTTPRequestHandler):
         if self.path != "/":
             self._send(404, b"not found", "text/plain; charset=utf-8")
             return
-        body = self.server.page.encode("utf-8")
+        page = (
+            self.server.received_page_html
+            if self.server.receipt_ready
+            else self.server.page
+        )
+        body = page.encode("utf-8")
         self._send(200, body, "text/html; charset=utf-8")
 
     def do_POST(self):
@@ -136,6 +141,15 @@ class DecisionPageBridgeHandler(BaseHTTPRequestHandler):
             status = response.status
             response_body = response.read()
             content_type = response.getheader("Content-Type", "application/json")
+            if self.server.lose_next_post_response:
+                self.server.lose_next_post_response = False
+                self.server.receipt_ready = True
+                self._send(
+                    503,
+                    b'{"error":"response lost after save"}',
+                    "application/json",
+                )
+                return
             self._send(status, response_body, content_type)
         finally:
             client.close()
@@ -156,6 +170,9 @@ class DecisionPageBridge(ThreadingHTTPServer):
         self.page = page
         self.receiver_path = receiver_path
         self.fail_next_post = True
+        self.lose_next_post_response = False
+        self.received_page_html = ""
+        self.receipt_ready = False
         self.received_payloads = []
         super().__init__(("127.0.0.1", 0), DecisionPageBridgeHandler)
 
@@ -181,11 +198,11 @@ def browser_receiver(directory, page_html, decisions, answers_path, fail_next_po
         yield receiver_thread, bridge
     finally:
         stop_event.set()
+        bridge.shutdown()
+        receiver_thread.join(2)
         receiver.server_close()
         socket_path.unlink(missing_ok=True)
-        bridge.shutdown()
         bridge.server_close()
-        receiver_thread.join(2)
         bridge_thread.join(2)
 
 
@@ -513,8 +530,7 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     self.assertTrue(first_item.locator("textarea").is_disabled())
                     browser.close()
 
-                receiver_thread.join(5)
-                self.assertFalse(receiver_thread.is_alive())
+                self.assertTrue(receiver_thread.is_alive())
                 expected_answers = {
                     "A1": {"option": "Remove", "note": "My written decision wins."},
                     "B1": {"option": "Use current name", "note": ""},
@@ -534,6 +550,90 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 )
                 submitted = {"answers": expected_answers}
                 self.assertEqual(bridge.received_payloads, [submitted, submitted])
+                self.assertEqual(script_errors, [])
+
+    def test_failed_submit_recovers_from_the_static_received_page(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        self.assertTrue(
+            hasattr(decision_page, "render_received_page"),
+            "决定页模块必须能生成静态已收到页",
+        )
+        decisions = browser_decisions()
+        answers = {
+            "A1": {"option": "Remove", "note": "保存成功但回执丢了。"},
+            "B1": {"option": "Use current name", "note": ""},
+            "__proto__": {"option": "Keep prototype", "note": ""},
+            "constructor": {"option": "Keep constructor", "note": ""},
+        }
+        page_html = decision_page.render_decision_page(decisions)
+        received_html = decision_page.render_received_page(decisions, answers)
+        self.assertIn(
+            '<meta name="decision-state" content="received">', received_html
+        )
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            answers_path = Path(temporary) / "answers.json"
+            script_errors = []
+            with browser_receiver(
+                Path(temporary), page_html, decisions, answers_path, False
+            ) as (receiver_thread, bridge):
+                bridge.received_page_html = received_html
+                bridge.lose_next_post_response = True
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(
+                        executable_path=executable,
+                        headless=True,
+                    )
+                    context = browser.new_context(
+                        viewport={"width": 390, "height": 844}
+                    )
+                    context.add_init_script(
+                        """
+                        const originalSetTimeout = window.setTimeout.bind(window);
+                        window.setTimeout = (callback, delay, ...args) =>
+                          originalSetTimeout(callback, Math.min(delay, 10), ...args);
+                        """
+                    )
+                    page = context.new_page()
+                    page.on("pageerror", lambda error: script_errors.append(str(error)))
+                    page.goto(f"http://127.0.0.1:{bridge.server_port}/")
+                    item = page.locator('[data-item-id="A1"]')
+                    item.locator('input[value="Remove"]').check()
+                    item.locator("textarea").fill("保存成功但回执丢了。")
+
+                    page.locator("#submit").click()
+                    page.locator("#status").get_by_text("已收到").wait_for()
+                    self.assertTrue(item.locator("textarea").is_disabled())
+                    self.assertFalse(page.locator("#feedback").is_visible())
+
+                    receipt_page = context.new_page()
+                    receipt_page.goto(f"http://127.0.0.1:{bridge.server_port}/")
+                    self.assertEqual(
+                        receipt_page.locator("#page-title").inner_text(), "已收到"
+                    )
+                    self.assertEqual(
+                        receipt_page.locator('[data-item-id="A1"] textarea').input_value(),
+                        "保存成功但回执丢了。",
+                    )
+                    self.assertTrue(
+                        receipt_page.locator('[data-item-id="A1"] textarea').is_disabled()
+                    )
+                    self.assertEqual(
+                        receipt_page.locator(
+                            '[data-item-id="A1"] input[value="Remove"]'
+                        ).is_checked(),
+                        True,
+                    )
+                    self.assertTrue(receiver_thread.is_alive())
+                    browser.close()
+
+                self.assertEqual(
+                    json.loads(answers_path.read_text(encoding="utf-8")),
+                    {"title": decisions["title"], "answers": answers},
+                )
+                self.assertEqual(len(bridge.received_payloads), 1)
                 self.assertEqual(script_errors, [])
 
     def test_storage_errors_stay_visible_without_blocking_answers_or_submission(self):
@@ -581,8 +681,7 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     self.assertTrue(item.locator("textarea").is_disabled())
                     browser.close()
 
-                receiver_thread.join(5)
-                self.assertFalse(receiver_thread.is_alive())
+                self.assertTrue(receiver_thread.is_alive())
                 self.assertEqual(
                     json.loads(answers_path.read_text(encoding="utf-8"))["answers"][
                         "A1"

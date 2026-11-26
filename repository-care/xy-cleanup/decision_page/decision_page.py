@@ -270,6 +270,16 @@ def _comparison_data(compare):
 
 def render_decision_page(decisions):
     """Read the decision-page template and embed safe data for one call."""
+    return _render_decision_page(decisions)
+
+
+def render_received_page(decisions, answers):
+    """Render the submitted choices as a locked static page."""
+    checked_answers = validate_answers({"answers": answers}, decisions)
+    return _render_decision_page(decisions, answers=checked_answers)
+
+
+def _render_decision_page(decisions, answers=None):
     comparisons = {
         item["id"]: _comparison_data(item["compare"])
         for group in decisions["groups"]
@@ -280,10 +290,21 @@ def render_decision_page(decisions):
         "call_id": secrets.token_urlsafe(18),
         "decisions": decisions,
         "comparisons": comparisons,
+        "state": "received" if answers is not None else "pending",
     }
+    if answers is not None:
+        page_data["answers"] = answers
     embedded = json_for_html(page_data)
     template = TEMPLATE.read_text(encoding="utf-8")
-    return template.replace("__DECISION_DATA__", embedded)
+    state_meta = (
+        '<meta name="decision-state" content="received">'
+        if answers is not None
+        else ""
+    )
+    return (
+        template.replace("__DECISION_STATE_META__", state_meta)
+        .replace("__DECISION_DATA__", embedded)
+    )
 
 
 def validate_answers(payload, decisions):
@@ -367,11 +388,13 @@ class DecisionHTTPServer(socketserver.UnixStreamServer):
         self.decisions = decisions
         self.answers_path = Path(answers_path)
         self.submitted = False
+        self.submitted_answers = None
+        self.submitted_event = threading.Event()
         self.timeout = 0.25
         super().__init__(str(socket_path), DecisionRequestHandler)
 
     def serve_until_complete(self, stop_event):
-        while not self.submitted and not stop_event.is_set():
+        while not stop_event.is_set():
             self.handle_request()
 
 
@@ -443,6 +466,13 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": str(error)})
             return
 
+        if self.server.submitted_answers is not None:
+            if answers == self.server.submitted_answers:
+                self._send_json(200, {"received": True})
+            else:
+                self._send_json(409, {"error": "已经收到不同的回答"})
+            return
+
         document = {"title": self.server.decisions["title"], "answers": answers}
         try:
             _write_answer_document(self.server.answers_path, document)
@@ -451,6 +481,8 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
             return
 
         self.server.submitted = True
+        self.server.submitted_answers = answers
+        self.server.submitted_event.set()
         self._send_json(200, {"received": True})
 
     def _send_json(self, status, value):
@@ -497,6 +529,25 @@ def _mount_configuration_uses_socket(name, socket_path):
     except (OSError, UnicodeError):
         return False
     return str(socket_path) in content
+
+
+def _received_site_index(name):
+    portal_root = PORTAL_SCRIPT.parent
+    site = portal_root / "sites" / name
+    if not site.is_symlink():
+        return None
+    try:
+        target = site.resolve(strict=True)
+        published_root = (portal_root / "published").resolve(strict=True)
+        if target.parent != published_root or not target.name.startswith(f"{name}-"):
+            return None
+        index = target / "index.html"
+        page = index.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    if '<meta name="decision-state" content="received">' not in page:
+        return None
+    return index
 
 
 @dataclass
@@ -555,8 +606,50 @@ def _mount_decision_page(call):
     _write_platform_output(call, result)
     if result.returncode == 0:
         call.mounted = True
-        call.serving_thread.join()
-        call.exit_code = 0 if call.server.submitted else 1
+        while not call.services.stop_event.is_set():
+            if call.server.submitted_event.wait(0.25):
+                break
+        if call.server.submitted:
+            _publish_received_page(call)
+
+
+def _publish_received_page(call):
+    directory = Path(call.temporary.name) / "received"
+    directory.mkdir()
+    (directory / "index.html").write_text(
+        render_received_page(call.decisions, call.server.submitted_answers),
+        encoding="utf-8",
+    )
+
+    unmount_command = [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "unmount", call.name]
+    unmount_result = call.services.platform_runner(unmount_command)
+    _write_platform_output(call, unmount_result)
+    if unmount_result.returncode != 0:
+        raise RuntimeError("无法摘除决定页应用挂载")
+    call.mounted = False
+
+    call.services.stop_event.set()
+    call.serving_thread.join()
+    publish_command = [
+        PLATFORM_PYTHON,
+        str(PORTAL_SCRIPT),
+        "publish",
+        call.name,
+        str(directory),
+    ]
+    publish_result = call.services.platform_runner(publish_command)
+    _write_platform_output(call, publish_result)
+    call.exit_code = 0 if publish_result.returncode == 0 else 1
+
+
+def _unmount_previous_received_page(call):
+    if _received_site_index(call.name) is None:
+        return
+    command = [PLATFORM_PYTHON, str(PORTAL_SCRIPT), "unmount", call.name]
+    result = call.services.platform_runner(command)
+    _write_platform_output(call, result)
+    if result.returncode != 0:
+        raise RuntimeError("无法替换已收到的静态决定页")
 
 
 def _stop_decision_page(call):
@@ -594,6 +687,7 @@ def run_ask(decisions, name, answers_path, services):
         socket_path=Path(temporary.name) / "s",
     )
     try:
+        _unmount_previous_received_page(call)
         _start_decision_server(call)
         # The platform requests the page to verify the mount before mount returns.
         _mount_decision_page(call)

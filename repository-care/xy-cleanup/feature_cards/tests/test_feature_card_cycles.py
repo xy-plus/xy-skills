@@ -27,13 +27,15 @@ class FeatureCardCycleTest(unittest.TestCase):
             "alpha": alpha,
             "beta": {"title": "Beta", "parent": "root"},
         }
+        card = card_fixtures.card("alpha", used=[])
         context = feature_cards.DecisionContext(
             values={"alpha": alpha},
             data={"features": features},
             previous_features={},
             commits={"alpha": "无"},
+            cards={"alpha": card},
+            planned_ids=["alpha"],
         )
-        card = card_fixtures.card("alpha", used=[])
 
         decision = feature_cards._decision_item("alpha", card, context)
 
