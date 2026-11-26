@@ -184,9 +184,7 @@ class FeatureCardsTest(unittest.TestCase):
         ]
         subprocess.run(worktree_args, check=True, capture_output=True, text=True)
         self.repository = deep_checkout
-        self.assertEqual(
-            feature_cards.primary_checkout_path(self.repository), self.primary.resolve()
-        )
+        self.assertEqual(feature_cards.primary_checkout_path(self.repository), self.primary)
 
         result = self.run_cards(
             [unused_card(reverse_search="检查登记仓，没有产品代码引用。")],
