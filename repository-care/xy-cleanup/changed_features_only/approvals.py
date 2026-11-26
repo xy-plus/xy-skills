@@ -61,6 +61,7 @@ def parser():
     record.add_argument("--repo", required=True, help="隔离工作树的仓根绝对路径")
     record.add_argument("--decisions", required=True, help="本次生成的决定清单 JSON")
     record.add_argument("--answers", required=True, help="这份决定清单对应的回答 JSON")
+    record.add_argument("--mainline", required=True, help="主线分支或提交")
     return result
 
 
@@ -95,7 +96,7 @@ def _require_tracked_worktree_clean(repository):
         "--untracked-files=no",
     )
     if changes:
-        raise ValueError("工作树必须干净；请先提交或清理所有改动")
+        raise ValueError("已跟踪文件有改动；请先提交或清理这些改动")
 
 
 def _commit_exists(repository, commit):
@@ -373,11 +374,12 @@ class FileComparison:
     current_skip: set
 
 
-def _record_owner_change(path, old_owner, current_owner, changed, transfers):
+def _record_owner_change(path, old_owner, current_owner, changed, transfers=None):
     if old_owner == current_owner:
         return
     changed.update((old_owner, current_owner))
-    transfers.append((path, old_owner, current_owner))
+    if transfers is not None:
+        transfers.append((path, old_owner, current_owner))
 
 
 def _shared_path_owners(context, path):
@@ -404,7 +406,7 @@ def _changed_file_owners(context):
     return changed, transfers
 
 
-def _record_diff_owners(context, change, changed, transfers):
+def _record_diff_owners(context, change, changed, transfers=None):
     status = change[0]
     if status.startswith("R"):
         _record_rename_owners(context, change, changed, transfers)
@@ -416,7 +418,7 @@ def _record_diff_owners(context, change, changed, transfers):
         _record_modified_owners(context, change[1], changed, transfers)
 
 
-def _record_rename_owners(context, paths, changed, transfers):
+def _record_rename_owners(context, paths, changed, transfers=None):
     status, old_path, current_path = paths
     if _is_excluded(old_path, context.old_skip, context.current_skip) or _is_excluded(
         current_path, context.old_skip, context.current_skip
@@ -426,7 +428,7 @@ def _record_rename_owners(context, paths, changed, transfers):
     current_owner = _snapshot_owner(current_path, context.current_snapshot)
     if status != "R100" or old_owner != current_owner:
         changed.update((old_owner, current_owner))
-    if old_owner != current_owner:
+    if old_owner != current_owner and transfers is not None:
         transfers.append((f"{old_path} -> {current_path}", old_owner, current_owner))
 
 
@@ -440,12 +442,12 @@ def _record_deleted_owner(context, path, changed):
         changed.add(_snapshot_owner(path, context.old_snapshot))
 
 
-def _record_modified_owners(context, path, changed, transfers):
+def _record_modified_owners(context, path, changed, transfers=None):
     if _is_excluded(path, context.old_skip, context.current_skip):
         return
     old_owner, current_owner = _shared_path_owners(context, path)
     changed.update((old_owner, current_owner))
-    if old_owner != current_owner:
+    if old_owner != current_owner and transfers is not None:
         transfers.append((path, old_owner, current_owner))
 
 
@@ -725,66 +727,76 @@ def _plan_commit_from_title(repository, title, head):
         raise ValueError(f"计划提交不存在：{commit}")
     if not _is_ancestor(repository, commit, head):
         raise ValueError(f"计划提交不是当前 HEAD 的祖先：{commit}")
+    if not _is_first_parent_ancestor(repository, commit, head):
+        raise ValueError("计划提交不是当前 HEAD 第一父链上的祖先")
     return commit
 
 
-def _first_parent_merges(repository, plan_commit, head):
-    merges = []
-    commit = head
-    while commit != plan_commit:
-        fields = _git_output(repository, "rev-list", "--parents", "-n", "1", commit)
-        parents = fields.split()
+def _is_first_parent_ancestor(repository, ancestor, descendant):
+    commit = descendant
+    while commit != ancestor:
+        parents = _git_output(
+            repository, "rev-list", "--parents", "-n", "1", commit
+        ).split()
         if len(parents) < 2:
-            raise ValueError("计划提交不是当前 HEAD 第一父链上的祖先")
-        first_parent = parents[1]
-        if len(parents) > 2:
-            merges.append((commit, first_parent))
-        commit = first_parent
-    return merges
+            return False
+        commit = parents[1]
+    return True
 
 
-def _mainline_changed_features(repository, plan_commit, head, data, values):
-    current_snapshot = _current_snapshot(data, values)
-    current_skip = _current_skip_set(repository)
+def _mainline_changed_features(repository, plan_commit, head, mainline):
+    mainline_commit = _git_output(
+        repository,
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        f"{mainline}^{{commit}}",
+    ).strip()
+    base = _git_output(repository, "merge-base", head, mainline_commit).strip()
+    if _is_ancestor(repository, base, plan_commit):
+        return set()
+
+    comparison_base = _git_output(
+        repository, "merge-base", plan_commit, base
+    ).strip()
+    old_snapshot = _feature_snapshot(repository, comparison_base)
+    mainline_snapshot = _feature_snapshot(repository, base)
+    _directory_snapshot(
+        old_snapshot,
+        mainline_snapshot["root"],
+        comparison_base,
+        [mainline_snapshot["root"]],
+    )
+    _directory_snapshot(
+        mainline_snapshot,
+        mainline_snapshot["root"],
+        base,
+        [mainline_snapshot["root"]],
+    )
+    old_skip = _skip_set_from_commit(repository, comparison_base)
+    mainline_skip = _skip_set_from_commit(repository, base)
     changed = set()
-    for merge_commit, first_parent in _first_parent_merges(
-        repository, plan_commit, head
-    ):
-        old_snapshot = _feature_snapshot(repository, first_parent)
-        merge_snapshot = _feature_snapshot(repository, merge_commit)
-        _directory_snapshot(
-            old_snapshot, current_snapshot["root"], first_parent, [current_snapshot["root"]]
-        )
-        _directory_snapshot(
-            merge_snapshot,
-            current_snapshot["root"],
-            merge_commit,
-            [current_snapshot["root"]],
-        )
-        comparison = FileComparison(
-            Path(repository),
-            first_parent,
-            merge_commit,
-            old_snapshot,
-            current_snapshot,
-            _skip_set_from_commit(repository, first_parent),
-            current_skip,
-        )
-        transfers = []
-        for change in _diff_records(repository, first_parent, merge_commit):
-            _record_diff_owners(comparison, change, changed, transfers)
+    comparison = FileComparison(
+        Path(repository),
+        comparison_base,
+        base,
+        old_snapshot,
+        mainline_snapshot,
+        old_skip,
+        mainline_skip,
+    )
+    for change in _diff_records(repository, comparison_base, base):
+        _record_diff_owners(comparison, change, changed)
 
-        for feature_id in current_snapshot["order"]:
-            if (
-                feature_id not in old_snapshot["features"]
-                or feature_id not in merge_snapshot["features"]
-                or _registration_changed(old_snapshot, merge_snapshot, feature_id)
-            ):
-                changed.add(feature_id)
-        if _skip_set_from_commit(repository, first_parent) != _skip_set_from_commit(
-            repository, merge_commit
+    for feature_id in set(old_snapshot["order"]) | set(mainline_snapshot["order"]):
+        if (
+            feature_id not in old_snapshot["features"]
+            or feature_id not in mainline_snapshot["features"]
+            or _registration_changed(old_snapshot, mainline_snapshot, feature_id)
         ):
-            changed.add(current_snapshot["root"])
+            changed.add(feature_id)
+    if old_skip != mainline_skip:
+        changed.add(mainline_snapshot["root"])
     return changed
 
 
@@ -824,7 +836,10 @@ def _validate_record_features(inputs):
         if feature_id not in answer_again and feature_id not in defer
     ]
     _reject_reused_answers(
-        inputs.repository, inputs.records, to_record, inputs.plan_commit
+        inputs.repository,
+        inputs.records,
+        to_record + reask,
+        inputs.plan_commit,
     )
     drafts = [
         feature_id
@@ -879,21 +894,18 @@ def _write_approvals(repository, head, values, records, selection):
     return "\n".join(lines)
 
 
-def record_decisions(repository, decisions_path, answers_path):
+def record_decisions(repository, decisions_path, answers_path, mainline):
     root = require_repository_root(repository)
     _require_linked_worktree(root)
     _require_clean_worktree(root)
     head = _head_commit(root)
-    data = build_map(root)
     values, _order = feature_values(root)
     records = _read_committed_approvals(root, head)
     decisions = _load_input_json(decisions_path, "决定清单")
     answers = _load_input_json(answers_path, "回答文件")
     title, feature_ids, checked_answers = _answered_features(decisions, answers)
     plan_commit = _plan_commit_from_title(root, title, head)
-    mainline_changed = _mainline_changed_features(
-        root, plan_commit, head, data, values
-    )
+    mainline_changed = _mainline_changed_features(root, plan_commit, head, mainline)
     selection = _validate_record_features(
         RecordInputs(
             repository=root,
@@ -927,7 +939,11 @@ def main(argv):
         return 0
 
     try:
-        print(record_decisions(repository, options.decisions, options.answers))
+        print(
+            record_decisions(
+                repository, options.decisions, options.answers, options.mainline
+            )
+        )
     except ArgumentError as error:
         return report_cli_argument_error(error)
     except (OSError, UnicodeError, ValueError) as error:

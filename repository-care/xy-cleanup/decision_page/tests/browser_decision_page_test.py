@@ -123,6 +123,8 @@ class DecisionPageBridgeHandler(BaseHTTPRequestHandler):
         self.server.received_payloads.append(json.loads(body))
         if self.server.fail_next_post:
             self.server.fail_next_post = False
+            if self.server.received_page_html:
+                self.server.receipt_ready = True
             self._send(503, b'{"error":"temporary test failure"}', "application/json")
             return
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -635,6 +637,97 @@ class DecisionPageBrowserTest(unittest.TestCase):
                 )
                 self.assertEqual(len(bridge.received_payloads), 1)
                 self.assertEqual(script_errors, [])
+
+    def test_failed_submit_with_a_different_static_answer_shows_conflict(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        decisions = browser_decisions()
+        saved_answers = {
+            "A1": {"option": "Keep", "note": "已保存的回答。"},
+            "B1": {"option": "Rename", "note": ""},
+            "__proto__": {"option": "Keep prototype", "note": ""},
+            "constructor": {"option": "Keep constructor", "note": ""},
+        }
+        page_html = decision_page.render_decision_page(decisions)
+        receipt_html = decision_page.render_received_page(decisions, saved_answers)
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            answers_path = Path(temporary) / "answers.json"
+            with browser_receiver(
+                Path(temporary), page_html, decisions, answers_path, True
+            ) as (_receiver_thread, bridge):
+                bridge.received_page_html = receipt_html
+                with sync_playwright() as playwright:
+                    browser, page = self._open_page(
+                        playwright, executable, bridge, []
+                    )
+                    item = page.locator('[data-item-id="A1"]')
+                    item.locator('input[value="Remove"]').check()
+                    item.locator("textarea").fill("本页尚未保存的回答。")
+                    page.locator("#submit").click()
+
+                    feedback = page.locator("#feedback")
+                    feedback.wait_for(state="visible")
+                    self.assertEqual(
+                        feedback.inner_text(),
+                        "已经提交过另一份回答，这页的选择没有保存",
+                    )
+                    self.assertFalse(item.locator("textarea").is_disabled())
+                    self.assertFalse(page.locator("#submit").is_hidden())
+                    browser.close()
+
+    def test_409_shows_conflict_without_locking_this_page(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        decisions = browser_decisions()
+        page_html = decision_page.render_decision_page(decisions)
+        saved_answers = {
+            "A1": {"option": "Keep", "note": "另一份回答。"},
+            "B1": {"option": "Use current name", "note": ""},
+            "__proto__": {"option": "Keep prototype", "note": ""},
+            "constructor": {"option": "Keep constructor", "note": ""},
+        }
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            answers_path = Path(temporary) / "answers.json"
+            with browser_receiver(
+                Path(temporary), page_html, decisions, answers_path, False
+            ) as (_receiver_thread, bridge):
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", bridge.server_port, timeout=5
+                )
+                try:
+                    connection.request(
+                        "POST",
+                        "/submit",
+                        json.dumps({"answers": saved_answers}),
+                        {"Content-Type": "application/json"},
+                    )
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 200, response.read())
+                finally:
+                    connection.close()
+
+                with sync_playwright() as playwright:
+                    browser, page = self._open_page(
+                        playwright, executable, bridge, []
+                    )
+                    item = page.locator('[data-item-id="A1"]')
+                    item.locator('input[value="Remove"]').check()
+                    item.locator("textarea").fill("本页没有保存。")
+                    page.locator("#submit").click()
+                    feedback = page.locator("#feedback")
+                    feedback.wait_for(state="visible")
+                    self.assertEqual(
+                        feedback.inner_text(),
+                        "已经提交过另一份回答，这页的选择没有保存",
+                    )
+                    self.assertFalse(item.locator("textarea").is_disabled())
+                    self.assertFalse(page.locator("#submit").is_hidden())
+                    self.assertEqual(page.locator("#page-title").inner_text(), decisions["title"])
+                    browser.close()
 
     def test_storage_errors_stay_visible_without_blocking_answers_or_submission(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")

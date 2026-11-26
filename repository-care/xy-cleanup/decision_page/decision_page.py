@@ -290,7 +290,6 @@ def _render_decision_page(decisions, answers=None):
         "call_id": secrets.token_urlsafe(18),
         "decisions": decisions,
         "comparisons": comparisons,
-        "state": "received" if answers is not None else "pending",
     }
     if answers is not None:
         page_data["answers"] = answers

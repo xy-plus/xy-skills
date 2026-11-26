@@ -235,12 +235,18 @@ async function submitAnswers() {
   }
 
   let problem = "";
+  let submittedAnswers;
   try {
+    submittedAnswers = Object.fromEntries(answers);
     const response = await fetch("submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answers: Object.fromEntries(answers) }),
+      body: JSON.stringify({ answers: submittedAnswers }),
     });
+    if (response.status === 409) {
+      showAnswerConflict();
+      return;
+    }
     if (!response.ok) {
       const reply = await response.json().catch(() => ({}));
       problem = reply.error || `服务返回 ${response.status}`;
@@ -250,8 +256,13 @@ async function submitAnswers() {
   }
 
   if (problem) {
-    if (await pageHasReceivedAnswers()) {
+    const receipt = await pageHasReceivedAnswers(submittedAnswers);
+    if (receipt === "received") {
       lockSubmittedPage();
+      return;
+    }
+    if (receipt === "conflict") {
+      showAnswerConflict();
       return;
     }
     submitButton.disabled = false;
@@ -262,6 +273,13 @@ async function submitAnswers() {
   }
 
   lockSubmittedPage();
+}
+
+function showAnswerConflict() {
+  submitButton.disabled = false;
+  submitButton.textContent = "再提交一次";
+  feedback.textContent = "已经提交过另一份回答，这页的选择没有保存";
+  feedback.hidden = false;
 }
 
 function lockSubmittedPage() {
@@ -277,7 +295,17 @@ function lockSubmittedPage() {
   }
 }
 
-async function pageHasReceivedAnswers() {
+function answersMatch(saved, pending) {
+  return items.every((item) => {
+    const savedAnswer = saved?.[item.id];
+    const pendingAnswer = pending?.[item.id];
+    return savedAnswer !== undefined && pendingAnswer !== undefined &&
+      savedAnswer.option === pendingAnswer.option &&
+      savedAnswer.note === pendingAnswer.note;
+  });
+}
+
+async function pageHasReceivedAnswers(pendingAnswers) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 2000));
     try {
@@ -285,7 +313,16 @@ async function pageHasReceivedAnswers() {
       if (!response.ok) continue;
       const page = new DOMParser().parseFromString(await response.text(), "text/html");
       if (page.querySelector('meta[name="decision-state"]')?.content === "received") {
-        return true;
+        const receiptData = page.querySelector("#decision-data");
+        if (!receiptData) return "conflict";
+        try {
+          const receipt = JSON.parse(receiptData.textContent);
+          return answersMatch(receipt.answers, pendingAnswers)
+            ? "received"
+            : "conflict";
+        } catch (error) {
+          return "conflict";
+        }
       }
     } catch (error) {
       // The page may briefly be unavailable while the portal switches mounts.

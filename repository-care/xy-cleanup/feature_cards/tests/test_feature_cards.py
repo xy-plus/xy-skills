@@ -58,6 +58,14 @@ def unused_card(**changes):
 
 
 class FeatureCardsTest(unittest.TestCase):
+    def test_reask_on_cross_feature_change_precedes_suggestion_approval(self):
+        skill = (XY_CLEANUP_DIRECTORY / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "被连带改动的功能选了「留，下次还问我」时，即使该改动已列在「照建议」卡片里，也先不做改它的部分，停下问用户，并把回答原样交终审；这条优先于随「照建议」获批。",
+            skill,
+        )
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -891,6 +899,8 @@ class FeatureCardsTest(unittest.TestCase):
                 str(decisions),
                 "--answers",
                 str(answers),
+                "--mainline",
+                head,
             ],
             check=True,
             capture_output=True,

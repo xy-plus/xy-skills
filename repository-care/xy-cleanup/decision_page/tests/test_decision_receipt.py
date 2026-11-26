@@ -30,7 +30,6 @@ class DecisionReceiptTest(unittest.TestCase):
         )
         self.assertIsNotNone(embedded)
         page_data = json.loads(embedded.group(1))
-        self.assertEqual(page_data["state"], "received")
         self.assertEqual(page_data["answers"], answers)
 
     def test_ask_serves_the_page_and_publishes_a_static_receipt(self):

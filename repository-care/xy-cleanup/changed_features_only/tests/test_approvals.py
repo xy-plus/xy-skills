@@ -151,13 +151,24 @@ class ApprovalPlanTest(unittest.TestCase):
         )
         return decisions_path, answers_path
 
-    def record(self, feature_ids=("alpha",), repository=None, title=None, choices=None):
+    def record(
+        self,
+        feature_ids=("alpha",),
+        repository=None,
+        title=None,
+        choices=None,
+        mainline=None,
+    ):
         decisions_path, answers_path = self.record_files(
             feature_ids, title, choices
         )
-        return self.run_record_files(decisions_path, answers_path, repository)
+        return self.run_record_files(
+            decisions_path, answers_path, repository, mainline
+        )
 
-    def run_record_files(self, decisions_path, answers_path, repository=None):
+    def run_record_files(
+        self, decisions_path, answers_path, repository=None, mainline=None
+    ):
         return self.run_approvals(
             "record",
             "--repo",
@@ -166,6 +177,8 @@ class ApprovalPlanTest(unittest.TestCase):
             str(decisions_path),
             "--answers",
             str(answers_path),
+            "--mainline",
+            mainline or self.plan_commit,
         )
 
     def test_plan_uses_committed_approvals_and_clean_worktree(self):
@@ -184,7 +197,8 @@ class ApprovalPlanTest(unittest.TestCase):
         )
         tracked = self.plan()
         self.assertEqual(tracked.returncode, 1, tracked.stdout + tracked.stderr)
-        self.assertIn("工作树必须干净", tracked.stdout + tracked.stderr)
+        self.assertIn("已跟踪文件有改动", tracked.stdout + tracked.stderr)
+        self.assertNotIn("工作树必须干净", tracked.stdout + tracked.stderr)
 
     def test_plan_detects_only_changed_owned_file(self):
         (self.repository / "alpha" / "main.py").write_text(
@@ -508,6 +522,16 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertEqual(second.returncode, 1, second.stdout + second.stderr)
         self.assertIn("已经记过", second.stdout + second.stderr)
 
+    def test_reask_answer_is_rejected_when_the_decision_was_already_recorded(self):
+        first = self.record(("alpha",))
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.commit_changes("记录首次回答")
+
+        second = self.record(("alpha",), choices={"alpha": "留，下次还问我"})
+
+        self.assertEqual(second.returncode, 1, second.stdout + second.stderr)
+        self.assertIn("已经记过", second.stdout + second.stderr)
+
     def test_record_requires_clean_linked_worktree(self):
         (self.repository / "alpha" / "main.py").write_text("dirty\n", encoding="utf-8")
 
@@ -515,6 +539,21 @@ class ApprovalPlanTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("工作树必须干净", result.stdout + result.stderr)
+
+    def test_record_requires_an_explicit_mainline(self):
+        decisions_path, answers_path = self.record_files(("alpha",))
+        result = self.run_approvals(
+            "record",
+            "--repo",
+            str(self.repository),
+            "--decisions",
+            str(decisions_path),
+            "--answers",
+            str(answers_path),
+        )
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--mainline", result.stderr)
 
     def test_record_rejects_primary_checkout(self):
         primary_title = f"清扫决定：{self.primary.name} 计划提交 {self.plan_commit}"
@@ -531,6 +570,26 @@ class ApprovalPlanTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("title", result.stdout + result.stderr)
+
+    def test_record_requires_the_plan_commit_on_the_first_parent_chain(self):
+        run_git(self.repository, "reset", "--hard", self.approval_base)
+        run_git(self.repository, "switch", "-c", "alternate-history")
+        (self.repository / "alpha" / "main.py").write_text(
+            "value = alternate\n", encoding="utf-8"
+        )
+        self.commit_changes("创建另一条历史")
+        run_git(
+            self.repository,
+            "merge",
+            "--no-ff",
+            "--no-edit",
+            self.plan_commit,
+        )
+
+        result = self.record(("alpha",), mainline=self.plan_commit)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("第一父链", result.stdout + result.stderr)
 
     def test_reask_removes_old_approval_and_allows_draft_items(self):
         path = self.repository / "repo-map" / "features.json"
@@ -552,13 +611,15 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertNotIn("alpha", saved)
 
     def test_record_keeps_features_changed_by_a_merged_mainline(self):
-        for index, change in enumerate(("beta-file", "beta-registration-draft")):
+        for index, change in enumerate(
+            ("beta-file", "beta-registration-draft", "beta-rename")
+        ):
             with self.subTest(change=change):
                 if index:
                     self._reset_mainline_merge_fixture()
                 self._merge_mainline_change(change)
 
-                result = self.record(("alpha", "beta"))
+                result = self.record(("alpha", "beta"), mainline="mainline")
 
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 saved = json.loads(
@@ -570,6 +631,40 @@ class ApprovalPlanTest(unittest.TestCase):
                 self.assertEqual(saved["alpha"], head)
                 self.assertEqual(saved["beta"], self.approval_base)
                 self.assertIn("留到下次清扫：beta（主线带来改动）", result.stdout)
+
+    def test_record_keeps_features_changed_by_a_fast_forward_mainline(self):
+        run_git(self.primary, "switch", "-c", "fast-forward-mainline")
+        (self.primary / "beta" / "main.py").write_text(
+            "value = 20\n", encoding="utf-8"
+        )
+        run_git(self.primary, "add", "-A")
+        run_git(self.primary, "commit", "-m", "主线改动 beta")
+        mainline_head = run_git(self.primary, "rev-parse", "HEAD")
+        run_git(self.repository, "merge", "--ff-only", "fast-forward-mainline")
+
+        result = self.record(("alpha", "beta"), mainline="fast-forward-mainline")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        saved = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(saved["alpha"], mainline_head)
+        self.assertEqual(saved["beta"], self.approval_base)
+        self.assertIn("留到下次清扫：beta（主线带来改动）", result.stdout)
+
+    def test_record_records_answers_when_mainline_has_no_changes(self):
+        result = self.record(("beta",), mainline=self.plan_commit)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        saved = json.loads(
+            (self.repository / "repo-map" / "approved.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(saved["beta"], self.plan_commit)
+        self.assertNotIn("留到下次清扫", result.stdout)
 
     def test_reask_removes_approval_even_when_mainline_changed_the_feature(self):
         self._merge_mainline_change("beta-file")
@@ -605,6 +700,11 @@ class ApprovalPlanTest(unittest.TestCase):
             document["children"][1]["items"][0]["text"] = "Beta 主线改过的要求。"
             document["children"][1]["items"][0]["status"] = "起草"
             path.write_text(json.dumps(document), encoding="utf-8")
+        elif change == "beta-rename":
+            (self.primary / "beta" / "keep.py").write_text(
+                "value = 2\n", encoding="utf-8"
+            )
+            run_git(self.primary, "mv", "beta/main.py", "beta-main.py")
         else:
             self.fail(f"未知主线改动：{change}")
         run_git(self.primary, "add", "-A")
