@@ -11,6 +11,8 @@ from json_validation import object_without_duplicate_keys  # noqa: E402
 
 
 FEATURE_KEYS = {"id", "title", "what", "why", "directory", "items", "children"}
+ROOT_REQUIRED_KEYS = {"subrepositories", "external_dependencies"}
+ROOT_OPTIONAL_KEYS = {"used_by_repositories"}
 WHY_KEYS = {"text", "source", "quote", "from"}
 ITEM_KEYS = {"id", "text", "status"}
 FEATURE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -68,15 +70,8 @@ def _safe_relative_path(value, allow_directory_marker):
     return all(part not in ("", ".", "..") for part in path.split("/"))
 
 
-def _validate_feature_keys(
-    value,
-    required_keys,
-    allowed_keys,
-    current,
-    label,
-    errors,
-):
-    missing = required_keys - value.keys()
+def _validate_feature_keys(value, allowed_keys, current, label, errors):
+    missing = allowed_keys - ROOT_OPTIONAL_KEYS - value.keys()
     extra = value.keys() - allowed_keys
     for key in sorted(missing):
         if key == "items":
@@ -280,20 +275,11 @@ def _collect_features(value, parent, collection, label):
     if not isinstance(value, dict):
         errors.append(f"{label}必须是对象")
         return
-    root_keys = {"subrepositories", "external_dependencies"} if parent is None else set()
-    required_keys = FEATURE_KEYS | root_keys
-    optional_keys = {"used_by_repositories"} if parent is None else set()
-    allowed_keys = required_keys | optional_keys
+    root_keys = ROOT_REQUIRED_KEYS | ROOT_OPTIONAL_KEYS if parent is None else set()
+    allowed_keys = FEATURE_KEYS | root_keys
     feature_id = value.get("id")
     current = feature_id if isinstance(feature_id, str) else label
-    _validate_feature_keys(
-        value,
-        required_keys,
-        allowed_keys,
-        current,
-        label,
-        errors,
-    )
+    _validate_feature_keys(value, allowed_keys, current, label, errors)
 
     if not isinstance(feature_id, str) or FEATURE_ID.fullmatch(feature_id) is None:
         errors.append(f"{label}的 id 必须匹配 ^[a-z][a-z0-9-]*$：{feature_id!r}")

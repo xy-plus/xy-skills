@@ -115,33 +115,6 @@ class FeatureCheckTest(FeatureCheckBase):
                 self.assertIn(expected, output)
                 self.assertNotIn("根功能有多余键 used_by_repositories", output)
 
-    def test_rejects_used_by_repositories_on_a_child_feature(self):
-        self.write("child/readme.md", "child\n")
-        child = feature(
-            "child",
-            "child",
-            children=[],
-            source="原话",
-            items=[],
-        )
-        child["used_by_repositories"] = []
-        root = make_root_feature(
-            "root",
-            "",
-            children=[child],
-            subrepositories=[],
-            external_dependencies=[],
-            source="原话",
-            items=[],
-        )
-        self.set_features(root)
-
-        result = self.check()
-        output = result.stdout + result.stderr
-
-        self.assertEqual(result.returncode, 1, output)
-        self.assertIn("子功能有多余键 used_by_repositories", output)
-
     def test_allows_subrepositories_only_on_the_root_feature(self):
         self.write("child/readme.md", "child\n")
         child = make_root_feature(
@@ -153,6 +126,7 @@ class FeatureCheckTest(FeatureCheckBase):
             source="原话",
             items=[],
         )
+        child["used_by_repositories"] = []
         root = make_root_feature(
             "root",
             "",
@@ -171,6 +145,7 @@ class FeatureCheckTest(FeatureCheckBase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("子功能有多余键 subrepositories", output)
         self.assertIn("子功能有多余键 external_dependencies", output)
+        self.assertIn("子功能有多余键 used_by_repositories", output)
         self.assertNotIn("根功能有多余键 subrepositories", output)
         self.assertNotIn("根功能有多余键 external_dependencies", output)
         self.assertIn("根功能有多余键 legacy", output)
