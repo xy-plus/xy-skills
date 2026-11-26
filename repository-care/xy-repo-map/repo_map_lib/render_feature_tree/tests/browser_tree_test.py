@@ -725,6 +725,15 @@ class BrowserTreeTest(unittest.TestCase):
             panel = page.locator("#detail-panel")
             cycle_heading = panel.get_by_role("heading", name="互相引用", exact=True)
             self.assertTrue(cycle_heading.is_visible())
+            self.assertEqual(
+                cycle_heading.locator("xpath=following-sibling::small[1]").text_content(),
+                "只算 Python 的 import；其他语言之间的引用没算",
+            )
+            uses_heading = panel.get_by_role("heading", name="用到", exact=True)
+            self.assertEqual(
+                uses_heading.locator("xpath=following-sibling::small[1]").text_content(),
+                "只算 Python 的 import 和路径提及",
+            )
             cycle_list = cycle_heading.locator("xpath=following-sibling::ul[1]")
             cycle_list.get_by_role("button", name="Beta（beta）", exact=True).click()
             self.assertEqual(panel.locator("h2").text_content(), "Beta（beta）")

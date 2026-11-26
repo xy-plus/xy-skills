@@ -8,6 +8,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
+from pathlib import PurePosixPath
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -88,49 +91,6 @@ def _regular_tracked_paths(repository):
     }
 
 
-def _merge_line_ranges(ranges):
-    merged = []
-    for start, end in sorted(ranges):
-        if merged and start <= merged[-1][1] + 1:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-    return [[start, end] for start, end in merged]
-
-
-def _diff_new_line_ranges(repository, base, head, renamed_paths):
-    if not renamed_paths:
-        return {}
-    result = _git(
-        repository, "diff", "-M", "-U0", "--no-color", base, head,
-        accepted_codes=(0,),
-    )
-    ranges = {path: [] for path in renamed_paths}
-    current_path = None
-    hunk_pattern = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-    for line in result.stdout.splitlines():
-        if line.startswith("+++ b/"):
-            current_path = line[6:]
-            continue
-        if line.startswith("+++ "):
-            current_path = None
-            continue
-        match = hunk_pattern.match(line)
-        if match is None or current_path not in ranges:
-            continue
-        new_start = int(match.group(1))
-        new_count = int(match.group(2) or "1")
-        if new_count:
-            ranges[current_path].append((new_start, new_start + new_count - 1))
-        else:
-            # A deletion has no new line; include the lines on both sides of its point.
-            ranges[current_path].append((max(1, new_start), max(1, new_start + 1)))
-    return {
-        path: _merge_line_ranges(path_ranges)
-        for path, path_ranges in ranges.items()
-    }
-
-
 def _changed_paths(repository, base, head, regular_files):
     result = _git(
         repository, "diff", "-M", "--name-status", "-z", base, head,
@@ -138,7 +98,7 @@ def _changed_paths(repository, base, head, regular_files):
     )
     parts = result.stdout.split("\0")
     changed = set()
-    renamed_paths = set()
+    source_paths = {}
     index = 0
     while index < len(parts) and parts[index]:
         status = parts[index]
@@ -147,21 +107,22 @@ def _changed_paths(repository, base, head, regular_files):
             old_path, new_path = parts[index:index + 2]
             index += 2
             if status.startswith("R") and status != "R100" and new_path in regular_files:
-                renamed_paths.add(new_path)
                 changed.add(new_path)
+                source_paths[new_path] = old_path
             elif status.startswith("C") and new_path in regular_files:
                 changed.add(new_path)
+                source_paths[new_path] = None
         elif status in {"A", "M", "T"}:
             path = parts[index]
             index += 1
             if path in regular_files:
                 changed.add(path)
+                source_paths[path] = None if status == "A" else path
         elif status == "D":
             index += 1
         else:
             raise ScanError(f"无法识别 git diff 改动状态：{status}")
-    partial = _diff_new_line_ranges(repository, base, head, renamed_paths)
-    return sorted(changed), partial
+    return sorted(changed), source_paths
 
 
 def _repository_and_revision(repository_value, base_value):
@@ -223,6 +184,63 @@ def _skip_paths(repository, tracked_paths):
         return read_skip_paths(repository, tracked_paths)
     except (OSError, ValueError) as error:
         raise ScanError(str(error)) from error
+
+
+def _archive_base(repository, base, temporary_directory):
+    """Export regular tracked files from a commit without creating a worktree."""
+    archive_path = Path(temporary_directory) / "base.tar"
+    base_repository = Path(temporary_directory) / "base"
+    base_repository.mkdir()
+    try:
+        with archive_path.open("wb") as output:
+            result = subprocess.run(
+                ["git", "-C", str(repository), "archive", "--format=tar", base],
+                stdout=output,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+    except OSError as error:
+        raise ScanError(f"无法导出基准版本：{error}") from error
+    if result.returncode:
+        details = result.stderr.strip()
+        raise ScanError(f"导出基准版本失败（退出码 {result.returncode}）：{details}")
+
+    try:
+        with tarfile.open(archive_path, "r:") as archive:
+            regular_files = set()
+            for member in archive:
+                raw_name = member.name.rstrip("/")
+                path_parts = raw_name.split("/")
+                if (
+                    not raw_name
+                    or raw_name.startswith("/")
+                    or any(part in {"", ".", ".."} for part in path_parts)
+                ):
+                    raise ScanError(f"基准版本含不安全路径：{member.name}")
+                if not member.isfile():
+                    continue
+                path = PurePosixPath(raw_name)
+                target = base_repository.joinpath(*path.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source = archive.extractfile(member)
+                if source is None:
+                    raise ScanError(f"无法读取基准文件：{raw_name}")
+                with source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+                regular_files.add(path.as_posix())
+    except (OSError, tarfile.TarError) as error:
+        raise ScanError(f"无法解开基准版本：{error}") from error
+
+    tracked_result = _git(
+        repository,
+        "ls-tree", "-r", "-z", "--name-only", base,
+        accepted_codes=(0,),
+    )
+    tracked = {path for path in tracked_result.stdout.split("\0") if path}
+    return base_repository, tracked, regular_files
 
 
 def _stable_hit(tool, rule, path, line_range, message):
@@ -535,15 +553,263 @@ def _structural_test_hits(repository, tracked_paths, skip_paths, changed, catego
     return hits
 
 
-def _hit_is_in_partial_change(hit, partial):
-    changed_ranges = partial.get(hit["path"])
-    if changed_ranges is None:
-        return True
-    hit_start, hit_end = hit["lines"]
-    return any(
-        hit_start <= changed_end and changed_start <= hit_end
-        for changed_start, changed_end in changed_ranges
+def _unchanged_line_segments(old_file, new_file, repository):
+    """Map contiguous new-file line ranges that Git identifies as unchanged."""
+    try:
+        old_bytes = old_file.read_bytes()
+        new_bytes = new_file.read_bytes()
+    except OSError as error:
+        raise ScanError(f"无法读取改动前后的文件：{error}") from error
+
+    result = _run(
+        [
+            "git", "diff", "--no-index", "--no-ext-diff", "--no-textconv",
+            "--no-color", "--unified=0", "--", str(old_file), str(new_file),
+        ],
+        repository,
+        "git diff",
+        accepted_codes=(0, 1),
     )
+    old_lines = old_bytes.splitlines()
+    new_lines = new_bytes.splitlines()
+    segments = []
+    old_next = 1
+    new_next = 1
+    found_hunk = False
+    hunk_pattern = re.compile(
+        r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@"
+    )
+    for line in result.stdout.splitlines():
+        match = hunk_pattern.match(line)
+        if match is None:
+            continue
+        found_hunk = True
+        old_start = int(match.group(1))
+        old_count = int(match.group(2) or "1")
+        new_start = int(match.group(3))
+        new_count = int(match.group(4) or "1")
+        old_region_start = old_start if old_count else old_start + 1
+        new_region_start = new_start if new_count else new_start + 1
+        old_unchanged = old_region_start - old_next
+        new_unchanged = new_region_start - new_next
+        if old_unchanged < 0 or old_unchanged != new_unchanged:
+            raise ScanError("无法按改动前后的逐行差异对齐文件")
+        if old_unchanged:
+            segments.append((new_next, new_next + new_unchanged - 1, old_next))
+        old_next = old_start + old_count if old_count else old_start + 1
+        new_next = new_start + new_count if new_count else new_start + 1
+
+    if not found_hunk and old_bytes == new_bytes:
+        if new_lines:
+            segments.append((1, len(new_lines), 1))
+        return segments
+
+    old_remaining = len(old_lines) - old_next + 1
+    new_remaining = len(new_lines) - new_next + 1
+    if old_remaining == new_remaining and old_remaining > 0:
+        segments.append((new_next, len(new_lines), old_next))
+    return segments
+
+
+def _line_mappings(repository, base_repository, base_regular_files, source_paths):
+    mappings = {}
+    for new_path, old_path in source_paths.items():
+        if old_path is None or old_path not in base_regular_files:
+            continue
+        mappings[new_path] = _unchanged_line_segments(
+            base_repository / old_path,
+            repository / new_path,
+            repository,
+        )
+    return mappings
+
+
+def _old_line_number(line_mapping, new_line):
+    for new_start, new_end, old_start in line_mapping:
+        if new_start <= new_line <= new_end:
+            return old_start + new_line - new_start
+    return None
+
+
+def _old_line_range(line_mapping, new_start, new_end):
+    for segment_start, segment_end, old_start in line_mapping:
+        if segment_start <= new_start and new_end <= segment_end:
+            offset = new_start - segment_start
+            return old_start + offset, old_start + offset + new_end - new_start
+    return None
+
+
+def _ruff_rule(hit):
+    match = re.match(r"([A-Z]+\d+):", hit["message"])
+    return match.group(1) if match else None
+
+
+def _quoted_name(message):
+    match = re.search(r"[`'\"“‘]([^`'\"”’]+)[`'\"”’]", message)
+    return match.group(1) if match else None
+
+
+def _function_name(repository, path, line):
+    try:
+        source = (repository / path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ScanError(f"无法读取 Ruff 函数命中所在文件 {path}：{error}") from error
+    try:
+        tree = ast.parse(source, filename=path)
+    except SyntaxError as error:
+        raise ScanError(f"无法解析 Ruff 函数命中所在文件 {path}：{error}") from error
+    matches = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.lineno <= line <= node.end_lineno
+    ]
+    if not matches:
+        return None
+    function = min(matches, key=lambda node: node.end_lineno - node.lineno)
+    return function.name
+
+
+def _structural_test_identity(hit):
+    match = re.match(
+        r"(Python|Rust) 测试 (.+?) 去掉字面量后结构相同", hit["message"]
+    )
+    return tuple(match.groups()) if match else None
+
+
+def _duplicate_overlap(old_hit, new_hit, old_path, line_mapping):
+    if old_hit["path"] != old_path or old_hit["tool"] != "duplicate-blocks":
+        return 0
+    old_range = _old_line_range(
+        line_mapping, new_hit["lines"][0], new_hit["lines"][1]
+    )
+    if old_range is None:
+        return 0
+    return max(
+        0,
+        min(old_range[1], old_hit["lines"][1])
+        - max(old_range[0], old_hit["lines"][0])
+        + 1,
+    )
+
+
+def _existing_issue_matches(
+    old_hit,
+    new_hit,
+    old_path,
+    line_mapping,
+    old_repository,
+    new_repository,
+):
+    if old_hit["path"] != old_path or old_hit["tool"] != new_hit["tool"]:
+        return False
+
+    if new_hit["tool"] == "file-lines":
+        return True
+
+    if new_hit["tool"] == "structural-tests":
+        return _structural_test_identity(old_hit) == _structural_test_identity(new_hit)
+
+    if new_hit["tool"] != "ruff":
+        return False
+    old_rule = _ruff_rule(old_hit)
+    new_rule = _ruff_rule(new_hit)
+    if old_rule is None or old_rule != new_rule:
+        return False
+    if new_rule in {"F401", "F841"}:
+        old_name = _quoted_name(old_hit["message"])
+        return old_name is not None and old_name == _quoted_name(new_hit["message"])
+    if new_rule in {"C901", "PLR0913", "PLR0915"}:
+        old_name = _function_name(
+            old_repository, old_path, old_hit["line"]
+        )
+        return old_name is not None and old_name == _function_name(
+            new_repository, new_hit["path"], new_hit["line"]
+        )
+    if new_rule == "ERA001":
+        old_line = _old_line_number(line_mapping, new_hit["line"])
+        if old_line is None:
+            return False
+        try:
+            old_text = (old_repository / old_path).read_bytes().splitlines()[old_line - 1]
+            new_text = (new_repository / new_hit["path"]).read_bytes().splitlines()[
+                new_hit["line"] - 1
+            ]
+        except (IndexError, OSError) as error:
+            raise ScanError(f"无法读取注释代码命中所在行：{error}") from error
+        return old_text == new_text
+    return False
+
+
+def _hit_sort_key(hit):
+    return hit["path"], hit["line"], hit["tool"], hit["id"], hit["message"]
+
+
+def _new_issue_hits(
+    old_hits,
+    new_hits,
+    source_paths,
+    line_mappings,
+    old_repository,
+    new_repository,
+):
+    old_hits = sorted(old_hits, key=_hit_sort_key)
+    available_old_hits = set(range(len(old_hits)))
+    new_issues = []
+    for new_hit in sorted(new_hits, key=_hit_sort_key):
+        old_path = source_paths.get(new_hit["path"])
+        line_mapping = line_mappings.get(new_hit["path"], ())
+        matched_index = None
+        if old_path is not None and new_hit["tool"] == "duplicate-blocks":
+            overlaps = [
+                (_duplicate_overlap(old_hit, new_hit, old_path, line_mapping), index)
+                for index, old_hit in enumerate(old_hits)
+                if index in available_old_hits
+            ]
+            overlaps = [(amount, index) for amount, index in overlaps if amount]
+            if overlaps:
+                greatest_overlap = max(amount for amount, _index in overlaps)
+                best_matches = [
+                    index for amount, index in overlaps if amount == greatest_overlap
+                ]
+                if len(best_matches) == 1:
+                    matched_index = best_matches[0]
+        elif old_path is not None:
+            for index, old_hit in enumerate(old_hits):
+                if index not in available_old_hits:
+                    continue
+                if _existing_issue_matches(
+                    old_hit,
+                    new_hit,
+                    old_path,
+                    line_mapping,
+                    old_repository,
+                    new_repository,
+                ):
+                    matched_index = index
+                    break
+        if matched_index is None:
+            new_issues.append(new_hit)
+        else:
+            available_old_hits.remove(matched_index)
+    return new_issues
+
+
+def _scan_hits(repository, tracked, regular_files, skip_paths, changed):
+    categories = {
+        path: (
+            file_category_with_skip(repository, path, skip_paths)
+            if path in regular_files else "other"
+        )
+        for path in tracked
+    }
+    changed_set = set(changed)
+    hits = _duplicate_block_hits(repository, regular_files, skip_paths, changed_set)
+    hits.extend(_line_count_hits(repository, changed, categories))
+    hits.extend(_ruff_hits(repository, changed, categories))
+    hits.extend(_structural_test_hits(
+        repository, regular_files, skip_paths, changed_set, categories
+    ))
+    return hits
 
 
 def scan_repository(repository_value, base_value):
@@ -558,36 +824,54 @@ def scan_repository(repository_value, base_value):
             raise ScanError(str(error)) from error
         if cycle_registry_errors:
             raise ScanError("\n".join(cycle_registry_errors))
-    skip_paths = _skip_paths(repository, tracked)
-    changed, partial = _changed_paths(repository, base, head, regular_files)
-    changed = [path for path in changed if not is_skipped_path(path, skip_paths)]
-    partial = {
-        path: ranges for path, ranges in partial.items()
-        if not is_skipped_path(path, skip_paths)
-    }
-    categories = {
-        path: file_category_with_skip(repository, path, skip_paths)
-        for path in tracked
-    }
-    changed_set = set(changed)
-
-    # Whole-repository scans are needed to see callers and duplicate copies outside
-    # this commit; only findings in changed paths belong in the review response.
-    hits = _duplicate_block_hits(repository, tracked, skip_paths, changed_set)
-    hits.extend(_line_count_hits(repository, changed, categories))
-    hits.extend(_ruff_hits(repository, changed, categories))
-    hits.extend(_structural_test_hits(
-        repository, tracked, skip_paths, changed_set, categories
-    ))
-    hits = [hit for hit in hits if _hit_is_in_partial_change(hit, partial)]
+    changed, source_paths = _changed_paths(repository, base, head, regular_files)
+    with tempfile.TemporaryDirectory(prefix="xy-review-base-") as temporary_directory:
+        base_repository, base_tracked, base_regular_files = _archive_base(
+            repository, base, temporary_directory
+        )
+        skip_paths = _skip_paths(base_repository, base_tracked)
+        changed = [
+            path for path in changed
+            if not is_skipped_path(path, skip_paths)
+        ]
+        source_paths = {path: source_paths[path] for path in changed}
+        old_changed = sorted({
+            old_path for old_path in source_paths.values()
+            if old_path is not None
+            and old_path in base_regular_files
+            and not is_skipped_path(old_path, skip_paths)
+        })
+        old_hits = _scan_hits(
+            base_repository,
+            base_tracked,
+            base_regular_files,
+            skip_paths,
+            old_changed,
+        )
+        hits = _scan_hits(
+            repository,
+            tracked,
+            regular_files,
+            skip_paths,
+            changed,
+        )
+        line_mappings = _line_mappings(
+            repository,
+            base_repository,
+            base_regular_files,
+            source_paths,
+        )
+        hits = _new_issue_hits(
+            old_hits,
+            hits,
+            source_paths,
+            line_mappings,
+            base_repository,
+            repository,
+        )
     counts = {}
     ordered_hits = []
-    for hit in sorted(
-        hits,
-        key=lambda hit: (
-            hit["path"], hit["line"], hit["tool"], hit["id"], hit["message"]
-        ),
-    ):
+    for hit in sorted(hits, key=_hit_sort_key):
         identifier = hit["id"]
         counts[identifier] = counts.get(identifier, 0) + 1
         if counts[identifier] > 1:
@@ -598,7 +882,6 @@ def scan_repository(repository_value, base_value):
         "base": base,
         "head": head,
         "changed": changed,
-        "partial": partial,
         "hits": ordered_hits,
     }
 

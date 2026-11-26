@@ -834,7 +834,7 @@
               "items": [
                 {
                   "id": "scan-committed-review-changes",
-                  "text": "改动扫描只报基准到送审提交间内容真改过的地方：纯改名不扫，改名又改内容的只报改动附近；定位重复块、结构相同的测试、复杂度和超长文件，给稳定编号供剃刀判断。",
+                  "text": "改动扫描只报基准到送审提交间新出现的问题：同一个问题在基准那一版（按改名对上位置）已经有了就不报；纯改名不扫。",
                   "status": "起草"
                 }
               ],
@@ -1035,7 +1035,7 @@
                 },
                 {
                   "id": "track-and-verify-close-review-scope",
-                  "text": "关闭复核只因交付物没做、没做完或做错挡住关闭；只需改契约记录的问题记为附注，改完不再重审。",
+                  "text": "关闭复核只因交付物没做、没做完或做错挡住关闭；只需改契约记录的问题记为附注，作者改完续用同一个审查会话只核这几处改动，再出复核报告。",
                   "status": "起草"
                 },
                 {
@@ -1563,8 +1563,8 @@
               "status": "起草"
             },
             {
-              "id": "rewrite-only-named-words",
-              "text": "已有的「要什么」和条目，指得出哪个词是自造的词、名词串或代码里、skill 里的叫法才改。",
+              "id": "rewrite-hard-to-read",
+              "text": "已有的「要什么」和条目读着不顺就改写得更好读，说不出好在哪的不动。",
               "status": "起草"
             }
           ],
@@ -1870,6 +1870,11 @@
                   "id": "show-usage-relations",
                   "text": "功能节点和详情显示本功能用到及被哪些功能用到。",
                   "status": "确认"
+                },
+                {
+                  "id": "python-import-relation-scope",
+                  "text": "页面说明「用到」包含 Python import 和路径提及，「互相引用」只算 Python import；其他语言之间的引用没算。",
+                  "status": "起草"
                 },
                 {
                   "id": "navigate-related-features",

@@ -102,6 +102,7 @@ body.detail-open main{padding-bottom:45vh}
 .detail-path{font:12px var(--mono);color:var(--muted);margin:0;word-break:break-all}
 .close-detail{flex:none;margin-left:auto;font-size:20px;color:var(--muted);padding:0 4px;text-align:center}
 .detail-panel p{margin:8px 0;color:var(--ink2);font-size:14px;overflow-wrap:anywhere}
+.detail-note{display:block;margin-top:4px;color:var(--muted);font-size:11px}
 .detail-panel h3{margin:12px 0 0;font-size:12px;color:var(--muted);font-weight:650}
 .detail-panel blockquote{margin:6px 0 0;padding:6px 10px;border-left:3px solid var(--docs);background:var(--page);font-size:13px;color:var(--ink2);border-radius:0 6px 6px 0;overflow-wrap:anywhere}
 .detail-panel .citation-origin{display:block;margin-top:4px;color:var(--muted);font-size:11px}
@@ -534,7 +535,11 @@ function openDetails(featureId) {
       feature: otherFeature,
       by: "import",
     }));
-    panel.append(make("h3", "", "互相引用"), relationList(members, []));
+    panel.append(
+      make("h3", "", "互相引用"),
+      make("small", "detail-note", "只算 Python 的 import；其他语言之间的引用没算"),
+      relationList(members, []),
+    );
     panel.append(
       make(
         "p",
@@ -543,7 +548,11 @@ function openDetails(featureId) {
       ),
     );
   }
-  panel.append(make("h3", "", "用到"), relationList(feature.uses, feature.external_uses));
+  panel.append(
+    make("h3", "", "用到"),
+    make("small", "detail-note", "只算 Python 的 import 和路径提及"),
+    relationList(feature.uses, feature.external_uses),
+  );
   panel.append(make("h3", "", "被用到"), relationList(incomingUses.get(featureId), []));
   panel.hidden = false;
   document.body.classList.add("detail-open");

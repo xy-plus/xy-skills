@@ -138,7 +138,7 @@ class ScanChangesTest(unittest.TestCase):
         self.assertEqual(document["changed"], [])
         self.assertEqual(document["hits"], [])
 
-    def test_changed_rename_reports_only_hits_near_the_changed_lines(self):
+    def test_changed_rename_reports_new_duplicate_block_in_added_lines(self):
         repeated = [f"shared block row {number} carries enough words" for number in range(1, 9)]
         original = [f"filler row {number} remains in the same file" for number in range(1, 17)]
         original.extend(repeated)
@@ -154,10 +154,12 @@ class ScanChangesTest(unittest.TestCase):
         document = self.scan_document(base)
 
         self.assertEqual(document["changed"], ["new-name.md"])
-        self.assertEqual(document["partial"], {"new-name.md": [[25, 40]]})
-        local_hits = [hit for hit in document["hits"] if hit["path"] == "new-name.md"]
-        self.assertEqual([hit["line"] for hit in local_hits], [33])
-        self.assertTrue(all(hit["lines"][0] >= 25 for hit in local_hits), local_hits)
+        self.assertNotIn("partial", document)
+        new_hits = [
+            hit for hit in document["hits"]
+            if hit["tool"] == "duplicate-blocks" and hit["path"] == "new-name.md"
+        ]
+        self.assertEqual([hit["line"] for hit in new_hits], [33])
 
     def test_changed_rename_deletions_include_lines_on_both_sides(self):
         original = [f"stable line {number} has enough meaning" for number in range(1, 9)]
@@ -170,7 +172,8 @@ class ScanChangesTest(unittest.TestCase):
         document = self.scan_document(base)
 
         self.assertEqual(document["changed"], ["new-name.md"])
-        self.assertEqual(document["partial"], {"new-name.md": [[2, 3]]})
+        self.assertNotIn("partial", document)
+        self.assertEqual(document["hits"], [])
 
     def test_deleted_files_and_gitlinks_are_not_changed_regular_files(self):
         self.write("deleted.md", "remove\n")
@@ -267,6 +270,19 @@ class ScanChangesTest(unittest.TestCase):
         document = self.scan_document(base)
 
         self.assertEqual(document["changed"], ["shown.md"])
+
+    def test_changed_paths_use_the_base_skip_list(self):
+        self.write("repo-map/skip.json", '["changed.py"]\n')
+        self.write("changed.py", "import os\n")
+        base = self.commit("base")
+        self.write("repo-map/skip.json", "[]\n")
+        self.write("changed.py", "import os\nvalue = 1\n")
+        self.commit("remove skip entry")
+
+        document = self.scan_document(base)
+
+        self.assertNotIn("changed.py", document["changed"])
+        self.assertFalse(any(hit["path"] == "changed.py" for hit in document["hits"]))
 
     def test_same_commits_produce_stable_json_and_full_head(self):
         self.write("readme.md", "before\n")
@@ -440,6 +456,194 @@ class ScanChangesTest(unittest.TestCase):
             hits,
         )
         self.assertFalse(any(hit["path"] == "clean.py" for hit in hits), hits)
+
+    def test_renamed_file_matches_unused_imports_by_name(self):
+        self.write("old/module.py", "from package import HOUR\n")
+        base = self.commit("base")
+        (self.repository / "new").mkdir()
+        self.git("mv", "old/module.py", "new/module.py")
+        self.write(
+            "new/module.py",
+            "from package import HOUR\nfrom package import DAY\n",
+        )
+        self.commit("rename and change imports")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "ruff" and "F401" in hit["message"]
+        ]
+
+        self.assertEqual(len(hits), 1, hits)
+        self.assertEqual(hits[0]["path"], "new/module.py")
+        self.assertEqual(hits[0]["line"], 2)
+        self.assertIn("DAY", hits[0]["message"])
+
+    def test_unchanged_unused_local_is_suppressed_but_new_name_is_reported(self):
+        self.write(
+            "changed.py",
+            "def calculate():\n    unused = 1\n    return 0\n",
+        )
+        base = self.commit("base")
+        self.write(
+            "changed.py",
+            "def calculate():\n    unused = 2\n    new_unused = 3\n    return 0\n",
+        )
+        self.commit("add unused local")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "ruff" and "F841" in hit["message"]
+        ]
+
+        self.assertEqual(len(hits), 1, hits)
+        self.assertIn("new_unused", hits[0]["message"])
+
+    def test_existing_complexity_is_suppressed_for_the_same_function_after_rename(self):
+        source = "def complex_function(value):\n"
+        source += "".join(
+            f"    if value == {number}: value += 1\n" for number in range(11)
+        )
+        source += "    return value\n"
+        self.write("old/module.py", source)
+        base = self.commit("base")
+        (self.repository / "new").mkdir()
+        self.git("mv", "old/module.py", "new/module.py")
+        self.write("new/module.py", source.replace("value == 0", "value == 100"))
+        self.commit("rename and change condition")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "ruff" and "C901" in hit["message"]
+        ]
+
+        self.assertEqual(hits, [])
+
+    def test_existing_structural_test_is_suppressed_by_test_name_after_rename(self):
+        source = (
+            "def test_same_name():\n    assert process(1) == 2\n"
+            "def test_peer():\n    assert process(3) == 4\n"
+        )
+        self.write("tests/old_test.py", source)
+        base = self.commit("base")
+        self.git("mv", "tests/old_test.py", "tests/new_test.py")
+        self.write("tests/new_test.py", source.replace("process(1)", "process(8)"))
+        self.commit("rename and change literal")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "structural-tests"
+        ]
+
+        self.assertEqual(hits, [])
+
+    def test_existing_file_length_finding_is_suppressed_after_content_change(self):
+        source = "".join(
+            f"distinct line {number} with enough words to avoid duplicates\n"
+            for number in range(1001)
+        )
+        self.write("large.md", source)
+        base = self.commit("base")
+        self.write("large.md", source.replace("distinct line 0", "changed line 0", 1))
+        self.commit("change long file")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "file-lines"
+        ]
+
+        self.assertEqual(hits, [])
+
+    def test_comment_out_code_matches_only_the_same_unchanged_line(self):
+        self.write("changed.py", "# total = 1\nvalue = 1\n")
+        base = self.commit("base")
+        self.write("changed.py", "# total = 1\n# fresh_total = 2\nvalue = 2\n")
+        self.commit("add commented code")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "ruff" and "ERA001" in hit["message"]
+        ]
+
+        self.assertEqual(len(hits), 1, hits)
+        self.assertEqual(hits[0]["line"], 2)
+
+    def test_unchanged_duplicate_block_is_suppressed_when_another_line_changes(self):
+        repeated = [f"shared block row {number} carries enough words" for number in range(1, 9)]
+        self.write("source.md", "\n".join(repeated) + "\n")
+        self.write("copy.md", "old lead line is distinct\n" + "\n".join(repeated) + "\n")
+        base = self.commit("base with old duplicate")
+        self.write("copy.md", "new lead line is distinct\n" + "\n".join(repeated) + "\n")
+        self.commit("change line before duplicate")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "duplicate-blocks" and hit["path"] == "copy.md"
+        ]
+
+        self.assertEqual(hits, [])
+
+    def test_duplicate_block_with_changed_line_is_reported(self):
+        original = [f"shared block row {number} carries enough words" for number in range(1, 9)]
+        changed = original.copy()
+        changed[3] = "changed shared row carries enough words to stay duplicated"
+        self.write("source.md", "\n".join(original) + "\n")
+        self.write("copy.md", "\n".join(original) + "\n")
+        base = self.commit("base with old duplicate")
+        self.write("source.md", "\n".join(changed) + "\n")
+        self.write("copy.md", "\n".join(changed) + "\n")
+        self.commit("change duplicate block")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "duplicate-blocks" and hit["path"] == "copy.md"
+        ]
+
+        self.assertEqual(len(hits), 1, hits)
+        self.assertEqual(hits[0]["lines"], [1, 8])
+
+    def test_one_old_duplicate_hit_matches_at_most_one_new_hit(self):
+        repeated = [f"shared block row {number} carries enough words" for number in range(1, 21)]
+        self.write("source.md", "\n".join(repeated) + "\n")
+        self.write("copy.md", "\n".join(repeated) + "\n")
+        base = self.commit("base with old duplicate")
+        changed = repeated.copy()
+        changed[9] = "changed row breaks duplicate windows but keeps enough words"
+        self.write("copy.md", "\n".join(changed) + "\n")
+        self.commit("split old duplicate")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "duplicate-blocks" and hit["path"] == "copy.md"
+        ]
+
+        self.assertEqual(len(hits), 1, hits)
+
+    def test_ambiguous_equal_overlap_with_old_duplicate_hits_is_reported(self):
+        old_hits = [
+            scan_changes._stable_hit(
+                "duplicate-blocks", "six-lines-forty-characters", "old.md",
+                (1, 6), "first old block",
+            ),
+            scan_changes._stable_hit(
+                "duplicate-blocks", "six-lines-forty-characters", "old.md",
+                (7, 12), "second old block",
+            ),
+        ]
+        new_hit = scan_changes._stable_hit(
+            "duplicate-blocks", "six-lines-forty-characters", "new.md",
+            (1, 12), "overlaps both old blocks equally",
+        )
+
+        new_issues = scan_changes._new_issue_hits(
+            old_hits,
+            [new_hit],
+            {"new.md": "old.md"},
+            {"new.md": [(1, 12, 1)]},
+            self.repository,
+            self.repository,
+        )
+
+        self.assertEqual(new_issues, [new_hit])
 
     def test_ruff_function_rules_report_the_function_definition_range(self):
         self.write("base.py", "value = 1\n")
