@@ -219,6 +219,17 @@ class DecisionPageBrowserTest(unittest.TestCase):
         page.goto(f"http://127.0.0.1:{bridge.server_port}/")
         return browser, page
 
+    def _assert_conflict_remains_editable(self, page, item, title=None):
+        feedback = page.locator("#feedback")
+        feedback.wait_for(state="visible")
+        self.assertEqual(
+            feedback.inner_text(), "已经提交过另一份回答，这页的选择没有保存"
+        )
+        self.assertFalse(item.locator("textarea").is_disabled())
+        self.assertFalse(page.locator("#submit").is_hidden())
+        if title is not None:
+            self.assertEqual(page.locator("#page-title").inner_text(), title)
+
     def _expand_folded_details(self, page, item, expected_lines):
         disclosure = item.locator(".decision-details")
         self.assertFalse(disclosure.evaluate("element => element.open"))
@@ -666,15 +677,7 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     item.locator('input[value="Remove"]').check()
                     item.locator("textarea").fill("本页尚未保存的回答。")
                     page.locator("#submit").click()
-
-                    feedback = page.locator("#feedback")
-                    feedback.wait_for(state="visible")
-                    self.assertEqual(
-                        feedback.inner_text(),
-                        "已经提交过另一份回答，这页的选择没有保存",
-                    )
-                    self.assertFalse(item.locator("textarea").is_disabled())
-                    self.assertFalse(page.locator("#submit").is_hidden())
+                    self._assert_conflict_remains_editable(page, item)
                     browser.close()
 
     def test_409_shows_conflict_without_locking_this_page(self):
@@ -718,15 +721,9 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     item.locator('input[value="Remove"]').check()
                     item.locator("textarea").fill("本页没有保存。")
                     page.locator("#submit").click()
-                    feedback = page.locator("#feedback")
-                    feedback.wait_for(state="visible")
-                    self.assertEqual(
-                        feedback.inner_text(),
-                        "已经提交过另一份回答，这页的选择没有保存",
+                    self._assert_conflict_remains_editable(
+                        page, item, decisions["title"]
                     )
-                    self.assertFalse(item.locator("textarea").is_disabled())
-                    self.assertFalse(page.locator("#submit").is_hidden())
-                    self.assertEqual(page.locator("#page-title").inner_text(), decisions["title"])
                     browser.close()
 
     def test_storage_errors_stay_visible_without_blocking_answers_or_submission(self):
