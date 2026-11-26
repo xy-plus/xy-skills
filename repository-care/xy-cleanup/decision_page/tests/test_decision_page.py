@@ -296,6 +296,15 @@ def prepare_static_site(directory, page_content):
     return site
 
 
+def static_site_ask_fixture(directory, page_content):
+    portal_script = directory / "portal.py"
+    decisions = directory / "decisions.json"
+    answers = directory / "answers.json"
+    decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+    site = prepare_static_site(directory, page_content)
+    return portal_script, decisions, answers, site
+
+
 @contextmanager
 def background_decision_page(decisions, answers, call_log):
     child_code = """
@@ -371,6 +380,19 @@ def temporary_background_decision_page():
             calls,
         ):
             yield decisions, answers, call_log, process, calls
+
+
+@contextmanager
+def mounted_background_decision_page(test_case):
+    with temporary_background_decision_page() as (
+        _decisions,
+        answers,
+        call_log,
+        process,
+        calls,
+    ):
+        test_case.assertTrue(calls, "mount was not attempted")
+        yield answers, call_log, process, calls[0][5]
 
 
 class DecisionPageCommandTest(unittest.TestCase):
@@ -842,15 +864,12 @@ class DecisionPageCommandTest(unittest.TestCase):
                 self.assertFalse(answers.exists())
 
     def test_term_unmounts_site_and_removes_socket_without_an_answer(self):
-        with temporary_background_decision_page() as (
-            _decisions,
+        with mounted_background_decision_page(self) as (
             answers,
             call_log,
             process,
-            calls,
+            socket_path,
         ):
-            self.assertTrue(calls, "mount was not attempted")
-            socket_path = calls[0][5]
             self.assertTrue(Path(socket_path).exists())
             process.send_signal(signal.SIGTERM)
             stdout, stderr = process.communicate(timeout=12)
@@ -862,15 +881,12 @@ class DecisionPageCommandTest(unittest.TestCase):
         self.assertFalse(Path(socket_path).exists())
 
     def test_term_interrupts_a_stalled_request_before_idle_timeout(self):
-        with temporary_background_decision_page() as (
-            _decisions,
+        with mounted_background_decision_page(self) as (
             answers,
             call_log,
             process,
-            calls,
+            socket_path,
         ):
-            self.assertTrue(calls, "mount was not attempted")
-            socket_path = calls[0][5]
             partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             partial.connect(socket_path)
             partial.sendall(b"POST /sub")

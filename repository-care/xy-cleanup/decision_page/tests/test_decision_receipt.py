@@ -119,11 +119,7 @@ class DecisionReceiptTest(unittest.TestCase):
     def test_ask_replaces_only_an_existing_static_received_page(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             directory = Path(temporary)
-            portal_script = directory / "portal.py"
-            decisions = directory / "decisions.json"
-            answers = directory / "answers.json"
-            decisions.write_text(json.dumps(support.valid_decisions()), encoding="utf-8")
-            support.prepare_static_site(
+            portal_script, decisions, answers, _site = support.static_site_ask_fixture(
                 directory,
                 '<meta name="decision-state" content="received">',
             )
@@ -147,11 +143,9 @@ class DecisionReceiptTest(unittest.TestCase):
     def test_ask_does_not_remove_another_static_site_with_the_same_name(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             directory = Path(temporary)
-            portal_script = directory / "portal.py"
-            decisions = directory / "decisions.json"
-            answers = directory / "answers.json"
-            decisions.write_text(json.dumps(support.valid_decisions()), encoding="utf-8")
-            site = support.prepare_static_site(directory, "other page")
+            portal_script, decisions, answers, site = support.static_site_ask_fixture(
+                directory, "other page"
+            )
             calls = []
 
             def reject_mount(arguments):
