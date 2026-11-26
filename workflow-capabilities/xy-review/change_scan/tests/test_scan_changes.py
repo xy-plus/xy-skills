@@ -567,6 +567,36 @@ class ScanChangesTest(unittest.TestCase):
         self.assertEqual(len(hits), 1, hits)
         self.assertEqual(hits[0]["line"], 2)
 
+    def test_moved_commented_code_is_suppressed_by_same_line_text(self):
+        self.write("changed.py", "# total = 1\nvalue = 1\nkeep = 1\n")
+        base = self.commit("base")
+        self.write("changed.py", "value = 2\nkeep = 1\n# total = 1\n")
+        self.commit("move commented code")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "ruff" and "ERA001" in hit["message"]
+        ]
+
+        self.assertEqual(hits, [])
+
+    def test_only_one_of_multiple_same_text_commented_lines_is_suppressed(self):
+        self.write("changed.py", "# total = 1  \nvalue = 1\nkeep = 1\n")
+        base = self.commit("base")
+        self.write(
+            "changed.py",
+            "value = 2\nkeep = 1\n# total = 1\n# total = 1\n",
+        )
+        self.commit("move and duplicate commented code")
+
+        hits = [
+            hit for hit in self.scan_document(base)["hits"]
+            if hit["tool"] == "ruff" and "ERA001" in hit["message"]
+        ]
+
+        self.assertEqual(len(hits), 1, hits)
+        self.assertEqual(hits[0]["line"], 4)
+
     def test_unchanged_duplicate_block_is_suppressed_when_another_line_changes(self):
         repeated = [f"shared block row {number} carries enough words" for number in range(1, 9)]
         self.write("source.md", "\n".join(repeated) + "\n")

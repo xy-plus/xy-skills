@@ -707,18 +707,22 @@ def _same_named_function(old_hit, new_hit, comparison):
 
 def _same_commented_line(old_hit, new_hit, comparison):
     old_path = comparison.source_paths[new_hit["path"]]
-    line_mapping = comparison.line_mappings.get(new_hit["path"], ())
-    old_line = _old_line_number(line_mapping, new_hit["line"])
-    if old_line is None:
-        return False
     try:
-        old_text = (comparison.old_repository / old_path).read_bytes().splitlines()[
-            old_line - 1
-        ]
-        new_text = (comparison.new_repository / new_hit["path"]).read_bytes().splitlines()[
-            new_hit["line"] - 1
-        ]
-    except (IndexError, OSError) as error:
+        old_text = (
+            (comparison.old_repository / old_path)
+            .read_bytes()
+            .splitlines()[old_hit["line"] - 1]
+            .decode("utf-8")
+            .strip()
+        )
+        new_text = (
+            (comparison.new_repository / new_hit["path"])
+            .read_bytes()
+            .splitlines()[new_hit["line"] - 1]
+            .decode("utf-8")
+            .strip()
+        )
+    except (IndexError, OSError, UnicodeDecodeError) as error:
         raise ScanError(f"无法读取注释代码命中所在行：{error}") from error
     return old_text == new_text
 
