@@ -11,7 +11,11 @@ from json_validation import object_without_duplicate_keys  # noqa: E402
 
 
 FEATURE_KEYS = {"id", "title", "what", "why", "directory", "items", "children"}
-ROOT_REQUIRED_KEYS = {"subrepositories", "external_dependencies"}
+ROOT_REQUIRED_KEYS = {
+    "subrepositories",
+    "external_dependencies",
+    "existing_cycle_imports",
+}
 ROOT_OPTIONAL_KEYS = {"used_by_repositories"}
 WHY_KEYS = {"text", "source", "quote", "from"}
 ITEM_KEYS = {"id", "text", "status"}
@@ -80,6 +84,8 @@ def _validate_feature_keys(value, allowed_keys, current, label, errors):
             errors.append(
                 f"功能 {current} 缺少键 directory；请填写该功能自己的仓内目录路径。"
             )
+        elif key == "existing_cycle_imports":
+            errors.append("根功能缺 existing_cycle_imports")
         else:
             errors.append(f"{label}缺少键 {key}")
     for key in sorted(extra):
@@ -233,6 +239,39 @@ def _validate_root_paths(value, label, errors):
                     f"{label}的 external_dependencies 名字必须是非空字符串、首尾无空白且不含换行：{name!r}"
                 )
     _validate_used_by_repositories(value, label, errors)
+    _validate_existing_cycle_imports(value, label, errors)
+
+
+def _validate_existing_cycle_imports(value, label, errors):
+    if "existing_cycle_imports" not in value:
+        return
+    imports = value["existing_cycle_imports"]
+    if not isinstance(imports, list):
+        errors.append(f"{label}的 existing_cycle_imports 必须是数组")
+        return
+
+    seen = set()
+    for index, item in enumerate(imports):
+        item_label = f"{label}的 existing_cycle_imports[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{item_label}必须是对象")
+            continue
+        if item.keys() != {"from", "to"}:
+            errors.append(f"{item_label}必须恰有 from、to 两个键")
+        source = item.get("from")
+        target = item.get("to")
+        if not isinstance(source, str) or not source.strip():
+            errors.append(f"{item_label}.from 必须是非空字符串")
+        if not isinstance(target, str) or not target.strip():
+            errors.append(f"{item_label}.to 必须是非空字符串")
+        if not isinstance(source, str) or not isinstance(target, str):
+            continue
+        edge = (source, target)
+        if source == target:
+            errors.append(f"{item_label}不能自己引用：{source}")
+        if edge in seen:
+            errors.append(f"{item_label}不能重复：{source} → {target}")
+        seen.add(edge)
 
 
 def _validate_used_by_repositories(value, label, errors):
@@ -373,7 +412,8 @@ def load_features(repository, tracked_paths):
     features, order, errors = collection.features, collection.order, collection.errors
     if not order or document.get("id") not in features:
         return features, order, errors or ["功能清单必须包含根功能"]
-    if errors:
+    missing_cycle_registry = "根功能缺 existing_cycle_imports"
+    if errors and any(error != missing_cycle_registry for error in errors):
         return features, order, errors
     _validate_paths(features, order, tracked_paths, errors)
     return features, order, errors

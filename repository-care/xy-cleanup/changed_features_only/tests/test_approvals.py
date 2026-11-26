@@ -223,6 +223,54 @@ class ApprovalPlanTest(unittest.TestCase):
             + "\n要审 1 个功能（范围内 1 个）\n",
         )
 
+    def test_changed_review_includes_unchanged_features_in_an_existing_cycle_in_scope_order(
+        self,
+    ):
+        features_path = self.primary / "repo-map" / "features.json"
+        features = json.loads(features_path.read_text(encoding="utf-8"))
+        features["existing_cycle_imports"] = [
+            {"from": "alpha", "to": "beta"},
+            {"from": "beta", "to": "alpha"},
+        ]
+        features_path.write_text(
+            json.dumps(features, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        (self.primary / "alpha" / "main.py").write_text(
+            "import beta.main\n", encoding="utf-8"
+        )
+        (self.primary / "beta" / "main.py").write_text(
+            "import alpha.main\n", encoding="utf-8"
+        )
+        cycle_commit = self.commit_changes("登记测试循环依赖", self.primary)
+        approved_path = self.primary / "repo-map" / "approved.json"
+        approved_path.write_text(
+            json.dumps(
+                {feature_id: cycle_commit for feature_id in FEATURE_IDS}, indent=2
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        plan_commit = self.commit_changes("认可循环依赖测试基线", self.primary)
+        cycle_worktree = self.parent / "cycle-worktree"
+        run_git(
+            self.primary,
+            "worktree",
+            "add",
+            "--detach",
+            str(cycle_worktree),
+            plan_commit,
+        )
+
+        result = self.plan(repository=cycle_worktree)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stdout,
+            f"alpha\t有存量互相引用\t{cycle_commit}\n"
+            f"beta\t有存量互相引用\t{cycle_commit}\n"
+            "要审 2 个功能（范围内 3 个）\n",
+        )
+
     def test_feature_registration_changes_are_scoped(self):
         path = self.repository / "repo-map" / "features.json"
         document = json.loads(path.read_text(encoding="utf-8"))

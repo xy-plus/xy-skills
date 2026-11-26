@@ -62,6 +62,7 @@ def root_feature(  # noqa: PLR0913 -- expose every required root field as a keyw
     items,
     subrepositories,
     external_dependencies,
+    existing_cycle_imports=MISSING,
 ):
     """Build a feature and keep root-only fields outside the generic factory."""
     result = feature(
@@ -75,6 +76,9 @@ def root_feature(  # noqa: PLR0913 -- expose every required root field as a keyw
         result["subrepositories"] = subrepositories
     if external_dependencies is not MISSING:
         result["external_dependencies"] = external_dependencies
+    result["existing_cycle_imports"] = (
+        [] if existing_cycle_imports is MISSING else existing_cycle_imports
+    )
     return result
 
 

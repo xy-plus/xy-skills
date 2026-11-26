@@ -65,6 +65,14 @@ def _from_import_targets(path, statement, python_paths):
     return result
 
 
+def _import_statement_targets(path, statement, python_paths):
+    if isinstance(statement, ast.Import):
+        return _absolute_import_targets(statement, python_paths)
+    if isinstance(statement, ast.ImportFrom):
+        return _from_import_targets(path, statement, python_paths)
+    return set()
+
+
 def _import_targets(path, source, python_paths):
     try:
         tree = ast.parse(source)
@@ -72,11 +80,77 @@ def _import_targets(path, source, python_paths):
         return set()
     result = set()
     for statement in ast.walk(tree):
-        if isinstance(statement, ast.Import):
-            result.update(_absolute_import_targets(statement, python_paths))
-        elif isinstance(statement, ast.ImportFrom):
-            result.update(_from_import_targets(path, statement, python_paths))
+        result.update(_import_statement_targets(path, statement, python_paths))
     return result
+
+
+def _import_targets_with_lines(path, source, python_paths):
+    """Return resolved Python imports with the line of each import statement."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    return {
+        (target, statement.lineno)
+        for statement in ast.walk(tree)
+        for target in _import_statement_targets(path, statement, python_paths)
+    }
+
+
+def find_cycles(edges):
+    """Return multi-node strongly connected components and their internal edges."""
+    edges = list(edges)
+    adjacency = {}
+    reverse = {}
+    for source, target in edges:
+        adjacency.setdefault(source, set()).add(target)
+        adjacency.setdefault(target, set())
+        reverse.setdefault(target, set()).add(source)
+        reverse.setdefault(source, set())
+
+    visited = set()
+    finish_order = []
+
+    def visit(node):
+        visited.add(node)
+        for target in sorted(adjacency[node]):
+            if target not in visited:
+                visit(target)
+        finish_order.append(node)
+
+    for node in sorted(adjacency):
+        if node not in visited:
+            visit(node)
+
+    visited.clear()
+    components = []
+
+    def collect(node, component):
+        visited.add(node)
+        component.append(node)
+        for source in sorted(reverse[node]):
+            if source not in visited:
+                collect(source, component)
+
+    for node in reversed(finish_order):
+        if node in visited:
+            continue
+        component = []
+        collect(node, component)
+        if len(component) > 1:
+            components.append(tuple(sorted(component)))
+
+    components.sort()
+    component_by_node = {
+        node: component for component in components for node in component
+    }
+    cycle_edges = {
+        (source, target)
+        for source, target in edges
+        if source in component_by_node
+        and component_by_node[source] == component_by_node.get(target)
+    }
+    return components, cycle_edges
 
 
 def file_mentions(path, source, tracked_paths):

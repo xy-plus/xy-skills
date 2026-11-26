@@ -113,6 +113,37 @@ def _make_rendered_tree(test_case):
     return output, expected, payload, external_name
 
 
+def _make_cycle_rendered_tree(test_case):
+    repository = make_repo(
+        test_case,
+        {
+            "README.md": "Root overview.\n",
+            "alpha/main.py": "import beta.main\n",
+            "beta/main.py": "import alpha.main\n",
+        },
+        make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            existing_cycle_imports=[
+                {"from": "alpha", "to": "beta"},
+                {"from": "beta", "to": "alpha"},
+            ],
+            children=[
+                feature("alpha", "alpha", children=[], source="原话", items=[]),
+                feature("beta", "beta", children=[], source="原话", items=[]),
+            ],
+            source="原话",
+            items=[],
+        ),
+    )
+    output = repository.parent / "cycle-rendered"
+    rendered = run_map_command("render", repository, output)
+    test_case.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
+    return output
+
+
 def _make_greedy_layout_rendered_tree(test_case):
     files = {"README.md": "Root overview.\n"}
     children = []
@@ -670,6 +701,39 @@ def _assert_phone_layout(test_case, page):
 
 
 class BrowserTreeTest(unittest.TestCase):
+    def test_cycle_marker_is_visible_in_both_views_and_details_link_to_members(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        output = _make_cycle_rendered_tree(self)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                executable_path=executable, headless=True
+            )
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.goto((output / "index.html").as_uri())
+
+            alpha_node = page.locator('.picture-node[data-feature-id="alpha"]')
+            self.assertIn("互相引用", alpha_node.get_attribute("aria-label"))
+            self.assertEqual(alpha_node.locator("circle.cycle-outline").count(), 1)
+            self.assertEqual(
+                page.locator(".cycle-legend").text_content(), "互相引用（虚线圈）"
+            )
+
+            alpha_node.click()
+            panel = page.locator("#detail-panel")
+            cycle_heading = panel.get_by_role("heading", name="互相引用", exact=True)
+            self.assertTrue(cycle_heading.is_visible())
+            cycle_list = cycle_heading.locator("xpath=following-sibling::ul[1]")
+            cycle_list.get_by_role("button", name="Beta（beta）", exact=True).click()
+            self.assertEqual(panel.locator("h2").text_content(), "Beta（beta）")
+
+            page.get_by_role("button", name="文字", exact=True).click()
+            beta_row = _row_for_title(self, page, "Beta")
+            self.assertEqual(beta_row.locator(".cycle-marker").text_content(), "互相引用")
+            browser.close()
+
     def test_root_branches_follow_greedy_height_order(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(

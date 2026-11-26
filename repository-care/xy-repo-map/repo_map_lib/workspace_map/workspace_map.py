@@ -26,6 +26,10 @@ def _namespace_child_features(root_id, features, child_maps):
                 {**use, "feature": f"{relative_path}/{use['feature']}"}
                 for use in feature["uses"]
             ]
+            joined["cycle_with"] = [
+                f"{relative_path}/{other_id}"
+                for other_id in feature["cycle_with"]
+            ]
             joined["files"] = [f"{relative_path}/{path}" for path in feature["files"]]
             features[joined_id] = joined
             feature_repositories[joined_id] = relative_path

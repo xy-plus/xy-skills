@@ -16,6 +16,9 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "repository-care/xy-repo-map"))
 from duplicate_blocks import find_duplicate_windows, merge_ranges  # noqa: E402
 from repo_map_lib.git_repository import gitlink_paths, run_git, tracked_paths  # noqa: E402
 from repo_map_lib.map_data import file_category_with_skip  # noqa: E402
+from repo_map_lib.validate_feature_list.cycle_imports import (  # noqa: E402
+    cycle_registry_change_errors,
+)
 from repo_map_lib.skip_paths.skip_paths import is_skipped_path, read_skip_paths  # noqa: E402
 
 
@@ -546,6 +549,15 @@ def _hit_is_in_partial_change(hit, partial):
 def scan_repository(repository_value, base_value):
     repository, base, head = _repository_and_revision(repository_value, base_value)
     tracked, regular_files = _regular_tracked_paths(repository)
+    if "repo-map/features.json" in tracked:
+        try:
+            cycle_registry_errors = cycle_registry_change_errors(
+                repository, base, head
+            )
+        except (OSError, ValueError) as error:
+            raise ScanError(str(error)) from error
+        if cycle_registry_errors:
+            raise ScanError("\n".join(cycle_registry_errors))
     skip_paths = _skip_paths(repository, tracked)
     changed, partial = _changed_paths(repository, base, head, regular_files)
     changed = [path for path in changed if not is_skipped_path(path, skip_paths)]

@@ -49,6 +49,7 @@ body.detail-open main{padding-bottom:45vh}
 .picture-node{cursor:pointer;outline:none}
 .picture-hit-area{fill:transparent;pointer-events:all}
 .picture-node circle{fill:var(--node-color);stroke:var(--page);stroke-width:2}
+.picture-node .cycle-outline{fill:none;stroke:var(--ink);stroke-width:1.75;stroke-dasharray:3 2;pointer-events:none}
 .picture-node:hover circle{stroke:var(--ink);stroke-width:3}
 .picture-node:focus-visible circle,.picture-node.selected circle{stroke:var(--ink);stroke-width:4}
 .picture-label{fill:var(--ink);paint-order:stroke;stroke:var(--page);stroke-width:5px;stroke-linejoin:round}
@@ -68,6 +69,8 @@ body.detail-open main{padding-bottom:45vh}
 .feature-title{display:flex;align-items:baseline;gap:5px;min-width:0;max-width:100%;font-weight:650;overflow:hidden}
 .feature-title .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .feature-title .directory-name{font:12px var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cycle-marker{flex:none;border:1px dashed var(--ink2);border-radius:5px;padding:0 5px;color:var(--ink2);font-size:10.5px;line-height:1.5;white-space:nowrap}
+.legend .cycle-legend:before{background:transparent;border:1px dashed var(--ink);border-radius:50%;width:9px;height:9px}
 .feature-total{margin-left:auto;flex:none;padding-left:6px;color:var(--ink2);font:12px var(--mono);white-space:nowrap}
 .what{margin:3px 0 0;color:var(--ink2);font-size:13.5px;overflow-wrap:anywhere}
 .why{margin:3px 0 0;color:var(--ink2);font-size:13px;overflow-wrap:anywhere}
@@ -331,6 +334,9 @@ function renderFeature(featureId, level) {
   name.append(make("span", "title", feature.title));
   name.append(make("span", "directory-name", `（${feature.directory_name}）`));
   first.append(name);
+  if (feature.cycle_with.length) {
+    first.append(make("span", "cycle-marker", "互相引用"));
+  }
   const lineTotal = sumLines(feature.lines.total);
   first.append(make("span", "feature-total", `${formatNumber(lineTotal)} 行`));
   body.append(first);
@@ -420,6 +426,9 @@ function renderHeader() {
   const legend = document.querySelector("#legend");
   for (const key of lineKeys) {
     legend.append(make("span", key, `${lineTitles[key]} ${formatNumber(totalLines[key])}`));
+  }
+  if (Object.values(features).some((feature) => feature.cycle_with.length)) {
+    legend.append(make("span", "cycle-legend", "互相引用（虚线圈）"));
   }
   const hasDecisions = Object.values(features).some(
     (feature) => feature.markers.includes("等你拍板"),
@@ -520,6 +529,20 @@ function openDetails(featureId) {
     panel.append(make("p", "citation-origin", `确认来历：${feature.why.from}`));
   }
 
+  if (feature.cycle_with.length) {
+    const members = feature.cycle_with.map((otherFeature) => ({
+      feature: otherFeature,
+      by: "import",
+    }));
+    panel.append(make("h3", "", "互相引用"), relationList(members, []));
+    panel.append(
+      make(
+        "p",
+        "",
+        "产品代码 import 成环；已有的先放行，不许新增，清扫时逐步解开。",
+      ),
+    );
+  }
   panel.append(make("h3", "", "用到"), relationList(feature.uses, feature.external_uses));
   panel.append(make("h3", "", "被用到"), relationList(incomingUses.get(featureId), []));
   panel.hidden = false;

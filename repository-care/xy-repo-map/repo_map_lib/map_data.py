@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 from .constants import (
@@ -9,7 +10,9 @@ from .constants import (
 )
 from .find_dependencies.dependencies import (
     _import_targets,
+    _import_targets_with_lines,
     directory_mentions,
+    find_cycles,
     file_mentions,
     name_mentions,
 )
@@ -26,6 +29,7 @@ from .skip_paths.skip_paths import is_skipped_path, read_skip_paths
 
 
 CODE_CANDIDATE_SUFFIXES = set(CODE_SUFFIXES) | {".html"} | UNSUPPORTED_CODE_SUFFIXES
+MISSING_CYCLE_REGISTRY_ERROR = "根功能缺 existing_cycle_imports"
 
 
 def _file_category(path):
@@ -88,13 +92,14 @@ def _add_use(uses, source, target, kind, features):
 def _load_inputs(root):
     paths = sorted(tracked_paths(root))
     features, order, errors = load_features(root, paths)
-    if errors:
+    missing_cycle_registry = errors == [MISSING_CYCLE_REGISTRY_ERROR]
+    if errors and not missing_cycle_registry:
         raise ValueError("\n".join(errors))
     skip_paths = read_skip_paths(root, paths)
     errors = subrepository_errors(root, features[order[0]]["subrepositories"])
     if errors:
         raise ValueError("\n".join(errors))
-    return paths, features, order, skip_paths
+    return paths, features, order, skip_paths, missing_cycle_registry
 
 
 def _read_sources(root, paths, skip_paths):
@@ -163,6 +168,88 @@ def _python_imports(paths, categories, source_texts):
     return imports
 
 
+def _product_import_graph(paths, categories, source_texts, features, owners):
+    python_paths = [path for path in paths if Path(path).suffix.lower() == ".py"]
+    edges = set()
+    locations = {}
+    for source_path in paths:
+        if (
+            Path(source_path).suffix.lower() != ".py"
+            or categories[source_path] != "code"
+        ):
+            continue
+        source_feature = owners[source_path]
+        for target_path, line in _import_targets_with_lines(
+            source_path, source_texts[source_path], python_paths
+        ):
+            if categories.get(target_path) != "code":
+                continue
+            target_feature = owners[target_path]
+            if (
+                source_feature == target_feature
+                or is_feature_ancestor(source_feature, target_feature, features)
+                or is_feature_ancestor(target_feature, source_feature, features)
+            ):
+                continue
+            edge = (source_feature, target_feature)
+            edges.add(edge)
+            locations.setdefault(edge, set()).add(
+                (source_path, line, target_path)
+            )
+    return edges, locations
+
+
+def _feature_edge_order(edge, feature_order):
+    index = {feature_id: position for position, feature_id in enumerate(feature_order)}
+    return index.get(edge[0], len(index)), index.get(edge[1], len(index))
+
+
+def _cycle_registry_errors(
+    features, order, cycle_edges, locations, missing_cycle_registry
+):
+    root = features[order[0]]
+    registry = root.get("existing_cycle_imports", [])
+    registered = {(entry["from"], entry["to"]) for entry in registry}
+    sorted_edges = sorted(cycle_edges, key=lambda edge: _feature_edge_order(edge, order))
+    errors = []
+    if missing_cycle_registry:
+        current = [{"from": source, "to": target} for source, target in sorted_edges]
+        errors.append(
+            f"{MISSING_CYCLE_REGISTRY_ERROR}；首次登记照现状填写：\n"
+            + json.dumps(current, ensure_ascii=False)
+        )
+        return errors
+
+    for edge in sorted_edges:
+        if edge in registered:
+            continue
+        imports = sorted(locations.get(edge, ()))
+        details = "、".join(
+            f"{source_path}:{line} → {target_path}"
+            for source_path, line, target_path in imports
+        )
+        errors.append(
+            f"名单外出现成环引用 {edge[0]} → {edge[1]}；文件级 import：{details}；"
+            "名单只能删不能加，先解开这条引用。"
+        )
+    for edge in sorted(registered - cycle_edges, key=lambda pair: _feature_edge_order(pair, order)):
+        errors.append(
+            f"existing_cycle_imports 里的 {edge[0]} → {edge[1]} 已不成环或功能 id 不在图上；"
+            "请从名单删除。"
+        )
+    return errors
+
+
+def _cycle_with_features(order, components):
+    cycle_with = {feature_id: [] for feature_id in order}
+    for component in components:
+        for feature_id in component:
+            cycle_with[feature_id] = [
+                other for other in order if other in component and other != feature_id
+            ]
+    return cycle_with
+
+
 def _aggregate_feature_metrics(features, order, paths, owners, counts):
     lines = {feature_id: {name: 0 for name in LINE_NAMES} for feature_id in order}
     doc_chars = {feature_id: 0 for feature_id in order}
@@ -216,6 +303,7 @@ class UseInputs:
 class UseGraph:
     by_source: dict
     external: dict
+    cycle_with: dict
 
 
 @dataclass
@@ -293,7 +381,7 @@ def _derive_feature_uses(inputs):
         )
     for feature_uses in uses_by_source.values():
         feature_uses.sort(key=lambda item: index[item["feature"]])
-    return UseGraph(uses_by_source, context.external_uses)
+    return UseGraph(uses_by_source, context.external_uses, {})
 
 
 def _assemble_features(
@@ -315,6 +403,8 @@ def _assemble_features(
             item["status"] == "起草" for item in value["items"]
         ):
             markers.append("等你拍板")
+        if use_graph.cycle_with[feature_id]:
+            markers.append("互相引用")
         result[feature_id] = {
             "title": value["title"],
             "directory_name": directory_name,
@@ -332,6 +422,7 @@ def _assemble_features(
             "uses": use_graph.by_source[feature_id],
             "external_uses": sorted(use_graph.external[feature_id]),
             "markers": markers,
+            "cycle_with": use_graph.cycle_with[feature_id],
         }
     return result
 
@@ -339,7 +430,7 @@ def _assemble_features(
 def build_map(repository):
     """Return the complete machine-readable map, raising ValueError on invalid input."""
     root = require_repository_root(repository)
-    paths, features, order, skip_paths = _load_inputs(root)
+    paths, features, order, skip_paths, missing_cycle_registry = _load_inputs(root)
     categories, source_texts = _read_sources(root, paths, skip_paths)
     external_mentions = _external_references(
         features,
@@ -351,6 +442,16 @@ def build_map(repository):
     counts = _count_sources(paths, categories, source_texts)
     imports = _python_imports(paths, categories, source_texts)
     owners = assign_files(features, order, paths)
+    feature_edges, locations = _product_import_graph(
+        paths, categories, source_texts, features, owners
+    )
+    components, cycle_edges = find_cycles(feature_edges)
+    registry_errors = _cycle_registry_errors(
+        features, order, cycle_edges, locations, missing_cycle_registry
+    )
+    if registry_errors:
+        raise ValueError("\n".join(registry_errors))
+    cycle_with = _cycle_with_features(order, components)
     metrics = _aggregate_feature_metrics(features, order, paths, owners, counts)
     lines, doc_chars, files, children, totals, total_doc_chars = metrics
     use_graph = _derive_feature_uses(
@@ -366,6 +467,7 @@ def build_map(repository):
             files,
         )
     )
+    use_graph.cycle_with = cycle_with
     result_features = _assemble_features(
         root,
         features,

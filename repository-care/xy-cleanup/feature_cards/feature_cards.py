@@ -287,6 +287,14 @@ def _decision_item(feature_id, card, context):
         previous_what = previous_feature.get("what")
         if previous_what != feature["what"]:
             lines.append(f"原来\t{previous_what}")
+    if features[feature_id]["cycle_with"]:
+        other_titles = "、".join(
+            features[other_id]["title"]
+            for other_id in features[feature_id]["cycle_with"]
+        )
+        lines.append(
+            f"互相引用\t和 {other_titles} 成环（产品代码 import）"
+        )
     lines.extend(_front_card_lines(card))
     if not unapproved:
         lines.extend(draft_items)

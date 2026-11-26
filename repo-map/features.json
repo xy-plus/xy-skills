@@ -96,6 +96,7 @@
     "Chromium",
     "ruff"
   ],
+  "existing_cycle_imports": [],
   "children": [
     {
       "id": "rules",
@@ -1619,6 +1620,11 @@
                   "id": "used-by-field",
                   "text": "根功能可以登记用到本仓的其他仓，清扫判没人用时也去这些仓反查；没登记就只查本仓。",
                   "status": "起草"
+                },
+                {
+                  "id": "existing-cycle-list",
+                  "text": "已有的成环引用登记在根功能的名单里放行；名单外出现新环时检查失败，名单只能删。",
+                  "status": "起草"
                 }
               ],
               "children": []
@@ -1759,6 +1765,11 @@
                   "id": "external-name-mentions",
                   "text": "代码或文档提到仓库声明的外部依赖时，功能图能够显示该外部使用关系。",
                   "status": "确认"
+                },
+                {
+                  "id": "product-import-cycles",
+                  "text": "产品代码的 Python import 在功能之间连成环时标出来；测试文件里的 import 不算。",
+                  "status": "起草"
                 }
               ],
               "children": []
@@ -1923,6 +1934,11 @@
                 {
                   "id": "picture-zoom",
                   "text": "图视图可放大、缩小和看全图，手机可横向滑动查看。",
+                  "status": "起草"
+                },
+                {
+                  "id": "show-cycle-marker",
+                  "text": "在环里的功能标「互相引用」，详情列出环里的其他功能。",
                   "status": "起草"
                 }
               ],
@@ -2221,6 +2237,11 @@
               "id": "map-issue-with-fix",
               "text": "卡片把每处图上写偏和它的改法写在一句里。",
               "status": "起草"
+            },
+            {
+              "id": "clean-cycles-gradually",
+              "text": "在环里的功能每次清扫都出卡片，卡片写怎么解开，由我定解不解。",
+              "status": "起草"
             }
           ],
           "children": [
@@ -2394,6 +2415,11 @@
                 {
                   "id": "show-approval-commit",
                   "text": "计划逐项显示该功能上次认可时的提交；无记录时显示“无”，无效或不在当前历史中的记录拒绝生成计划。",
+                  "status": "起草"
+                },
+                {
+                  "id": "plan-cycle-features",
+                  "text": "在环里的功能即使没变过也进清扫计划。",
                   "status": "起草"
                 }
               ],

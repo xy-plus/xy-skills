@@ -620,6 +620,8 @@ def plan_data(repository, scope, review):
                 planned.append((feature_id, "没有认可记录"))
             elif feature_id in changed:
                 planned.append((feature_id, "认可后改过"))
+            elif data["features"][feature_id]["cycle_with"]:
+                planned.append((feature_id, "有存量互相引用"))
     return data, values, records, planned, approval_commits, head
 
 

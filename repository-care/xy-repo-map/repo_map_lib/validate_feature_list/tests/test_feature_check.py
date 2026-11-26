@@ -70,6 +70,142 @@ class FeatureCheckBase(unittest.TestCase):
 
 
 class FeatureCheckTest(FeatureCheckBase):
+    def test_rejects_stale_and_unknown_existing_cycle_imports(self):
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            existing_cycle_imports=[
+                {"from": "alpha", "to": "beta"},
+                {"from": "ghost", "to": "beta"},
+            ],
+            children=[
+                feature("alpha", "alpha", children=[], source="原话", items=[]),
+                feature("beta", "beta", children=[], source="原话", items=[]),
+            ],
+            source="原话",
+            items=[],
+        )
+        self.repo = make_repo(
+            self,
+            {
+                "README.md": "仓库说明。\n",
+                "alpha/module.py": "value = 1\n",
+                "beta/module.py": "value = 2\n",
+            },
+            root,
+        )
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("alpha → beta 已不成环", output)
+        self.assertIn("ghost → beta 已不成环或功能 id 不在图上", output)
+
+    def test_new_cycle_edge_reports_its_source_line(self):
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            existing_cycle_imports=[],
+            children=[
+                feature("alpha", "alpha", children=[], source="原话", items=[]),
+                feature("beta", "beta", children=[], source="原话", items=[]),
+            ],
+            source="原话",
+            items=[],
+        )
+        self.repo = make_repo(
+            self,
+            {
+                "README.md": "仓库说明。\n",
+                "alpha/module.py": "import beta.module\n",
+                "beta/module.py": "import alpha.module\n",
+            },
+            root,
+        )
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("名单只能删不能加", output)
+        self.assertIn("alpha/module.py:1 → beta/module.py", output)
+
+    def test_accepts_an_empty_existing_cycle_import_registry_on_the_root(self):
+        root = empty_root_feature()
+        root["existing_cycle_imports"] = []
+        self.set_features(root)
+
+        result = self.check()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rejects_invalid_existing_cycle_import_registry_entries(self):
+        cases = [
+            ("不是数组", "invalid", "必须是数组"),
+            ("条目不是对象", ["alpha->beta"], "必须是对象"),
+            ("缺目标", [{"from": "alpha"}], "恰有 from、to"),
+            ("多字段", [{"from": "alpha", "to": "beta", "why": "old"}], "恰有 from、to"),
+            ("空来源", [{"from": "", "to": "beta"}], "from 必须是非空字符串"),
+            ("空目标", [{"from": "alpha", "to": ""}], "to 必须是非空字符串"),
+            ("自环", [{"from": "alpha", "to": "alpha"}], "不能自己引用"),
+            (
+                "重复边",
+                [{"from": "alpha", "to": "beta"}, {"from": "alpha", "to": "beta"}],
+                "不能重复",
+            ),
+        ]
+        for name, imports, expected in cases:
+            with self.subTest(value=name):
+                root = empty_root_feature()
+                root["existing_cycle_imports"] = imports
+                self.set_features(root)
+
+                result = self.check()
+                output = result.stdout + result.stderr
+
+                self.assertEqual(result.returncode, 1, output)
+                self.assertIn(expected, output)
+
+    def test_missing_cycle_import_registry_reports_current_cycle_edges(self):
+        root = make_root_feature(
+            "root",
+            "",
+            subrepositories=[],
+            external_dependencies=[],
+            children=[
+                feature("alpha", "alpha", children=[], source="原话", items=[]),
+                feature("beta", "beta", children=[], source="原话", items=[]),
+            ],
+            source="原话",
+            items=[],
+        )
+        root.pop("existing_cycle_imports")
+        self.repo = make_repo(
+            self,
+            {
+                "README.md": "仓库说明。\n",
+                "alpha/module.py": "import beta.module\n",
+                "beta/module.py": "import alpha.module\n",
+            },
+            root,
+        )
+
+        result = self.check()
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("根功能缺 existing_cycle_imports", output)
+        self.assertIn(
+            '[{"from": "alpha", "to": "beta"}, '
+            '{"from": "beta", "to": "alpha"}]',
+            output,
+        )
+
     def test_used_by_repositories_is_optional_on_the_root(self):
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -146,6 +282,7 @@ class FeatureCheckTest(FeatureCheckBase):
         self.assertIn("子功能有多余键 subrepositories", output)
         self.assertIn("子功能有多余键 external_dependencies", output)
         self.assertIn("子功能有多余键 used_by_repositories", output)
+        self.assertIn("子功能有多余键 existing_cycle_imports", output)
         self.assertNotIn("根功能有多余键 subrepositories", output)
         self.assertNotIn("根功能有多余键 external_dependencies", output)
         self.assertIn("根功能有多余键 legacy", output)

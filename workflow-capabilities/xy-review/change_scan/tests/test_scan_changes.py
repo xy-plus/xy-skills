@@ -66,6 +66,48 @@ class ScanChangesTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
+    def test_scan_rejects_new_existing_cycle_import_entries(self):
+        self.write("repo-map/skip.json", "[]\n")
+        manifest = {
+            "id": "root",
+            "directory": "",
+            "existing_cycle_imports": [{"from": "alpha", "to": "beta"}],
+            "children": [
+                {"id": "alpha", "directory": "alpha", "children": []},
+                {"id": "beta", "directory": "beta", "children": []},
+            ],
+        }
+        self.write("repo-map/features.json", json.dumps(manifest))
+        self.write("alpha/module.py", "value = 1\n")
+        self.write("beta/module.py", "value = 2\n")
+        base = self.commit("base")
+        manifest["existing_cycle_imports"].append({"from": "beta", "to": "alpha"})
+        self.write("repo-map/features.json", json.dumps(manifest))
+        self.commit("add cycle registry entry")
+
+        result = self.scan(base)
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("名单只能删不能加", output)
+        self.assertIn("beta → alpha", output)
+
+    def test_scan_skips_cycle_registry_comparison_without_a_feature_map(self):
+        self.write("README.md", "Repository without a feature map.\n")
+        self.write("repo-map/skip.json", "[]\n")
+        base = self.commit("base")
+        self.write("changed.md", "A small change.\n")
+        self.commit("change")
+
+        with patch.object(
+            scan_changes,
+            "cycle_registry_change_errors",
+            side_effect=AssertionError("cycle registry comparison should be skipped"),
+        ):
+            result = self.scan(base)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_changed_paths_ignore_pure_renames_and_keep_added_modified_files(self):
         self.write("modified.md", "before\n")
         self.write("deleted.md", "remove\n")

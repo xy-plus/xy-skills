@@ -447,7 +447,11 @@ function drawPictureNodes(svg, nodePositions, composite) {
     node.setAttribute("class", `picture-node${featureId === rootId ? " root-node" : ""}`);
     node.setAttribute("role", "button");
     node.setAttribute("tabindex", "0");
-    node.setAttribute("aria-label", featureName(features[featureId]));
+    const feature = features[featureId];
+    node.setAttribute(
+      "aria-label",
+      `${featureName(feature)}${feature.cycle_with.length ? "，互相引用" : ""}`,
+    );
     node.setAttribute("data-feature-id", featureId);
     node.setAttribute("transform", `translate(${position.x} ${position.y})`);
     if (selectedFeatureId === featureId) node.classList.add("selected");
@@ -477,6 +481,12 @@ function drawPictureNodes(svg, nodePositions, composite) {
     const circle = document.createElementNS(pictureSvgNamespace, "circle");
     circle.setAttribute("r", String(info.radius));
     node.append(circle);
+    if (feature.cycle_with.length) {
+      const cycleOutline = document.createElementNS(pictureSvgNamespace, "circle");
+      cycleOutline.setAttribute("class", "cycle-outline");
+      cycleOutline.setAttribute("r", String(info.radius + 4));
+      node.append(cycleOutline);
+    }
     if (featureId === rootId) {
       const rootLines = pictureRootLines(rootFeature.directory_name);
       const lineHeight = 17;
