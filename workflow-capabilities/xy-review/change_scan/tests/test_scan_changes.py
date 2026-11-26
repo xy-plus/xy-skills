@@ -634,14 +634,13 @@ class ScanChangesTest(unittest.TestCase):
             (1, 12), "overlaps both old blocks equally",
         )
 
-        new_issues = scan_changes._new_issue_hits(
-            old_hits,
-            [new_hit],
+        comparison = scan_changes._IssueComparison(
+            self.repository,
+            self.repository,
             {"new.md": "old.md"},
             {"new.md": [(1, 12, 1)]},
-            self.repository,
-            self.repository,
         )
+        new_issues = scan_changes._new_issue_hits(old_hits, [new_hit], comparison)
 
         self.assertEqual(new_issues, [new_hit])
 

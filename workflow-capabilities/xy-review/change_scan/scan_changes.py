@@ -1,6 +1,7 @@
 """Scan committed changes for small cleanup issues before code review."""
 import argparse
 import ast
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -328,7 +329,7 @@ def _relative_path(repository, value):
     return Path(os.path.relpath(path, repository)).as_posix()
 
 
-def _function_line_range(repository, path, line):
+def _function_node(repository, path, line):
     try:
         source = (repository / path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
@@ -343,8 +344,14 @@ def _function_line_range(repository, path, line):
         and node.lineno <= line <= node.end_lineno
     ]
     if not matches:
+        return None
+    return min(matches, key=lambda node: node.end_lineno - node.lineno)
+
+
+def _function_line_range(repository, path, line):
+    function = _function_node(repository, path, line)
+    if function is None:
         return [line, line]
-    function = min(matches, key=lambda node: node.end_lineno - node.lineno)
     return [function.lineno, function.end_lineno]
 
 
@@ -650,23 +657,8 @@ def _quoted_name(message):
 
 
 def _function_name(repository, path, line):
-    try:
-        source = (repository / path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
-        raise ScanError(f"无法读取 Ruff 函数命中所在文件 {path}：{error}") from error
-    try:
-        tree = ast.parse(source, filename=path)
-    except SyntaxError as error:
-        raise ScanError(f"无法解析 Ruff 函数命中所在文件 {path}：{error}") from error
-    matches = [
-        node for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.lineno <= line <= node.end_lineno
-    ]
-    if not matches:
-        return None
-    function = min(matches, key=lambda node: node.end_lineno - node.lineno)
-    return function.name
+    function = _function_node(repository, path, line)
+    return function.name if function is not None else None
 
 
 def _structural_test_identity(hit):
@@ -676,9 +668,19 @@ def _structural_test_identity(hit):
     return tuple(match.groups()) if match else None
 
 
-def _duplicate_overlap(old_hit, new_hit, old_path, line_mapping):
+@dataclass(frozen=True)
+class _IssueComparison:
+    old_repository: Path
+    new_repository: Path
+    source_paths: dict
+    line_mappings: dict
+
+
+def _duplicate_overlap(old_hit, new_hit, comparison):
+    old_path = comparison.source_paths.get(new_hit["path"])
     if old_hit["path"] != old_path or old_hit["tool"] != "duplicate-blocks":
         return 0
+    line_mapping = comparison.line_mappings.get(new_hit["path"], ())
     old_range = _old_line_range(
         line_mapping, new_hit["lines"][0], new_hit["lines"][1]
     )
@@ -692,25 +694,36 @@ def _duplicate_overlap(old_hit, new_hit, old_path, line_mapping):
     )
 
 
-def _existing_issue_matches(
-    old_hit,
-    new_hit,
-    old_path,
-    line_mapping,
-    old_repository,
-    new_repository,
-):
-    if old_hit["path"] != old_path or old_hit["tool"] != new_hit["tool"]:
+def _same_named_function(old_hit, new_hit, comparison):
+    old_path = comparison.source_paths[new_hit["path"]]
+    old_name = _function_name(
+        comparison.old_repository, old_path, old_hit["line"]
+    )
+    new_name = _function_name(
+        comparison.new_repository, new_hit["path"], new_hit["line"]
+    )
+    return old_name is not None and old_name == new_name
+
+
+def _same_commented_line(old_hit, new_hit, comparison):
+    old_path = comparison.source_paths[new_hit["path"]]
+    line_mapping = comparison.line_mappings.get(new_hit["path"], ())
+    old_line = _old_line_number(line_mapping, new_hit["line"])
+    if old_line is None:
         return False
+    try:
+        old_text = (comparison.old_repository / old_path).read_bytes().splitlines()[
+            old_line - 1
+        ]
+        new_text = (comparison.new_repository / new_hit["path"]).read_bytes().splitlines()[
+            new_hit["line"] - 1
+        ]
+    except (IndexError, OSError) as error:
+        raise ScanError(f"无法读取注释代码命中所在行：{error}") from error
+    return old_text == new_text
 
-    if new_hit["tool"] == "file-lines":
-        return True
 
-    if new_hit["tool"] == "structural-tests":
-        return _structural_test_identity(old_hit) == _structural_test_identity(new_hit)
-
-    if new_hit["tool"] != "ruff":
-        return False
+def _ruff_issue_matches(old_hit, new_hit, comparison):
     old_rule = _ruff_rule(old_hit)
     new_rule = _ruff_rule(new_hit)
     if old_rule is None or old_rule != new_rule:
@@ -719,49 +732,47 @@ def _existing_issue_matches(
         old_name = _quoted_name(old_hit["message"])
         return old_name is not None and old_name == _quoted_name(new_hit["message"])
     if new_rule in {"C901", "PLR0913", "PLR0915"}:
-        old_name = _function_name(
-            old_repository, old_path, old_hit["line"]
-        )
-        return old_name is not None and old_name == _function_name(
-            new_repository, new_hit["path"], new_hit["line"]
-        )
+        return _same_named_function(old_hit, new_hit, comparison)
     if new_rule == "ERA001":
-        old_line = _old_line_number(line_mapping, new_hit["line"])
-        if old_line is None:
-            return False
-        try:
-            old_text = (old_repository / old_path).read_bytes().splitlines()[old_line - 1]
-            new_text = (new_repository / new_hit["path"]).read_bytes().splitlines()[
-                new_hit["line"] - 1
-            ]
-        except (IndexError, OSError) as error:
-            raise ScanError(f"无法读取注释代码命中所在行：{error}") from error
-        return old_text == new_text
+        return _same_commented_line(old_hit, new_hit, comparison)
     return False
+
+
+def _existing_issue_matches(old_hit, new_hit, comparison):
+    old_path = comparison.source_paths.get(new_hit["path"])
+    if old_hit["path"] != old_path or old_hit["tool"] != new_hit["tool"]:
+        return False
+
+    if new_hit["tool"] == "file-lines":
+        return True
+
+    if new_hit["tool"] == "structural-tests":
+        old_identity = _structural_test_identity(old_hit)
+        return old_identity is not None and old_identity == _structural_test_identity(
+            new_hit
+        )
+
+    return new_hit["tool"] == "ruff" and _ruff_issue_matches(
+        old_hit, new_hit, comparison
+    )
 
 
 def _hit_sort_key(hit):
     return hit["path"], hit["line"], hit["tool"], hit["id"], hit["message"]
 
 
-def _new_issue_hits(
-    old_hits,
-    new_hits,
-    source_paths,
-    line_mappings,
-    old_repository,
-    new_repository,
-):
+def _new_issue_hits(old_hits, new_hits, comparison):
     old_hits = sorted(old_hits, key=_hit_sort_key)
     available_old_hits = set(range(len(old_hits)))
     new_issues = []
     for new_hit in sorted(new_hits, key=_hit_sort_key):
-        old_path = source_paths.get(new_hit["path"])
-        line_mapping = line_mappings.get(new_hit["path"], ())
         matched_index = None
-        if old_path is not None and new_hit["tool"] == "duplicate-blocks":
+        if (
+            comparison.source_paths.get(new_hit["path"]) is not None
+            and new_hit["tool"] == "duplicate-blocks"
+        ):
             overlaps = [
-                (_duplicate_overlap(old_hit, new_hit, old_path, line_mapping), index)
+                (_duplicate_overlap(old_hit, new_hit, comparison), index)
                 for index, old_hit in enumerate(old_hits)
                 if index in available_old_hits
             ]
@@ -773,18 +784,11 @@ def _new_issue_hits(
                 ]
                 if len(best_matches) == 1:
                     matched_index = best_matches[0]
-        elif old_path is not None:
+        elif comparison.source_paths.get(new_hit["path"]) is not None:
             for index, old_hit in enumerate(old_hits):
                 if index not in available_old_hits:
                     continue
-                if _existing_issue_matches(
-                    old_hit,
-                    new_hit,
-                    old_path,
-                    line_mapping,
-                    old_repository,
-                    new_repository,
-                ):
+                if _existing_issue_matches(old_hit, new_hit, comparison):
                     matched_index = index
                     break
         if matched_index is None:
@@ -861,14 +865,10 @@ def scan_repository(repository_value, base_value):
             base_regular_files,
             source_paths,
         )
-        hits = _new_issue_hits(
-            old_hits,
-            hits,
-            source_paths,
-            line_mappings,
-            base_repository,
-            repository,
+        comparison = _IssueComparison(
+            base_repository, repository, source_paths, line_mappings
         )
+        hits = _new_issue_hits(old_hits, hits, comparison)
     counts = {}
     ordered_hits = []
     for hit in sorted(hits, key=_hit_sort_key):
