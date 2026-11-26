@@ -25,6 +25,13 @@ sys.path.insert(0, str(DECISION_PAGE_DIRECTORY))
 import decision_page  # noqa: E402
 
 
+FAST_PAGE_TIMERS_SCRIPT = """
+const originalSetTimeout = window.setTimeout.bind(window);
+window.setTimeout = (callback, delay, ...args) =>
+  originalSetTimeout(callback, Math.min(delay, 10), ...args);
+"""
+
+
 def browser_decisions():
     return {
         "title": "Cleanup decisions",
@@ -621,11 +628,7 @@ class DecisionPageBrowserTest(unittest.TestCase):
                         viewport={"width": 390, "height": 844}
                     )
                     context.add_init_script(
-                        """
-                        const originalSetTimeout = window.setTimeout.bind(window);
-                        window.setTimeout = (callback, delay, ...args) =>
-                          originalSetTimeout(callback, Math.min(delay, 10), ...args);
-                        """
+                        FAST_PAGE_TIMERS_SCRIPT
                     )
                     page = context.new_page()
                     page.on("pageerror", lambda error: script_errors.append(str(error)))
@@ -696,11 +699,7 @@ class DecisionPageBrowserTest(unittest.TestCase):
                         playwright, executable, bridge, []
                     )
                     page.evaluate(
-                        """
-                        const originalSetTimeout = window.setTimeout.bind(window);
-                        window.setTimeout = (callback, delay, ...args) =>
-                          originalSetTimeout(callback, Math.min(delay, 10), ...args);
-                        """
+                        FAST_PAGE_TIMERS_SCRIPT
                     )
                     item = page.locator('[data-item-id="A1"]')
                     item.locator('input[value="Remove"]').check()
@@ -741,11 +740,7 @@ class DecisionPageBrowserTest(unittest.TestCase):
                         playwright, executable, bridge, []
                     )
                     page.evaluate(
-                        """
-                        const originalSetTimeout = window.setTimeout.bind(window);
-                        window.setTimeout = (callback, delay, ...args) =>
-                          originalSetTimeout(callback, Math.min(delay, 10), ...args);
-                        """
+                        FAST_PAGE_TIMERS_SCRIPT
                     )
                     item = page.locator('[data-item-id="A1"]')
                     page.locator("#submit").click()
