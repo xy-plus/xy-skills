@@ -100,6 +100,20 @@ def request_socket(socket_path, method, path, data, timeout=None):
         connection.close()
 
 
+def page_call_id(socket_path):
+    status, page = request_socket(socket_path, "GET", "/", None)
+    if status != 200:
+        raise AssertionError(f"决定页返回 {status}，无法读取页面编号")
+    embedded = re.search(
+        rb'<script id="decision-data" type="application/json">(.*?)</script>',
+        page,
+        re.DOTALL,
+    )
+    if embedded is None:
+        raise AssertionError("决定页没有内嵌页面数据")
+    return json.loads(embedded.group(1))["call_id"]
+
+
 def request_raw_socket(socket_path, raw_body, content_length):
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.connect(socket_path)
@@ -269,7 +283,10 @@ def running_ask(decisions_path, answers_path, portal_script=None):
                     mount[5],
                     "POST",
                     "/submit",
-                    {"answers": default_answers},
+                    {
+                        "call_id": page_call_id(mount[5]),
+                        "answers": default_answers,
+                    },
                 )
             except (OSError, http.client.HTTPException):
                 pass
@@ -278,7 +295,12 @@ def running_ask(decisions_path, answers_path, portal_script=None):
 
 
 def submit_ask_answer(test_case, call, socket_path, answers, expected_commands):
-    status, body = request_socket(socket_path, "POST", "/submit", {"answers": answers})
+    status, body = request_socket(
+        socket_path,
+        "POST",
+        "/submit",
+        {"call_id": page_call_id(socket_path), "answers": answers},
+    )
     test_case.assertEqual(status, 200, body)
     call["thread"].join(5)
     test_case.assertFalse(call["thread"].is_alive())
@@ -605,6 +627,7 @@ class DecisionPageCommandTest(unittest.TestCase):
             with running_ask(decisions, answers) as call:
                 self.assertTrue(call["mounted"].wait(3), call["stderr"].getvalue())
                 socket_path = call["calls"][0][5]
+                call_id = page_call_id(socket_path)
                 invalid_answers = [
                     {},
                     {"A1": {"option": "Other", "note": ""}},
@@ -617,7 +640,10 @@ class DecisionPageCommandTest(unittest.TestCase):
                 for payload in invalid_answers:
                     with self.subTest(answers=payload):
                         status, _ = request_socket(
-                            socket_path, "POST", "/submit", {"answers": payload}
+                            socket_path,
+                            "POST",
+                            "/submit",
+                            {"call_id": call_id, "answers": payload},
                         )
                         self.assertEqual(status, 400)
                         self.assertFalse(answers.exists())
@@ -653,7 +679,10 @@ class DecisionPageCommandTest(unittest.TestCase):
             socket_path,
             serving,
         ):
-            valid_payload = {"answers": {"A1": {"option": "Keep", "note": ""}}}
+            valid_payload = {
+                "call_id": page_call_id(socket_path),
+                "answers": {"A1": {"option": "Keep", "note": ""}},
+            }
 
             def fail_after_partial_write(document, output, ensure_ascii, indent):
                 output.write("{")
@@ -716,7 +745,10 @@ class DecisionPageCommandTest(unittest.TestCase):
                 time.sleep(0.1)
 
                 payload = json.dumps(
-                    {"answers": {"A1": {"option": "Keep", "note": ""}}}
+                    {
+                        "call_id": page_call_id(socket_path),
+                        "answers": {"A1": {"option": "Keep", "note": ""}},
+                    }
                 ).encode("utf-8")
                 complete.settimeout(12)
                 complete.connect(socket_path)

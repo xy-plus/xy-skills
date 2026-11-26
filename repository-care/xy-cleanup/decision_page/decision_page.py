@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import signal
 import socketserver
@@ -273,13 +274,17 @@ def render_decision_page(decisions):
     return _render_decision_page(decisions)
 
 
-def render_received_page(decisions, answers):
+def render_received_page(decisions, answers, call_id):
     """Render the submitted choices as a locked static page."""
+    if not isinstance(call_id, str) or not call_id:
+        raise ValueError("页面实例编号必须是非空字符串")
     checked_answers = validate_answers({"answers": answers}, decisions)
-    return _render_decision_page(decisions, answers=checked_answers)
+    return _render_decision_page(
+        decisions, answers=checked_answers, call_id=call_id
+    )
 
 
-def _render_decision_page(decisions, answers=None):
+def _render_decision_page(decisions, answers=None, call_id=None):
     comparisons = {
         item["id"]: _comparison_data(item["compare"])
         for group in decisions["groups"]
@@ -287,7 +292,7 @@ def _render_decision_page(decisions, answers=None):
         if item["compare"] is not None
     }
     page_data = {
-        "call_id": secrets.token_urlsafe(18),
+        "call_id": call_id or secrets.token_urlsafe(18),
         "decisions": decisions,
         "comparisons": comparisons,
     }
@@ -379,11 +384,30 @@ def _preflight_answer_path(answers_path):
             pass
 
 
+def _page_call_id(page):
+    embedded = re.search(
+        r'<script id="decision-data" type="application/json">(.*?)</script>',
+        page,
+        re.DOTALL,
+    )
+    if embedded is None:
+        raise ValueError("决定页没有页面实例编号")
+    try:
+        page_data = json.loads(embedded.group(1))
+    except json.JSONDecodeError as error:
+        raise ValueError("决定页的页面实例编号无效") from error
+    call_id = page_data.get("call_id") if isinstance(page_data, dict) else None
+    if not isinstance(call_id, str) or not call_id:
+        raise ValueError("决定页没有有效的页面实例编号")
+    return call_id
+
+
 class DecisionHTTPServer(socketserver.UnixStreamServer):
     """Serve one decision page and accept one complete answer on a Unix socket."""
 
     def __init__(self, socket_path, page, decisions, answers_path):
         self.page = page
+        self.call_id = _page_call_id(page)
         self.decisions = decisions
         self.answers_path = Path(answers_path)
         self.submitted = False
@@ -477,6 +501,12 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
             return None
         except ValueError as error:
             self._send_json(400, {"error": str(error)})
+            return None
+        if not isinstance(payload, dict):
+            self._send_json(400, {"error": "answers 必须是对象"})
+            return None
+        if payload.get("call_id") != self.server.call_id:
+            self._send_json(409, {"error": "已经收到不同的回答"})
             return None
         try:
             return validate_answers(payload, self.server.decisions)
@@ -625,7 +655,9 @@ def _publish_received_page(call):
     directory = Path(call.temporary.name) / "received"
     directory.mkdir()
     (directory / "index.html").write_text(
-        render_received_page(call.decisions, call.server.submitted_answers),
+        render_received_page(
+            call.decisions, call.server.submitted_answers, call.server.call_id
+        ),
         encoding="utf-8",
     )
 

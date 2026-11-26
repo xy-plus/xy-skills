@@ -18,7 +18,9 @@ class DecisionReceiptTest(unittest.TestCase):
     def test_received_page_contains_marker_and_saved_answers(self):
         answers = {"A1": {"option": "Remove", "note": "用户写的说明。"}}
 
-        page = decision_page.render_received_page(support.valid_decisions(), answers)
+        page = decision_page.render_received_page(
+            support.valid_decisions(), answers, call_id="current-ask"
+        )
 
         self.assertIn(
             '<meta name="decision-state" content="received">', page
@@ -31,6 +33,21 @@ class DecisionReceiptTest(unittest.TestCase):
         self.assertIsNotNone(embedded)
         page_data = json.loads(embedded.group(1))
         self.assertEqual(page_data["answers"], answers)
+
+    def test_received_page_carries_the_current_ask_id(self):
+        answers = {"A1": {"option": "Remove", "note": "用户写的说明。"}}
+
+        page = decision_page.render_received_page(
+            support.valid_decisions(), answers, call_id="current-ask"
+        )
+
+        embedded = support.re.search(
+            r'<script id="decision-data" type="application/json">(.*?)</script>',
+            page,
+            support.re.DOTALL,
+        )
+        self.assertIsNotNone(embedded)
+        self.assertEqual(json.loads(embedded.group(1))["call_id"], "current-ask")
 
     def test_ask_serves_the_page_and_publishes_a_static_receipt(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -47,6 +64,13 @@ class DecisionReceiptTest(unittest.TestCase):
                 status, page = support.request_socket(socket_path, "GET", "/", None)
                 self.assertEqual(status, 200)
                 self.assertIn(b"decision-data", page)
+                ask_data = support.re.search(
+                    rb'<script id="decision-data" type="application/json">(.*?)</script>',
+                    page,
+                    support.re.DOTALL,
+                )
+                self.assertIsNotNone(ask_data)
+                ask_call_id = json.loads(ask_data.group(1))["call_id"]
                 self.assertEqual(call["verification"]["status"], 200)
                 self.assertIn(b"Cleanup decisions", page)
                 status, _ = support.request_socket(
@@ -68,6 +92,14 @@ class DecisionReceiptTest(unittest.TestCase):
                     call["published_page"],
                 )
                 self.assertIn("用户的备注。", call["published_page"])
+                receipt_data = support.re.search(
+                    r'<script id="decision-data" type="application/json">(.*?)</script>',
+                    call["published_page"],
+                    support.re.DOTALL,
+                )
+                self.assertEqual(
+                    json.loads(receipt_data.group(1))["call_id"], ask_call_id
+                )
                 self.assertIn(
                     "https://portal.example/decision-test/", call["stdout"].getvalue()
                 )
@@ -85,7 +117,11 @@ class DecisionReceiptTest(unittest.TestCase):
             socket_path,
             serving,
         ):
-            submitted = {"answers": {"A1": {"option": "Keep", "note": "原备注。"}}}
+            call_id = support.page_call_id(socket_path)
+            submitted = {
+                "call_id": call_id,
+                "answers": {"A1": {"option": "Keep", "note": "原备注。"}},
+            }
             status, body = support.request_socket(
                 socket_path, "POST", "/submit", submitted
             )
@@ -102,7 +138,12 @@ class DecisionReceiptTest(unittest.TestCase):
                     socket_path,
                     "POST",
                     "/submit",
-                    {"answers": {"A1": {"option": "Keep", "note": "不同备注。"}}},
+                    {
+                        "call_id": call_id,
+                        "answers": {
+                            "A1": {"option": "Keep", "note": "不同备注。"}
+                        },
+                    },
                     timeout=1,
                 )
             except (OSError, http.client.HTTPException) as error:
@@ -113,6 +154,37 @@ class DecisionReceiptTest(unittest.TestCase):
                 json.loads(answers_path.read_text(encoding="utf-8"))["answers"],
                 submitted["answers"],
             )
+            self.assertTrue(serving.is_alive())
+
+    def test_submission_from_a_previous_ask_is_rejected_without_saving(self):
+        with support.temporary_decision_receiver() as (
+            _directory,
+            decisions,
+            answers_path,
+            socket_path,
+            serving,
+        ):
+            previous_page = decision_page.render_decision_page(decisions)
+            previous_data = support.re.search(
+                r'<script id="decision-data" type="application/json">(.*?)</script>',
+                previous_page,
+                support.re.DOTALL,
+            )
+            previous_call_id = json.loads(previous_data.group(1))["call_id"]
+            self.assertNotEqual(previous_call_id, support.page_call_id(socket_path))
+            status, body = support.request_socket(
+                socket_path,
+                "POST",
+                "/submit",
+                {
+                    "call_id": previous_call_id,
+                    "answers": {"A1": {"option": "Keep", "note": "旧页回答。"}},
+                },
+            )
+
+            self.assertEqual(status, 409, body)
+            self.assertIn("已经收到不同的回答", body.decode("utf-8"))
+            self.assertFalse(answers_path.exists())
             self.assertTrue(serving.is_alive())
 
     def test_ask_replaces_only_an_existing_static_received_page(self):

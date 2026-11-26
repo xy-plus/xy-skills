@@ -241,7 +241,7 @@ async function submitAnswers() {
     const response = await fetch("submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answers: submittedAnswers }),
+      body: JSON.stringify({ call_id: pageData.call_id, answers: submittedAnswers }),
     });
     if (response.status === 409) {
       showAnswerConflict();
@@ -317,7 +317,8 @@ async function pageHasReceivedAnswers(pendingAnswers) {
         if (!receiptData) return "conflict";
         try {
           const receipt = JSON.parse(receiptData.textContent);
-          return answersMatch(receipt.answers, pendingAnswers)
+          return receipt.call_id === pageData.call_id &&
+            answersMatch(receipt.answers, pendingAnswers)
             ? "received"
             : "conflict";
         } catch (error) {

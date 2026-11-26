@@ -5,6 +5,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import sys
 import tempfile
@@ -100,6 +101,17 @@ def browser_decisions():
         ],
         "footnotes": [{"title": "Already handled", "lines": ["No answer needed."]}],
     }
+
+
+def embedded_page_data(page_html):
+    match = re.search(
+        r'<script id="decision-data" type="application/json">(.*?)</script>',
+        page_html,
+        re.DOTALL,
+    )
+    if match is None:
+        raise AssertionError("decision page must embed its page data")
+    return match, json.loads(match.group(1))
 
 
 class DecisionPageBridgeHandler(BaseHTTPRequestHandler):
@@ -561,7 +573,10 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     saved_answers,
                     {"title": "Cleanup decisions", "answers": expected_answers},
                 )
-                submitted = {"answers": expected_answers}
+                submitted = {
+                    "call_id": embedded_page_data(page_html)[1]["call_id"],
+                    "answers": expected_answers,
+                }
                 self.assertEqual(bridge.received_payloads, [submitted, submitted])
                 self.assertEqual(script_errors, [])
 
@@ -582,7 +597,10 @@ class DecisionPageBrowserTest(unittest.TestCase):
             "constructor": {"option": "Keep constructor", "note": ""},
         }
         page_html = decision_page.render_decision_page(decisions)
-        received_html = decision_page.render_received_page(decisions, answers)
+        call_id = embedded_page_data(page_html)[1]["call_id"]
+        received_html = decision_page.render_received_page(
+            decisions, answers, call_id=call_id
+        )
         self.assertIn(
             '<meta name="decision-state" content="received">', received_html
         )
@@ -662,7 +680,11 @@ class DecisionPageBrowserTest(unittest.TestCase):
             "constructor": {"option": "Keep constructor", "note": ""},
         }
         page_html = decision_page.render_decision_page(decisions)
-        receipt_html = decision_page.render_received_page(decisions, saved_answers)
+        receipt_html = decision_page.render_received_page(
+            decisions,
+            saved_answers,
+            call_id=embedded_page_data(page_html)[1]["call_id"],
+        )
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             answers_path = Path(temporary) / "answers.json"
             with browser_receiver(
@@ -673,10 +695,61 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     browser, page = self._open_page(
                         playwright, executable, bridge, []
                     )
+                    page.evaluate(
+                        """
+                        const originalSetTimeout = window.setTimeout.bind(window);
+                        window.setTimeout = (callback, delay, ...args) =>
+                          originalSetTimeout(callback, Math.min(delay, 10), ...args);
+                        """
+                    )
                     item = page.locator('[data-item-id="A1"]')
                     item.locator('input[value="Remove"]').check()
                     item.locator("textarea").fill("本页尚未保存的回答。")
                     page.locator("#submit").click()
+                    self._assert_conflict_remains_editable(page, item)
+                    browser.close()
+
+    def test_failed_submit_with_a_different_receipt_id_shows_conflict(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        decisions = browser_decisions()
+        answers = {
+            "A1": {"option": "Keep", "note": ""},
+            "B1": {"option": "Use current name", "note": ""},
+            "__proto__": {"option": "Keep prototype", "note": ""},
+            "constructor": {"option": "Keep constructor", "note": ""},
+        }
+        page_html = decision_page.render_decision_page(decisions)
+        previous_page = decision_page.render_decision_page(decisions)
+        previous_call_id = embedded_page_data(previous_page)[1]["call_id"]
+        self.assertNotEqual(
+            previous_call_id, embedded_page_data(page_html)[1]["call_id"]
+        )
+        receipt_html = decision_page.render_received_page(
+            decisions, answers, call_id=previous_call_id
+        )
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            answers_path = Path(temporary) / "answers.json"
+            with browser_receiver(
+                Path(temporary), page_html, decisions, answers_path, True
+            ) as (_receiver_thread, bridge):
+                bridge.received_page_html = receipt_html
+                with sync_playwright() as playwright:
+                    browser, page = self._open_page(
+                        playwright, executable, bridge, []
+                    )
+                    page.evaluate(
+                        """
+                        const originalSetTimeout = window.setTimeout.bind(window);
+                        window.setTimeout = (callback, delay, ...args) =>
+                          originalSetTimeout(callback, Math.min(delay, 10), ...args);
+                        """
+                    )
+                    item = page.locator('[data-item-id="A1"]')
+                    page.locator("#submit").click()
+                    page.set_default_timeout(1000)
                     self._assert_conflict_remains_editable(page, item)
                     browser.close()
 
@@ -705,7 +778,12 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     connection.request(
                         "POST",
                         "/submit",
-                        json.dumps({"answers": saved_answers}),
+                        json.dumps(
+                            {
+                                "call_id": embedded_page_data(page_html)[1]["call_id"],
+                                "answers": saved_answers,
+                            }
+                        ),
                         {"Content-Type": "application/json"},
                     )
                     response = connection.getresponse()
