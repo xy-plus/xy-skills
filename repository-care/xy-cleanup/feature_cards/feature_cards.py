@@ -18,8 +18,8 @@ from decision_page import validate_decisions  # noqa: E402
 from json_validation import check_value, object_without_duplicate_keys  # noqa: E402
 from repo_map_lib.git_repository import (  # noqa: E402
     ArgumentError,
+    primary_checkout_path,
     require_repository_root,
-    run_git,
 )
 from repo_map_lib.validate_feature_list.features import feature_chain  # noqa: E402
 
@@ -479,26 +479,8 @@ def build_decisions(plan, cards):
     return validate_decisions(decisions), []
 
 
-def _primary_checkout_path(repository):
-    result = run_git(
-        repository,
-        "worktree",
-        "list",
-        "--porcelain",
-        "-z",
-        check=False,
-    )
-    if result.returncode != 0:
-        message = result.stderr.strip() or "无法读取 Git 工作树列表"
-        raise ValueError(message)
-    for entry in result.stdout.split("\0"):
-        if entry.startswith("worktree "):
-            return Path(entry[len("worktree "):]).resolve()
-    raise ValueError("无法从 Git 工作树列表找到主检出")
-
-
 def _unavailable_reverse_repositories(repository, relative_paths):
-    primary_checkout = _primary_checkout_path(repository)
+    primary_checkout = primary_checkout_path(repository)
     unavailable = []
     for relative_path in relative_paths:
         candidate = (primary_checkout / relative_path).resolve()

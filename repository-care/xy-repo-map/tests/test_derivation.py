@@ -18,6 +18,7 @@ from map_fixture import (  # noqa: E402
     make_repo,
     root_feature as make_root_feature,
 )
+import repo_map_lib.git_repository as git_repository  # noqa: E402
 import repo_map_lib.map_data as map_data  # noqa: E402
 
 
@@ -841,6 +842,13 @@ class DerivationTest(unittest.TestCase):
                 ],
                 check=True,
             )
+            primary_checkout_path = getattr(
+                git_repository,
+                "primary_checkout_path",
+                None,
+            )
+            self.assertTrue(callable(primary_checkout_path))
+            self.assertEqual(primary_checkout_path(worktree), primary.resolve())
             data = build_map(worktree)
 
         self.assertEqual(
