@@ -144,6 +144,7 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertTrue(shared_check.called)
 
     def test_rejects_missing_or_empty_reverse_search(self):
+        self._set_used_by_repositories([])
         for missing in (True, False):
             with self.subTest(missing=missing):
                 value = unused_card()
@@ -281,6 +282,7 @@ class FeatureCardsTest(unittest.TestCase):
             map_issues=["把 alpha 的功能说明改成人话。"],
             recommended="照建议",
         )
+        self._set_used_by_repositories([])
 
         result = self.run_cards([value], scope=("alpha",), review="全部")
 
@@ -340,6 +342,7 @@ class FeatureCardsTest(unittest.TestCase):
                 },
             ],
         )
+        self._set_used_by_repositories([])
 
         result = self.run_cards([value], scope=("alpha",), review="全部")
 
@@ -565,6 +568,7 @@ class FeatureCardsTest(unittest.TestCase):
             todo=["大问题还没解决。"],
             map_issues=["功能说明需要改。"],
         )
+        self._set_used_by_repositories([])
 
         result = self.run_cards([value], scope=("alpha",), review="全部")
 
