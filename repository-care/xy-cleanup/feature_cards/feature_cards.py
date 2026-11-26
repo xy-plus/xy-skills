@@ -77,6 +77,14 @@ def _card_errors(card, label):
     problems = check_value(label, shape_view, CARD_SHAPE)
     if not isinstance(card, dict):
         return problems
+    problems.extend(_card_usage_errors(card, label))
+    problems.extend(_card_recommendation_error(card, label))
+    problems.extend(_item_change_errors(card, label))
+    return problems
+
+
+def _card_usage_errors(card, label):
+    problems = []
     used = card.get("used")
     if isinstance(used, list) and len(used) > 3:
         problems.append(f"{label}.used 最多 3 条")
@@ -88,6 +96,11 @@ def _card_errors(card, label):
             lines = value.get("lines")
             if type(lines) is not int or lines < 0:
                 problems.append(f"{label}.unused[{index}].lines 必须是非负整数")
+    return problems
+
+
+def _card_recommendation_error(card, label):
+    problems = []
     recommendation = card.get("recommended")
     if not isinstance(recommendation, str) or recommendation not in RECOMMENDATIONS:
         problems.append(f"{label}.recommended 必须是 照建议、留、不要这个功能 之一")
@@ -99,6 +112,11 @@ def _card_errors(card, label):
         problems.append(
             f"{label}.recommended 为 照建议 时 suggestion、map_issues 和 item_changes 不能都空"
         )
+    return problems
+
+
+def _item_change_errors(card, label):
+    problems = []
     item_changes = card.get("item_changes")
     if isinstance(item_changes, list):
         seen_items = set()

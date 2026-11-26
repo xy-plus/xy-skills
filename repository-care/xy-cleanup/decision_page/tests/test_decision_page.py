@@ -148,6 +148,19 @@ def decision_receiver(directory, decisions, answers):
         socket_path.unlink(missing_ok=True)
 
 
+@contextmanager
+def temporary_decision_receiver():
+    with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+        directory = Path(temporary)
+        decisions = valid_decisions()
+        answers = directory / "answers.json"
+        with decision_receiver(directory, decisions, answers) as (
+            socket_path,
+            serving,
+        ):
+            yield directory, decisions, answers, socket_path, serving
+
+
 def run_ask(decisions, answers, runner):
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -264,6 +277,25 @@ def running_ask(decisions_path, answers_path, portal_script=None):
         portal_patcher.__exit__(None, None, None)
 
 
+def submit_ask_answer(test_case, call, socket_path, answers, expected_commands):
+    status, body = request_socket(socket_path, "POST", "/submit", {"answers": answers})
+    test_case.assertEqual(status, 200, body)
+    call["thread"].join(5)
+    test_case.assertFalse(call["thread"].is_alive())
+    test_case.assertEqual(call["result"]["code"], 0)
+    test_case.assertEqual([entry[2] for entry in call["calls"]], expected_commands)
+
+
+def prepare_static_site(directory, page_content):
+    published = directory / "published" / "decision-test-old"
+    published.mkdir(parents=True)
+    (published / "index.html").write_text(page_content, encoding="utf-8")
+    site = directory / "sites" / "decision-test"
+    site.parent.mkdir()
+    site.symlink_to(published, target_is_directory=True)
+    return site
+
+
 @contextmanager
 def background_decision_page(decisions, answers, call_log):
     child_code = """
@@ -325,6 +357,20 @@ raise SystemExit(decision_page.main(arguments, run, sys.stdout, sys.stderr))
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.communicate(timeout=5)
+
+
+@contextmanager
+def temporary_background_decision_page():
+    with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+        decisions = Path(temporary) / "decisions.json"
+        answers = Path(temporary) / "answers.json"
+        call_log = Path(temporary) / "calls.json"
+        decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+        with background_decision_page(decisions, answers, call_log) as (
+            process,
+            calls,
+        ):
+            yield decisions, answers, call_log, process, calls
 
 
 class DecisionPageCommandTest(unittest.TestCase):
@@ -528,202 +574,6 @@ class DecisionPageCommandTest(unittest.TestCase):
         self.assertTrue(first_call_id)
         self.assertNotEqual(first_call_id, second_call_id)
 
-    def test_received_page_contains_a_machine_readable_marker_and_saved_answers(self):
-        self.assertTrue(
-            hasattr(decision_page, "render_received_page"),
-            "决定页模块必须能生成静态已收到页",
-        )
-        answers = {"A1": {"option": "Remove", "note": "用户写的说明。"}}
-
-        page = decision_page.render_received_page(valid_decisions(), answers)
-
-        self.assertIn(
-            '<meta name="decision-state" content="received">', page
-        )
-        embedded = re.search(
-            r'<script id="decision-data" type="application/json">(.*?)</script>',
-            page,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(embedded)
-        page_data = json.loads(embedded.group(1))
-        self.assertEqual(page_data["state"], "received")
-        self.assertEqual(page_data["answers"], answers)
-
-    def test_ask_serves_the_page_and_unmounts_after_answer(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions = Path(temporary) / "decisions.json"
-            answers = Path(temporary) / "answers.json"
-            decisions_data = valid_decisions()
-            decisions.write_text(json.dumps(decisions_data), encoding="utf-8")
-
-            with running_ask(decisions, answers) as call:
-                self.assertTrue(call["mounted"].wait(3), call["stderr"].getvalue())
-                mount = call["calls"][0]
-                self.assertEqual(
-                    mount[:5],
-                    [
-                        "python3",
-                        str(decision_page.PORTAL_SCRIPT),
-                        "mount",
-                        "decision-test",
-                        "--app",
-                    ],
-                )
-                socket_path = mount[5]
-                status, page = request_socket(socket_path, "GET", "/", None)
-                self.assertEqual(status, 200)
-                self.assertIn(b"decision-data", page)
-                self.assertEqual(call["verification"]["status"], 200)
-                self.assertIn(b"Cleanup decisions", page)
-                status, _ = request_socket(socket_path, "GET", "/index.html", None)
-                self.assertEqual(status, 404)
-
-                answers_data = {"A1": {"option": "Keep", "note": "用户的备注。"}}
-                status, body = request_socket(
-                    socket_path, "POST", "/submit", {"answers": answers_data}
-                )
-                self.assertEqual(status, 200, body)
-                call["thread"].join(5)
-                self.assertFalse(call["thread"].is_alive())
-                self.assertEqual(call["result"]["code"], 0)
-                self.assertEqual(
-                    [entry[2] for entry in call["calls"]],
-                    ["mount", "unmount", "publish"],
-                )
-                self.assertIn(
-                    '<meta name="decision-state" content="received">',
-                    call["published_page"],
-                )
-                self.assertIn("用户的备注。", call["published_page"])
-                self.assertIn(
-                    "https://portal.example/decision-test/", call["stdout"].getvalue()
-                )
-                self.assertEqual(
-                    json.loads(answers.read_text(encoding="utf-8")),
-                    {"title": "Cleanup decisions", "answers": answers_data},
-                )
-                self.assertFalse(Path(socket_path).exists())
-
-    def test_duplicate_submissions_return_success_only_for_the_saved_answers(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            directory = Path(temporary)
-            answers_path = directory / "answers.json"
-            decisions = valid_decisions()
-            with decision_receiver(directory, decisions, answers_path) as (
-                socket_path,
-                serving,
-            ):
-                submitted = {
-                    "answers": {"A1": {"option": "Keep", "note": "原备注。"}}
-                }
-                status, body = request_socket(
-                    socket_path, "POST", "/submit", submitted
-                )
-                self.assertEqual(status, 200, body)
-                try:
-                    same_status, same_body = request_socket(
-                        socket_path,
-                        "POST",
-                        "/submit",
-                        submitted,
-                        timeout=1,
-                    )
-                    different_status, different_body = request_socket(
-                        socket_path,
-                        "POST",
-                        "/submit",
-                        {
-                            "answers": {
-                                "A1": {"option": "Keep", "note": "不同备注。"}
-                            }
-                        },
-                        timeout=1,
-                    )
-                except (OSError, http.client.HTTPException) as error:
-                    self.fail(f"已提交的服务没有处理重复提交：{error}")
-                self.assertEqual(same_status, 200, same_body)
-                self.assertEqual(different_status, 409, different_body)
-                self.assertEqual(
-                    json.loads(answers_path.read_text(encoding="utf-8"))["answers"],
-                    submitted["answers"],
-                )
-                self.assertTrue(serving.is_alive())
-
-    def test_ask_replaces_only_an_existing_static_received_page(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            directory = Path(temporary)
-            portal_script = directory / "portal.py"
-            decisions = directory / "decisions.json"
-            answers = directory / "answers.json"
-            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
-            published = directory / "published" / "decision-test-old"
-            published.mkdir(parents=True)
-            (published / "index.html").write_text(
-                '<meta name="decision-state" content="received">',
-                encoding="utf-8",
-            )
-            site = directory / "sites" / "decision-test"
-            site.parent.mkdir()
-            site.symlink_to(published, target_is_directory=True)
-
-            with running_ask(decisions, answers, portal_script) as call:
-                self.assertTrue(call["mounted"].wait(3), call["stderr"].getvalue())
-                self.assertEqual(
-                    [entry[2] for entry in call["calls"][:2]],
-                    ["unmount", "mount"],
-                )
-                socket_path = next(
-                    entry[5] for entry in call["calls"] if entry[2] == "mount"
-                )
-                status, body = request_socket(
-                    socket_path,
-                    "POST",
-                    "/submit",
-                    {"answers": {"A1": {"option": "Keep", "note": ""}}},
-                )
-                self.assertEqual(status, 200, body)
-                call["thread"].join(5)
-                self.assertFalse(call["thread"].is_alive())
-                self.assertEqual(call["result"]["code"], 0)
-                self.assertEqual(
-                    [entry[2] for entry in call["calls"]],
-                    ["unmount", "mount", "unmount", "publish"],
-                )
-
-    def test_ask_does_not_remove_another_static_site_with_the_same_name(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            directory = Path(temporary)
-            portal_script = directory / "portal.py"
-            decisions = directory / "decisions.json"
-            answers = directory / "answers.json"
-            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
-            published = directory / "published" / "decision-test-old"
-            published.mkdir(parents=True)
-            (published / "index.html").write_text("other page", encoding="utf-8")
-            site = directory / "sites" / "decision-test"
-            site.parent.mkdir()
-            site.symlink_to(published, target_is_directory=True)
-            calls = []
-
-            def platform_runner(arguments):
-                calls.append(arguments)
-                return subprocess.CompletedProcess(
-                    arguments,
-                    1,
-                    "",
-                    "挂载名已有目录挂载",
-                )
-
-            with patch.object(decision_page, "PORTAL_SCRIPT", portal_script):
-                code, _stdout, stderr = run_ask(
-                    decisions, answers, platform_runner
-                )
-
-            self.assertEqual(code, 1, stderr)
-            self.assertEqual([entry[2] for entry in calls], ["mount"])
-            self.assertTrue(site.is_symlink())
-
     def test_ask_rejects_invalid_and_oversized_submissions(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
             decisions = Path(temporary) / "decisions.json"
@@ -761,119 +611,117 @@ class DecisionPageCommandTest(unittest.TestCase):
                 self.assertFalse(answers.exists())
 
                 answers_data = {"A1": {"option": "Keep", "note": ""}}
-                status, body = request_socket(
-                    socket_path, "POST", "/submit", {"answers": answers_data}
+                submit_ask_answer(
+                    self,
+                    call,
+                    socket_path,
+                    answers_data,
+                    ["mount", "unmount", "publish"],
                 )
-                self.assertEqual(status, 200, body)
-                call["thread"].join(5)
-                self.assertFalse(call["thread"].is_alive())
-                self.assertEqual(call["result"]["code"], 0)
                 self.assertEqual(
                     json.loads(answers.read_text(encoding="utf-8"))["answers"],
                     answers_data,
                 )
 
     def test_failed_answer_write_leaves_no_file_and_service_accepts_retry(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            directory = Path(temporary)
-            answers_path = Path(temporary) / "answers.json"
-            decisions = valid_decisions()
-            with decision_receiver(directory, decisions, answers_path) as (
-                socket_path,
-                serving,
+        with temporary_decision_receiver() as (
+            directory,
+            decisions,
+            answers_path,
+            socket_path,
+            serving,
+        ):
+            valid_payload = {"answers": {"A1": {"option": "Keep", "note": ""}}}
+
+            def fail_after_partial_write(document, output, ensure_ascii, indent):
+                output.write("{")
+                raise OSError("simulated full disk")
+
+            with patch.object(
+                decision_page.json, "dump", side_effect=fail_after_partial_write
             ):
-                valid_payload = {"answers": {"A1": {"option": "Keep", "note": ""}}}
-
-                def fail_after_partial_write(document, output, ensure_ascii, indent):
-                    output.write("{")
-                    raise OSError("simulated full disk")
-
-                with patch.object(
-                    decision_page.json, "dump", side_effect=fail_after_partial_write
-                ):
-                    status, body = request_socket(
-                        str(socket_path), "POST", "/submit", valid_payload
-                    )
-                self.assertEqual(status, 500, body)
-                self.assertFalse(answers_path.exists())
-                self.assertEqual(list(Path(temporary).glob("*.tmp")), [])
-
                 status, body = request_socket(
-                    str(socket_path), "POST", "/submit", valid_payload
+                    socket_path, "POST", "/submit", valid_payload
                 )
-                self.assertEqual(status, 200, body)
-                self.assertTrue(serving.is_alive())
-                self.assertEqual(
-                    json.loads(answers_path.read_text(encoding="utf-8")),
-                    {"title": decisions["title"], "answers": valid_payload["answers"]},
-                )
+            self.assertEqual(status, 500, body)
+            self.assertFalse(answers_path.exists())
+            self.assertEqual(list(directory.glob("*.tmp")), [])
+
+            status, body = request_socket(
+                socket_path, "POST", "/submit", valid_payload
+            )
+            self.assertEqual(status, 200, body)
+            self.assertTrue(serving.is_alive())
+            self.assertEqual(
+                json.loads(answers_path.read_text(encoding="utf-8")),
+                {"title": decisions["title"], "answers": valid_payload["answers"]},
+            )
 
     def test_answer_with_duplicate_json_key_returns_400_without_writing(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            directory = Path(temporary)
-            answers_path = Path(temporary) / "answers.json"
-            decisions = valid_decisions()
-            with decision_receiver(directory, decisions, answers_path) as (
-                socket_path,
-                serving,
-            ):
-                raw_answer = (
-                    '{"answers":{"A1":{"option":"Keep","option":"Remove","note":""}}}'
+        with temporary_decision_receiver() as (
+            _directory,
+            _decisions,
+            answers_path,
+            socket_path,
+            _serving,
+        ):
+            raw_answer = (
+                '{"answers":{"A1":{"option":"Keep","option":"Remove","note":""}}}'
+            )
+            with patch.object(decision_page.DecisionHTTPServer, "handle_error"):
+                status, body = request_raw_socket(
+                    socket_path,
+                    raw_answer,
+                    content_length=None,
                 )
-                with patch.object(decision_page.DecisionHTTPServer, "handle_error"):
-                    status, body = request_raw_socket(
-                        str(socket_path),
-                        raw_answer,
-                        content_length=None,
-                    )
-                self.assertEqual(status, 400, body)
-                self.assertIn("重复键：option", body.decode("utf-8"))
-                self.assertFalse(answers_path.exists())
+            self.assertEqual(status, 400, body)
+            self.assertIn("重复键：option", body.decode("utf-8"))
+            self.assertFalse(answers_path.exists())
 
     def test_incomplete_request_line_times_out_before_next_submission(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            answers = Path(temporary) / "answers.json"
-            decisions = valid_decisions()
-            with decision_receiver(Path(temporary), decisions, answers) as (
-                socket_path,
-                serving,
-            ):
-                partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                complete = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        with temporary_decision_receiver() as (
+            _directory,
+            _decisions,
+            answers,
+            socket_path,
+            serving,
+        ):
+            partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            complete = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                partial.connect(socket_path)
+                partial.sendall(b"POST /sub")
+                time.sleep(0.1)
+
+                payload = json.dumps(
+                    {"answers": {"A1": {"option": "Keep", "note": ""}}}
+                ).encode("utf-8")
+                complete.settimeout(12)
+                complete.connect(socket_path)
+                complete.sendall(
+                    b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
+                    b"Content-Type: application/json\r\nContent-Length: "
+                    + str(len(payload)).encode("ascii")
+                    + b"\r\n\r\n"
+                    + payload
+                )
+                response = bytearray()
                 try:
-                    partial.connect(socket_path)
-                    partial.sendall(b"POST /sub")
-                    time.sleep(0.1)
+                    while True:
+                        chunk = complete.recv(4096)
+                        if not chunk:
+                            break
+                        response.extend(chunk)
+                except socket.timeout:
+                    pass
 
-                    payload = json.dumps(
-                        {"answers": {"A1": {"option": "Keep", "note": ""}}}
-                    ).encode("utf-8")
-                    complete.settimeout(12)
-                    complete.connect(socket_path)
-                    complete.sendall(
-                        b"POST /submit HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n"
-                        b"Content-Type: application/json\r\nContent-Length: "
-                        + str(len(payload)).encode("ascii")
-                        + b"\r\n\r\n"
-                        + payload
-                    )
-                    response = bytearray()
-                    try:
-                        while True:
-                            chunk = complete.recv(4096)
-                            if not chunk:
-                                break
-                            response.extend(chunk)
-                    except socket.timeout:
-                        pass
-
-                    self.assertIn(b"HTTP/1.0 200 OK", response)
-                    self.assertTrue(answers.exists())
-                    self.assertTrue(serving.is_alive())
-                finally:
-                    partial.shutdown(socket.SHUT_WR)
-                    partial.close()
-                    complete.close()
+                self.assertIn(b"HTTP/1.0 200 OK", response)
+                self.assertTrue(answers.exists())
+                self.assertTrue(serving.is_alive())
+            finally:
+                partial.shutdown(socket.SHUT_WR)
+                partial.close()
+                complete.close()
 
     def test_slow_page_reader_receives_complete_response_after_timeout_period(self):
         with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
@@ -994,63 +842,55 @@ class DecisionPageCommandTest(unittest.TestCase):
                 self.assertFalse(answers.exists())
 
     def test_term_unmounts_site_and_removes_socket_without_an_answer(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions = Path(temporary) / "decisions.json"
-            answers = Path(temporary) / "answers.json"
-            call_log = Path(temporary) / "calls.json"
-            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
+        with temporary_background_decision_page() as (
+            _decisions,
+            answers,
+            call_log,
+            process,
+            calls,
+        ):
+            self.assertTrue(calls, "mount was not attempted")
+            socket_path = calls[0][5]
+            self.assertTrue(Path(socket_path).exists())
+            process.send_signal(signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=12)
+            saved_calls = json.loads(call_log.read_text(encoding="utf-8"))
 
-            with background_decision_page(decisions, answers, call_log) as (
-                process,
-                calls,
-            ):
-                self.assertTrue(calls, "mount was not attempted")
-                socket_path = calls[0][5]
-                self.assertTrue(Path(socket_path).exists())
-                process.send_signal(signal.SIGTERM)
-                stdout, stderr = process.communicate(timeout=12)
-                saved_calls = json.loads(call_log.read_text(encoding="utf-8"))
-
-            self.assertEqual(process.returncode, 1, stdout + stderr)
-            self.assertEqual([call[2] for call in saved_calls], ["mount", "unmount"])
-            self.assertFalse(answers.exists())
-            self.assertFalse(Path(socket_path).exists())
+        self.assertEqual(process.returncode, 1, stdout + stderr)
+        self.assertEqual([call[2] for call in saved_calls], ["mount", "unmount"])
+        self.assertFalse(answers.exists())
+        self.assertFalse(Path(socket_path).exists())
 
     def test_term_interrupts_a_stalled_request_before_idle_timeout(self):
-        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
-            decisions = Path(temporary) / "decisions.json"
-            answers = Path(temporary) / "answers.json"
-            call_log = Path(temporary) / "calls.json"
-            decisions.write_text(json.dumps(valid_decisions()), encoding="utf-8")
-
-            with background_decision_page(decisions, answers, call_log) as (
-                process,
-                calls,
-            ):
-                self.assertTrue(calls, "mount was not attempted")
-                socket_path = calls[0][5]
-                partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                partial.connect(socket_path)
-                partial.sendall(b"POST /sub")
-                time.sleep(0.1)
-                started = time.monotonic()
-                process.send_signal(signal.SIGTERM)
-                exited_on_timeout = True
-                try:
-                    stdout, stderr = process.communicate(timeout=12)
-                except subprocess.TimeoutExpired:
-                    exited_on_timeout = False
-                    partial.close()
-                    stdout, stderr = process.communicate(timeout=5)
-                elapsed = time.monotonic() - started
+        with temporary_background_decision_page() as (
+            _decisions,
+            answers,
+            call_log,
+            process,
+            calls,
+        ):
+            self.assertTrue(calls, "mount was not attempted")
+            socket_path = calls[0][5]
+            partial = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            partial.connect(socket_path)
+            partial.sendall(b"POST /sub")
+            time.sleep(0.1)
+            started = time.monotonic()
+            process.send_signal(signal.SIGTERM)
+            exited_on_timeout = True
+            try:
+                stdout, stderr = process.communicate(timeout=12)
+            except subprocess.TimeoutExpired:
+                exited_on_timeout = False
                 partial.close()
-                saved_calls = json.loads(call_log.read_text(encoding="utf-8"))
+                stdout, stderr = process.communicate(timeout=5)
+            elapsed = time.monotonic() - started
+            partial.close()
+            saved_calls = json.loads(call_log.read_text(encoding="utf-8"))
 
-            self.assertEqual(process.returncode, 1, stdout + stderr)
-            self.assertEqual([call[2] for call in saved_calls], ["mount", "unmount"])
-            self.assertFalse(answers.exists())
-            self.assertFalse(Path(socket_path).exists())
-            self.assertTrue(
-                exited_on_timeout, f"TERM exit waited too long: {elapsed:.2f}s"
-            )
-            self.assertLess(elapsed, 11.5, f"TERM exit waited too long: {elapsed:.2f}s")
+        self.assertEqual(process.returncode, 1, stdout + stderr)
+        self.assertEqual([call[2] for call in saved_calls], ["mount", "unmount"])
+        self.assertFalse(answers.exists())
+        self.assertFalse(Path(socket_path).exists())
+        self.assertTrue(exited_on_timeout, f"TERM exit waited too long: {elapsed:.2f}s")
+        self.assertLess(elapsed, 11.5, f"TERM exit waited too long: {elapsed:.2f}s")

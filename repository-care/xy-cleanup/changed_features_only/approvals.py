@@ -497,6 +497,24 @@ class PlanInputs:
     head: str
 
 
+@dataclass
+class RecordInputs:
+    repository: Path
+    values: dict
+    records: dict
+    feature_ids: list
+    answers: dict
+    plan_commit: str
+    mainline_changed: set
+
+
+@dataclass
+class RecordSelection:
+    to_record: list
+    reask: list
+    mainline_deferred: list
+
+
 def _selected_registration_changes(inputs, current_snapshot):
     changed = set()
     snapshots = {}
@@ -783,27 +801,21 @@ def _reject_reused_answers(repository, records, feature_ids, plan_commit):
         raise ValueError("这份回答对应的功能已经记过：" + ", ".join(reused))
 
 
-def _validate_record_features(
-    values,
-    records,
-    feature_ids,
-    answers,
-    plan_commit,
-    repository,
-    mainline_changed,
-):
-    current_ids = set(values)
-    selected = [feature_id for feature_id in feature_ids if feature_id in current_ids]
+def _validate_record_features(inputs):
+    current_ids = set(inputs.values)
+    selected = [
+        feature_id for feature_id in inputs.feature_ids if feature_id in current_ids
+    ]
     reask = [
         feature_id
         for feature_id in selected
-        if answers[feature_id]["option"] == REASK_OPTION
+        if inputs.answers[feature_id]["option"] == REASK_OPTION
     ]
     answer_again = set(reask)
     defer_from_mainline = [
         feature_id
         for feature_id in selected
-        if feature_id in mainline_changed and feature_id not in answer_again
+        if feature_id in inputs.mainline_changed and feature_id not in answer_again
     ]
     defer = set(defer_from_mainline)
     to_record = [
@@ -811,40 +823,36 @@ def _validate_record_features(
         for feature_id in selected
         if feature_id not in answer_again and feature_id not in defer
     ]
-    _reject_reused_answers(repository, records, to_record, plan_commit)
+    _reject_reused_answers(
+        inputs.repository, inputs.records, to_record, inputs.plan_commit
+    )
     drafts = [
         feature_id
         for feature_id in to_record
-        if values[feature_id]["why"]["source"] == "起草"
-        or any(item["status"] == "起草" for item in values[feature_id]["items"])
+        if inputs.values[feature_id]["why"]["source"] == "起草"
+        or any(
+            item["status"] == "起草" for item in inputs.values[feature_id]["items"]
+        )
     ]
     if drafts:
         raise ValueError(
             "拒绝记录：这些功能的 why.source 或 items.status 仍是 起草："
             + ", ".join(drafts)
         )
-    return to_record, reask, defer_from_mainline
+    return RecordSelection(to_record, reask, defer_from_mainline)
 
 
-def _write_approvals(
-    repository,
-    head,
-    values,
-    records,
-    selected,
-    remove,
-    mainline_deferred,
-):
+def _write_approvals(repository, head, values, records, selection):
     approved_path = Path(repository) / APPROVED_RELATIVE_PATH
-    removed = set(remove)
+    removed = set(selection.reask)
     updated = {
         feature_id: commit
         for feature_id, commit in records.items()
         if feature_id in values
-        and feature_id not in selected
+        and feature_id not in selection.to_record
         and feature_id not in removed
     }
-    updated.update({feature_id: head for feature_id in selected})
+    updated.update({feature_id: head for feature_id in selection.to_record})
     content = json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     temporary_path = None
     try:
@@ -863,13 +871,10 @@ def _write_approvals(
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
-    lines = [f"已记录 {len(selected)} 个功能：{approved_path}"]
+    lines = [f"已记录 {len(selection.to_record)} 个功能：{approved_path}"]
     lines.extend(
         f"留到下次清扫：{feature_id}（主线带来改动）"
-        for feature_id in mainline_deferred
-    )
-    lines.extend(
-        f"留到下次清扫：{feature_id}（用户选择再问）" for feature_id in remove
+        for feature_id in selection.mainline_deferred
     )
     return "\n".join(lines)
 
@@ -889,24 +894,18 @@ def record_decisions(repository, decisions_path, answers_path):
     mainline_changed = _mainline_changed_features(
         root, plan_commit, head, data, values
     )
-    selected, reask, mainline_deferred = _validate_record_features(
-        values,
-        records,
-        feature_ids,
-        checked_answers,
-        plan_commit,
-        root,
-        mainline_changed,
+    selection = _validate_record_features(
+        RecordInputs(
+            repository=root,
+            values=values,
+            records=records,
+            feature_ids=feature_ids,
+            answers=checked_answers,
+            plan_commit=plan_commit,
+            mainline_changed=mainline_changed,
+        )
     )
-    return _write_approvals(
-        root,
-        head,
-        values,
-        records,
-        selected,
-        reask,
-        mainline_deferred,
-    )
+    return _write_approvals(root, head, values, records, selection)
 
 
 def main(argv):

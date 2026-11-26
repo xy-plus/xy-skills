@@ -552,36 +552,24 @@ class ApprovalPlanTest(unittest.TestCase):
         self.assertNotIn("alpha", saved)
 
     def test_record_keeps_features_changed_by_a_merged_mainline(self):
-        self._merge_mainline_change("beta-file")
+        for index, change in enumerate(("beta-file", "beta-registration-draft")):
+            with self.subTest(change=change):
+                if index:
+                    self._reset_mainline_merge_fixture()
+                self._merge_mainline_change(change)
 
-        result = self.record(("alpha", "beta"))
+                result = self.record(("alpha", "beta"))
 
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        saved = json.loads(
-            (self.repository / "repo-map" / "approved.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        head = run_git(self.repository, "rev-parse", "HEAD")
-        self.assertEqual(saved["alpha"], head)
-        self.assertEqual(saved["beta"], self.approval_base)
-        self.assertIn("留到下次清扫：beta（主线带来改动）", result.stdout)
-
-    def test_record_uses_mainline_feature_registration_changes_and_ignores_its_draft(self):
-        self._merge_mainline_change("beta-registration-draft")
-
-        result = self.record(("alpha", "beta"))
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        saved = json.loads(
-            (self.repository / "repo-map" / "approved.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        head = run_git(self.repository, "rev-parse", "HEAD")
-        self.assertEqual(saved["alpha"], head)
-        self.assertEqual(saved["beta"], self.approval_base)
-        self.assertIn("留到下次清扫：beta（主线带来改动）", result.stdout)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                saved = json.loads(
+                    (self.repository / "repo-map" / "approved.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                head = run_git(self.repository, "rev-parse", "HEAD")
+                self.assertEqual(saved["alpha"], head)
+                self.assertEqual(saved["beta"], self.approval_base)
+                self.assertIn("留到下次清扫：beta（主线带来改动）", result.stdout)
 
     def test_reask_removes_approval_even_when_mainline_changed_the_feature(self):
         self._merge_mainline_change("beta-file")
@@ -629,6 +617,13 @@ class ApprovalPlanTest(unittest.TestCase):
             "--no-edit",
             mainline_head,
         )
+
+    def _reset_mainline_merge_fixture(self):
+        run_git(self.repository, "reset", "--hard", self.plan_commit)
+        run_git(self.repository, "switch", "--detach", self.plan_commit)
+        run_git(self.repository, "branch", "-D", "cleanup-branch")
+        run_git(self.primary, "switch", "--detach", self.plan_commit)
+        run_git(self.primary, "branch", "-D", "mainline")
 
     def test_record_rejects_drafts_and_old_features_argument(self):
         path = self.repository / "repo-map" / "features.json"

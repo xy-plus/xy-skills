@@ -434,43 +434,10 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
         if urlsplit(self.path).path != "/submit":
             self._send_json(404, {"error": "找不到提交入口"})
             return
-        if self.headers.get("Transfer-Encoding") is not None:
-            self._send_json(400, {"error": "不支持分块请求体"})
+        answers = self._read_valid_answers()
+        if answers is None:
             return
-        length_text = self.headers.get("Content-Length")
-        if length_text is None or not length_text.isdecimal():
-            self._send_json(400, {"error": "缺少有效的 Content-Length"})
-            return
-        try:
-            length = int(length_text)
-        except ValueError:
-            self._send_json(400, {"error": "Content-Length 超出可接受范围"})
-            return
-        if length > MAX_REQUEST_BYTES:
-            self._send_json(400, {"error": "请求体不能超过 200 KB"})
-            return
-        try:
-            payload = json.loads(
-                self.rfile.read(length),
-                object_pairs_hook=object_without_duplicate_keys,
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            self._send_json(400, {"error": "请求体必须是有效 JSON"})
-            return
-        except ValueError as error:
-            self._send_json(400, {"error": str(error)})
-            return
-        try:
-            answers = validate_answers(payload, self.server.decisions)
-        except ValueError as error:
-            self._send_json(400, {"error": str(error)})
-            return
-
-        if self.server.submitted_answers is not None:
-            if answers == self.server.submitted_answers:
-                self._send_json(200, {"received": True})
-            else:
-                self._send_json(409, {"error": "已经收到不同的回答"})
+        if self._respond_to_duplicate_submission(answers):
             return
 
         document = {"title": self.server.decisions["title"], "answers": answers}
@@ -484,6 +451,48 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
         self.server.submitted_answers = answers
         self.server.submitted_event.set()
         self._send_json(200, {"received": True})
+
+    def _read_valid_answers(self):
+        if self.headers.get("Transfer-Encoding") is not None:
+            self._send_json(400, {"error": "不支持分块请求体"})
+            return None
+        length_text = self.headers.get("Content-Length")
+        if length_text is None or not length_text.isdecimal():
+            self._send_json(400, {"error": "缺少有效的 Content-Length"})
+            return None
+        try:
+            length = int(length_text)
+        except ValueError:
+            self._send_json(400, {"error": "Content-Length 超出可接受范围"})
+            return None
+        if length > MAX_REQUEST_BYTES:
+            self._send_json(400, {"error": "请求体不能超过 200 KB"})
+            return None
+        try:
+            payload = json.loads(
+                self.rfile.read(length),
+                object_pairs_hook=object_without_duplicate_keys,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json(400, {"error": "请求体必须是有效 JSON"})
+            return None
+        except ValueError as error:
+            self._send_json(400, {"error": str(error)})
+            return None
+        try:
+            return validate_answers(payload, self.server.decisions)
+        except ValueError as error:
+            self._send_json(400, {"error": str(error)})
+            return None
+
+    def _respond_to_duplicate_submission(self, answers):
+        if self.server.submitted_answers is not None:
+            if answers == self.server.submitted_answers:
+                self._send_json(200, {"received": True})
+            else:
+                self._send_json(409, {"error": "已经收到不同的回答"})
+            return True
+        return False
 
     def _send_json(self, status, value):
         body = json.dumps(value, ensure_ascii=False).encode("utf-8")
