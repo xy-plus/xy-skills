@@ -525,7 +525,13 @@ def main(argv):
             and card["unused"]
             for card in cards
         )
-        used_by_repositories = values[data["root"]].get("used_by_repositories", [])
+        root_values = values[data["root"]]
+        if has_unused and "used_by_repositories" not in root_values:
+            raise ValueError(
+                "根功能还没登记 used_by_repositories，反查范围没定，不能判没人用；"
+                "先按清扫第 2 步问用户，按回答写进去（不查别的仓写 []）。"
+            )
+        used_by_repositories = root_values.get("used_by_repositories", [])
         if has_unused and used_by_repositories:
             unavailable = _unavailable_reverse_repositories(
                 options.repo,

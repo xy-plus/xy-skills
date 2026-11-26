@@ -194,7 +194,7 @@ class FeatureCardsTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_output_uses_the_decision_page_schema(self):
+    def test_missing_used_by_repositories_blocks_unused_decisions(self):
         cards = self.default_cards()
         cards[1]["unused"] = [
             {
@@ -209,6 +209,22 @@ class FeatureCardsTest(unittest.TestCase):
         cards[1]["recommended"] = "照建议"
 
         result = self.run_cards(cards)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stdout + result.stderr,
+            "根功能还没登记 used_by_repositories，反查范围没定，不能判没人用；"
+            "先按清扫第 2 步问用户，按回答写进去（不查别的仓写 []）。\n",
+        )
+
+    def test_empty_used_by_repositories_allows_unused_decisions(self):
+        self._set_used_by_repositories([])
+
+        result = self.run_cards(
+            [unused_card()],
+            scope=("alpha",),
+            review="全部",
+        )
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         decisions = json.loads(self.output.read_text(encoding="utf-8"))
