@@ -787,6 +787,45 @@ class DecisionPageBrowserTest(unittest.TestCase):
                     )
                     browser.close()
 
+    def test_old_page_id_shows_expired_message_and_locks_page(self):
+        executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
+        self.assertTrue(
+            executable, "XY_REPO_MAP_CHROMIUM must name the Chromium executable"
+        )
+        decisions = browser_decisions()
+        current_page = decision_page.render_decision_page(decisions)
+        stale_page = decision_page.render_decision_page(decisions)
+        self.assertNotEqual(
+            embedded_page_data(current_page)[1]["call_id"],
+            embedded_page_data(stale_page)[1]["call_id"],
+        )
+        with tempfile.TemporaryDirectory(prefix="d", dir="/tmp") as temporary:
+            answers_path = Path(temporary) / "answers.json"
+            with browser_receiver(
+                Path(temporary), current_page, decisions, answers_path, False
+            ) as (_receiver_thread, bridge):
+                bridge.page = stale_page
+                with sync_playwright() as playwright:
+                    browser, page = self._open_page(
+                        playwright, executable, bridge, []
+                    )
+                    try:
+                        page.locator("#submit").click()
+                        feedback = page.locator("#feedback")
+                        feedback.wait_for(state="visible")
+                        self.assertEqual(
+                            feedback.inner_text(),
+                            "这页已经过期：决定页换过了，请重新打开决定页链接",
+                        )
+                        self.assertTrue(
+                            page.locator(".item input, .item textarea").evaluate_all(
+                                "controls => controls.every(control => control.disabled)"
+                            )
+                        )
+                        self.assertTrue(page.locator("#submit").is_hidden())
+                    finally:
+                        browser.close()
+
     def test_storage_errors_stay_visible_without_blocking_answers_or_submission(self):
         executable = os.environ.get("XY_REPO_MAP_CHROMIUM")
         self.assertTrue(

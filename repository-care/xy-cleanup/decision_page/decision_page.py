@@ -506,7 +506,7 @@ class DecisionRequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "answers 必须是对象"})
             return None
         if payload.get("call_id") != self.server.call_id:
-            self._send_json(409, {"error": "已经收到不同的回答"})
+            self._send_json(410, {"error": "page_expired"})
             return None
         try:
             return validate_answers(payload, self.server.decisions)

@@ -243,6 +243,10 @@ async function submitAnswers() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ call_id: pageData.call_id, answers: submittedAnswers }),
     });
+    if (response.status === 410) {
+      showExpiredPage();
+      return;
+    }
     if (response.status === 409) {
       showAnswerConflict();
       return;
@@ -279,6 +283,15 @@ function showAnswerConflict() {
   submitButton.disabled = false;
   submitButton.textContent = "再提交一次";
   feedback.textContent = "已经提交过另一份回答，这页的选择没有保存";
+  feedback.hidden = false;
+}
+
+function showExpiredPage() {
+  for (const control of document.querySelectorAll(".item input, .item textarea")) {
+    control.disabled = true;
+  }
+  submitButton.hidden = true;
+  feedback.textContent = "这页已经过期：决定页换过了，请重新打开决定页链接";
   feedback.hidden = false;
 }
 

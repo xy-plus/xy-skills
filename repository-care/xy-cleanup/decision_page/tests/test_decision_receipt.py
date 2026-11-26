@@ -182,8 +182,10 @@ class DecisionReceiptTest(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(status, 409, body)
-            self.assertIn("已经收到不同的回答", body.decode("utf-8"))
+            self.assertEqual(status, 410, body)
+            self.assertEqual(
+                json.loads(body), {"error": "page_expired"}
+            )
             self.assertFalse(answers_path.exists())
             self.assertTrue(serving.is_alive())
 
