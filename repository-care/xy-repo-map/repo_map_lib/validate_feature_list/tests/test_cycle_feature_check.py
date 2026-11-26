@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-import unittest
 
 REPOSITORY_ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()

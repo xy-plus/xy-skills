@@ -6,7 +6,9 @@ ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / ".git").exists()
 )
 sys.path.insert(0, str(ROOT / "repository-care" / "xy-cleanup" / "feature_cards"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import feature_cards  # noqa: E402
+import test_feature_cards as card_fixtures  # noqa: E402
 
 
 class FeatureCardCycleTest(unittest.TestCase):
@@ -31,15 +33,7 @@ class FeatureCardCycleTest(unittest.TestCase):
             previous_features={},
             commits={"alpha": "无"},
         )
-        card = {
-            "used": [],
-            "unused": [],
-            "changed": [],
-            "todo": [],
-            "map_issues": [],
-            "suggestion": [],
-            "recommended": "留",
-        }
+        card = card_fixtures.card("alpha", used=[])
 
         decision = feature_cards._decision_item("alpha", card, context)
 
