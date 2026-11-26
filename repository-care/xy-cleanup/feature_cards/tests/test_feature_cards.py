@@ -196,37 +196,17 @@ class FeatureCardsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_missing_used_by_repositories_blocks_unused_decisions(self):
-        cards = self.default_cards()
-        cards[1]["unused"] = [
-            {
-                "what": "可选的旧格式导出入口。",
-                "evidence": "README 实际使用记录只选了新版入口。",
-                "reverse_search": "本仓全部分支、tag 和发布产物均没有其他引用。",
-                "lines": 12,
-                "risk": "旧调用方可能需要迁移。",
-            }
-        ]
-        cards[1]["suggestion"] = ["删除旧格式导出入口。"]
-        cards[1]["recommended"] = "照建议"
-
-        result = self.run_cards(cards)
-
+        result = self.run_cards([unused_card()], scope=("alpha",), review="全部")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(
-            result.stdout + result.stderr,
+        self.assertIn(
             "根功能还没登记 used_by_repositories，反查范围没定，不能判没人用；"
-            "先按清扫第 2 步问用户，按回答写进去（不查别的仓写 []）。\n",
+            "先按清扫第 2 步问用户，按回答写进去（不查别的仓写 []）。",
+            result.stderr,
         )
 
     def test_empty_used_by_repositories_allows_unused_decisions(self):
         self._set_used_by_repositories([])
-
-        result = self.run_cards(
-            [unused_card()],
-            scope=("alpha",),
-            review="全部",
-        )
-
+        result = self.run_cards([unused_card()], scope=("alpha",), review="全部")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         decisions = json.loads(self.output.read_text(encoding="utf-8"))
         self.assertIs(decision_page.validate_decisions(decisions), decisions)
